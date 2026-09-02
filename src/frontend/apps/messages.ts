@@ -1,4 +1,4 @@
-import type { PhoneState, PocketConversation } from '../../types.js'
+import type { PhoneMessage, PhoneState, PocketConversation } from '../../types.js'
 import { contactAvatar, contactAccent } from '../../domain/contacts.js'
 import { button, el, formatTime, inputValue } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -21,6 +21,11 @@ export interface MessagesViewHost {
   openContact(contactId: string): void
   send(type: string, payload?: Record<string, unknown>): void
   generateReply(conversationId: string, speakerContactId?: string): void
+  composerState(conversationId: string, held: boolean): void
+  messageAnyway(conversationId: string): void
+  manualOverride: boolean
+  returnToRoleplay(): void
+  showGenerationInfo(message: PhoneMessage): void
   back(): void
 }
 
@@ -31,6 +36,12 @@ const PAUSE_COPY = {
   arriving: 'is here now.',
   sleeping: 'went offline for the night.',
   unknown: 'stopped responding.',
+} as const
+
+const LOCAL_COPY = {
+  in_scene: 'is currently with you.',
+  arriving: 'is here now.',
+  took_action: 'continued this in the main conversation.',
 } as const
 
 function conversationTitle(state: PhoneState, conversation: PocketConversation): string {
@@ -141,7 +152,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       retry.type = 'button'
       retry.setAttribute('aria-label', `Retry message from ${message.senderName}`)
       retry.addEventListener('click', () => host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: message.id }))
-      bubble.appendChild(retry)
+      const generationInfo = button('Generation info', 'lp-bubble-action')
+      generationInfo.type = 'button'
+      generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
+      bubble.append(retry, generationInfo)
     }
     bubbles.appendChild(bubble)
   }
@@ -157,13 +171,25 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     pending.appendChild(dots)
     bubbles.appendChild(pending)
   }
-  if (!replyBusy && (scenePresent || conversation.pause)) {
-    const reason = scenePresent ? 'is currently with you.' : PAUSE_COPY[conversation.pause!.reason]
+  const availability = scenePresent && conversation.availability.state !== 'local'
+    ? { state: 'local' as const, reason: 'in_scene' as const }
+    : conversation.availability
+  if (!replyBusy && (availability.state !== 'available' || conversation.pause)) {
+    const reason = availability.state === 'local' ? LOCAL_COPY[availability.reason] : PAUSE_COPY[availability.state === 'paused' ? availability.reason : conversation.pause!.reason]
     const banner = el('div', 'lp-conversation-status', `${directContact?.name || titleText} ${reason}`)
-    banner.dataset.pauseReason = scenePresent ? 'in-scene' : conversation.pause!.reason
+    banner.dataset.pauseReason = availability.state === 'local' ? availability.reason : availability.state === 'paused' ? availability.reason : conversation.pause!.reason
     bubbles.appendChild(banner)
   }
   if (!conversation.messages.length) bubbles.appendChild(host.empty('Say hello', 'This thread is private to this Pocket roleplay state.'))
+
+  if (availability.state === 'local' && !host.manualOverride) {
+    const localActions = el('div', 'lp-local-actions')
+    const roleplay = button('Return to roleplay', 'lp-button'); roleplay.addEventListener('click', () => host.returnToRoleplay())
+    const anyway = button('Message anyway', 'lp-button lp-button-quiet'); anyway.addEventListener('click', () => host.messageAnyway(conversation.id))
+    localActions.append(el('strong', '', 'Continue in main conversation'), roleplay, anyway)
+    page.append(nav, bubbles, localActions)
+    return page
+  }
 
   const compose = el('form', 'lp-compose')
   const sparkle = scenePresent || conversation.pause
@@ -190,7 +216,9 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`
     textarea.style.overflowY = textarea.scrollHeight > 112 ? 'auto' : 'hidden'
   }
-  textarea.addEventListener('input', () => { host.updateDraft(conversation.id, textarea.value); resizeComposer() })
+  textarea.addEventListener('focus', () => host.composerState(conversation.id, true))
+  textarea.addEventListener('input', () => { host.updateDraft(conversation.id, textarea.value); host.composerState(conversation.id, true); resizeComposer() })
+  textarea.addEventListener('blur', () => host.composerState(conversation.id, false))
   const submit = host.iconButton('send', 'Send message')
   submit.type = 'submit'
   textarea.addEventListener('keydown', (event) => {

@@ -7,6 +7,8 @@ import type {
   PhoneNote,
   PhoneNotification,
   PocketGenerationInfo,
+  PocketContextDiagnostics,
+  ChatPocketPersona,
   PocketOperationProgress,
   PocketContactSourceOption,
   PocketActivity,
@@ -109,10 +111,13 @@ class PocketController {
   private caps: PhoneCapabilities | null = null
   private swarmProfile: SwarmVisualProfile | null = null
   private generation: PocketGenerationInfo | null = null
+  private contextPreview: PocketContextDiagnostics | null = null
+  private personaPreview: ChatPocketPersona | null = null
   private operations = new Map<string, PocketOperationProgress>()
   private router = new PocketRouteHistory()
   private gallery: GalleryResult = { data: [], total: 0 }
   private galleryScope = 'chat'
+  private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string }>()
   private selectedContactId = ''
   private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'new' = 'list'
   private selectedConversationId = ''
@@ -130,6 +135,7 @@ class PocketController {
   private cameraRequestId = ''
   private messageRequests = new Map<string, { conversationId: string; speakerContactId: string; phase: 'checking' | 'pending' }>()
   private messageDrafts = new Map<string, string>()
+  private manualMessageOverrides = new Set<string>()
   private contactSources: PocketContactSourceOption[] = []
   private contactSourcesRequested = false
   private lastTagKeys = new Set<string>()
@@ -148,6 +154,7 @@ class PocketController {
   private notificationTimer = 0
   private notificationIsland: HTMLButtonElement
   private customStyle: HTMLStyleElement
+  private setupModalOpen = false
 
   constructor(ctx: SpindleFrontendContext) {
     this.ctx = ctx
@@ -564,6 +571,10 @@ class PocketController {
       if (active.characterId && payload.state.characterId !== active.characterId) return
       const previousUnread = this.unreadCount()
       this.state = payload.state as PhoneState
+      for (const conversationId of this.manualMessageOverrides) {
+        const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
+        if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
+      }
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       if (payload.reason === 'import' || payload.reason === 'reset_preferences') this.settingsDraft = structuredClone(this.preferences)
       this.caps = payload.capabilities || this.caps
@@ -575,6 +586,7 @@ class PocketController {
       this.updateBadge()
       this.announceView()
       if (payload.open) this.open()
+      if (payload.reason === 'chat_switched' && !this.state.setup.initialized && !this.state.setup.dismissed) this.showFirstChatSetup()
       const pending = this.pendingRoute
       this.pendingRoute = null
       if (pending) this.openPocket(pending)
@@ -599,6 +611,24 @@ class PocketController {
       this.preferences.generationHistory = history.slice(-24)
       if (this.generation) this.generation.history = this.preferences.generationHistory
       if (this.currentApp === 'settings') this.updateSettingsDiagnostics()
+      return
+    }
+    if (payload.type === 'lumiphone:context_preview' && payload.diagnostics) {
+      this.contextPreview = payload.diagnostics as PocketContextDiagnostics
+      if (this.currentApp === 'settings') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:action_done' && payload.result?.trackerId && this.currentApp === 'trackers' && this.selectedTrackerView === 'config') {
+      this.openPocket({ app: 'trackers', trackerId: String(payload.result.trackerId), view: 'detail' }, false)
+      return
+    }
+    if (payload.type === 'lumiphone:pocket_persona_preview' && payload.persona) {
+      this.personaPreview = payload.persona as ChatPocketPersona
+      if (this.currentApp === 'settings') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:pocket_persona_saved') {
+      this.personaPreview = null
       return
     }
     if (payload.type === 'lumiphone:operation_progress' && payload.requestId) {
@@ -631,6 +661,17 @@ class PocketController {
     if (payload.type === 'lumiphone:gallery') {
       this.gallery = { data: payload.data || [], total: Number(payload.total) || 0 }
       if (this.currentApp === 'gallery') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:gallery_action_done' && payload.requestId) {
+      const pending = this.galleryActionButtons.get(payload.requestId)
+      if (pending) {
+        pending.button.disabled = false
+        pending.button.textContent = '✓ Done'
+        window.setTimeout(() => { pending.button.textContent = pending.idle }, 1_400)
+        this.galleryActionButtons.delete(payload.requestId)
+      }
+      this.showFeedback(payload.message || 'Gallery action complete.')
       return
     }
     if (payload.type === 'lumiphone:contact_sources') {
@@ -702,6 +743,8 @@ class PocketController {
       this.messageRequests.delete(payload.requestId)
       const operation = this.operations.get(payload.requestId)
       if (operation) this.operations.set(payload.requestId, { ...operation, phase: 'error', message: payload.error || 'Operation failed' })
+      const galleryAction = this.galleryActionButtons.get(payload.requestId)
+      if (galleryAction) { galleryAction.button.disabled = false; galleryAction.button.textContent = galleryAction.idle; this.galleryActionButtons.delete(payload.requestId) }
       this.showError(payload.error || 'Pocket could not complete that action.')
       if (this.expanded) this.render(false)
     }
@@ -752,7 +795,8 @@ class PocketController {
       const title = effectiveNode.querySelector<HTMLElement>('strong')
       const detail = effectiveNode.querySelector<HTMLElement>('span')
       if (title) title.textContent = effective?.name || 'No effective connection'
-      if (detail) detail.textContent = effective ? `${effective.provider} · ${effective.model || 'model not set'}` : 'Configure a Lumiverse LLM connection.'
+      const model = (this.settingsDraft?.generationMode === 'sidecar' && this.settingsDraft.sidecarModelOverride) || effective?.model || 'model not set'
+      if (detail) detail.textContent = effective ? `${effective.provider} · ${model}` : 'Configure a Lumiverse LLM connection.'
     }
     const swarmNode = this.screen.querySelector<HTMLElement>('[data-pocket-swarm-status]')
     if (swarmNode && this.swarmProfile) {
@@ -817,8 +861,10 @@ class PocketController {
     this.shell.style.setProperty('--lp-text', appearance.colors.text)
     const homeWallpaper = wallpaperCss(appearance.colors.wallpaperPrimary, appearance.colors.wallpaperSecondary)
     const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
-    this.shell.style.setProperty('--lp-wallpaper', settings.wallpaperImageUrl ? `${homeWallpaper},url(${JSON.stringify(settings.wallpaperImageUrl)})` : homeWallpaper)
-    this.shell.style.setProperty('--lp-chat-wallpaper', settings.chatWallpaperImageUrl ? `${chatWallpaper},url(${JSON.stringify(settings.chatWallpaperImageUrl)})` : chatWallpaper)
+    const homeImage = persona?.enabled ? persona.wallpaperImageUrl || settings.wallpaperImageUrl : settings.wallpaperImageUrl
+    const chatImage = persona?.enabled ? persona.chatWallpaperImageUrl || settings.chatWallpaperImageUrl : settings.chatWallpaperImageUrl
+    this.shell.style.setProperty('--lp-wallpaper', homeImage ? `linear-gradient(rgba(7,6,11,.14),rgba(7,6,11,.3)),url(${JSON.stringify(homeImage)}),${homeWallpaper}` : homeWallpaper)
+    this.shell.style.setProperty('--lp-chat-wallpaper', chatImage ? `linear-gradient(rgba(9,8,14,.12),rgba(9,8,14,.3)),url(${JSON.stringify(chatImage)}),${chatWallpaper}` : chatWallpaper)
     this.shell.style.setProperty('--pocket-ui-scale', String(settings.uiScale))
     this.shell.style.setProperty('--lp-animation-ms', `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`)
     this.shell.dataset.reducedMotion = String(settings.reducedMotion)
@@ -890,7 +936,7 @@ class PocketController {
 
   private openPocket(routeInput: PocketRoute, pushHistory = true): void {
     const normalized = normalizePocketRoute(routeInput)
-    const route = pushHistory ? this.router.navigate(normalized) : normalized
+    const route = this.router.navigate(normalized, !pushHistory)
     if (!this.state) {
       this.pendingRoute = route
       this.open()
@@ -1100,8 +1146,33 @@ class PocketController {
       openContact: (contactId) => this.openPocket({ app: 'contacts', contactId, view: 'detail' }),
       send: (type, payload) => { this.send(type, payload) },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
+      composerState: (conversationId, held) => { this.send('lumiphone:composer_state', { conversationId, held }) },
+      messageAnyway: (conversationId) => { this.manualMessageOverrides.add(conversationId); this.render(false) },
+      manualOverride: this.manualMessageOverrides.has(this.selectedConversationId),
+      returnToRoleplay: () => this.close(),
+      showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back(),
     })
+  }
+
+  private showMessageGenerationInfo(message: import('../types.js').PhoneMessage): void {
+    const info = message.generation?.info
+    const modal = this.ctx.ui.showModal({ title: 'Generation info', width: 460, maxHeight: 620 })
+    const content = el('div', 'lp-settings-section')
+    if (!info) {
+      content.appendChild(el('p', 'lp-copy', `Request ${message.generation?.requestId || 'unknown'} predates detailed diagnostics.`))
+    } else {
+      for (const [label, value] of [
+        ['Speaker', info.speaker], ['Source', `${info.source} · ${info.sourceId}`], ['Source resolution', info.sourceResolution],
+        ['Active character used', `${info.activeCharacterUsed ? 'yes' : 'no'} · ${info.activeCharacterId}`], ['Identity', `${info.identityChars} chars`],
+        ['Scene snapshot', info.sceneSnapshotStale ? 'stale' : 'current'], ['Context mode', info.contextMode],
+        ['Recent RP', `${info.recentCount} messages · ${info.recentChars} chars`], ['Story', `${info.storyCount} facts · ${info.storyChars} chars`],
+        ['Phone thread', `${info.threadCount} messages · ${info.threadChars} chars`], ['Generation', `${info.generationMode} · ${info.connectionName} · ${info.model}`],
+      ]) {
+        const row = el('div', 'lp-row-between'); row.append(el('strong', '', label), el('span', 'lp-copy', value)); content.appendChild(row)
+      }
+    }
+    modal.root.appendChild(content)
   }
 
   private generateReply(conversationId: string, speakerContactId = ''): void {
@@ -1157,7 +1228,7 @@ class PocketController {
       if (item.id === this.selectedGalleryImageId) tile.setAttribute('aria-current', 'true')
       const image = el('img')
       image.loading = 'lazy'
-      image.src = item.url
+      image.src = item.thumbnailUrl || item.url
       image.alt = item.filename || 'Gallery image'
       image.addEventListener('error', () => {
         tile.dataset.missing = 'true'
@@ -1173,21 +1244,21 @@ class PocketController {
   }
 
   private inspectImage(item: GalleryResult['data'][number]): void {
-    const modal = this.ctx.ui.showModal({ title: item.filename || 'Pocket photo', size: 'lg' } as any)
+    const modal = this.ctx.ui.showModal({ title: item.filename || 'Pocket photo', width: 760, maxHeight: 820 })
     const image = el('img')
-    image.src = item.url
+    image.src = item.fullUrl || item.url
     image.alt = item.filename || 'Pocket photo'
     image.style.cssText = 'display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808'
     const actions = el('div', 'lp-gallery-actions')
     const open = button('Open image', 'lp-button')
-    open.addEventListener('click', () => window.open(item.url, '_blank', 'noopener,noreferrer'))
+    open.addEventListener('click', () => window.open(item.fullUrl || item.url, '_blank', 'noopener,noreferrer'))
     const attach = button('Add to current RP chat', 'lp-button')
     attach.disabled = !this.caps?.sceneSync
-    attach.addEventListener('click', () => this.send('lumiphone:gallery_add_to_chat', { imageId: item.id, imageUrl: item.url, filename: item.filename }))
+    attach.addEventListener('click', () => this.runGalleryAction(attach, 'Adding…', 'lumiphone:gallery_add_to_chat', { imageId: item.id, imageUrl: item.fullUrl || item.url, filename: item.filename }))
     const homeWallpaper = button('Set as home wallpaper', 'lp-button lp-button-quiet')
-    homeWallpaper.addEventListener('click', () => this.send('lumiphone:gallery_set_wallpaper', { imageUrl: item.url, target: 'home' }))
+    homeWallpaper.addEventListener('click', () => this.runGalleryAction(homeWallpaper, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'home' }))
     const chatWallpaper = button('Set as chat wallpaper', 'lp-button lp-button-quiet')
-    chatWallpaper.addEventListener('click', () => this.send('lumiphone:gallery_set_wallpaper', { imageUrl: item.url, target: 'chat' }))
+    chatWallpaper.addEventListener('click', () => this.runGalleryAction(chatWallpaper, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'chat' }))
     const contact = el('select', 'lp-select')
     const choose = el('option', '', 'Choose a contact photo…'); choose.value = ''; contact.appendChild(choose)
     for (const entry of this.state?.contacts || []) {
@@ -1196,10 +1267,28 @@ class PocketController {
     const setPhoto = button('Set contact photo', 'lp-button lp-button-quiet')
     setPhoto.addEventListener('click', () => {
       if (!contact.value) { this.showError('Choose a contact first.'); return }
-      this.send('lumiphone:set_contact_photo', { contactId: contact.value, imageUrl: item.url })
+      this.runGalleryAction(setPhoto, 'Applying…', 'lumiphone:set_contact_photo', { contactId: contact.value, imageUrl: item.fullUrl || item.url })
     })
-    actions.append(open, attach, homeWallpaper, chatWallpaper, contact, setPhoto)
+    actions.append(open, attach, homeWallpaper, chatWallpaper)
+    const personaAppearance = this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null
+    if (this.activePersona && personaAppearance?.enabled) {
+      const personaHome = button(`Set ${this.activePersona.name} home wallpaper`, 'lp-button lp-button-quiet')
+      personaHome.addEventListener('click', () => this.runGalleryAction(personaHome, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'home', personaId: this.activePersona!.id }))
+      const personaChat = button(`Set ${this.activePersona.name} chat wallpaper`, 'lp-button lp-button-quiet')
+      personaChat.addEventListener('click', () => this.runGalleryAction(personaChat, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'chat', personaId: this.activePersona!.id }))
+      actions.append(personaHome, personaChat)
+    }
+    actions.append(contact, setPhoto)
     modal.root.append(image, actions)
+  }
+
+  private runGalleryAction(buttonNode: HTMLButtonElement, progress: string, type: string, payload: Record<string, unknown>): void {
+    const idle = buttonNode.textContent || 'Action'
+    const actionRequestId = requestId('gallery')
+    buttonNode.disabled = true
+    buttonNode.textContent = progress
+    this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle })
+    this.send(type, { ...payload, requestId: actionRequestId })
   }
 
   private renderCamera(): HTMLDivElement {
@@ -1446,7 +1535,7 @@ class PocketController {
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
       send: (type, payload) => { this.send(type, payload) },
-      select: (id, view = 'detail') => this.openPocket({ app: 'trackers', trackerId: id || undefined, view }),
+      select: (id, view = 'detail', replace = false) => this.openPocket({ app: 'trackers', trackerId: id || undefined, view }, !replace),
       back: () => this.back(),
       onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
     })
@@ -1465,18 +1554,50 @@ class PocketController {
     this.settingsDraft ||= structuredClone(this.preferences)
     return renderSettingsView({
       draft: this.settingsDraft,
+      state: this.state!,
       section: this.selectedSettingsSection,
       activePersona: this.activePersona,
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
       generation: this.generation,
+      contextPreview: this.contextPreview,
+      personaPreview: this.personaPreview,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       update: (preferences, options) => this.updatePreferences(preferences, options),
       navigate: (section) => this.openPocket({ app: 'settings', section }),
       send: (type, payload) => { this.send(type, payload) },
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
+      rerender: () => this.render(false),
+      mountModelCombobox: (target, options) => {
+        const handle = this.ctx.components.mountModelCombobox(target, {
+          value: options.value,
+          connection: options.connection,
+          appearance: 'standard',
+          placeholder: 'Use connection model',
+          disabled: options.disabled,
+          onChange: options.onChange,
+        })
+        this.viewCleanups.push(() => handle.destroy())
+      },
     })
+  }
+
+  private showFirstChatSetup(): void {
+    if (this.setupModalOpen || !this.state) return
+    this.setupModalOpen = true
+    const modal = this.ctx.ui.showModal({ title: 'Set up Pocket for this roleplay', width: 430, maxHeight: 560 })
+    const copy = el('div', 'lp-settings-section')
+    copy.append(el('p', 'lp-copy', 'Pocket keeps its Persona, scene snapshot, contacts, and phone memory scoped to this chat. Choose how this phone should represent you.'))
+    const follow = button(`Follow ${this.activePersona?.name || 'Lumiverse Persona'}`, 'lp-button')
+    follow.addEventListener('click', () => { this.send('lumiphone:save_pocket_persona', { followLumiverse: true, persona: this.state!.pocketPersona }); modal.dismiss() })
+    const customize = button('Customize Pocket profile', 'lp-button lp-button-quiet')
+    customize.addEventListener('click', () => { this.openPocket({ app: 'settings', section: 'persona' }); modal.dismiss() })
+    const later = button('Not now', 'lp-button lp-button-quiet')
+    later.addEventListener('click', () => { this.send('lumiphone:dismiss_setup'); modal.dismiss() })
+    copy.append(follow, customize, later)
+    modal.root.appendChild(copy)
+    modal.onDismiss(() => { this.setupModalOpen = false })
   }
   private field(labelText: string, value = '', type = 'text'): { label: HTMLLabelElement; input: HTMLInputElement } {
     const label = el('label', 'lp-label', labelText)
@@ -1496,8 +1617,13 @@ class PocketController {
   }
 
   private showError(message: string): void {
+    this.showFeedback(message, true)
+  }
+
+  private showFeedback(message: string, error = false): void {
     window.clearTimeout(this.alertTimer)
     this.alert.textContent = message
+    this.alert.dataset.severity = error ? 'error' : 'success'
     this.alert.hidden = false
     this.alertTimer = window.setTimeout(() => { this.alert.hidden = true }, 5_500)
   }

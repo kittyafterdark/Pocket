@@ -14,7 +14,7 @@ export interface TrackerViewHost {
   page(title: string, subtitle?: string, action?: PageAction): Page
   field(label: string, value?: string, type?: string): Field
   send(type: string, payload?: Record<string, unknown>): void
-  select(id: string, view?: 'detail' | 'config'): void
+  select(id: string, view?: 'detail' | 'config', replace?: boolean): void
   back(): void
   onCleanup(cleanup: () => void): void
 }
@@ -203,7 +203,7 @@ function config(host: TrackerViewHost, current: PhoneTracker | null, templateInd
   const { page, content } = host.page(current ? 'Tracker Settings' : 'New Tracker', 'Configuration', { label: 'Save', callback: () => saveTracker() })
   if (!current) {
     const templateField = selectField('Template', TRACKER_TEMPLATES.map((entry, index) => [String(index), `${entry.group} · ${entry.name}`]), String(templateIndex))
-    templateField.select.addEventListener('change', () => host.select(`__template:${templateField.select.value}`, 'config'))
+    templateField.select.addEventListener('change', () => host.select(`__template:${templateField.select.value}`, 'config', true))
     content.appendChild(templateField.label)
   }
   const label = host.field('Label', String(source.label || ''))
@@ -249,7 +249,6 @@ function config(host: TrackerViewHost, current: PhoneTracker | null, templateInd
       updateMode: mode.select.value as TrackerUpdateMode, clock: clock.select.value, ratePerHour: Number(rate.input.value), bands: parsedBands,
       visibleToModel: visible.button.getAttribute('aria-pressed') === 'true', allowModelWrite: writable.button.getAttribute('aria-pressed') === 'true',
     } })
-    host.back()
   }
   if (current) {
     const remove = button('Delete tracker', 'lp-button lp-button-danger')

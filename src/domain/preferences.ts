@@ -1,6 +1,6 @@
 import type { DevicePreferences, PhonePalette, PhoneTheme } from '../types.js'
 
-export const PREFERENCES_VERSION = 3 as const
+export const PREFERENCES_VERSION = 4 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -68,7 +68,9 @@ export function defaultPreferences(): DevicePreferences {
     sceneEnhancer: true,
     generationMode: 'roleplay',
     sidecarConnectionId: '',
+    sidecarModelOverride: '',
     autoReplyAfterSend: false,
+    replyCadence: 'natural',
     ambientMessaging: 'off',
     roleplayContextMode: 'smart',
     recentRoleplayMessages: 8,
@@ -119,7 +121,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const item = record(entry)
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
-    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'message-reply', 'message-retry', 'reply-decision', 'ambient-decision', 'scene-planner', 'connection-test'])
+    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'reply-decision', 'ambient-decision', 'scene-planner', 'connection-test'])
     if (!requestId || !tasks.has(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{
@@ -156,6 +158,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
         chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary),
       },
       customCss: text(item.customCss, '', 30_000),
+      wallpaperImageUrl: text(item.wallpaperImageUrl, '', 2_000),
+      chatWallpaperImageUrl: text(item.chatWallpaperImageUrl, '', 2_000),
     }
   }
   const contextMode = raw.roleplayContextMode === 'off' || raw.roleplayContextMode === 'recent' || raw.roleplayContextMode === 'story'
@@ -177,7 +181,9 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     generationMode: raw.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
     sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
+    sidecarModelOverride: text(raw.sidecarModelOverride, '', 500),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
+    replyCadence: raw.replyCadence === 'instant' || raw.replyCadence === 'quick' || raw.replyCadence === 'relaxed' ? raw.replyCadence : 'natural',
     ambientMessaging: raw.ambientMessaging === 'sparse' || raw.ambientMessaging === 'normal' ? raw.ambientMessaging : 'off',
     roleplayContextMode: contextMode,
     recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),

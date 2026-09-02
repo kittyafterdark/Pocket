@@ -1,4 +1,4 @@
-import type { ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
+import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
 
 const MAX_CONTACTS = 80
 const MAX_CONVERSATIONS = 80
@@ -160,6 +160,15 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
   const pauseValue = record(value.pause) ? value.pause : null
   const pauseReasons = new Set<ConversationPauseReason>(['ended', 'busy', 'away', 'arriving', 'sleeping', 'unknown'])
   const pauseReason = pauseReasons.has(pauseValue?.reason as ConversationPauseReason) ? pauseValue?.reason as ConversationPauseReason : null
+  const availabilityValue = record(value.availability) ? value.availability : null
+  const localReasons = new Set<ConversationLocalReason>(['in_scene', 'arriving', 'took_action'])
+  const availability = availabilityValue?.state === 'local' && localReasons.has(availabilityValue.reason as ConversationLocalReason)
+    ? { state: 'local' as const, reason: availabilityValue.reason as ConversationLocalReason, resumePauseReason: pauseReasons.has(availabilityValue.resumePauseReason as ConversationPauseReason) ? availabilityValue.resumePauseReason as ConversationPauseReason : undefined }
+    : availabilityValue?.state === 'paused' && pauseReasons.has(availabilityValue.reason as ConversationPauseReason)
+      ? { state: 'paused' as const, reason: availabilityValue.reason as ConversationPauseReason }
+      : pauseReason ? { state: 'paused' as const, reason: pauseReason } : { state: 'available' as const }
+  const burstValue = record(value.outgoingBurst) ? value.outgoingBurst : null
+  const burstId = clean(burstValue?.id, 180)
   return {
     id: clean(value.id, 180) || makeId('conversation'),
     kind,
@@ -171,6 +180,15 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
       reason: pauseReason,
       createdAt: timestamp(pauseValue?.createdAt, now),
       source: pauseValue?.source === 'scene' ? 'scene' : 'model',
+    } : undefined,
+    availability,
+    outgoingBurst: burstId ? {
+      id: burstId,
+      messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean(entry, 180)).filter(Boolean).slice(-12),
+      open: flag(burstValue?.open, false),
+      held: flag(burstValue?.held, false),
+      finalized: flag(burstValue?.finalized, false),
+      updatedAt: timestamp(burstValue?.updatedAt, now),
     } : undefined,
     createdAt,
     updatedAt: timestamp(value.updatedAt, messages.at(-1)?.createdAt || createdAt),
@@ -208,7 +226,7 @@ export function ensureDirectConversation(state: { contacts: PocketContact[]; con
   const contact = state.contacts.find((entry) => entry.id === contactId)
   const conversation: PocketConversation = {
     id: makeId('conversation'), kind: 'direct', title: contact?.name || 'Conversation', participantContactIds: [contactId],
-    messages: [], unread: 0, createdAt: now, updatedAt: now,
+    messages: [], unread: 0, availability: { state: 'available' }, createdAt: now, updatedAt: now,
   }
   state.conversations.push(conversation)
   return conversation

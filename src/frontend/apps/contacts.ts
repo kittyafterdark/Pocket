@@ -173,6 +173,10 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   const sceneOperation = [...host.operations.values()].find((entry) => entry.task === 'scene-sync' && entry.phase !== 'complete' && entry.phase !== 'error')
   sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation)
   sync.addEventListener('click', () => host.send('lumiphone:sync_scene_contacts'))
+  const snapshot = host.state.sceneSnapshot
+  const snapshotStatus = el('p', snapshot?.stale ? 'lp-warning' : 'lp-copy', !snapshot
+    ? 'No scene snapshot yet.'
+    : `${snapshot.stale ? 'Scene snapshot is stale' : 'Scene snapshot is current'} · ${snapshot.actors.length} actor${snapshot.actors.length === 1 ? '' : 's'} · source turn ${snapshot.sourceMessageIndex}`)
   const list = el('div', 'lp-contact-list')
   const renderList = (filter: 'all' | 'here' | 'recent' = 'all') => {
     list.replaceChildren()
@@ -197,7 +201,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   all.addEventListener('click', () => useFilter('all')); here.addEventListener('click', () => useFilter('here')); recent.addEventListener('click', () => useFilter('recent'))
   search.addEventListener('input', () => renderList(active))
   renderList()
-  content.append(search, filters, sync)
+  content.append(search, filters, sync, snapshotStatus)
   if (sceneOperation) {
     const progress = el('div', 'lp-operation-progress')
     progress.dataset.operationRequest = sceneOperation.requestId

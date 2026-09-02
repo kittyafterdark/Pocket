@@ -53,17 +53,25 @@ export type PocketGenerationMode = 'roleplay' | 'sidecar'
 export type AmbientMessageFrequency = 'off' | 'sparse' | 'normal'
 export type RoleplayContextMode = 'off' | 'recent' | 'story' | 'smart'
 export type ConversationPauseReason = 'ended' | 'busy' | 'away' | 'arriving' | 'sleeping' | 'unknown'
+export type ConversationLocalReason = 'in_scene' | 'arriving' | 'took_action'
+export type ConversationAvailability =
+  | { state: 'available' }
+  | { state: 'paused'; reason: ConversationPauseReason }
+  | { state: 'local'; reason: ConversationLocalReason; resumePauseReason?: ConversationPauseReason }
+export type ReplyCadence = 'instant' | 'quick' | 'natural' | 'relaxed'
 
 export interface PersonaAppearanceOverride {
   enabled: boolean
   theme: PhoneTheme
   colors: PhonePalette
   customCss: string
+  wallpaperImageUrl: string
+  chatWallpaperImageUrl: string
 }
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'message-reply' | 'message-retry' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -90,6 +98,56 @@ export interface PocketGenerationInfo {
   effective: PocketConnectionSummary | null
   connections: PocketConnectionSummary[]
   history: PocketGenerationRun[]
+  modelOverride: string
+}
+
+export interface SceneActorSnapshotEntry {
+  contactId: string
+  roleHint: string
+  sceneBrief: string
+}
+
+export interface SceneActorSnapshot {
+  actors: SceneActorSnapshotEntry[]
+  capturedAt: string
+  sourceMessageId: string
+  sourceMessageIndex: number
+  sourceRevision: number
+  stale: boolean
+}
+
+export interface ChatPocketPersona {
+  source: 'lumiverse' | 'manual' | 'generated'
+  linkedPersonaId: string
+  displayName: string
+  pronouns: string
+  role: string
+  identityBrief: string
+  avatarUrl: string
+  accent: string
+  canAppear: boolean
+  updatedAt: string
+}
+
+export interface PocketContextComponentStat {
+  count: number
+  chars: number
+  budget: number
+}
+
+export interface PocketContextDiagnostics {
+  mode: RoleplayContextMode
+  actorIdentityChars: number
+  sceneSnapshot: { stale: boolean; capturedAt: string; sourceMessageId: string; sourceMessageIndex: number; chars: number }
+  phoneThread: PocketContextComponentStat
+  recentRoleplay: PocketContextComponentStat & { latestMessageId: string }
+  story: PocketContextComponentStat
+  totalChars: number
+  estimatedTokens: number
+  authoritativeLatest: { id: string; index: number; excerpt: string }
+  includedLatest: { id: string; index: number; excerpt: string }
+  freshnessWarning: string
+  assembled: string
 }
 
 export interface PocketOperationProgress {
@@ -100,7 +158,7 @@ export interface PocketOperationProgress {
 }
 
 export interface DevicePreferences {
-  version: 3
+  version: 4
   theme: PhoneTheme
   colors: PhonePalette
   wallpaperImageUrl: string
@@ -118,7 +176,9 @@ export interface DevicePreferences {
   sceneEnhancer: boolean
   generationMode: PocketGenerationMode
   sidecarConnectionId: string
+  sidecarModelOverride: string
   autoReplyAfterSend: boolean
+  replyCadence: ReplyCadence
   ambientMessaging: AmbientMessageFrequency
   roleplayContextMode: RoleplayContextMode
   recentRoleplayMessages: number
@@ -146,7 +206,30 @@ export interface PhoneMessage {
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
   imageId?: string
   imageUrl?: string
-  generation?: { requestId: string; retryOf?: string }
+  generation?: {
+    requestId: string
+    retryOf?: string
+    info?: {
+      speaker: string
+      source: string
+      sourceId: string
+      sourceResolution: 'resolved' | 'snapshot' | 'manual'
+      activeCharacterId: string
+      activeCharacterUsed: boolean
+      identityChars: number
+      sceneSnapshotStale: boolean
+      contextMode: RoleplayContextMode
+      recentCount: number
+      recentChars: number
+      storyCount: number
+      storyChars: number
+      threadCount: number
+      threadChars: number
+      generationMode: PocketGenerationMode
+      connectionName: string
+      model: string
+    }
+  }
 }
 
 export type PocketContactSource =
@@ -191,6 +274,15 @@ export interface PocketConversation {
   messages: PhoneMessage[]
   unread: number
   pause?: { reason: ConversationPauseReason; createdAt: string; source: 'model' | 'scene' }
+  availability: ConversationAvailability
+  outgoingBurst?: {
+    id: string
+    messageIds: string[]
+    open: boolean
+    held: boolean
+    finalized: boolean
+    updatedAt: string
+  }
   createdAt: string
   updatedAt: string
 }
@@ -351,11 +443,14 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 4
+  version: 5
   chatId: string
   characterId: string
   characterName: string
   roleplayNow: string
+  sceneSnapshot: SceneActorSnapshot | null
+  pocketPersona: ChatPocketPersona
+  setup: { initialized: boolean; dismissed: boolean }
   contacts: PocketContact[]
   conversations: PocketConversation[]
   notes: PhoneNote[]
@@ -406,6 +501,8 @@ export interface PhoneCapabilities {
 export interface GalleryResult {
   data: Array<{
     id: string
+    thumbnailUrl: string
+    fullUrl: string
     url: string
     filename: string
     mimeType: string

@@ -1,4 +1,4 @@
-import type { DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PocketGenerationInfo, SwarmVisualProfile } from '../../types.js'
+import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
 import { button, el } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -8,17 +8,22 @@ type ActivePersona = { id: string; name: string } | null
 
 export interface SettingsViewHost {
   draft: DevicePreferences
+  state: PhoneState
   section: string
   activePersona: ActivePersona
   capabilities: PhoneCapabilities | null
   swarmProfile: SwarmVisualProfile | null
   generation: PocketGenerationInfo | null
+  contextPreview: PocketContextDiagnostics | null
+  personaPreview: ChatPocketPersona | null
   page(title: string, subtitle?: string, action?: PageAction): Page
   update(preferences: DevicePreferences, options?: { persist?: boolean; resize?: boolean }): void
   navigate(section: string): void
   send(type: string, payload?: Record<string, unknown>): void
   requestPermissions(): void
   showError(message: string): void
+  rerender(): void
+  mountModelCombobox(target: HTMLElement, options: { value: string; connection: { kind: 'llm'; id?: string }; disabled?: boolean; onChange(value: string): void }): void
 }
 
 function clone(value: DevicePreferences): DevicePreferences { return structuredClone(value) }
@@ -94,6 +99,23 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const palette = el('div', 'lp-color-grid')
   const colorControl = (label: string, key: keyof PhonePalette) => color(label, settings.colors[key], (value) => commit((next) => { next.theme = 'custom'; next.colors[key] = value }))
   palette.append(colorControl('Accent', 'accent'), colorControl('Bezel', 'bezel'), colorControl('UI background', 'background'), colorControl('UI surface', 'surface'), colorControl('UI text', 'text'), colorControl('Home top', 'wallpaperPrimary'), colorControl('Home bottom', 'wallpaperSecondary'), colorControl('Chat top', 'chatPrimary'), colorControl('Chat bottom', 'chatSecondary'))
+  const wallpapers = el('section', 'lp-card lp-settings-section')
+  wallpapers.append(el('div', 'lp-eyebrow', 'Wallpaper images'))
+  const homeImage = row('Home wallpaper', settings.wallpaperImageUrl ? 'Gallery image selected' : 'Theme gradient')
+  homeImage.dataset.setting = 'home-wallpaper'
+  const clearHome = button('Clear', 'lp-button lp-button-quiet'); clearHome.disabled = !settings.wallpaperImageUrl; clearHome.addEventListener('click', () => {
+    commit((next) => { next.wallpaperImageUrl = '' })
+    const detail = homeImage.querySelector<HTMLElement>('.lp-copy'); if (detail) detail.textContent = 'Theme gradient'
+    clearHome.disabled = true
+  }); homeImage.appendChild(clearHome)
+  const chatImage = row('Chat wallpaper', settings.chatWallpaperImageUrl ? 'Gallery image selected' : 'Theme gradient')
+  chatImage.dataset.setting = 'chat-wallpaper'
+  const clearChat = button('Clear', 'lp-button lp-button-quiet'); clearChat.disabled = !settings.chatWallpaperImageUrl; clearChat.addEventListener('click', () => {
+    commit((next) => { next.chatWallpaperImageUrl = '' })
+    const detail = chatImage.querySelector<HTMLElement>('.lp-copy'); if (detail) detail.textContent = 'Theme gradient'
+    clearChat.disabled = true
+  }); chatImage.appendChild(clearChat)
+  wallpapers.append(homeImage, chatImage)
   const scaleCard = el('section', 'lp-card lp-settings-section'); scaleCard.append(el('div', 'lp-eyebrow', 'Sizing'))
   const presets = el('div', 'lp-row')
   for (const [label, value] of [['Compact', .8], ['Default', 1], ['Large', 1.2]] as const) { const preset = button(label, 'lp-chip'); preset.setAttribute('aria-pressed', String(settings.uiScale === value)); preset.addEventListener('click', () => commit((next) => { next.uiScale = value })); presets.appendChild(preset) }
@@ -111,35 +133,96 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const css = el('textarea', 'lp-textarea lp-code-input'); css.value = settings.customCss; css.placeholder = '.lp-bubble { border-radius: 12px; }'; css.addEventListener('input', () => commit((next) => { next.customCss = css.value }, { persist: false }))
   const apply = button('Apply custom CSS', 'lp-button'); apply.addEventListener('click', () => commit((next) => { next.customCss = css.value }))
   custom.append(css, apply)
-  content.append(themes, palette, scaleCard, motion, custom); return page
+  content.append(themes, palette, wallpapers, scaleCard, motion, custom); return page
 }
 
 function persona(host: SettingsViewHost): HTMLDivElement {
-  const { page, content } = host.page('Persona & Device', host.activePersona?.name || 'No active persona')
-  if (!host.activePersona) { content.append(el('div', 'lp-card lp-copy', 'Choose an active Lumiverse Persona to create a device appearance override.')); return page }
-  const persona = host.activePersona
-  const current = host.draft.personaAppearance[persona.id] || { enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: '' }
-  const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[persona.id] || current); mutate(value); next.personaAppearance[persona.id] = value; host.update(next, { persist }) }
+  const profile = host.state.pocketPersona
+  const { page, content } = host.page('Persona & Device', profile.displayName || host.activePersona?.name || 'Pocket profile')
+  const identity = el('section', 'lp-card lp-settings-section')
+  identity.append(el('div', 'lp-eyebrow', 'Who is using this phone?'))
+  const source = el('select', 'lp-select')
+  for (const [value, label] of [['lumiverse', 'Follow Lumiverse Persona'], ['manual', 'Use Pocket profile']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = profile.source === value || (profile.source === 'generated' && value === 'manual'); source.appendChild(option)
+  }
+  const name = el('input', 'lp-input'); name.placeholder = 'Display name'; name.value = profile.displayName
+  const pronouns = el('input', 'lp-input'); pronouns.placeholder = 'Pronouns'; pronouns.value = profile.pronouns
+  const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = profile.role
+  const brief = el('textarea', 'lp-textarea'); brief.placeholder = 'Stable identity and roleplay facts'; brief.value = profile.identityBrief
+  const canAppear = toggle('Can appear as phone participant', profile.canAppear, () => {}, 'Off by default. The active Persona is never imported as a Contact.')
+  const fields = el('div', 'lp-fields'); fields.append(name, pronouns, role, brief, canAppear)
+  const syncDisabled = () => { const disabled = source.value === 'lumiverse'; for (const control of [name, pronouns, role, brief]) control.disabled = disabled; canAppear.querySelector('button')!.toggleAttribute('disabled', disabled) }
+  source.addEventListener('change', syncDisabled); syncDisabled()
+  const actions = el('div', 'lp-row')
+  const describe = button('Describe from roleplay', 'lp-button lp-button-quiet'); describe.disabled = !host.capabilities?.generation; describe.addEventListener('click', () => host.send('lumiphone:generate_pocket_persona'))
+  const save = button('Save profile', 'lp-button'); save.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', {
+    followLumiverse: source.value === 'lumiverse',
+    persona: { ...profile, source: source.value, displayName: name.value.trim(), pronouns: pronouns.value.trim(), role: role.value.trim(), identityBrief: brief.value.trim(), canAppear: canAppear.querySelector('button')?.getAttribute('aria-pressed') === 'true' },
+  }))
+  actions.append(describe, save); identity.append(source, fields, actions)
+  if (host.personaPreview) {
+    const preview = el('section', 'lp-card lp-settings-section'); preview.dataset.pocketPersonaPreview = 'true'
+    preview.append(el('div', 'lp-eyebrow', 'Generated preview'), el('strong', '', host.personaPreview.displayName), el('p', 'lp-copy', [host.personaPreview.pronouns, host.personaPreview.role].filter(Boolean).join(' · ')), el('p', 'lp-copy', host.personaPreview.identityBrief))
+    const use = button('Use profile', 'lp-button'); use.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', { persona: host.personaPreview })); preview.appendChild(use); identity.appendChild(preview)
+  }
+  content.appendChild(identity)
+  if (!host.activePersona) return page
+  const active = host.activePersona
+  const current = host.draft.personaAppearance[active.id] || { enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: '', wallpaperImageUrl: '', chatWallpaperImageUrl: '' }
+  const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }) }
   const card = el('section', 'lp-card lp-settings-section')
-  card.append(el('div', 'lp-eyebrow', 'Persona override'), toggle(`Enable for ${persona.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Only appearance changes; connections and notifications remain device-wide.'))
+  card.append(el('div', 'lp-eyebrow', 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
   const theme = el('select', 'lp-select')
-  for (const name of ['midnight', 'porcelain', 'rose', 'forest', 'custom'] as const) { const option = el('option', '', name); option.value = name; option.selected = current.theme === name; theme.appendChild(option) }
+  for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'custom'] as const) { const option = el('option', '', themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
   theme.addEventListener('change', () => commit((item) => { item.theme = theme.value as PhoneSettings['theme']; if (item.theme !== 'custom') item.colors = themePalette(item.theme) }))
   const colors = el('div', 'lp-color-grid')
   for (const [label, key] of [['Accent', 'accent'], ['Bezel', 'bezel'], ['Home top', 'wallpaperPrimary'], ['Home bottom', 'wallpaperSecondary'], ['Chat top', 'chatPrimary'], ['Chat bottom', 'chatSecondary']] as Array<[string, keyof PhonePalette]>) colors.appendChild(color(label, current.colors[key], (value) => commit((item) => { item.theme = 'custom'; item.colors[key] = value })))
+  const clearHome = button('Clear persona home wallpaper', 'lp-button lp-button-quiet'); clearHome.disabled = !current.wallpaperImageUrl; clearHome.addEventListener('click', () => commit((item) => { item.wallpaperImageUrl = '' }))
+  const clearChat = button('Clear persona chat wallpaper', 'lp-button lp-button-quiet'); clearChat.disabled = !current.chatWallpaperImageUrl; clearChat.addEventListener('click', () => commit((item) => { item.chatWallpaperImageUrl = '' }))
   const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
   const apply = button('Apply persona CSS', 'lp-button'); apply.addEventListener('click', () => commit((item) => { item.customCss = css.value }))
-  card.append(theme, colors, css, apply); content.appendChild(card); return page
+  card.append(theme, colors, clearHome, clearChat, css, apply); content.appendChild(card); return page
 }
 
 function messages(host: SettingsViewHost): HTMLDivElement {
   const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); host.update(next) }
   const { page, content } = host.page('Messages', 'Generation and context bridge')
   const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })))
+  const cadence = el('select', 'lp-select'); for (const [value, label] of [['instant', 'Instant'], ['quick', 'Quick'], ['natural', 'Natural'], ['relaxed', 'Relaxed']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.replyCadence === value; cadence.appendChild(option) }; cadence.addEventListener('change', () => commit((next) => { next.replyCadence = cadence.value as DevicePreferences['replyCadence'] })); replies.append(el('div', 'lp-label', 'Outgoing message grace'), cadence, el('p', 'lp-copy', 'Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision.'))
   const ambient = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.ambientMessaging === value; ambient.appendChild(option) }; ambient.addEventListener('change', () => commit((next) => { next.ambientMessaging = ambient.value as DevicePreferences['ambientMessaging'] })); replies.append(el('div', 'lp-label', 'Ambient messages'), ambient)
   const context = el('section', 'lp-card lp-settings-section'); context.append(el('div', 'lp-eyebrow', 'Roleplay context'))
   const mode = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['recent', 'Recent RP'], ['story', 'Story context'], ['smart', 'Smart']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.roleplayContextMode === value; mode.appendChild(option) }; mode.addEventListener('change', () => commit((next) => { next.roleplayContextMode = mode.value as DevicePreferences['roleplayContextMode'] }))
-  context.append(mode, slider('Recent roleplay messages', settings.recentRoleplayMessages, 0, 20, 1, String, (value) => commit((next) => { next.recentRoleplayMessages = value }), 'Bounded host-chat context used by Recent RP and deterministic Smart mode.'))
+  const explanations: Record<string, string> = {
+    off: 'Off — phone replies use only compact actor identity and the Pocket thread.',
+    recent: 'Recent RP — includes a bounded tail of the committed Lumiverse transcript.',
+    story: 'Story — includes Pocket timeline, trackers, weather, and pinned notes without transcript lines.',
+    smart: 'Smart — combines Story with Recent RP when the conversation or current scene makes it relevant.',
+  }
+  const explanation = el('p', 'lp-copy', explanations[settings.roleplayContextMode]); mode.addEventListener('change', () => { explanation.textContent = explanations[mode.value] })
+  const previewSelect = el('select', 'lp-select')
+  for (const conversation of host.state.conversations) { const option = el('option', '', conversation.title); option.value = conversation.id; previewSelect.appendChild(option) }
+  const preview = button('Preview effective context', 'lp-button lp-button-quiet'); preview.disabled = !host.state.conversations.length; preview.addEventListener('click', () => host.send('lumiphone:preview_context', { conversationId: previewSelect.value }))
+  context.append(mode, explanation, slider('Recent roleplay messages', settings.recentRoleplayMessages, 0, 20, 1, String, (value) => commit((next) => { next.recentRoleplayMessages = value }), 'Bounded committed host-chat context used by Recent RP and deterministic Smart mode.'), previewSelect, preview)
+  if (host.contextPreview) {
+    const diagnostic = host.contextPreview
+    const details = el('details', 'lp-context-preview'); details.open = true; details.appendChild(el('summary', '', `Effective context · ~${diagnostic.estimatedTokens} tokens`))
+    const stats = el('div', 'lp-context-stats')
+    for (const [label, value] of [
+      ['Actor identity', `${diagnostic.actorIdentityChars} chars`],
+      ['Scene snapshot', `${diagnostic.sceneSnapshot.chars} chars · ${diagnostic.sceneSnapshot.stale ? 'stale' : 'current'} · turn ${diagnostic.sceneSnapshot.sourceMessageIndex}`],
+      ['Phone thread', `${diagnostic.phoneThread.count} messages · ${diagnostic.phoneThread.chars}/${diagnostic.phoneThread.budget} chars`],
+      ['Recent RP', `${diagnostic.recentRoleplay.count} messages · ${diagnostic.recentRoleplay.chars}/${diagnostic.recentRoleplay.budget} chars`],
+      ['Story', `${diagnostic.story.count} facts · ${diagnostic.story.chars}/${diagnostic.story.budget} chars`],
+      ['Total', `${diagnostic.totalChars} chars`],
+    ]) stats.appendChild(row(label, value))
+    const anchors = el('p', 'lp-copy', `Authoritative latest: ${diagnostic.authoritativeLatest.id || 'none'} (#${diagnostic.authoritativeLatest.index}) · Included latest: ${diagnostic.includedLatest.id || 'none'} (#${diagnostic.includedLatest.index})`)
+    details.append(stats, anchors)
+    if (diagnostic.freshnessWarning) details.appendChild(el('p', 'lp-warning', diagnostic.freshnessWarning))
+    const advanced = el('details'); advanced.append(el('summary', '', 'Exact sanitized assembled block'))
+    const exact = el('pre', 'lp-context-exact', diagnostic.assembled)
+    const copy = button('Copy', 'lp-button lp-button-quiet'); copy.addEventListener('click', () => void navigator.clipboard.writeText(diagnostic.assembled))
+    advanced.append(exact, copy); details.appendChild(advanced); context.appendChild(details)
+  }
   content.append(replies, context); return page
 }
 
@@ -149,12 +232,19 @@ function generation(host: SettingsViewHost): HTMLDivElement {
   const card = el('section', 'lp-card lp-settings-section')
   const mode = el('select', 'lp-select'); for (const [value, label] of [['roleplay', 'Follow roleplay model'], ['sidecar', 'Pocket sidecar']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.generationMode === value; mode.appendChild(option) }
   const connections = el('select', 'lp-select'); const none = el('option', '', 'Choose a connection'); none.value = ''; connections.appendChild(none); for (const entry of host.generation?.connections || []) { const option = el('option', '', `${entry.name} · ${entry.model || entry.provider}`); option.value = entry.id; option.selected = settings.sidecarConnectionId === entry.id; connections.appendChild(option) }; connections.disabled = settings.generationMode !== 'sidecar'
-  mode.addEventListener('change', () => commit((next) => { next.generationMode = mode.value === 'sidecar' ? 'sidecar' : 'roleplay' })); connections.addEventListener('change', () => commit((next) => { next.sidecarConnectionId = connections.value }))
-  const effective = host.generation?.effective; const effectiveCard = el('div', 'lp-generation-effective'); effectiveCard.dataset.pocketGenerationEffective = 'true'; effectiveCard.append(el('strong', '', effective?.name || 'No effective connection'), el('span', 'lp-copy', effective ? `${effective.provider} · ${effective.model || 'model not set'}` : 'Configure a Lumiverse LLM connection.'))
-  const test = button('Test Pocket generation', 'lp-button'); test.dataset.pocketGenerationTest = 'true'; test.disabled = !host.capabilities?.generation; test.addEventListener('click', () => host.send('lumiphone:test_generation', { generationMode: mode.value, sidecarConnectionId: connections.value }))
+  mode.addEventListener('change', () => { commit((next) => { next.generationMode = mode.value === 'sidecar' ? 'sidecar' : 'roleplay' }); host.rerender() }); connections.addEventListener('change', () => { commit((next) => { next.sidecarConnectionId = connections.value; next.sidecarModelOverride = '' }); host.rerender() })
+  const modelMount = el('div', 'lp-model-combobox')
+  host.mountModelCombobox(modelMount, {
+    value: settings.sidecarModelOverride,
+    connection: { kind: 'llm', id: settings.sidecarConnectionId || undefined },
+    disabled: settings.generationMode !== 'sidecar' || !settings.sidecarConnectionId,
+    onChange: (value) => commit((next) => { next.sidecarModelOverride = value }),
+  })
+  const effective = host.generation?.effective; const effectiveModel = settings.generationMode === 'sidecar' && settings.sidecarModelOverride ? `${settings.sidecarModelOverride} (override)` : effective?.model || 'model not set'; const effectiveCard = el('div', 'lp-generation-effective'); effectiveCard.dataset.pocketGenerationEffective = 'true'; effectiveCard.append(el('strong', '', effective?.name || 'No effective connection'), el('span', 'lp-copy', effective ? `${effective.provider} · ${effectiveModel}` : 'Configure a Lumiverse LLM connection.'))
+  const test = button('Test Pocket generation', 'lp-button'); test.dataset.pocketGenerationTest = 'true'; test.disabled = !host.capabilities?.generation; test.addEventListener('click', () => host.send('lumiphone:test_generation', { generationMode: mode.value, sidecarConnectionId: connections.value, sidecarModelOverride: settings.sidecarModelOverride }))
   const diagnostic = el('p', 'lp-copy', 'Not tested yet.'); diagnostic.dataset.pocketGenerationDiagnostic = 'true'
   const run = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test'); if (run) diagnostic.textContent = run.status === 'started' ? '● Testing…' : run.status === 'completed' ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || 'Unknown provider error'}`
-  card.append(el('div', 'lp-label', 'Generation mode'), mode, el('div', 'lp-label', 'Sidecar connection'), connections, effectiveCard, test, diagnostic); content.appendChild(card); return page
+  card.append(el('div', 'lp-label', 'Generation mode'), mode, el('div', 'lp-label', 'Connection profile'), connections, el('div', 'lp-label', 'Model override'), modelMount, el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic); content.appendChild(card); return page
 }
 
 function camera(host: SettingsViewHost): HTMLDivElement {

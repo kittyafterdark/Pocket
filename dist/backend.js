@@ -1,6 +1,6 @@
 // @bun
 // src/domain/preferences.ts
-var PREFERENCES_VERSION = 3;
+var PREFERENCES_VERSION = 4;
 var PREFERENCES_PATH = "device/preferences.json";
 var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
@@ -87,7 +87,9 @@ function defaultPreferences() {
     sceneEnhancer: true,
     generationMode: "roleplay",
     sidecarConnectionId: "",
+    sidecarModelOverride: "",
     autoReplyAfterSend: false,
+    replyCadence: "natural",
     ambientMessaging: "off",
     roleplayContextMode: "smart",
     recentRoleplayMessages: 8,
@@ -131,7 +133,7 @@ function normalizePreferences(value) {
     const item = record(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "message-reply", "message-retry", "reply-decision", "ambient-decision", "scene-planner", "connection-test"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "reply-decision", "ambient-decision", "scene-planner", "connection-test"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -173,7 +175,9 @@ function normalizePreferences(value) {
         chatPrimary: safeColor(overrideColors.chatPrimary, overridePreset.chatPrimary),
         chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary)
       },
-      customCss: text(item.customCss, "", 30000)
+      customCss: text(item.customCss, "", 30000),
+      wallpaperImageUrl: text(item.wallpaperImageUrl, "", 2000),
+      chatWallpaperImageUrl: text(item.chatWallpaperImageUrl, "", 2000)
     };
   }
   const contextMode = raw.roleplayContextMode === "off" || raw.roleplayContextMode === "recent" || raw.roleplayContextMode === "story" ? raw.roleplayContextMode : "smart";
@@ -194,7 +198,9 @@ function normalizePreferences(value) {
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
+    sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
+    replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
     ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
     roleplayContextMode: contextMode,
     recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
@@ -717,6 +723,11 @@ function normalizeConversation(value, contacts, now, makeId) {
   const pauseValue = record3(value.pause) ? value.pause : null;
   const pauseReasons = new Set(["ended", "busy", "away", "arriving", "sleeping", "unknown"]);
   const pauseReason = pauseReasons.has(pauseValue?.reason) ? pauseValue?.reason : null;
+  const availabilityValue = record3(value.availability) ? value.availability : null;
+  const localReasons = new Set(["in_scene", "arriving", "took_action"]);
+  const availability = availabilityValue?.state === "local" && localReasons.has(availabilityValue.reason) ? { state: "local", reason: availabilityValue.reason, resumePauseReason: pauseReasons.has(availabilityValue.resumePauseReason) ? availabilityValue.resumePauseReason : undefined } : availabilityValue?.state === "paused" && pauseReasons.has(availabilityValue.reason) ? { state: "paused", reason: availabilityValue.reason } : pauseReason ? { state: "paused", reason: pauseReason } : { state: "available" };
+  const burstValue = record3(value.outgoingBurst) ? value.outgoingBurst : null;
+  const burstId = clean2(burstValue?.id, 180);
   return {
     id: clean2(value.id, 180) || makeId("conversation"),
     kind,
@@ -728,6 +739,15 @@ function normalizeConversation(value, contacts, now, makeId) {
       reason: pauseReason,
       createdAt: timestamp(pauseValue?.createdAt, now),
       source: pauseValue?.source === "scene" ? "scene" : "model"
+    } : undefined,
+    availability,
+    outgoingBurst: burstId ? {
+      id: burstId,
+      messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-12),
+      open: flag(burstValue?.open, false),
+      held: flag(burstValue?.held, false),
+      finalized: flag(burstValue?.finalized, false),
+      updatedAt: timestamp(burstValue?.updatedAt, now)
     } : undefined,
     createdAt,
     updatedAt: timestamp(value.updatedAt, messages.at(-1)?.createdAt || createdAt)
@@ -769,6 +789,7 @@ function ensureDirectConversation(state, contactId, now, makeId) {
     participantContactIds: [contactId],
     messages: [],
     unread: 0,
+    availability: { state: "available" },
     createdAt: now,
     updatedAt: now
   };
@@ -905,10 +926,10 @@ function summary(connection) {
 }
 async function inspectPocketGeneration(host, preferences, userId) {
   if (!host.spindle.permissions.has("generation"))
-    return { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory };
+    return { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride };
   const connections = (await host.spindle.connections.list(userId)).map(summary);
   const effective = preferences.generationMode === "sidecar" ? connections.find((entry) => entry.id === preferences.sidecarConnectionId) || null : connections.find((entry) => entry.isDefault) || connections[0] || null;
-  return { mode: preferences.generationMode, effective, connections, history: preferences.generationHistory };
+  return { mode: preferences.generationMode, effective, connections, history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride };
 }
 async function writeRun(host, run, userId) {
   const key = userId || "_default";
@@ -941,7 +962,7 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
     connectionId: info.effective.id,
     connectionName: info.effective.name,
     provider: info.effective.provider,
-    model: info.effective.model,
+    model: preferences.sidecarModelOverride || info.effective.model,
     status: "started",
     startedAt
   };
@@ -950,8 +971,11 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
   const started = Date.now();
   try {
     const request = { ...input };
-    if (preferences.generationMode === "sidecar")
+    if (preferences.generationMode === "sidecar") {
       request.connection_id = info.effective.id;
+      if (preferences.sidecarModelOverride)
+        request.parameters = { ...request.parameters || {}, model: preferences.sidecarModelOverride };
+    }
     const result = await host.spindle.generate.quiet(request);
     const completed = { ...run, status: "completed", completedAt: new Date().toISOString(), latencyMs: Date.now() - started };
     await writeRun(host, completed, userId);
@@ -1060,56 +1084,113 @@ async function parseWithTruncationRetry(content, retry) {
 }
 
 // src/backend/roleplay-context.ts
+var BUDGETS = { actor: 1200, scene: 1800, thread: 6000, recent: 3200, story: 2400, total: 10500 };
 function clean3(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
-function storyContext(state, contact) {
+function messageIndex(message, fallback) {
+  const parsed = Number(message.index_in_chat);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function storyLines(state, contact) {
   const name = contact.name.toLocaleLowerCase();
-  const events = state.events.filter((event) => !event.completed && `${event.title} ${event.description}`.toLocaleLowerCase().includes(name)).slice(0, 4);
-  const trackers = state.trackers.filter((tracker) => tracker.visibleToModel && (`${tracker.target.id} ${tracker.target.label}`.includes(contact.id) || `${tracker.target.label}`.toLocaleLowerCase().includes(name))).slice(0, 5);
-  const notes = state.notes.filter((note) => note.pinned).slice(0, 3);
-  const present = state.contacts.filter((entry) => entry.presence.inScene).slice(0, 6);
+  const events = state.events.filter((event) => !event.completed && `${event.title} ${event.description}`.toLocaleLowerCase().includes(name)).slice(0, 3);
+  const trackers = state.trackers.filter((tracker) => tracker.visibleToModel && (`${tracker.target.id} ${tracker.target.label}`.includes(contact.id) || `${tracker.target.label}`.toLocaleLowerCase().includes(name))).slice(0, 4);
+  const notes = state.notes.filter((note) => note.pinned).slice(0, 2);
   return [
     `Roleplay time: ${state.roleplayNow}`,
     `Scene: ${state.weather.location}; ${state.weather.condition}.`,
-    present.length ? `Present actors: ${present.map((entry) => `${entry.name}${entry.sceneNote ? ` \u2014 ${entry.sceneNote}` : ""}`).join("; ")}` : "",
-    events.length ? `Relevant timeline: ${events.map((entry) => `${entry.whenText}: ${entry.title}`).join("; ")}` : "",
-    trackers.length ? `Relevant trackers: ${trackers.map((entry) => `${entry.label}=${entry.kind === "state" ? entry.state : entry.value}`).join("; ")}` : "",
-    notes.length ? `Pinned notes: ${notes.map((entry) => `${entry.title}: ${entry.body.slice(0, 240)}`).join("; ")}` : ""
-  ].filter(Boolean).join(`
-`).slice(0, 4800);
+    ...events.map((entry) => `Timeline: ${entry.whenText}: ${entry.title}`),
+    ...trackers.map((entry) => `Tracker: ${entry.label}=${entry.kind === "state" ? entry.state : entry.value}`),
+    ...notes.map((entry) => `Pinned note: ${entry.title}: ${entry.body.slice(0, 180)}`)
+  ];
 }
-async function buildRoleplayContext(options) {
+function sceneLines(state) {
+  const snapshot = state.sceneSnapshot;
+  if (!snapshot)
+    return [];
+  return snapshot.actors.slice(0, 8).map((actor) => {
+    const contact = state.contacts.find((entry) => entry.id === actor.contactId);
+    return `${contact?.name || actor.contactId}${actor.roleHint ? ` (${actor.roleHint})` : ""}${actor.sceneBrief ? ` \u2014 ${actor.sceneBrief}` : ""}`;
+  });
+}
+function trimBlock(lines, budget) {
+  return lines.filter(Boolean).join(`
+`).slice(0, budget);
+}
+async function assemblePocketContext(options) {
   const { state, contact, conversation, preferences } = options;
   const mode = preferences.roleplayContextMode;
-  if (mode === "off")
-    return "";
-  const parts = [];
+  const hostMessages = options.getMessages ? await options.getMessages().catch(() => []) : [];
+  const authoritative = hostMessages.at(-1);
+  const authoritativeLatest = authoritative ? {
+    id: clean3(authoritative.id, 180),
+    index: messageIndex(authoritative, hostMessages.length - 1),
+    excerpt: clean3(authoritative.content, 180)
+  } : { id: "", index: -1, excerpt: "" };
+  const actorIdentity = clean3(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
+  const scene = trimBlock(sceneLines(state), BUDGETS.scene);
+  const threadLines = conversation.messages.slice(-20).map((message) => `${message.sender === "persona" ? state.pocketPersona.displayName || "You" : message.senderName || "Pocket"}: ${clean3(message.text, 520)}`);
+  const thread = trimBlock(threadLines, BUDGETS.thread);
   const wantsRecent = mode === "recent" || mode === "smart" && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote));
-  if (wantsRecent && preferences.recentRoleplayMessages > 0 && options.getMessages) {
-    const messages = await options.getMessages().catch(() => []);
-    const recent = messages.slice(-preferences.recentRoleplayMessages).map((message) => {
-      const role = message.role === "user" ? "User" : message.role === "assistant" ? "Character" : "System";
-      return `${role}: ${clean3(message.content, 900)}`;
-    }).filter((line) => !line.endsWith(": ")).join(`
-`).slice(-6000);
-    if (recent)
-      parts.push(`RECENT ROLEPLAY
-${recent}`);
-  }
-  if (mode === "story" || mode === "smart") {
-    const story = storyContext(state, contact);
-    if (story)
-      parts.push(`STORY CONTEXT
-${story}`);
-  }
-  return parts.join(`
+  const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
+  const recentLines = selectedRecent.map((message, index) => {
+    const role = message.role === "user" ? "User" : message.role === "assistant" ? "Character" : "System";
+    const anchor = clean3(message.id, 180);
+    const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
+    return `${role}${source}: ${clean3(message.content, 520)}`;
+  }).filter((line) => !line.endsWith(": "));
+  const recent = trimBlock(recentLines, BUDGETS.recent);
+  const includedMessage = selectedRecent.at(-1);
+  const includedLatest = includedMessage ? {
+    id: clean3(includedMessage.id, 180),
+    index: messageIndex(includedMessage, hostMessages.length - 1),
+    excerpt: clean3(includedMessage.content, 180)
+  } : { id: "", index: -1, excerpt: "" };
+  const storySource = mode === "story" || mode === "smart" ? storyLines(state, contact) : [];
+  const story = trimBlock(storySource, BUDGETS.story);
+  const parts = [
+    actorIdentity ? `ACTOR IDENTITY
+${actorIdentity}` : "",
+    scene ? `SCENE SNAPSHOT${state.sceneSnapshot?.stale ? " (STALE)" : ""}
+${scene}` : "",
+    recent ? `RECENT ROLEPLAY
+${recent}` : "",
+    story ? `STORY CONTEXT
+${story}` : "",
+    thread ? `PHONE THREAD
+${thread}` : ""
+  ].filter(Boolean);
+  const finalText = (mode === "off" ? [actorIdentity ? `ACTOR IDENTITY
+${actorIdentity}` : "", thread ? `PHONE THREAD
+${thread}` : ""].filter(Boolean).join(`
 
-`).slice(0, 8000);
+`) : parts.join(`
+
+`)).slice(0, BUDGETS.total);
+  const latestMismatch = Boolean(authoritativeLatest.id && (!includedLatest.id || authoritativeLatest.id !== includedLatest.id));
+  const freshnessWarning = mode === "story" || mode === "off" || !wantsRecent ? "" : latestMismatch ? "The latest committed roleplay message is not included in the selected recent-context window." : "";
+  return {
+    text: finalText,
+    diagnostics: {
+      mode,
+      actorIdentityChars: actorIdentity.length,
+      sceneSnapshot: { stale: state.sceneSnapshot?.stale ?? true, capturedAt: state.sceneSnapshot?.capturedAt || "", sourceMessageId: state.sceneSnapshot?.sourceMessageId || "", sourceMessageIndex: state.sceneSnapshot?.sourceMessageIndex ?? -1, chars: scene.length },
+      phoneThread: { count: threadLines.length, chars: thread.length, budget: BUDGETS.thread },
+      recentRoleplay: { count: recentLines.length, chars: recent.length, budget: BUDGETS.recent, latestMessageId: includedLatest.id },
+      story: { count: storySource.length, chars: story.length, budget: BUDGETS.story },
+      totalChars: finalText.length,
+      estimatedTokens: Math.ceil(finalText.length / 4),
+      authoritativeLatest,
+      includedLatest,
+      freshnessWarning,
+      assembled: finalText
+    }
+  };
 }
 
 // src/backend.ts
-var STATE_VERSION = 4;
+var STATE_VERSION = 5;
 var MAX_MESSAGES2 = 240;
 var MAX_NOTIFICATIONS = 80;
 var MAX_NOTES = 120;
@@ -1121,9 +1202,10 @@ var cameraJobs = new Map;
 var notificationThrottle = new Map;
 var ambientFlights = new Set;
 var replyDecisionFlights = new Set;
+var replyBurstTimers = new Map;
 var frontendViews = new Map;
 var PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
-<lumi-phone action="message|contact|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
+<lumi-phone action="message|contact|scene|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
 Do not explain the tag. Do not use it for ordinary narration. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`;
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -1166,6 +1248,25 @@ function defaultWeather() {
     updatedAt: nowIso()
   };
 }
+function defaultPocketPersona(createdAt = nowIso()) {
+  return { source: "lumiverse", linkedPersonaId: "", displayName: "You", pronouns: "", role: "Persona", identityBrief: "", avatarUrl: "", accent: "#8b7dff", canAppear: false, updatedAt: createdAt };
+}
+function normalizePocketPersona(value, fallback = defaultPocketPersona()) {
+  const raw = isRecord(value) ? value : {};
+  const source = raw.source === "manual" || raw.source === "generated" ? raw.source : "lumiverse";
+  return {
+    source,
+    linkedPersonaId: text2(raw.linkedPersonaId, 180),
+    displayName: text2(raw.displayName, 120) || fallback.displayName,
+    pronouns: text2(raw.pronouns, 120),
+    role: text2(raw.role, 120) || fallback.role,
+    identityBrief: text2(raw.identityBrief, 1200),
+    avatarUrl: text2(raw.avatarUrl, 2000),
+    accent: /^#[0-9a-f]{6}$/i.test(text2(raw.accent, 20)) ? text2(raw.accent, 20) : fallback.accent,
+    canAppear: bool2(raw.canAppear),
+    updatedAt: text2(raw.updatedAt, 40) || fallback.updatedAt
+  };
+}
 function defaultState(chatId, characterId, characterName = "Character") {
   const createdAt = nowIso();
   const collections = normalizeContactCollections({}, { characterId, characterName, now: createdAt, makeId: id });
@@ -1175,6 +1276,9 @@ function defaultState(chatId, characterId, characterName = "Character") {
     characterId,
     characterName: characterName || "Character",
     roleplayNow: createdAt,
+    sceneSnapshot: null,
+    pocketPersona: defaultPocketPersona(createdAt),
+    setup: { initialized: false, dismissed: false },
     contacts: collections.contacts,
     conversations: collections.conversations,
     notes: [],
@@ -1299,12 +1403,33 @@ function normalizeState(value, chatId, characterId, characterName) {
     details: text2(weatherValue.details, 2000) || fallback.weather.details,
     updatedAt: text2(weatherValue.updatedAt, 40) || nowIso()
   };
+  const snapshotValue = isRecord(value.sceneSnapshot) ? value.sceneSnapshot : null;
+  const sceneSnapshot = snapshotValue ? {
+    actors: (Array.isArray(snapshotValue.actors) ? snapshotValue.actors : []).slice(0, 8).flatMap((entry) => {
+      if (!isRecord(entry))
+        return [];
+      const contactId = text2(entry.contactId, 180);
+      if (!contactId)
+        return [];
+      return [{ contactId, roleHint: text2(entry.roleHint, 120), sceneBrief: text2(entry.sceneBrief, 600) }];
+    }),
+    capturedAt: text2(snapshotValue.capturedAt, 40) || nowIso(),
+    sourceMessageId: text2(snapshotValue.sourceMessageId, 180),
+    sourceMessageIndex: Math.max(-1, Math.round(numberValue(snapshotValue.sourceMessageIndex, -1))),
+    sourceRevision: Math.max(0, Math.round(numberValue(snapshotValue.sourceRevision, 0))),
+    stale: bool2(snapshotValue.stale, true)
+  } : null;
+  const setupValue = isRecord(value.setup) ? value.setup : {};
+  const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0);
   return {
     version: STATE_VERSION,
     chatId,
     characterId,
     characterName: characterName || text2(value.characterName, 120) || fallback.characterName,
     roleplayNow: text2(value.roleplayNow, 80) || fallback.roleplayNow,
+    sceneSnapshot,
+    pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
+    setup: { initialized: bool2(setupValue.initialized, hadPocketData), dismissed: bool2(setupValue.dismissed) },
     contacts: collections.contacts,
     conversations: collections.conversations,
     notes,
@@ -1327,6 +1452,35 @@ async function characterNameFor(characterId, userId) {
     return "Character";
   }
 }
+async function resolveActivePocketPersona(userId) {
+  if (!spindle.permissions.has("personas"))
+    return null;
+  try {
+    const persona = await spindle.personas.getActive(userId);
+    if (!persona)
+      return null;
+    let avatarUrl = "";
+    if (persona.image_id && spindle.permissions.has("images")) {
+      const image = await spindle.images.get(String(persona.image_id), { specificity: "sm", userId }).catch(() => null);
+      avatarUrl = text2(image?.url, 2000);
+    }
+    const metadata = isRecord(persona.metadata) ? persona.metadata : {};
+    return {
+      source: "lumiverse",
+      linkedPersonaId: text2(persona.id, 180),
+      displayName: text2(persona.name, 120) || "You",
+      pronouns: text2(metadata.pronouns, 120),
+      role: text2(persona.title, 120) || text2(metadata.role, 120) || "Persona",
+      identityBrief: text2(persona.description, 1200),
+      avatarUrl,
+      accent: /^#[0-9a-f]{6}$/i.test(text2(metadata.color ?? metadata.accent, 20)) ? text2(metadata.color ?? metadata.accent, 20) : "#8b7dff",
+      canAppear: bool2(metadata.canAppear),
+      updatedAt: nowIso()
+    };
+  } catch {
+    return null;
+  }
+}
 async function loadState(chatId, characterId, userId) {
   const characterName = await characterNameFor(characterId, userId);
   const raw = await spindle.userStorage.getJson(statePath(chatId, characterId), {
@@ -1347,6 +1501,14 @@ async function loadState(chatId, characterId, userId) {
   if (contact && characterName !== "Character")
     contact.name = characterName;
   state.characterName = characterName;
+  if (state.pocketPersona.source === "lumiverse") {
+    const hostPersona = await resolveActivePocketPersona(userId);
+    if (hostPersona) {
+      const changed = JSON.stringify({ ...state.pocketPersona, updatedAt: "" }) !== JSON.stringify({ ...hostPersona, updatedAt: "" });
+      state.pocketPersona = changed ? hostPersona : state.pocketPersona;
+      stateChanged ||= changed;
+    }
+  }
   if (stateChanged)
     await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId });
   return state;
@@ -1405,7 +1567,7 @@ function send(payload, userId) {
 }
 async function sendState(state, userId, reason = "refresh", open = false) {
   const preferences = await loadPreferences(userId);
-  let generation = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory };
+  let generation = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride };
   try {
     generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
   } catch (error) {
@@ -1509,7 +1671,7 @@ async function listContactSources(state, userId) {
   const options = [];
   if (spindle.permissions.has("characters")) {
     try {
-      const listed = await spindle.characters.list({ limit: 200, offset: 0 }, userId);
+      const listed = await spindle.characters.list({ limit: 200, offset: 0, userId });
       for (const character of Array.isArray(listed?.data) ? listed.data : []) {
         const sourceId = text2(character?.id, 180);
         const name = text2(character?.name, 120);
@@ -1635,6 +1797,20 @@ function upsertContact(state, contact) {
   state.contacts = state.contacts.slice(-80);
   return contact;
 }
+function reconcileContactAvailability(state, contact) {
+  const conversation = state.conversations.find((entry) => entry.kind === "direct" && entry.participantContactIds[0] === contact.id);
+  if (!conversation)
+    return;
+  if (contact.presence.inScene) {
+    const prior = conversation.availability.state === "paused" && conversation.availability.reason !== "arriving" ? conversation.availability.reason : undefined;
+    const arriving = conversation.availability.state === "paused" && conversation.availability.reason === "arriving";
+    conversation.availability = { state: "local", reason: arriving ? "arriving" : "in_scene", resumePauseReason: prior };
+  } else if (conversation.availability.state === "local") {
+    conversation.availability = conversation.availability.resumePauseReason ? { state: "paused", reason: conversation.availability.resumePauseReason } : { state: "available" };
+    if (conversation.availability.state === "available")
+      conversation.pause = undefined;
+  }
+}
 function contactFromSource(option) {
   const createdAt = nowIso();
   const source = option.kind === "character" ? { kind: "character", characterId: option.sourceId } : { kind: "council", memberId: option.sourceId, itemId: option.itemId || "" };
@@ -1738,7 +1914,7 @@ async function listGallery(input, userId) {
     throw new Error("Enable the Images permission to use Gallery.");
   const context = await resolveContext(input, userId);
   const scope = text2(input.scope, 30) || "chat";
-  const options = { limit: 120, offset: 0, specificity: "sm", userId };
+  const options = { limit: 120, offset: 0, specificity: "full", userId };
   if (scope === "chat")
     options.chatId = context.chatId;
   if (scope === "character")
@@ -1751,6 +1927,8 @@ async function listGallery(input, userId) {
     data: result.data.map((item) => ({
       id: item.id,
       url: item.url,
+      fullUrl: item.url,
+      thumbnailUrl: `${item.url}${String(item.url).includes("?") ? "&" : "?"}size=sm`,
       filename: item.original_filename,
       mimeType: item.mime_type,
       width: item.width,
@@ -1913,7 +2091,7 @@ async function generateMessage(input, userId) {
       const currentIndex = participants.findIndex((entry) => entry.id === lastSpeakerId);
       contact = participants[(currentIndex + 1 + participants.length) % participants.length];
     }
-    if (bool2(input.autonomous) && (contact.presence.inScene || !contact.messagingPolicy.remoteEligible))
+    if (bool2(input.autonomous) && (contact.presence.inScene || !contact.messagingPolicy.remoteEligible || conversation.availability.state !== "available"))
       return;
     send({
       type: "lumiphone:message_progress",
@@ -1926,39 +2104,26 @@ async function generateMessage(input, userId) {
       phase: "pending"
     }, userId);
     const profile = await resolveContactProfile(contact, userId);
-    const roster = participants.map((entry) => `${entry.name} (${entry.role || entry.source.kind})`).join("; ").slice(0, 2000);
     const replaceMessageId = text2(input.replaceMessageId, 180);
     const replaceIndex = replaceMessageId ? conversation.messages.findIndex((message) => message.id === replaceMessageId && message.sender === "contact") : -1;
-    const historyMessages = replaceIndex >= 0 ? conversation.messages.slice(0, replaceIndex) : conversation.messages;
-    const history = historyMessages.slice(-30).map((message) => `${message.sender === "persona" ? "User" : message.senderName || "Pocket"}: ${message.text.slice(0, 1200)}`).join(`
-`).slice(-12000);
-    const roleplayContext = await buildRoleplayContext({
+    const contextConversation = replaceIndex >= 0 ? { ...conversation, messages: conversation.messages.slice(0, replaceIndex) } : conversation;
+    const compactIdentity = (contact.identityBrief || profile.description || [profile.role, profile.personality, profile.behavior].filter(Boolean).join(". ")).slice(0, 1200);
+    const assembled = await assemblePocketContext({
       state,
       contact,
-      conversation,
+      conversation: contextConversation,
       preferences,
+      actorIdentity: compactIdentity,
       getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined
     });
     const instruction = text2(input.instruction, 2000) || "Reply naturally to the latest message.";
     const generationTask = replaceIndex >= 0 ? "message-retry" : "message-reply";
+    const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
     const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
       type: "quiet",
       messages: [
-        { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML.
-
-ACTOR IDENTITY
-Source: ${profile.source}
-Role: ${profile.role.slice(0, 120)}
-Stable identity: ${(profile.description || contact.identityBrief).slice(0, 8000)}
-Personality: ${profile.personality.slice(0, 4000)}
-Behavior: ${profile.behavior.slice(0, 3000)}
-Current scene note: ${contact.sceneNote || "(none)"}
-Conversation roster: ${roster}` },
-        { role: "user", content: `${roleplayContext ? `CURRENT ROLEPLAY CONTEXT
-${roleplayContext}
-
-` : ""}PHONE THREAD
-${history || "(no messages yet)"}
+        { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML. The compact identity and bounded context below are authoritative for this call.` },
+        { role: "user", content: `${assembled.text || "(no context)"}
 
 DIRECTION
 ${instruction}` }
@@ -1983,6 +2148,26 @@ ${instruction}` }
       status: visible ? "read" : "delivered",
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined }
     };
+    nextMessage.generation.info = {
+      speaker: profile.name,
+      source: profile.source,
+      sourceId: contact.source.kind === "character" ? contact.source.characterId : contact.source.kind === "council" ? contact.source.memberId || contact.source.itemId : contact.id,
+      sourceResolution: contact.source.kind === "character" || contact.source.kind === "council" ? "resolved" : contact.source.origin === "manual" ? "manual" : "snapshot",
+      activeCharacterId: state.characterId,
+      activeCharacterUsed: contact.source.kind === "character" && contact.source.characterId === state.characterId,
+      identityChars: assembled.diagnostics.actorIdentityChars,
+      sceneSnapshotStale: assembled.diagnostics.sceneSnapshot.stale,
+      contextMode: preferences.roleplayContextMode,
+      recentCount: assembled.diagnostics.recentRoleplay.count,
+      recentChars: assembled.diagnostics.recentRoleplay.chars,
+      storyCount: assembled.diagnostics.story.count,
+      storyChars: assembled.diagnostics.story.chars,
+      threadCount: assembled.diagnostics.phoneThread.count,
+      threadChars: assembled.diagnostics.phoneThread.chars,
+      generationMode: preferences.generationMode,
+      connectionName: generationInfo.effective?.name || "",
+      model: preferences.sidecarModelOverride || generationInfo.effective?.model || ""
+    };
     nextMessage.senderAccent = contactAccent(contact);
     if (replaceIndex >= 0)
       conversation.messages.splice(replaceIndex, 1, nextMessage);
@@ -1999,8 +2184,10 @@ ${instruction}` }
       contact.messagingPolicy.lastInitiatedMessageAt = nowIso();
       contact.messagingPolicy.lastInitiatedRoleplayAt = state.roleplayNow;
     }
-    if (replaceIndex < 0)
+    if (replaceIndex < 0 && !bool2(input.manualOverride)) {
       conversation.pause = undefined;
+      conversation.availability = { state: "available" };
+    }
     const activity = replaceIndex < 0 ? addActivity(state, { kind: "message", title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } }) : undefined;
     await saveState(state, userId);
     if (notification)
@@ -2122,6 +2309,21 @@ Behavior: ${profile.behavior}` }
 function sceneKeyFor(name) {
   return name.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 120) || name.toLocaleLowerCase().slice(0, 120);
 }
+function actorName(value) {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+function uniqueAliasMatch(candidate, names) {
+  const normalized = actorName(candidate);
+  if (!normalized)
+    return null;
+  const exact = names.find((name) => actorName(name) === normalized);
+  if (exact)
+    return exact;
+  if (normalized.includes(" "))
+    return null;
+  const matches = names.filter((name) => actorName(name).split(" ").includes(normalized));
+  return matches.length === 1 ? matches[0] : null;
+}
 async function syncSceneContacts(input, userId) {
   if (!spindle.permissions.has("generation"))
     throw new Error("Enable Generation to identify scene contacts.");
@@ -2131,13 +2333,16 @@ async function syncSceneContacts(input, userId) {
   const requestId = text2(input.requestId, 180) || id("scene");
   send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "request", message: "Reading current scene\u2026" }, userId);
   const messages = await spindle.chat.getMessages(context.chatId);
+  const authoritative = messages.at(-1);
   const transcript = messages.slice(-24).map((message) => `${message.role}: ${text2(message.content, 1200)}`).join(`
 `).slice(-16000);
+  const preflightState = await loadState(context.chatId, context.characterId, userId);
+  const exclusions = [preflightState.characterName, preflightState.pocketPersona.displayName].filter(Boolean);
   send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "generating", message: "Finding scene contacts\u2026" }, userId);
   const request = {
     type: "quiet",
     messages: [
-      { role: "system", content: 'Identify named non-user actors physically present in the most recent roleplay scene. Return strict JSON only: {"contacts":[{"name":"","role":"","identityBrief":"","sceneNote":""}]}. Return at most 6. Exclude merely mentioned, messaged, absent, historical, or hypothetical people. identityBrief is stable role/personality/relationship evidence only; sceneNote is why they are present, what they are doing, or their temporary state. Do not invent unsupported biography. Name/role max 120; identityBrief max 350; sceneNote max 220.' },
+      { role: "system", content: `Identify named non-user actors physically present in the most recent roleplay scene. Return strict JSON only: {"contacts":[{"name":"","role":"","identityBrief":"","sceneNote":""}]}. Return at most 6. Exclude the primary Character and active Persona, including unambiguous short aliases. Explicit exclusions: ${exclusions.join(", ") || "(none)"}. Exclude merely mentioned, messaged, absent, historical, or hypothetical people. identityBrief is stable role/personality/relationship evidence only; sceneNote is why they are present, what they are doing, or their temporary state. Do not invent unsupported biography. Name/role max 120; identityBrief max 350; sceneNote max 220.` },
       { role: "user", content: transcript || "(empty chat)" }
     ],
     parameters: { temperature: 0.2, max_tokens: 1500 },
@@ -2147,11 +2352,15 @@ async function syncSceneContacts(input, userId) {
   send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "parsing", message: "Parsing scene roster\u2026" }, userId);
   if (!Array.isArray(parsed.contacts))
     throw new Error("Scene Sync returned no contacts array; no contact state was changed.");
+  const aliasUniverse = [...new Set([...exclusions, ...preflightState.contacts.map((entry) => entry.name)])];
   const found = parsed.contacts.slice(0, 6).flatMap((entry) => {
     if (!isRecord(entry))
       return [];
     const name = text2(entry.name, 120);
     if (!name)
+      return [];
+    const excluded = uniqueAliasMatch(name, exclusions);
+    if (excluded)
       return [];
     return [{
       name,
@@ -2169,7 +2378,8 @@ async function syncSceneContacts(input, userId) {
     const contactIds = [];
     for (const candidate of found) {
       const sceneKey = sceneKeyFor(candidate.name);
-      const existing = state.contacts.find((entry) => entry.source.kind === "npc" && entry.source.origin === "scene" && entry.source.sceneKey === sceneKey) || state.contacts.find((entry) => entry.name.toLocaleLowerCase() === candidate.name.toLocaleLowerCase());
+      const matchedName = uniqueAliasMatch(candidate.name, aliasUniverse);
+      const existing = state.contacts.find((entry) => entry.source.kind === "npc" && entry.source.origin === "scene" && entry.source.sceneKey === sceneKey) || state.contacts.find((entry) => actorName(entry.name) === actorName(matchedName || candidate.name));
       if (existing && !(existing.source.kind === "npc" && existing.source.origin === "scene")) {
         existing.presence.inScene = true;
         existing.presence.lastSceneAt = sceneAt;
@@ -2202,14 +2412,32 @@ async function syncSceneContacts(input, userId) {
       });
       contactIds.push(contact.id);
     }
+    state.sceneSnapshot = {
+      actors: contactIds.map((contactId) => {
+        const contact = state.contacts.find((entry) => entry.id === contactId);
+        return { contactId, roleHint: contact.role, sceneBrief: contact.sceneNote };
+      }),
+      capturedAt: sceneAt,
+      sourceMessageId: text2(authoritative?.id, 180),
+      sourceMessageIndex: Number.isFinite(Number(authoritative?.index_in_chat)) ? Number(authoritative.index_in_chat) : messages.length - 1,
+      sourceRevision: Math.max(0, Math.round(numberValue(authoritative?.revision, 0))),
+      stale: false
+    };
     for (const conversation of state.conversations) {
-      if (conversation.kind !== "direct" || conversation.pause?.reason !== "arriving")
+      if (conversation.kind !== "direct")
         continue;
       const participant = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
-      if (participant && !participant.presence.inScene && conversation.pause.source === "scene")
-        conversation.pause = undefined;
-      else if (participant?.presence.inScene)
-        conversation.pause.source = "scene";
+      if (participant?.presence.inScene) {
+        const prior = conversation.availability.state === "paused" && conversation.availability.reason !== "arriving" ? conversation.availability.reason : undefined;
+        const arriving = conversation.availability.state === "paused" && conversation.availability.reason === "arriving";
+        conversation.availability = { state: "local", reason: arriving ? "arriving" : "in_scene", resumePauseReason: prior };
+        if (arriving)
+          conversation.pause = { reason: "arriving", createdAt: conversation.pause?.createdAt || sceneAt, source: "scene" };
+      } else if (conversation.availability.state === "local") {
+        conversation.availability = conversation.availability.resumePauseReason ? { state: "paused", reason: conversation.availability.resumePauseReason } : { state: "available" };
+        if (!conversation.availability || conversation.availability.state === "available")
+          conversation.pause = undefined;
+      }
     }
     const activity = addActivity(state, {
       kind: "contact",
@@ -2225,7 +2453,31 @@ async function syncSceneContacts(input, userId) {
     send({ type: "lumiphone:scene_contacts_done", requestId, contactIds }, userId);
   });
 }
-async function maybeReplyAfterSend(chatId, characterId, conversationId, userId) {
+function replyCadenceMs(preferences) {
+  return preferences.replyCadence === "instant" ? 0 : preferences.replyCadence === "quick" ? 1200 : preferences.replyCadence === "relaxed" ? 6500 : 3200;
+}
+function burstTimerKey(chatId, characterId, conversationId, userId) {
+  return `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`;
+}
+async function scheduleReplyBurst(chatId, characterId, conversationId, userId) {
+  const timerKey = burstTimerKey(chatId, characterId, conversationId, userId);
+  const previous = replyBurstTimers.get(timerKey);
+  if (previous)
+    clearTimeout(previous);
+  const preferences = await loadPreferences(userId);
+  if (!preferences.autoReplyAfterSend)
+    return;
+  const state = await loadState(chatId, characterId, userId);
+  const burst = state.conversations.find((entry) => entry.id === conversationId)?.outgoingBurst;
+  if (!burst?.open || burst.finalized || burst.held)
+    return;
+  const timer = setTimeout(() => {
+    replyBurstTimers.delete(timerKey);
+    maybeReplyAfterSend(chatId, characterId, conversationId, userId, burst.id);
+  }, replyCadenceMs(preferences));
+  replyBurstTimers.set(timerKey, timer);
+}
+async function maybeReplyAfterSend(chatId, characterId, conversationId, userId, expectedBurstId = "") {
   const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`;
   if (replyDecisionFlights.has(flightKey))
     return;
@@ -2239,10 +2491,13 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId) 
     const conversation = state.conversations.find((entry) => entry.id === conversationId);
     if (!conversation || conversation.kind !== "direct" || conversation.messages.at(-1)?.sender !== "persona")
       return;
+    const burst = conversation.outgoingBurst;
+    if (expectedBurstId && (!burst || burst.id !== expectedBurstId || !burst.open || burst.finalized || burst.held))
+      return;
     const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
     if (!contact || !contact.generationPolicy.relevant || !contact.messagingPolicy.remoteEligible || contact.presence.inScene)
       return;
-    const latest = conversation.messages.at(-1);
+    const burstMessages = burst?.messageIds.length ? conversation.messages.filter((message) => burst.messageIds.includes(message.id) && message.sender === "persona") : [conversation.messages.at(-1)];
     const requestId = id("reply_decision");
     progressRequestId = requestId;
     send({
@@ -2258,13 +2513,29 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId) 
     const decision = await runStructuredGeneration("reply-decision", requestId, {
       type: "quiet",
       messages: [
-        { role: "system", content: 'Decide the next state of this fictional phone conversation. Be conservative: silence is normal. Return strict JSON only. Allowed shapes: {"action":"reply"}, {"action":"none"}, or {"action":"pause","reason":"ended|busy|away|arriving|sleeping|unknown"}. Use arriving when the contact says they are physically coming to the user and the remote text arc is handing back to the scene. No markdown and no custom UI copy.' },
-        { role: "user", content: `Contact: ${contact.name} (${contact.role}). Presence: ${contact.presence.inScene ? "in the active scene" : "off-scene"}. Recent user text: ${latest.text.slice(0, 2000)}` }
+        { role: "system", content: 'Decide the next state of this fictional phone conversation. Be conservative: silence is normal. Return strict JSON only. Allowed shapes: {"action":"reply"}, {"action":"none"}, {"action":"pause","reason":"ended|busy|away|arriving|sleeping|unknown"}, or {"action":"handoff","reason":"arriving|took_action"}. Use handoff when remote texting has become physical scene action. No markdown and no custom UI copy.' },
+        { role: "user", content: `Contact: ${contact.name} (${contact.role}). Presence: ${contact.presence.inScene ? "in the active scene" : "off-scene"}. Settled outgoing burst:
+${burstMessages.map((message) => message.text.slice(0, 1200)).join(`
+`)}` }
       ],
       parameters: { temperature: 0.15, max_tokens: 80 },
       userId
     }, userId);
-    const action = decision.action === "reply" || decision.reply === true ? "reply" : decision.action === "pause" ? "pause" : "none";
+    const action = decision.action === "reply" || decision.reply === true ? "reply" : decision.action === "pause" ? "pause" : decision.action === "handoff" ? "handoff" : "none";
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const latestState = await loadState(chatId, characterId, userId);
+      const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId);
+      if (!latestConversation?.outgoingBurst || expectedBurstId && latestConversation.outgoingBurst.id !== expectedBurstId)
+        return;
+      latestConversation.outgoingBurst.open = false;
+      latestConversation.outgoingBurst.finalized = true;
+      latestConversation.outgoingBurst.updatedAt = nowIso();
+      if (action === "reply") {
+        latestConversation.availability = { state: "available" };
+        latestConversation.pause = undefined;
+      }
+      await saveState(latestState, userId);
+    });
     if (action === "pause") {
       const allowed = new Set(["ended", "busy", "away", "arriving", "sleeping", "unknown"]);
       const reason = allowed.has(String(decision.reason)) ? String(decision.reason) : "unknown";
@@ -2274,8 +2545,25 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId) 
         if (!latestConversation)
           return;
         latestConversation.pause = { reason, createdAt: nowIso(), source: "model" };
+        latestConversation.availability = { state: "paused", reason };
         await saveState(latestState, userId);
         await sendState(latestState, userId, "conversation_pause");
+      });
+      send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, contactId: contact.id, phase: "done" }, userId);
+      progressRequestId = "";
+      return;
+    }
+    if (action === "handoff") {
+      const reason = decision.reason === "took_action" ? "took_action" : "arriving";
+      await withStateLock(stateKey(chatId, characterId), async () => {
+        const latestState = await loadState(chatId, characterId, userId);
+        const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId);
+        if (!latestConversation)
+          return;
+        latestConversation.availability = { state: "local", reason };
+        latestConversation.pause = reason === "arriving" ? { reason: "arriving", createdAt: nowIso(), source: "model" } : undefined;
+        await saveState(latestState, userId);
+        await sendState(latestState, userId, "conversation_handoff");
       });
       send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, contactId: contact.id, phase: "done" }, userId);
       progressRequestId = "";
@@ -2418,7 +2706,54 @@ async function applyAction(input, userId, source = "model") {
       await sendState(state, userId, "open", true);
       return result;
     }
-    if (action === "message") {
+    if (action === "scene") {
+      const actors = (Array.isArray(payload.actors) ? payload.actors : Array.isArray(payload.contacts) ? payload.contacts : []).slice(0, 8);
+      const sceneAt = nowIso();
+      for (const contact of state.contacts)
+        contact.presence.inScene = false;
+      const snapshotActors = [];
+      for (const raw of actors) {
+        if (!isRecord(raw))
+          continue;
+        const name = text2(raw.name, 120);
+        if (!name || uniqueAliasMatch(name, [state.characterName, state.pocketPersona.displayName].filter(Boolean)))
+          continue;
+        let actor = state.contacts.find((entry) => entry.id === text2(raw.contactId, 180) || actorName(entry.name) === actorName(name));
+        if (!actor) {
+          const identityBrief = text2(raw.identityBrief ?? raw.description, 350);
+          actor = upsertContact(state, {
+            id: id("contact"),
+            name,
+            role: text2(raw.role, 120) || "Scene contact",
+            description: identityBrief,
+            identityBrief,
+            sceneNote: "",
+            avatarUrl: "",
+            sourceAvatarUrl: "",
+            avatarOverrideUrl: "",
+            accent: stableContactAccent(name),
+            sourceAccent: "",
+            colorMode: "pocket",
+            source: { kind: "npc", origin: "scene", description: identityBrief, sceneKey: sceneKeyFor(name) },
+            presence: { inScene: true, lastSceneAt: sceneAt },
+            contextPolicy: { pinned: false },
+            generationPolicy: { relevant: true },
+            messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+            createdAt: sceneAt,
+            updatedAt: sceneAt
+          });
+        }
+        actor.presence = { inScene: true, lastSceneAt: sceneAt };
+        actor.sceneNote = text2(raw.sceneBrief ?? raw.sceneNote, 600);
+        reconcileContactAvailability(state, actor);
+        snapshotActors.push({ contactId: actor.id, roleHint: text2(raw.roleHint ?? raw.role, 120) || actor.role, sceneBrief: actor.sceneNote });
+      }
+      for (const contact of state.contacts)
+        reconcileContactAvailability(state, contact);
+      state.sceneSnapshot = { actors: snapshotActors, capturedAt: sceneAt, sourceMessageId: text2(input.messageId, 180), sourceMessageIndex: Math.round(numberValue(payload.sourceMessageIndex, -1)), sourceRevision: Math.max(0, Math.round(numberValue(payload.sourceRevision, 0))), stale: false };
+      result.contactIds = snapshotActors.map((entry) => entry.contactId);
+      activity = addActivity(state, { kind: "contact", title: "Scene snapshot updated", summary: `${snapshotActors.length} actor${snapshotActors.length === 1 ? "" : "s"} present`, route: { app: "contacts" }, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
+    } else if (action === "message") {
       const requestedContactId = text2(payload.contact_id ?? payload.contactId, 180);
       let contact = state.contacts.find((item) => item.id === requestedContactId);
       if (!contact && requestedContactId) {
@@ -2470,8 +2805,14 @@ async function applyAction(input, userId, source = "model") {
       conversation.messages.push(message);
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
       conversation.updatedAt = message.createdAt;
-      if (sender === "contact")
+      if (sender === "persona" && source === "user") {
+        const previousBurst = conversation.outgoingBurst;
+        conversation.outgoingBurst = previousBurst?.open && !previousBurst.finalized ? { ...previousBurst, messageIds: [...previousBurst.messageIds, message.id].slice(-12), updatedAt: message.createdAt } : { id: id("burst"), messageIds: [message.id], open: true, held: false, finalized: false, updatedAt: message.createdAt };
+      }
+      if (sender === "contact") {
         conversation.pause = undefined;
+        conversation.availability = { state: "available" };
+      }
       const visible = sender === "contact" && notificationDestinationVisible(state, { app: "messages", conversationId: conversation.id }, userId);
       if (sender === "contact" && !visible)
         conversation.unread += 1;
@@ -2522,6 +2863,7 @@ async function applyAction(input, userId, source = "model") {
         createdAt,
         updatedAt: nowIso()
       });
+      reconcileContactAvailability(state, contact);
       const route = { app: "contacts", contactId: contact.id, view: "detail" };
       notification = source !== "user" && preferences.notifyContacts ? addNotification(state, { app: "contacts", title: contact.name, body: contact.role, route, source: "model", severity: "info" }, userId) : null;
       result.contactId = contact.id;
@@ -2663,7 +3005,7 @@ async function applyAction(input, userId, source = "model") {
     sendActivity(activity, userId);
     sendNotification(notification, userId);
     if (action === "message" && source === "user" && preferences.autoReplyAfterSend && typeof result.conversationId === "string") {
-      maybeReplyAfterSend(context.chatId, context.characterId, result.conversationId, userId);
+      scheduleReplyBurst(context.chatId, context.characterId, result.conversationId, userId);
     }
     return { ...result, activityId: activity?.id };
   });
@@ -2730,6 +3072,7 @@ async function handleFrontend(payload, userId) {
           if (!candidate)
             throw new Error("A contact needs a name.");
           const contact = upsertContact(state, candidate);
+          reconcileContactAvailability(state, contact);
           await saveState(state, userId);
           await sendState(state, userId, "contact");
           send({ type: "lumiphone:contact_saved", requestId, contactId: contact.id }, userId);
@@ -2772,6 +3115,7 @@ async function handleFrontend(payload, userId) {
             participantContactIds,
             messages: [],
             unread: 0,
+            availability: { state: "available" },
             createdAt,
             updatedAt: createdAt
           };
@@ -2806,6 +3150,73 @@ async function handleFrontend(payload, userId) {
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
         break;
       }
+      case "lumiphone:save_pocket_persona": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const next = normalizePocketPersona(payload.persona, state.pocketPersona);
+          next.source = payload.followLumiverse === true ? "lumiverse" : next.source === "lumiverse" ? "manual" : next.source;
+          if (next.source === "lumiverse") {
+            const hostPersona = await resolveActivePocketPersona(userId);
+            if (hostPersona)
+              Object.assign(next, hostPersona);
+          }
+          next.updatedAt = nowIso();
+          state.pocketPersona = next;
+          state.setup.initialized = true;
+          await saveState(state, userId);
+          await sendState(state, userId, "pocket_persona");
+          send({ type: "lumiphone:pocket_persona_saved", requestId }, userId);
+        });
+        break;
+      }
+      case "lumiphone:dismiss_setup": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          state.setup.dismissed = true;
+          await saveState(state, userId);
+          await sendState(state, userId, "setup");
+        });
+        break;
+      }
+      case "lumiphone:generate_pocket_persona": {
+        if (!spindle.permissions.has("generation"))
+          throw new Error("Enable Generation to describe the Pocket Persona from roleplay.");
+        const state = await loadState(context.chatId, context.characterId, userId);
+        const messages = spindle.permissions.has("chat_mutation") ? await spindle.chat.getMessages(context.chatId) : [];
+        const response = await runStructuredGeneration("persona-profile", requestId || id("persona"), {
+          type: "quiet",
+          messages: [
+            { role: "system", content: 'Describe only the user/persona represented in this roleplay. Return strict JSON: {"displayName":"","pronouns":"","role":"","identityBrief":""}. Use evidence from the transcript, keep identityBrief under 900 characters, and do not include the primary character as the persona.' },
+            { role: "user", content: messages.slice(-18).map((message) => `${message.role}: ${text2(message.content, 700)}`).join(`
+`).slice(-9000) || `Known persona: ${state.pocketPersona.displayName}` }
+          ],
+          parameters: { temperature: 0.2, max_tokens: 360 },
+          userId
+        }, userId);
+        const preview = normalizePocketPersona({ ...state.pocketPersona, ...response, source: "generated", linkedPersonaId: "", updatedAt: nowIso() }, state.pocketPersona);
+        send({ type: "lumiphone:pocket_persona_preview", requestId, persona: preview }, userId);
+        break;
+      }
+      case "lumiphone:preview_context": {
+        const state = await loadState(context.chatId, context.characterId, userId);
+        const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
+        if (!conversation)
+          throw new Error("Choose a conversation to preview.");
+        const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
+        if (!contact)
+          throw new Error("That conversation has no available contact.");
+        const profile = await resolveContactProfile(contact, userId);
+        const assembled = await assemblePocketContext({
+          state,
+          contact,
+          conversation,
+          preferences: await loadPreferences(userId),
+          actorIdentity: contact.identityBrief || profile.description,
+          getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined
+        });
+        send({ type: "lumiphone:context_preview", requestId, conversationId: conversation.id, diagnostics: assembled.diagnostics }, userId);
+        break;
+      }
       case "lumiphone:save_roleplay_time": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
@@ -2818,9 +3229,11 @@ async function handleFrontend(payload, userId) {
         });
         break;
       }
-      case "lumiphone:action":
-        await applyAction(payload, userId, "user");
+      case "lumiphone:action": {
+        const result = await applyAction(payload, userId, "user");
+        send({ type: "lumiphone:action_done", requestId, result }, userId);
         break;
+      }
       case "lumiphone:model_action": {
         const attrs = isRecord(payload.attrs) ? payload.attrs : {};
         const tagPayload = {
@@ -2835,8 +3248,32 @@ async function handleFrontend(payload, userId) {
         await applyAction(tagPayload, userId, "tag");
         break;
       }
+      case "lumiphone:composer_state": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
+          if (!conversation?.outgoingBurst?.open || conversation.outgoingBurst.finalized)
+            return;
+          conversation.outgoingBurst.held = bool2(payload.held);
+          conversation.outgoingBurst.updatedAt = nowIso();
+          await saveState(state, userId);
+        });
+        if (!bool2(payload.held))
+          scheduleReplyBurst(context.chatId, context.characterId, text2(payload.conversationId, 180), userId);
+        break;
+      }
       case "lumiphone:generate_message":
-        await generateMessage(payload, userId);
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
+          if (conversation?.outgoingBurst) {
+            conversation.outgoingBurst.open = false;
+            conversation.outgoingBurst.finalized = true;
+            conversation.outgoingBurst.updatedAt = nowIso();
+            await saveState(state, userId);
+          }
+        });
+        await generateMessage({ ...payload, manualOverride: true }, userId);
         break;
       case "lumiphone:retry_message": {
         const state = await loadState(context.chatId, context.characterId, userId);
@@ -2858,7 +3295,8 @@ async function handleFrontend(payload, userId) {
         await savePreferences({
           ...existing,
           generationMode: payload.generationMode === "sidecar" ? "sidecar" : "roleplay",
-          sidecarConnectionId: text2(payload.sidecarConnectionId, 180)
+          sidecarConnectionId: text2(payload.sidecarConnectionId, 180),
+          sidecarModelOverride: text2(payload.sidecarModelOverride, 500)
         }, userId);
         const started = Date.now();
         const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "connection-test", testRequestId, {
@@ -2877,29 +3315,47 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:gallery_add_to_chat": {
         if (!spindle.permissions.has("chat_mutation"))
           throw new Error("Enable Chat Mutation to add a Gallery image to the roleplay chat.");
-        const imageUrl = text2(payload.imageUrl, 2000);
+        const imageId = text2(payload.imageId, 180);
+        const asset = imageId && spindle.permissions.has("images") ? await spindle.images.get(imageId, { specificity: "full", userId }) : null;
+        const imageUrl = text2(asset?.url ?? payload.imageUrl, 2000);
         if (!imageUrl)
           throw new Error("That Gallery image is unavailable.");
-        const label = text2(payload.filename, 180) || "Pocket photo";
-        const appended = await spindle.chat.appendMessage(context.chatId, {
-          role: "user",
-          content: `![${label.replace(/[\[\]]/g, "")}](${imageUrl})`,
-          metadata: { source: "pocket", kind: "gallery-image", imageId: text2(payload.imageId, 180), imageUrl }
-        });
-        send({ type: "lumiphone:gallery_action_done", requestId, action: "add-to-chat", messageId: appended.id }, userId);
+        const label = (text2(asset?.original_filename ?? payload.filename, 180) || "Pocket photo").replace(/[\[\]]/g, "");
+        const messages = await spindle.chat.getMessages(context.chatId);
+        const target = [...messages].reverse().find((message) => message.role === "assistant" && text2(message.content, 40000));
+        if (!target?.id)
+          throw new Error("There is no existing narrative response to attach this image to yet.");
+        const marker = `![${label}](${imageUrl})`;
+        const content = `${text2(target.content, 40000)}
+
+${marker}`;
+        await spindle.chat.updateMessage(context.chatId, String(target.id), { content });
+        send({ type: "lumiphone:gallery_action_done", requestId, action: "add-to-chat", messageId: target.id, message: "Added to the latest narrative response." }, userId);
         break;
       }
       case "lumiphone:gallery_set_wallpaper": {
-        const imageUrl = text2(payload.imageUrl, 2000);
+        const imageId = text2(payload.imageId, 180);
+        const asset = imageId && spindle.permissions.has("images") ? await spindle.images.get(imageId, { specificity: "full", userId }) : null;
+        const imageUrl = text2(asset?.url ?? payload.imageUrl, 2000);
         if (!imageUrl)
           throw new Error("That Gallery image is unavailable.");
         const preferences = await loadPreferences(userId);
-        if (payload.target === "chat")
+        if (payload.personaId) {
+          const personaId = text2(payload.personaId, 180);
+          const appearance = preferences.personaAppearance[personaId];
+          if (!appearance)
+            throw new Error("Enable a Persona appearance before assigning its wallpaper.");
+          if (payload.target === "chat")
+            appearance.chatWallpaperImageUrl = imageUrl;
+          else
+            appearance.wallpaperImageUrl = imageUrl;
+        } else if (payload.target === "chat")
           preferences.chatWallpaperImageUrl = imageUrl;
         else
           preferences.wallpaperImageUrl = imageUrl;
         await savePreferences(preferences, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
+        send({ type: "lumiphone:gallery_action_done", requestId, action: "set-wallpaper", message: payload.target === "chat" ? "Chat wallpaper updated." : "Home wallpaper updated." }, userId);
         break;
       }
       case "lumiphone:set_contact_photo": {
@@ -2912,6 +3368,7 @@ async function handleFrontend(payload, userId) {
           contact.updatedAt = nowIso();
           await saveState(state, userId);
           await sendState(state, userId, "contact_photo");
+          send({ type: "lumiphone:gallery_action_done", requestId, action: "set-contact-photo", message: `${contact.name} photo updated.` }, userId);
         });
         break;
       }
@@ -3056,7 +3513,7 @@ function registerTool() {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["message", "contact", "note", "event", "weather", "tracker", "camera", "notify", "open"] },
+        action: { type: "string", enum: ["message", "contact", "scene", "note", "event", "weather", "tracker", "camera", "notify", "open"] },
         chat_id: { type: "string", description: "Current chat id when known." },
         character_id: { type: "string", description: "Current character id when known." },
         payload: {
@@ -3149,6 +3606,26 @@ spindle.on("PERSONA_CHANGED", async (_payload, userId) => {
     const characterId = text2(chat?.character_id, 180) || "_none";
     await sendState(await loadState(chatId, characterId, userId), userId, "persona_changed");
   } catch {}
+});
+spindle.on("GENERATION_ENDED", async (payload, userId) => {
+  const chatId = text2(payload?.chatId, 180);
+  const messageId = text2(payload?.messageId, 180);
+  if (!chatId || !messageId || !spindle.permissions.has("chats"))
+    return;
+  try {
+    const chat = await spindle.chats.get(chatId, userId);
+    const characterId = text2(chat?.character_id, 180) || "_none";
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId);
+      if (!state.sceneSnapshot || state.sceneSnapshot.sourceMessageId === messageId)
+        return;
+      state.sceneSnapshot.stale = true;
+      await saveState(state, userId);
+      await sendState(state, userId, "scene_stale");
+    });
+  } catch (error) {
+    spindle.log.warn(`Pocket could not mark the scene snapshot stale: ${error instanceof Error ? error.message : String(error)}`);
+  }
 });
 spindle.on("CHARACTER_MESSAGE_RENDERED", async (payload, userId) => {
   const chatId = text2(payload?.chatId, 180);

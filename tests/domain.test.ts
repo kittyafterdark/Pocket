@@ -9,7 +9,7 @@ import { activeNotifications, clearNotifications, destinationIsVisible, dismissN
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
-import { buildRoleplayContext } from '../src/backend/roleplay-context.js'
+import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
 describe('device preference schema', () => {
@@ -19,7 +19,7 @@ describe('device preference schema', () => {
       wallpaper: 'url(javascript:alert(1))', chatWallpaper: 'var(--host-secret)',
       animation: 'slide', autoOpenOnModelAction: true,
     })
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
     expect(migrated.colors.accent).toBe('#abcdef')
     expect(migrated.colors.bezel).toBe('#010203')
     expect(JSON.stringify(migrated)).not.toContain('javascript')
@@ -79,13 +79,30 @@ describe('roleplay context bridge', () => {
     const collections = normalizeContactCollections({ contacts: [{ id: 'zephyr', name: 'Zephyr', sceneNote: 'Walking toward the user.' }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
     const contact = collections.contacts.find((entry) => entry.id === 'zephyr')!
     const conversation = ensureDirectConversation(collections, contact.id, now, () => 'dm-zephyr')
-    const state = { version: 4, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, ...collections, notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now, weather: { location: 'Hall', condition: 'Dark', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now } } as PhoneState
+    const state = { version: 5, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, sceneSnapshot: null, pocketPersona: { source: 'manual', linkedPersonaId: '', displayName: 'You', pronouns: '', role: 'Persona', identityBrief: '', avatarUrl: '', accent: '#8b7dff', canAppear: false, updatedAt: now }, setup: { initialized: true, dismissed: false }, ...collections, notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now, weather: { location: 'Hall', condition: 'Dark', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now } } as PhoneState
     const preferences = normalizePreferences({ version: 3, roleplayContextMode: 'smart', recentRoleplayMessages: 2 })
     const context = await buildRoleplayContext({ state, contact, conversation, preferences, getMessages: async () => [{ role: 'user', content: 'old' }, { role: 'assistant', content: 'recent one' }, { role: 'user', content: 'recent two' }] })
     expect(context).not.toContain('old')
     expect(context).toContain('RECENT ROLEPLAY')
     expect(context).toContain('STORY CONTEXT')
-    expect(context.length).toBeLessThanOrEqual(8_000)
+    expect(context.length).toBeLessThanOrEqual(10_500)
+  })
+
+  test('uses the latest committed host row without one-turn lag', async () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'zephyr', name: 'Zephyr' }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const contact = collections.contacts.find((entry) => entry.id === 'zephyr')!
+    const conversation = ensureDirectConversation(collections, contact.id, now, () => 'dm-zephyr')
+    const state = { version: 5, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, sceneSnapshot: null, pocketPersona: { source: 'manual', linkedPersonaId: '', displayName: 'You', pronouns: '', role: 'Persona', identityBrief: '', avatarUrl: '', accent: '#8b7dff', canAppear: false, updatedAt: now }, setup: { initialized: true, dismissed: false }, ...collections, notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now, weather: { location: 'Kitchen', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now } } as PhoneState
+    const result = await assemblePocketContext({ state, contact, conversation, preferences: normalizePreferences({ roleplayContextMode: 'recent', recentRoleplayMessages: 2 }), getMessages: async () => [
+      { id: 'BED-111', index_in_chat: 10, role: 'assistant', content: 'They remain beside the bed.' },
+      { id: 'KITCHEN-222', index_in_chat: 11, role: 'assistant', content: 'They enter the kitchen and set down the keys.' },
+    ] })
+    expect(result.text).toContain('KITCHEN-222')
+    expect(result.text).toContain('enter the kitchen')
+    expect(result.diagnostics.authoritativeLatest.id).toBe('KITCHEN-222')
+    expect(result.diagnostics.includedLatest.id).toBe('KITCHEN-222')
+    expect(result.diagnostics.freshnessWarning).toBe('')
   })
 })
 

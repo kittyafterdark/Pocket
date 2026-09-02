@@ -26,12 +26,12 @@ function summary(connection: any): PocketConnectionSummary {
 }
 
 export async function inspectPocketGeneration(host: PocketGenerationHost, preferences: DevicePreferences, userId?: string): Promise<PocketGenerationInfo> {
-  if (!host.spindle.permissions.has('generation')) return { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory }
+  if (!host.spindle.permissions.has('generation')) return { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride }
   const connections = (await host.spindle.connections.list(userId)).map(summary)
   const effective = preferences.generationMode === 'sidecar'
     ? connections.find((entry: PocketConnectionSummary) => entry.id === preferences.sidecarConnectionId) || null
     : connections.find((entry: PocketConnectionSummary) => entry.isDefault) || connections[0] || null
-  return { mode: preferences.generationMode, effective, connections, history: preferences.generationHistory }
+  return { mode: preferences.generationMode, effective, connections, history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride }
 }
 
 async function writeRun(host: PocketGenerationHost, run: PocketGenerationRun, userId?: string): Promise<DevicePreferences> {
@@ -62,15 +62,18 @@ export async function runPocketGeneration(
   const run: PocketGenerationRun = {
     requestId, task, mode: preferences.generationMode,
     connectionId: info.effective.id, connectionName: info.effective.name,
-    provider: info.effective.provider, model: info.effective.model,
+    provider: info.effective.provider, model: preferences.sidecarModelOverride || info.effective.model,
     status: 'started', startedAt,
   }
   await writeRun(host, run, userId)
   host.send({ type: 'lumiphone:generation_status', run }, userId)
   const started = Date.now()
   try {
-    const request = { ...input } as GenerateInput & { connection_id?: string }
-    if (preferences.generationMode === 'sidecar') request.connection_id = info.effective.id
+    const request = { ...input } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
+    if (preferences.generationMode === 'sidecar') {
+      request.connection_id = info.effective.id
+      if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
+    }
     const result = await host.spindle.generate.quiet(request)
     const completed: PocketGenerationRun = { ...run, status: 'completed', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }
     await writeRun(host, completed, userId)
