@@ -5,6 +5,9 @@ import type {
   PhoneApp,
   PhoneCapabilities,
   PhoneNote,
+  PhoneNotification,
+  PocketGenerationInfo,
+  PocketOperationProgress,
   PocketContactSourceOption,
   PocketActivity,
   PocketRoute,
@@ -14,11 +17,13 @@ import type {
 } from '../types.js'
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
-import { applyMobilePhoneSurface, calculatePhoneSurface, currentViewport, desktopDockSize } from './surface.js'
+import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
+import { renderNotificationsView } from './apps/notifications.js'
+import { PocketRouteHistory } from './router.js'
 import { activityReceipt } from './activity.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
@@ -45,6 +50,7 @@ const ICONS: Record<string, string> = {
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg>',
   trackers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2.8 2.8-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.6v.2H10V21a1.8 1.8 0 0 0-1.1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1L4 17.1l.1-.1a1.8 1.8 0 0 0 .4-2A1.8 1.8 0 0 0 3 13.9h-.2V10H3a1.8 1.8 0 0 0 1.6-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1L6.9 4l.1.1a1.8 1.8 0 0 0 2 .4A1.8 1.8 0 0 0 10 3V2.8h4V3a1.8 1.8 0 0 0 1.1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1L20 6.9l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1.1h.2V14h-.2a1.8 1.8 0 0 0-1.7 1Z"/></svg>',
+  notifications: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.2 18-3.2-7.6L3 10zM10.6 13.4 21 3"/></svg>',
   sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5c.5 4.2 2.8 6.5 7 7-4.2.5-6.5 2.8-7 7-.5-4.2-2.8-6.5-7-7 4.2-.5 6.5-2.8 7-7Z"/><path d="M19 16.5c.2 2 1.3 3.1 3 3.3-1.7.2-2.8 1.3-3 3.2-.2-1.9-1.3-3-3-3.2 1.7-.2 2.8-1.3 3-3.3Z"/></svg>',
@@ -99,6 +105,9 @@ class PocketController {
   private preferences: DevicePreferences = defaultPreferences()
   private caps: PhoneCapabilities | null = null
   private swarmProfile: SwarmVisualProfile | null = null
+  private generation: PocketGenerationInfo | null = null
+  private operations = new Map<string, PocketOperationProgress>()
+  private router = new PocketRouteHistory()
   private gallery: GalleryResult = { data: [], total: 0 }
   private galleryScope = 'chat'
   private selectedContactId = ''
@@ -132,6 +141,8 @@ class PocketController {
   private pendingActivities = new Map<string, PocketActivity>()
   private viewCleanups: Cleanup[] = []
   private receiptSweepTimer = 0
+  private notificationTimer = 0
+  private notificationIsland: HTMLButtonElement
 
   constructor(ctx: SpindleFrontendContext) {
     this.ctx = ctx
@@ -160,7 +171,10 @@ class PocketController {
     dismiss.className = 'lumiphone-dismiss'
     dismiss.addEventListener('click', () => this.close())
     this.clock = el('span', 'lumiphone-time', formatTime(new Date()))
-    const island = el('span', 'lumiphone-island')
+    const island = button('', 'lumiphone-island')
+    island.setAttribute('aria-label', 'Open Notification Center')
+    island.addEventListener('click', () => this.openPocket({ app: 'notifications' }))
+    this.notificationIsland = island
     const signals = el('span', 'lumiphone-signals')
     const bars = el('span', 'lumiphone-signal-bars')
     for (let i = 0; i < 4; i += 1) bars.appendChild(el('i'))
@@ -186,10 +200,11 @@ class PocketController {
       this.open()
     })
     homeButton.addEventListener('click', () => {
-      if (this.currentApp !== 'home') this.openApp('home')
+      if (this.currentApp !== 'home') this.home()
       else this.close()
     })
     this.installSwipeDismiss(status)
+    this.installNotificationPull(status)
     this.renderDrawerLanding()
     this.installHostIntegrations()
     this.tickClock()
@@ -201,6 +216,7 @@ class PocketController {
     window.clearTimeout(this.collapseTimer)
     window.clearTimeout(this.alertTimer)
     window.clearInterval(this.receiptSweepTimer)
+    window.clearTimeout(this.notificationTimer)
     for (const cleanup of this.cleanups.splice(0)) {
       try { cleanup() } catch { /* best effort */ }
     }
@@ -269,10 +285,23 @@ class PocketController {
     this.cleanups.push(() => window.removeEventListener('resize', resize))
     window.visualViewport?.addEventListener('resize', resize)
     this.cleanups.push(() => window.visualViewport?.removeEventListener('resize', resize))
+    window.visualViewport?.addEventListener('scroll', resize)
+    this.cleanups.push(() => window.visualViewport?.removeEventListener('scroll', resize))
+    const focusin = (event: FocusEvent) => {
+      if (!this.expanded || this.handsetHost.dataset.fullscreen !== 'true') return
+      this.resizeExpanded()
+      const target = event.target instanceof HTMLElement ? event.target : null
+      window.setTimeout(() => {
+        this.resizeExpanded()
+        target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }, 60)
+    }
+    this.shell.addEventListener('focusin', focusin)
+    this.cleanups.push(() => this.shell.removeEventListener('focusin', focusin))
     const keydown = (event: KeyboardEvent) => {
       if (!this.expanded) return
       if (event.key === 'Escape') {
-        if (this.currentApp !== 'home') this.openApp('home')
+        if (this.currentApp !== 'home') this.back()
         else this.close()
         return
       }
@@ -349,7 +378,7 @@ class PocketController {
         edge: 'right', title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292, maxSize: 620, resizable: false, startCollapsed: true,
         chromeless: true, centerContent: true,
-      } as any)
+      })
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false
@@ -393,10 +422,11 @@ class PocketController {
       this.releaseDockPanel()
       const mobile = this.ensureMobileWidget()
       if (!mobile) return false
-      mobile.root.replaceChildren(this.handsetHost)
-      this.handsetHost.replaceChildren(this.shell)
+      if (this.handsetHost.parentElement !== mobile.root) mobile.root.replaceChildren(this.handsetHost)
+      if (this.shell.parentElement !== this.handsetHost) this.handsetHost.replaceChildren(this.shell)
       this.handsetHost.dataset.fullscreen = 'true'
       applyMobilePhoneSurface(mobile, this.preferences.handsetScale)
+      applyVisualViewportSurface(this.handsetHost)
       mobile.setVisible(true)
       return true
     }
@@ -406,11 +436,13 @@ class PocketController {
     }
     const panel = this.ensureDockPanel()
     if (!panel) return false
-    panel.root.replaceChildren(this.handsetHost)
-    this.handsetHost.replaceChildren(this.shell)
+    if (this.handsetHost.parentElement !== panel.root) panel.root.replaceChildren(this.handsetHost)
+    if (this.shell.parentElement !== this.handsetHost) this.handsetHost.replaceChildren(this.shell)
     this.handsetHost.dataset.fullscreen = 'false'
-    const setSize = (panel as SpindleDockPanelHandle & { setSize?: (size: number) => void }).setSize
-    if (typeof setSize === 'function') setSize.call(panel, desktopDockSize(this.preferences.handsetScale))
+    clearVisualViewportSurface(this.handsetHost)
+    if ('setSize' in panel && typeof panel.setSize === 'function') {
+      panel.setSize(desktopDockSize(this.preferences.handsetScale))
+    }
     panel.expand()
     const desktop = calculatePhoneSurface(this.preferences.handsetScale, currentViewport(), false)
     this.handsetHost.style.width = `${desktop.width}px`
@@ -427,6 +459,7 @@ class PocketController {
     host.style.width = geometry.fullscreen ? '100%' : `${geometry.width}px`
     host.style.height = geometry.fullscreen ? 'calc(100dvh - 110px)' : `${geometry.height}px`
     host.style.aspectRatio = '9 / 16'
+    host.dataset.fullscreen = 'false'
     this.drawer.root.appendChild(host)
     host.replaceChildren(this.shell)
     this.launcher.hidden = true
@@ -469,6 +502,22 @@ class PocketController {
     target.addEventListener('pointercancel', () => { active = false })
   }
 
+  private installNotificationPull(target: HTMLElement): void {
+    let startY = 0
+    let active = false
+    target.addEventListener('pointerdown', (event) => {
+      if ((event.target as Element | null)?.closest('button,input,select,textarea,a')) return
+      startY = event.clientY
+      active = true
+    })
+    target.addEventListener('pointerup', (event) => {
+      if (!active) return
+      active = false
+      if (event.clientY - startY > 52) this.openPocket({ app: 'notifications' })
+    })
+    target.addEventListener('pointercancel', () => { active = false })
+  }
+
   private tickClock(): void {
     const timer = window.setInterval(() => {
       this.clock.textContent = formatTime(new Date())
@@ -495,6 +544,10 @@ class PocketController {
     this.send('lumiphone:get_state')
   }
 
+  private announceView(): void {
+    this.send('lumiphone:view_state', { open: this.expanded, route: this.router.current })
+  }
+
   private onBackend(payload: BackendPayload): void {
     if (!payload || typeof payload !== 'object' || typeof payload.type !== 'string') return
     if (payload.type === 'lumiphone:state' && payload.state) {
@@ -506,9 +559,11 @@ class PocketController {
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile
+      this.generation = payload.generation || this.generation
       for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
       this.applyAppearance()
       this.updateBadge()
+      this.announceView()
       if (payload.open) this.open()
       const pending = this.pendingRoute
       this.pendingRoute = null
@@ -521,6 +576,31 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:activity' && payload.activity) {
       this.queueActivityReceipt(payload.activity as PocketActivity)
+      return
+    }
+    if (payload.type === 'lumiphone:notification' && payload.notification) {
+      this.showIncomingNotification(payload.notification as PhoneNotification)
+      return
+    }
+    if (payload.type === 'lumiphone:generation_status' && payload.run) {
+      const history = (this.generation?.history || this.preferences.generationHistory || []).filter((entry) => entry.requestId !== payload.run.requestId)
+      history.push(payload.run)
+      this.preferences.generationHistory = history.slice(-24)
+      if (this.generation) this.generation.history = this.preferences.generationHistory
+      if (this.currentApp === 'settings') this.render()
+      return
+    }
+    if (payload.type === 'lumiphone:operation_progress' && payload.requestId) {
+      const operation: PocketOperationProgress = {
+        task: payload.task, requestId: payload.requestId, phase: payload.phase,
+        message: payload.message || 'Working…',
+      }
+      this.operations.set(operation.requestId, operation)
+      if (this.currentApp === 'contacts') this.render()
+      if (operation.phase === 'complete') window.setTimeout(() => {
+        this.operations.delete(operation.requestId)
+        if (this.currentApp === 'contacts') this.render()
+      }, 1_200)
       return
     }
     if (payload.type === 'lumiphone:capabilities') {
@@ -549,19 +629,12 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:conversation_opened' && payload.conversationId) {
-      this.currentApp = 'messages'
-      this.selectedConversationId = payload.conversationId
-      this.selectedConversationView = 'thread'
-      this.selectedMessageId = ''
-      if (this.expanded) this.render()
+      this.openPocket({ app: 'messages', conversationId: payload.conversationId, view: 'thread' })
       return
     }
     if ((payload.type === 'lumiphone:contact_created' || payload.type === 'lumiphone:contact_saved') && payload.contactId) {
-      this.currentApp = 'contacts'
-      this.selectedContactId = payload.contactId
-      this.selectedContactView = 'detail'
       this.contactSourcesRequested = false
-      if (this.expanded) this.render()
+      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' })
       return
     }
     if (payload.type === 'lumiphone:swarm_profile') {
@@ -615,6 +688,8 @@ class PocketController {
     if (payload.type === 'lumiphone:error') {
       if (payload.requestId === this.cameraRequestId) this.cameraBusy = false
       this.messageRequests.delete(payload.requestId)
+      const operation = this.operations.get(payload.requestId)
+      if (operation) this.operations.set(payload.requestId, { ...operation, phase: 'error', message: payload.error || 'Operation failed' })
       this.showError(payload.error || 'Pocket could not complete that action.')
       if (this.expanded) this.render()
     }
@@ -622,7 +697,7 @@ class PocketController {
 
   private unreadCount(): number {
     if (!this.state) return 0
-    const notifications = this.state.notifications.filter((item) => !item.read).length
+    const notifications = this.state.notifications.filter((item) => !item.read && !item.dismissedAt).length
     const messages = this.state.conversations.reduce((sum, conversation) => sum + conversation.unread, 0)
     return Math.min(999, Math.max(notifications, messages))
   }
@@ -632,6 +707,30 @@ class PocketController {
     this.launcherBadge.hidden = unread === 0
     this.launcherBadge.textContent = unread > 99 ? '99+' : String(unread)
     this.drawer.setBadge(unread ? (unread > 99 ? '99+' : String(unread)) : null)
+    const notificationUnread = this.state?.notifications.filter((entry) => !entry.read && !entry.dismissedAt).length || 0
+    this.notificationIsland.dataset.unread = String(notificationUnread > 0)
+    this.notificationIsland.setAttribute('aria-label', notificationUnread ? `Open Notification Center, ${notificationUnread} unread` : 'Open Notification Center')
+  }
+
+  private showIncomingNotification(notification: PhoneNotification): void {
+    if (!this.expanded) {
+      this.launcher.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.12)' }, { transform: 'scale(1)' }], { duration: 360 })
+      return
+    }
+    window.clearTimeout(this.notificationTimer)
+    this.shell.querySelector('.lp-floating-notification')?.remove()
+    const toast = button('', 'lp-floating-notification')
+    toast.setAttribute('role', 'status')
+    toast.append(icon(notification.app), el('span', 'lp-grow', ''), el('span', 'lp-home-activity-arrow', '›'))
+    const copy = toast.children[1]
+    copy.append(el('strong', '', notification.title), el('span', '', notification.body))
+    toast.addEventListener('click', () => {
+      this.send('lumiphone:notification_mark_read', { notificationId: notification.id })
+      this.openPocket(notification.route || { app: notification.app })
+      toast.remove()
+    })
+    this.shell.appendChild(toast)
+    this.notificationTimer = window.setTimeout(() => toast.remove(), 6_000)
   }
 
   private applyAppearance(): void {
@@ -668,6 +767,7 @@ class PocketController {
     this.resizeExpanded()
     this.render()
     this.refresh()
+    this.announceView()
     requestAnimationFrame(() => {
       this.shell.tabIndex = -1
       this.shell.focus({ preventScroll: true })
@@ -684,6 +784,7 @@ class PocketController {
       this.mobileWidget.setFullscreen(false)
       this.mobileWidget.setVisible(false)
     }
+    this.announceView()
     window.clearTimeout(this.collapseTimer)
     this.collapseTimer = window.setTimeout(() => {
       this.launcherFocus?.focus({ preventScroll: true })
@@ -700,8 +801,17 @@ class PocketController {
     this.openPocket({ app } as PocketRoute)
   }
 
-  private openPocket(routeInput: PocketRoute): void {
-    const route = normalizePocketRoute(routeInput)
+  private back(): void {
+    this.openPocket(this.router.back(), false)
+  }
+
+  private home(): void {
+    this.openPocket(this.router.home(), false)
+  }
+
+  private openPocket(routeInput: PocketRoute, pushHistory = true): void {
+    const normalized = normalizePocketRoute(routeInput)
+    const route = pushHistory ? this.router.navigate(normalized) : normalized
     if (!this.state) {
       this.pendingRoute = route
       this.open()
@@ -724,14 +834,14 @@ class PocketController {
       this.send('lumiphone:mark_read', { app: 'contacts' })
     } else if (route.app === 'trackers') {
       const tracker = route.trackerId ? this.state.trackers.find((entry) => entry.id === route.trackerId) : null
-      this.selectedTrackerId = tracker?.id || ''
+      this.selectedTrackerId = tracker?.id || (route.trackerId?.startsWith('__template:') ? route.trackerId : '')
       this.selectedTrackerView = route.view || 'detail'
       this.send('lumiphone:mark_read', { app: 'trackers' })
     } else if (route.app === 'calendar') {
-      this.selectedEventId = route.eventId && this.state.events.some((entry) => entry.id === route.eventId) ? route.eventId : ''
+      this.selectedEventId = route.eventId === '__new__' || (route.eventId && this.state.events.some((entry) => entry.id === route.eventId)) ? route.eventId : ''
       this.send('lumiphone:mark_read', { app: 'calendar' })
     } else if (route.app === 'notes') {
-      this.selectedNoteId = route.noteId && this.state.notes.some((entry) => entry.id === route.noteId) ? route.noteId : ''
+      this.selectedNoteId = route.noteId === '__new__' || (route.noteId && this.state.notes.some((entry) => entry.id === route.noteId)) ? route.noteId : ''
       this.send('lumiphone:mark_read', { app: 'notes' })
     } else if (route.app === 'gallery') {
       this.selectedGalleryImageId = route.imageId || ''
@@ -743,6 +853,7 @@ class PocketController {
     } else if (route.app !== 'home') {
       this.send('lumiphone:mark_read', { app: route.app })
     }
+    this.announceView()
     this.render()
   }
 
@@ -789,6 +900,7 @@ class PocketController {
       : this.currentApp === 'weather' ? this.renderWeather()
       : this.currentApp === 'calendar' ? this.renderCalendar()
       : this.currentApp === 'trackers' ? this.renderTrackers()
+      : this.currentApp === 'notifications' ? this.renderNotifications()
       : this.renderSettings()
     view.classList.add('lumiphone-app-view')
     const animation = this.preferences.reducedMotion ? 'none' : this.preferences.animation
@@ -810,8 +922,8 @@ class PocketController {
   private page(title: string, subtitle = '', action?: PageAction): { page: HTMLDivElement; content: HTMLDivElement } {
     const page = el('div', 'lp-page')
     const nav = el('header', 'lp-nav')
-    const back = button('‹ Home', 'lp-nav-action')
-    back.addEventListener('click', () => this.openApp('home'))
+    const back = button('‹ Back', 'lp-nav-action')
+    back.addEventListener('click', () => this.back())
     const heading = el('div', 'lp-nav-title', title)
     if (subtitle) heading.appendChild(el('span', 'lp-nav-subtitle', subtitle))
     const right = button(action?.label || '', 'lp-nav-action')
@@ -838,12 +950,21 @@ class PocketController {
     const grid = el('div', 'lp-app-grid')
     for (const meta of APP_META.filter((entry) => !entry.dock)) grid.appendChild(this.appIcon(meta))
     const activity = el('div', 'lp-home-activity')
-    for (const item of [...(state.activities || [])].reverse().slice(0, 2)) {
+    const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read).slice(0, 3)
+    for (const item of recentNotifications) {
       const receipt = button('', 'lp-home-activity-item')
-      receipt.append(el('strong', '', item.title), el('span', '', item.summary || item.kind), el('span', 'lp-home-activity-arrow', '›'))
+      receipt.append(el('strong', '', item.title), el('span', '', item.body || item.app), el('span', 'lp-home-activity-arrow', '›'))
       receipt.setAttribute('aria-label', `Open ${item.title}`)
-      receipt.addEventListener('click', () => this.openPocket(item.route))
+      receipt.addEventListener('click', () => {
+        this.send('lumiphone:notification_mark_read', { notificationId: item.id })
+        this.openPocket(item.route || { app: item.app })
+      })
       activity.appendChild(receipt)
+    }
+    if (recentNotifications.length) {
+      const all = button('View all notifications', 'lp-home-notifications-all')
+      all.addEventListener('click', () => this.openPocket({ app: 'notifications' }))
+      activity.appendChild(all)
     }
     const dock = el('div', 'lp-home-dock')
     for (const meta of APP_META.filter((entry) => entry.dock)) dock.appendChild(this.appIcon(meta))
@@ -860,7 +981,7 @@ class PocketController {
     box.appendChild(icon(meta.icon))
     const unread = meta.app === 'messages'
       ? this.state!.conversations.reduce((sum, conversation) => sum + conversation.unread, 0)
-      : this.state!.notifications.filter((item) => !item.read && item.app === meta.app).length
+      : this.state!.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app).length
     if (unread) box.appendChild(el('span', 'lp-app-dot', unread > 99 ? '99+' : String(unread)))
     node.append(box, el('span', 'lp-app-label', meta.label))
     node.addEventListener('click', () => this.openApp(meta.app))
@@ -875,16 +996,11 @@ class PocketController {
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, entry.speakerContactId])),
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('messages', title, copy), iconButton,
-      selectConversation: (conversationId, view = 'thread') => {
-        this.selectedConversationId = conversationId
-        this.selectedConversationView = view
-        this.selectedMessageId = ''
-        if (conversationId) this.send('lumiphone:mark_read', { app: 'messages', conversationId })
-        this.render()
-      },
+      selectConversation: (conversationId, view = 'thread') => this.openPocket({ app: 'messages', conversationId: conversationId || undefined, view }),
       openContact: (contactId) => this.openPocket({ app: 'contacts', contactId, view: 'detail' }),
       send: (type, payload) => { this.send(type, payload) },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
+      back: () => this.back(),
     })
   }
 
@@ -902,7 +1018,8 @@ class PocketController {
       sources: this.contactSources, capabilities: this.caps,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('contacts', title, copy),
-      select: (contactId, view = contactId ? 'detail' : 'list') => { this.selectedContactId = contactId; this.selectedContactView = view; this.render() },
+      operations: this.operations,
+      select: (contactId, view = contactId ? 'detail' : 'list') => this.openPocket({ app: 'contacts', contactId: contactId || undefined, view }),
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       requestSources: () => {
         if (this.contactSourcesRequested) return
@@ -967,8 +1084,8 @@ class PocketController {
   private renderCamera(): HTMLDivElement {
     const page = el('div', 'lp-camera')
     const nav = el('header', 'lp-nav')
-    const back = button('‹ Home', 'lp-nav-action')
-    back.addEventListener('click', () => this.openApp('home'))
+    const back = button('‹ Back', 'lp-nav-action')
+    back.addEventListener('click', () => this.back())
     const profileLabel = this.swarmProfile?.available ? 'Swarm profile linked' : 'Manual profile'
     const title = el('div', 'lp-nav-title', 'Camera')
     title.appendChild(el('span', 'lp-nav-subtitle', profileLabel))
@@ -1032,7 +1149,7 @@ class PocketController {
     const state = this.state!
     const selected = state.notes.find((item) => item.id === this.selectedNoteId)
     if (this.selectedNoteId === '__new__' || selected) return this.renderNoteEditor(selected || null)
-    const { page, content } = this.page('Notes', `${state.notes.length} journal entries`, { label: 'New', callback: () => { this.selectedNoteId = '__new__'; this.render() } })
+    const { page, content } = this.page('Notes', `${state.notes.length} journal entries`, { label: 'New', callback: () => this.openPocket({ app: 'notes', noteId: '__new__' }) })
     const sorted = [...state.notes].sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     for (const note of sorted) {
       const card = el('div', 'lp-card lp-note-card')
@@ -1043,7 +1160,7 @@ class PocketController {
       const preview = el('p', 'lp-copy lp-note-preview', note.body || 'Empty note')
       card.append(head, preview)
       card.appendChild(el('span', 'lp-eyebrow', [note.author, note.mood].filter(Boolean).join(' · ')))
-      card.addEventListener('click', () => { this.selectedNoteId = note.id; this.render() })
+      card.addEventListener('click', () => this.openPocket({ app: 'notes', noteId: note.id }))
       content.appendChild(card)
     }
     if (!state.notes.length) content.appendChild(this.empty('notes', 'The journal is blank', 'You or the character can write the first entry.'))
@@ -1070,16 +1187,14 @@ class PocketController {
     pinRow.appendChild(pinned)
     const save = () => {
       this.send('lumiphone:action', { action: 'note', payload: { id: note?.id, title: inputValue(title), body: body.value, mood: inputValue(mood), pinned: pinned.checked } })
-      this.selectedNoteId = ''
-      this.render()
+      this.back()
     }
     content.append(title, mood, body, pinRow)
     if (note) {
       const remove = button('Delete note', 'lp-button lp-button-danger')
       remove.addEventListener('click', () => {
         this.send('lumiphone:delete', { kind: 'note', id: note.id })
-        this.selectedNoteId = ''
-        this.render()
+        this.back()
       })
       content.appendChild(remove)
     }
@@ -1127,7 +1242,7 @@ class PocketController {
     const state = this.state!
     const selected = state.events.find((item) => item.id === this.selectedEventId)
     if (this.selectedEventId === '__new__' || selected) return this.renderEventEditor(selected || null)
-    const { page, content } = this.page('Timeline', formatDate(state.roleplayNow, true), { label: 'Add', callback: () => { this.selectedEventId = '__new__'; this.render() } })
+    const { page, content } = this.page('Timeline', formatDate(state.roleplayNow, true), { label: 'Add', callback: () => this.openPocket({ app: 'calendar', eventId: '__new__' }) })
     const nowCard = el('div', 'lp-card')
     const nowField = el('input', 'lp-input')
     nowField.type = 'datetime-local'
@@ -1150,7 +1265,7 @@ class PocketController {
       card.dataset.clickable = 'true'
       card.append(el('div', 'lp-eyebrow', `${event.lane} · ${event.whenText || formatDate(event.start, true)}`), el('h3', 'lp-title', event.title))
       if (event.description) card.appendChild(el('p', 'lp-copy', event.description))
-      card.addEventListener('click', () => { this.selectedEventId = event.id; this.render() })
+      card.addEventListener('click', () => this.openPocket({ app: 'calendar', eventId: event.id }))
       row.append(dot, card)
       timeline.appendChild(row)
     }
@@ -1193,12 +1308,11 @@ class PocketController {
         end: Number.isNaN(endDate.getTime()) ? this.state!.roleplayNow : endDate.toISOString(),
         whenKind: whenKind.value, whenText: inputValue(whenText.input), completed: completed.checked,
       } })
-      this.selectedEventId = ''
-      this.render()
+      this.back()
     }
     if (event) {
       const remove = button('Delete event', 'lp-button lp-button-danger')
-      remove.addEventListener('click', () => { this.send('lumiphone:delete', { kind: 'event', id: event.id }); this.selectedEventId = ''; this.render() })
+      remove.addEventListener('click', () => { this.send('lumiphone:delete', { kind: 'event', id: event.id }); this.back() })
       content.appendChild(remove)
     }
     return page
@@ -1211,9 +1325,18 @@ class PocketController {
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
       send: (type, payload) => { this.send(type, payload) },
-      select: (id, view = 'detail') => { this.selectedTrackerId = id; this.selectedTrackerView = view; this.render() },
-      back: () => { this.selectedTrackerId = ''; this.selectedTrackerView = 'detail'; this.render() },
+      select: (id, view = 'detail') => this.openPocket({ app: 'trackers', trackerId: id || undefined, view }),
+      back: () => this.back(),
       onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
+    })
+  }
+
+  private renderNotifications(): HTMLDivElement {
+    return renderNotificationsView({
+      notifications: this.state!.notifications,
+      page: (title, subtitle, action) => this.page(title, subtitle, action),
+      navigate: (route) => this.openPocket(route),
+      send: (type, payload) => { this.send(type, payload) },
     })
   }
 
@@ -1222,6 +1345,7 @@ class PocketController {
       preferences: this.preferences,
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
+      generation: this.generation,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
       preview: (preferences, options) => {
@@ -1233,7 +1357,7 @@ class PocketController {
       send: (type, payload) => { this.send(type, payload) },
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
-      openHome: () => this.openApp('home'),
+      openHome: () => this.home(),
     })
     if (this.selectedSettingsSection) requestAnimationFrame(() => {
       view.querySelector<HTMLElement>(`[data-settings-section="${CSS.escape(this.selectedSettingsSection)}"]`)?.scrollIntoView({ block: 'start' })

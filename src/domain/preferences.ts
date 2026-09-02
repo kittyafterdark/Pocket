@@ -1,6 +1,6 @@
 import type { DevicePreferences, PhonePalette, PhoneTheme } from '../types.js'
 
-export const PREFERENCES_VERSION = 1 as const
+export const PREFERENCES_VERSION = 2 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -63,6 +63,11 @@ export function defaultPreferences(): DevicePreferences {
     pushNotifications: false,
     useSwarmProfile: true,
     sceneEnhancer: true,
+    generationMode: 'roleplay',
+    sidecarConnectionId: '',
+    autoReplyAfterSend: false,
+    ambientMessaging: 'off',
+    generationHistory: [],
     manualVisualProfile: { positive: '', negative: '', model: '', connectionId: '', loras: [], parameters: {} },
   }
 }
@@ -98,6 +103,24 @@ export function normalizePreferences(value: unknown): DevicePreferences {
   }
   const manual = record(raw.manualVisualProfile)
   const allowedAnimations = new Set(['spring', 'slide', 'fade', 'none'])
+  const history = (Array.isArray(raw.generationHistory) ? raw.generationHistory : []).slice(-24).flatMap((entry) => {
+    const item = record(entry)
+    const requestId = text(item.requestId, '', 180)
+    const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
+    const tasks = new Set(['npc-contact', 'scene-sync', 'message-reply', 'reply-decision', 'ambient-decision', 'scene-planner', 'connection-test'])
+    if (!requestId || !tasks.has(task)) return []
+    const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
+    return [{
+      requestId, task,
+      mode: item.mode === 'sidecar' ? 'sidecar' as const : 'roleplay' as const,
+      connectionId: text(item.connectionId, '', 180), connectionName: text(item.connectionName, '', 180),
+      provider: text(item.provider, '', 120), model: text(item.model, '', 500), status,
+      startedAt: text(item.startedAt, new Date(0).toISOString(), 40),
+      completedAt: text(item.completedAt, '', 40) || undefined,
+      latencyMs: Number.isFinite(Number(item.latencyMs)) ? Math.max(0, Math.round(Number(item.latencyMs))) : undefined,
+      error: text(item.error, '', 500) || undefined,
+    }]
+  })
   return {
     version: PREFERENCES_VERSION,
     theme,
@@ -110,6 +133,11 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
+    generationMode: raw.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
+    sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
+    autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
+    ambientMessaging: raw.ambientMessaging === 'sparse' || raw.ambientMessaging === 'normal' ? raw.ambientMessaging : 'off',
+    generationHistory: history,
     manualVisualProfile: {
       positive: text(manual.positive, '', 12_000),
       negative: text(manual.negative, '', 12_000),

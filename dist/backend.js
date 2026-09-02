@@ -1,6 +1,6 @@
 // @bun
 // src/domain/preferences.ts
-var PREFERENCES_VERSION = 1;
+var PREFERENCES_VERSION = 2;
 var PREFERENCES_PATH = "device/preferences.json";
 var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
@@ -82,6 +82,11 @@ function defaultPreferences() {
     pushNotifications: false,
     useSwarmProfile: true,
     sceneEnhancer: true,
+    generationMode: "roleplay",
+    sidecarConnectionId: "",
+    autoReplyAfterSend: false,
+    ambientMessaging: "off",
+    generationHistory: [],
     manualVisualProfile: { positive: "", negative: "", model: "", connectionId: "", loras: [], parameters: {} }
   };
 }
@@ -110,6 +115,29 @@ function normalizePreferences(value) {
   };
   const manual = record(raw.manualVisualProfile);
   const allowedAnimations = new Set(["spring", "slide", "fade", "none"]);
+  const history = (Array.isArray(raw.generationHistory) ? raw.generationHistory : []).slice(-24).flatMap((entry) => {
+    const item = record(entry);
+    const requestId = text(item.requestId, "", 180);
+    const task = text(item.task, "", 40);
+    const tasks = new Set(["npc-contact", "scene-sync", "message-reply", "reply-decision", "ambient-decision", "scene-planner", "connection-test"]);
+    if (!requestId || !tasks.has(task))
+      return [];
+    const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
+    return [{
+      requestId,
+      task,
+      mode: item.mode === "sidecar" ? "sidecar" : "roleplay",
+      connectionId: text(item.connectionId, "", 180),
+      connectionName: text(item.connectionName, "", 180),
+      provider: text(item.provider, "", 120),
+      model: text(item.model, "", 500),
+      status,
+      startedAt: text(item.startedAt, new Date(0).toISOString(), 40),
+      completedAt: text(item.completedAt, "", 40) || undefined,
+      latencyMs: Number.isFinite(Number(item.latencyMs)) ? Math.max(0, Math.round(Number(item.latencyMs))) : undefined,
+      error: text(item.error, "", 500) || undefined
+    }];
+  });
   return {
     version: PREFERENCES_VERSION,
     theme,
@@ -122,6 +150,11 @@ function normalizePreferences(value) {
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
+    generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
+    sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
+    autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
+    ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
+    generationHistory: history,
     manualVisualProfile: {
       positive: text(manual.positive, "", 12000),
       negative: text(manual.negative, "", 12000),
@@ -425,7 +458,7 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
 }
 
 // src/domain/navigation.ts
-var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
+var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings"]);
 function shortId(value) {
   if (typeof value !== "string")
     return;
@@ -465,7 +498,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return { app, imageId: shortId(raw.imageId) };
   if (app === "settings")
     return { app, section: shortId(raw.section) };
-  if (app === "camera" || app === "weather" || app === "home")
+  if (app === "camera" || app === "weather" || app === "notifications" || app === "home")
     return { app };
   return fallback;
 }
@@ -553,6 +586,8 @@ function normalizePocketContact(value, context) {
   const source = normalizeSource(value.source, contactId, context.characterId, description);
   const presence = record3(value.presence) ? value.presence : {};
   const contextPolicy = record3(value.contextPolicy) ? value.contextPolicy : {};
+  const generationPolicy = record3(value.generationPolicy) ? value.generationPolicy : {};
+  const messagingPolicy = record3(value.messagingPolicy) ? value.messagingPolicy : {};
   const createdAt = timestamp(value.createdAt, context.now);
   return {
     id: contactId,
@@ -567,6 +602,13 @@ function normalizePocketContact(value, context) {
       lastSceneAt: timestamp(presence.lastSceneAt, "")
     },
     contextPolicy: { pinned: flag(contextPolicy.pinned) },
+    generationPolicy: { relevant: flag(generationPolicy.relevant, true) },
+    messagingPolicy: {
+      remoteEligible: flag(messagingPolicy.remoteEligible, true),
+      allowAmbientInScene: flag(messagingPolicy.allowAmbientInScene, false),
+      lastInitiatedMessageAt: timestamp(messagingPolicy.lastInitiatedMessageAt, ""),
+      lastInitiatedRoleplayAt: timestamp(messagingPolicy.lastInitiatedRoleplayAt, "")
+    },
     createdAt,
     updatedAt: timestamp(value.updatedAt, createdAt)
   };
@@ -629,6 +671,8 @@ function activeContact(context) {
     source: { kind: "character", characterId: contactId },
     presence: { inScene: true, lastSceneAt: context.now },
     contextPolicy: { pinned: false },
+    generationPolicy: { relevant: true },
+    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
     createdAt: context.now,
     updatedAt: context.now
   };
@@ -709,6 +753,140 @@ function normalizeContactCollections(value, context) {
   return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy };
 }
 
+// src/domain/notifications.ts
+function routesShareDestination(leftInput, rightInput) {
+  const left = normalizePocketRoute(leftInput);
+  const right = normalizePocketRoute(rightInput);
+  if (left.app !== right.app)
+    return false;
+  if (left.app === "messages" && right.app === "messages") {
+    return Boolean(left.conversationId && right.conversationId && left.conversationId === right.conversationId);
+  }
+  if (left.app === "trackers" && right.app === "trackers") {
+    return Boolean(left.trackerId && right.trackerId && left.trackerId === right.trackerId);
+  }
+  return left.app !== "home" && left.app !== "notifications";
+}
+function destinationIsVisible(open, current, target) {
+  return Boolean(open && current && routesShareDestination(current, target));
+}
+function markNotificationRead(notifications, notificationId) {
+  const entry = notifications.find((item) => item.id === notificationId);
+  if (entry)
+    entry.read = true;
+}
+function dismissNotification(notifications, notificationId, at) {
+  const entry = notifications.find((item) => item.id === notificationId);
+  if (entry)
+    entry.dismissedAt = at;
+}
+function clearNotifications(notifications, mode, at) {
+  for (const entry of notifications) {
+    if (!entry.dismissedAt && (mode === "all" || entry.read))
+      entry.dismissedAt = at;
+  }
+}
+
+// src/domain/messaging.ts
+function ambientEligibleContacts(contacts) {
+  return contacts.filter((contact) => contact.messagingPolicy.remoteEligible && (!contact.presence.inScene || contact.messagingPolicy.allowAmbientInScene));
+}
+function contactCooldownReady(contact, frequency, roleplayNow, wallNow = Date.now()) {
+  const wallCooldown = frequency === "sparse" ? 60 * 60000 : 15 * 60000;
+  const roleplayCooldown = frequency === "sparse" ? 6 * 60 * 60000 : 2 * 60 * 60000;
+  const lastWall = Date.parse(contact.messagingPolicy.lastInitiatedMessageAt);
+  if (Number.isFinite(lastWall) && wallNow - lastWall < wallCooldown)
+    return false;
+  const currentRoleplay = Date.parse(roleplayNow);
+  const lastRoleplay = Date.parse(contact.messagingPolicy.lastInitiatedRoleplayAt);
+  if (Number.isFinite(currentRoleplay) && Number.isFinite(lastRoleplay) && currentRoleplay >= lastRoleplay && currentRoleplay - lastRoleplay < roleplayCooldown)
+    return false;
+  return true;
+}
+function shouldTakeAmbientOpportunity(frequency, random = Math.random()) {
+  if (frequency === "off")
+    return false;
+  return random < (frequency === "sparse" ? 0.18 : 0.42);
+}
+
+// src/backend/generation.ts
+var historyLocks = new Map;
+function compactError(error) {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/\b(?:sk-|key-|Bearer\s+)[A-Za-z0-9._-]{8,}\b/gi, "[redacted]").replace(/\s+/g, " ").trim().slice(0, 500) || "Generation failed";
+}
+function summary(connection) {
+  return {
+    id: String(connection?.id || ""),
+    name: String(connection?.name || connection?.provider || "Connection"),
+    provider: String(connection?.provider || ""),
+    model: String(connection?.model || ""),
+    isDefault: Boolean(connection?.is_default),
+    configured: Boolean(connection?.has_api_key)
+  };
+}
+async function inspectPocketGeneration(host, preferences, userId) {
+  if (!host.spindle.permissions.has("generation"))
+    return { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory };
+  const connections = (await host.spindle.connections.list(userId)).map(summary);
+  const effective = preferences.generationMode === "sidecar" ? connections.find((entry) => entry.id === preferences.sidecarConnectionId) || null : connections.find((entry) => entry.isDefault) || connections[0] || null;
+  return { mode: preferences.generationMode, effective, connections, history: preferences.generationHistory };
+}
+async function writeRun(host, run, userId) {
+  const key = userId || "_default";
+  const previous = historyLocks.get(key) || Promise.resolve(null);
+  const current = previous.catch(() => null).then(async () => {
+    const latest = await host.loadPreferences(userId);
+    const history = latest.generationHistory.filter((entry) => entry.requestId !== run.requestId);
+    history.push(run);
+    latest.generationHistory = history.slice(-24);
+    return host.savePreferences(latest, userId);
+  });
+  historyLocks.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (historyLocks.get(key) === current)
+      historyLocks.delete(key);
+  }
+}
+async function runPocketGeneration(host, task, requestId, input, userId) {
+  const preferences = await host.loadPreferences(userId);
+  const info = await inspectPocketGeneration(host, preferences, userId);
+  if (!info.effective)
+    throw new Error(preferences.generationMode === "sidecar" ? "The selected Pocket sidecar connection is unavailable." : "No active roleplay generation connection is configured.");
+  const startedAt = new Date().toISOString();
+  const run = {
+    requestId,
+    task,
+    mode: preferences.generationMode,
+    connectionId: info.effective.id,
+    connectionName: info.effective.name,
+    provider: info.effective.provider,
+    model: info.effective.model,
+    status: "started",
+    startedAt
+  };
+  await writeRun(host, run, userId);
+  host.send({ type: "lumiphone:generation_status", run }, userId);
+  const started = Date.now();
+  try {
+    const request = { ...input };
+    if (preferences.generationMode === "sidecar")
+      request.connection_id = info.effective.id;
+    const result = await host.spindle.generate.quiet(request);
+    const completed = { ...run, status: "completed", completedAt: new Date().toISOString(), latencyMs: Date.now() - started };
+    await writeRun(host, completed, userId);
+    host.send({ type: "lumiphone:generation_status", run: completed }, userId);
+    return result;
+  } catch (error) {
+    const failed = { ...run, status: "failed", completedAt: new Date().toISOString(), latencyMs: Date.now() - started, error: compactError(error) };
+    await writeRun(host, failed, userId);
+    host.send({ type: "lumiphone:generation_status", run: failed }, userId);
+    throw error;
+  }
+}
+
 // src/backend.ts
 var STATE_VERSION = 3;
 var MAX_MESSAGES2 = 240;
@@ -720,6 +898,9 @@ var MAX_ACTIVITIES = 120;
 var stateLocks = new Map;
 var cameraJobs = new Map;
 var notificationThrottle = new Map;
+var ambientFlights = new Set;
+var replyDecisionFlights = new Set;
+var frontendViews = new Map;
 var PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
 <lumi-phone action="message|contact|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
 Do not explain the tag. Do not use it for ordinary narration. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`;
@@ -845,6 +1026,9 @@ function normalizeState(value, chatId, characterId, characterName) {
       createdAt: text2(item.createdAt, 40) || nowIso(),
       read: bool2(item.read),
       route: normalizePocketRoute(item.route, legacyActionRoute(app, text2(item.action, 120))),
+      dismissedAt: text2(item.dismissedAt, 40) || undefined,
+      source: item.source === "automatic" || item.source === "system" ? item.source : "model",
+      severity: item.severity === "important" || item.severity === "error" ? item.severity : "info",
       action: text2(item.action, 120) || undefined
     }];
   });
@@ -999,13 +1183,38 @@ function send(payload, userId) {
   spindle.sendToFrontend(payload, userId);
 }
 async function sendState(state, userId, reason = "refresh", open = false) {
-  send({ type: "lumiphone:state", state, preferences: await loadPreferences(userId), capabilities: capabilities(), reason, open }, userId);
+  const preferences = await loadPreferences(userId);
+  let generation = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory };
+  try {
+    generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
+  } catch (error) {
+    spindle.log.warn(`Pocket could not inspect generation profiles: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  send({ type: "lumiphone:state", state, preferences, capabilities: capabilities(), generation, reason, open }, userId);
 }
-function addNotification(state, notification) {
+function viewKey(userId) {
+  return userId || "_default";
+}
+function currentView(userId) {
+  const view = frontendViews.get(viewKey(userId));
+  return view && Date.now() - view.updatedAt < 120000 ? view : null;
+}
+function notificationDestinationVisible(state, route, userId) {
+  const view = currentView(userId);
+  return Boolean(view && view.chatId === state.chatId && view.characterId === state.characterId && destinationIsVisible(view.open, view.route, route));
+}
+function addNotification(state, notification, userId) {
+  const route = notification.route || { app: notification.app };
+  if (notificationDestinationVisible(state, route, userId))
+    return null;
   const entry = { ...notification, id: id("ntf"), createdAt: nowIso(), read: false };
   state.notifications.unshift(entry);
   state.notifications = state.notifications.slice(0, MAX_NOTIFICATIONS);
   return entry;
+}
+function sendNotification(notification, userId) {
+  if (notification)
+    send({ type: "lumiphone:notification", notification }, userId);
 }
 function addActivity(state, activity, command) {
   const entry = {
@@ -1172,7 +1381,13 @@ function upsertContact(state, contact) {
   const sourceKey = contactSourceKey(contact.source);
   const existing = state.contacts.find((entry) => entry.id === contact.id || contact.source.kind !== "npc" && contactSourceKey(entry.source) === sourceKey || contact.source.kind === "npc" && entry.source.kind === "npc" && contact.source.sceneKey && entry.source.sceneKey === contact.source.sceneKey);
   if (existing) {
-    const preserved = { createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy };
+    const preserved = {
+      createdAt: existing.createdAt,
+      accent: existing.accent,
+      contextPolicy: existing.contextPolicy,
+      generationPolicy: contact.generationPolicy || existing.generationPolicy,
+      messagingPolicy: contact.messagingPolicy || existing.messagingPolicy
+    };
     Object.assign(existing, contact, preserved, { updatedAt: nowIso() });
     return existing;
   }
@@ -1193,6 +1408,8 @@ function contactFromSource(option) {
     source,
     presence: { inScene: false, lastSceneAt: "" },
     contextPolicy: { pinned: false },
+    generationPolicy: { relevant: true },
+    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
     createdAt,
     updatedAt: createdAt
   };
@@ -1276,10 +1493,10 @@ async function listGallery(input, userId) {
     }))
   };
 }
-async function enhanceScene(scene, state, preferences, profile, userId) {
+async function enhanceScene(scene, state, preferences, profile, requestId, userId) {
   if (!preferences.sceneEnhancer || !spindle.permissions.has("generation"))
     return scene;
-  const response = await spindle.generate.quiet({
+  const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "scene-planner", `${requestId}:planner`, {
     type: "quiet",
     messages: [
       { role: "system", content: "You are a concise image scene planner. Expand the user brief into one vivid diffusion-ready prompt. Preserve identity facts, subject count, action, camera, environment, lighting, and mood. Do not add names, explanations, headings, negative prompts, or markdown." },
@@ -1289,7 +1506,7 @@ Scene brief: ${scene}` }
     parameters: { temperature: 0.45, max_tokens: 450 },
     reasoning: { source: "off" },
     userId
-  });
+  }, userId);
   return text2(response.content, 12000) || scene;
 }
 async function cameraGenerate(input, userId) {
@@ -1311,7 +1528,7 @@ async function cameraGenerate(input, userId) {
   let expanded = scene;
   if (bool2(input.enhance, preferences.sceneEnhancer)) {
     try {
-      expanded = await enhanceScene(scene, state, preferences, profile, userId);
+      expanded = await enhanceScene(scene, state, preferences, profile, requestId, userId);
     } catch (error) {
       spindle.log.warn(`Pocket scene planner fell back to the original brief: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1382,8 +1599,10 @@ async function cameraGenerate(input, userId) {
     app: "camera",
     title: "Photo ready",
     body: scene.slice(0, 180),
-    route
-  });
+    route,
+    source: "system",
+    severity: "important"
+  }, userId);
   const command = state.processedCommands.find((entry) => entry.id === text2(input.__commandId, 240));
   const activity = addActivity(state, {
     kind: "image",
@@ -1393,9 +1612,11 @@ async function cameraGenerate(input, userId) {
     source: { messageId: text2(input.__sourceMessageId, 180) || undefined, imageId: imageId || undefined }
   }, command);
   await saveState(state, userId);
-  await maybePush(state, preferences, notification, userId);
+  if (notification)
+    await maybePush(state, preferences, notification, userId);
   await sendState(state, userId, "camera", false);
   sendActivity(activity, userId);
+  sendNotification(notification, userId);
   send({ type: "lumiphone:camera_done", requestId, imageId, imageUrl, prompt: expanded, profile }, userId);
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source };
 }
@@ -1441,7 +1662,7 @@ async function generateMessage(input, userId) {
     const history = conversation.messages.slice(-30).map((message) => `${message.sender === "persona" ? "User" : message.senderName || "Pocket"}: ${message.text.slice(0, 1200)}`).join(`
 `).slice(-12000);
     const instruction = text2(input.instruction, 2000) || "Reply naturally to the latest message.";
-    const response = await spindle.generate.quiet({
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "message-reply", requestId, {
       type: "quiet",
       messages: [
         { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML.
@@ -1458,10 +1679,12 @@ Direction: ${instruction}` }
       ],
       parameters: { temperature: 0.85, max_tokens: 500 },
       userId
-    });
+    }, userId);
     const reply = text2(response.content, 8000);
     if (!reply)
       throw new Error("The character did not return a phone message.");
+    const route = { app: "messages", conversationId: conversation.id };
+    const visible = notificationDestinationVisible(state, route, userId);
     conversation.messages.push({
       id: id("msg"),
       sender: "contact",
@@ -1470,20 +1693,27 @@ Direction: ${instruction}` }
       senderAccent: contact.accent,
       text: reply,
       createdAt: nowIso(),
-      read: false,
-      status: "delivered"
+      read: visible,
+      status: visible ? "read" : "delivered"
     });
     conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
-    conversation.unread += 1;
+    if (!visible)
+      conversation.unread += 1;
     conversation.updatedAt = nowIso();
     const phoneMessageId = conversation.messages.at(-1)?.id;
-    const route = { app: "messages", conversationId: conversation.id, messageId: phoneMessageId };
-    const notification = addNotification(state, { app: "messages", title: contact.name, body: reply.slice(0, 220), route });
+    route.messageId = phoneMessageId;
+    const notification = addNotification(state, { app: "messages", title: contact.name, body: reply.slice(0, 220), route, source: bool2(input.ambient) ? "automatic" : "model", severity: "important" }, userId);
+    if (bool2(input.initiated)) {
+      contact.messagingPolicy.lastInitiatedMessageAt = nowIso();
+      contact.messagingPolicy.lastInitiatedRoleplayAt = state.roleplayNow;
+    }
     const activity = addActivity(state, { kind: "message", title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } });
     await saveState(state, userId);
-    await maybePush(state, preferences, notification, userId);
+    if (notification)
+      await maybePush(state, preferences, notification, userId);
     await sendState(state, userId, "message", preferences.autoOpenOnModelAction);
     sendActivity(activity, userId);
+    sendNotification(notification, userId);
     send({
       type: "lumiphone:message_progress",
       requestId,
@@ -1503,7 +1733,9 @@ async function generateNpcContact(input, userId) {
   const prompt = text2(input.description, 2000);
   if (!prompt)
     throw new Error("Describe the NPC you want to add.");
-  const response = await spindle.generate.quiet({
+  const requestId = text2(input.requestId, 180) || id("npc");
+  send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "generating", message: "Generating contact\u2026" }, userId);
+  const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "npc-contact", requestId, {
     type: "quiet",
     messages: [
       { role: "system", content: 'Create one compact roleplay phone contact from the user description. Return strict JSON only with exactly these string fields: {"name":"","role":"","description":""}. No markdown. Name and role must each be at most 120 characters; description at most 600 characters.' },
@@ -1511,12 +1743,14 @@ async function generateNpcContact(input, userId) {
     ],
     parameters: { temperature: 0.55, max_tokens: 350 },
     userId
-  });
+  }, userId);
+  send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "parsing", message: "Parsing profile\u2026" }, userId);
   const parsed = parseStrictJson(response.content);
   const name = text2(parsed.name, 120);
   if (!name)
     throw new Error("NPC generation did not return a valid name.");
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "saving", message: "Saving contact\u2026" }, userId);
     const state = await loadState(context.chatId, context.characterId, userId);
     const createdAt = nowIso();
     const contact = upsertContact(state, {
@@ -1529,6 +1763,8 @@ async function generateNpcContact(input, userId) {
       source: { kind: "npc", origin: "generated", description: text2(parsed.description, 600) },
       presence: { inScene: false, lastSceneAt: "" },
       contextPolicy: { pinned: false },
+      generationPolicy: { relevant: true },
+      messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
       createdAt,
       updatedAt: createdAt
     });
@@ -1536,7 +1772,8 @@ async function generateNpcContact(input, userId) {
     await saveState(state, userId);
     await sendState(state, userId, "contact");
     sendActivity(activity, userId);
-    send({ type: "lumiphone:contact_created", requestId: text2(input.requestId, 180), contactId: contact.id }, userId);
+    send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "complete", message: "Contact saved" }, userId);
+    send({ type: "lumiphone:contact_created", requestId, contactId: contact.id }, userId);
   });
 }
 function sceneKeyFor(name) {
@@ -1548,10 +1785,13 @@ async function syncSceneContacts(input, userId) {
   if (!spindle.permissions.has("chat_mutation"))
     throw new Error("Enable Chat Mutation so Pocket can read the recent scene when you request a sync.");
   const context = await resolveContext(input, userId);
+  const requestId = text2(input.requestId, 180) || id("scene");
+  send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "request", message: "Reading current scene\u2026" }, userId);
   const messages = await spindle.chat.getMessages(context.chatId);
   const transcript = messages.slice(-24).map((message) => `${message.role}: ${text2(message.content, 1200)}`).join(`
 `).slice(-16000);
-  const response = await spindle.generate.quiet({
+  send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "generating", message: "Finding scene contacts\u2026" }, userId);
+  const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "scene-sync", requestId, {
     type: "quiet",
     messages: [
       { role: "system", content: 'Identify named non-user actors who are physically or actively present in the most recent roleplay scene. Return strict JSON only: {"contacts":[{"name":"","role":"","description":""}]}. Return at most 8 contacts. Do not include merely mentioned, messaged, absent, historical, or hypothetical people. Name and role max 120 characters; description max 600.' },
@@ -1559,7 +1799,8 @@ async function syncSceneContacts(input, userId) {
     ],
     parameters: { temperature: 0.2, max_tokens: 900 },
     userId
-  });
+  }, userId);
+  send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "parsing", message: "Parsing scene roster\u2026" }, userId);
   const parsed = parseStrictJson(response.content);
   const found = (Array.isArray(parsed.contacts) ? parsed.contacts : []).slice(0, 8).flatMap((entry) => {
     if (!isRecord(entry))
@@ -1570,6 +1811,7 @@ async function syncSceneContacts(input, userId) {
     return [{ name, role: text2(entry.role, 120) || "Scene contact", description: text2(entry.description, 600) }];
   });
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "saving", message: "Saving scene contacts\u2026" }, userId);
     const state = await loadState(context.chatId, context.characterId, userId);
     const sceneAt = nowIso();
     for (const contact of state.contacts) {
@@ -1598,6 +1840,8 @@ async function syncSceneContacts(input, userId) {
         source: { kind: "npc", origin: "scene", description: candidate.description, sceneKey },
         presence: { inScene: true, lastSceneAt: sceneAt },
         contextPolicy: existing?.contextPolicy || { pinned: false },
+        generationPolicy: existing?.generationPolicy || { relevant: true },
+        messagingPolicy: existing?.messagingPolicy || { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
         createdAt,
         updatedAt: sceneAt
       });
@@ -1618,8 +1862,97 @@ async function syncSceneContacts(input, userId) {
     await saveState(state, userId);
     await sendState(state, userId, "scene_contacts");
     sendActivity(activity, userId);
-    send({ type: "lumiphone:scene_contacts_done", requestId: text2(input.requestId, 180), contactIds }, userId);
+    send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "complete", message: "Scene contacts synced" }, userId);
+    send({ type: "lumiphone:scene_contacts_done", requestId, contactIds }, userId);
   });
+}
+async function maybeReplyAfterSend(chatId, characterId, conversationId, userId) {
+  const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`;
+  if (replyDecisionFlights.has(flightKey))
+    return;
+  replyDecisionFlights.add(flightKey);
+  try {
+    const preferences = await loadPreferences(userId);
+    if (!preferences.autoReplyAfterSend || !spindle.permissions.has("generation"))
+      return;
+    const state = await loadState(chatId, characterId, userId);
+    const conversation = state.conversations.find((entry) => entry.id === conversationId);
+    if (!conversation || conversation.kind !== "direct" || conversation.messages.at(-1)?.sender !== "persona")
+      return;
+    const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
+    if (!contact || !contact.generationPolicy.relevant || !contact.messagingPolicy.remoteEligible)
+      return;
+    const latest = conversation.messages.at(-1);
+    const requestId = id("reply_decision");
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "reply-decision", requestId, {
+      type: "quiet",
+      messages: [
+        { role: "system", content: 'Decide whether this fictional phone contact should reply now. Be conservative: silence is normal. Consider whether the message asks or invites a response, the relationship, scene presence, and conversational cadence. Return strict JSON only: {"reply":false} or {"reply":true}. No markdown.' },
+        { role: "user", content: `Contact: ${contact.name} (${contact.role}). Presence: ${contact.presence.inScene ? "in the active scene" : "off-scene"}. Recent user text: ${latest.text.slice(0, 2000)}` }
+      ],
+      parameters: { temperature: 0.15, max_tokens: 40 },
+      userId
+    }, userId);
+    const decision = parseStrictJson(response.content);
+    if (decision.reply !== true)
+      return;
+    await generateMessage({ requestId: id("auto_reply"), chatId, characterId, conversationId, speakerContactId: contact.id, instruction: "Reply naturally only because the latest user text warrants a response." }, userId);
+  } catch (error) {
+    spindle.log.warn(`Pocket reply decision skipped: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    replyDecisionFlights.delete(flightKey);
+  }
+}
+async function considerAmbientMessage(chatId, characterId, opportunity, userId) {
+  const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}`;
+  if (ambientFlights.has(flightKey))
+    return;
+  ambientFlights.add(flightKey);
+  try {
+    const preferences = await loadPreferences(userId);
+    if (!spindle.permissions.has("generation") || !shouldTakeAmbientOpportunity(preferences.ambientMessaging))
+      return;
+    const state = await loadState(chatId, characterId, userId);
+    if (preferences.ambientMessaging === "off")
+      return;
+    const candidates = ambientEligibleContacts(state.contacts).filter((contact2) => contact2.generationPolicy.relevant && contactCooldownReady(contact2, preferences.ambientMessaging, state.roleplayNow)).slice(0, 16);
+    if (!candidates.length)
+      return;
+    const requestId = id("ambient_decision");
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "ambient-decision", requestId, {
+      type: "quiet",
+      messages: [
+        { role: "system", content: 'Choose at most one conservative fictional off-scene phone-message opportunity. Most opportunities should be none. Return strict JSON only: {"action":"none"} or {"action":"message","contactId":"exact id","direction":"short reason or topic"}. Never select an actor marked in-scene. Do not write the actual message.' },
+        { role: "user", content: `Opportunity: ${opportunity}. Roleplay time: ${state.roleplayNow}. Candidates:
+${candidates.map((contact2) => `${contact2.id} | ${contact2.name} | ${contact2.role} | ${contact2.description.slice(0, 240)}`).join(`
+`)}` }
+      ],
+      parameters: { temperature: 0.35, max_tokens: 120 },
+      userId
+    }, userId);
+    const decision = parseStrictJson(response.content);
+    if (decision.action !== "message")
+      return;
+    const contact = candidates.find((entry) => entry.id === text2(decision.contactId, 180));
+    if (!contact)
+      return;
+    const conversation = ensureDirectConversation(state, contact.id, nowIso(), id);
+    await saveState(state, userId);
+    await generateMessage({
+      requestId: id("ambient_message"),
+      chatId,
+      characterId,
+      conversationId: conversation.id,
+      speakerContactId: contact.id,
+      instruction: text2(decision.direction, 500) || "Send a brief natural message appropriate to your off-scene life.",
+      ambient: true,
+      initiated: true
+    }, userId);
+  } catch (error) {
+    spindle.log.warn(`Pocket ambient opportunity skipped: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    ambientFlights.delete(flightKey);
+  }
 }
 function parseTagContent(content) {
   const trimmed = content.trim();
@@ -1706,6 +2039,8 @@ async function applyAction(input, userId, source = "model") {
           source: { kind: "npc", origin: "manual", description: text2(payload.contact_description ?? payload.contactDescription, 600) },
           presence: { inScene: false, lastSceneAt: "" },
           contextPolicy: { pinned: false },
+          generationPolicy: { relevant: true },
+          messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
           createdAt,
           updatedAt: createdAt
         };
@@ -1734,10 +2069,15 @@ async function applyAction(input, userId, source = "model") {
       conversation.messages.push(message);
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
       conversation.updatedAt = message.createdAt;
-      if (sender === "contact")
+      const visible = sender === "contact" && notificationDestinationVisible(state, { app: "messages", conversationId: conversation.id }, userId);
+      if (sender === "contact" && !visible)
         conversation.unread += 1;
+      if (visible) {
+        message.read = true;
+        message.status = "read";
+      }
       const route = { app: "messages", conversationId: conversation.id, messageId: message.id };
-      notification = sender === "contact" ? addNotification(state, { app: "messages", title: senderContact.name, body: messageText.slice(0, 220), route }) : null;
+      notification = sender === "contact" ? addNotification(state, { app: "messages", title: senderContact.name, body: messageText.slice(0, 220), route, source: source === "user" ? "system" : "model", severity: "important" }, userId) : null;
       result = { ...result, contactId: senderContact?.id || contact?.id, conversationId: conversation.id, messageId: message.id };
       activity = addActivity(state, { kind: "message", title: senderContact?.name || conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text2(input.messageId, 180) || message.id, contactId: senderContact?.id || contact?.id, conversationId: conversation.id } }, command);
     } else if (action === "contact") {
@@ -1761,11 +2101,18 @@ async function applyAction(input, userId, source = "model") {
           lastSceneAt: bool2(payload.inScene ?? payload.in_scene, existing?.presence.inScene) ? nowIso() : existing?.presence.lastSceneAt || ""
         },
         contextPolicy: { pinned: bool2(payload.pinned, existing?.contextPolicy.pinned) },
+        generationPolicy: { relevant: bool2(payload.generationRelevant ?? payload.generation_relevant, existing?.generationPolicy.relevant ?? true) },
+        messagingPolicy: {
+          remoteEligible: bool2(payload.remoteEligible ?? payload.remote_eligible, existing?.messagingPolicy.remoteEligible ?? true),
+          allowAmbientInScene: bool2(payload.allowAmbientInScene ?? payload.allow_ambient_in_scene, existing?.messagingPolicy.allowAmbientInScene),
+          lastInitiatedMessageAt: existing?.messagingPolicy.lastInitiatedMessageAt || "",
+          lastInitiatedRoleplayAt: existing?.messagingPolicy.lastInitiatedRoleplayAt || ""
+        },
         createdAt,
         updatedAt: nowIso()
       });
       const route = { app: "contacts", contactId: contact.id, view: "detail" };
-      notification = source !== "user" ? addNotification(state, { app: "contacts", title: contact.name, body: contact.role, route }) : null;
+      notification = source !== "user" ? addNotification(state, { app: "contacts", title: contact.name, body: contact.role, route, source: "model", severity: "info" }, userId) : null;
       result.contactId = contact.id;
       activity = addActivity(state, { kind: "contact", title: contact.name, summary: contact.role, route, source: { messageId: text2(input.messageId, 180) || undefined, contactId: contact.id } }, command);
     } else if (action === "note") {
@@ -1784,7 +2131,7 @@ async function applyAction(input, userId, source = "model") {
       }
       const route = { app: "notes", noteId: String(result.noteId) };
       if (source !== "user")
-        notification = addNotification(state, { app: "notes", title: "Journal updated", body: title, route });
+        notification = addNotification(state, { app: "notes", title: "Journal updated", body: title, route, source: "model", severity: "info" }, userId);
       activity = addActivity(state, { kind: "note", title: "Journal updated", summary: title, route, source: { messageId: text2(input.messageId, 180) || undefined, noteId: String(result.noteId) } }, command);
     } else if (action === "event") {
       const eventId = text2(payload.id, 120);
@@ -1810,7 +2157,7 @@ async function applyAction(input, userId, source = "model") {
         state.events.push(event);
       state.events = state.events.slice(-MAX_EVENTS);
       const route = { app: "calendar", eventId: event.id };
-      notification = source !== "user" ? addNotification(state, { app: "calendar", title: "Timeline updated", body: title, route }) : null;
+      notification = source !== "user" ? addNotification(state, { app: "calendar", title: "Timeline updated", body: title, route, source: "model", severity: "important" }, userId) : null;
       result.eventId = event.id;
       activity = addActivity(state, { kind: "timeline", title: "Timeline updated", summary: title, route, source: { messageId: text2(input.messageId, 180) || undefined, eventId: event.id } }, command);
     } else if (action === "weather") {
@@ -1825,7 +2172,7 @@ async function applyAction(input, userId, source = "model") {
         updatedAt: nowIso()
       };
       const route = { app: "weather" };
-      notification = source !== "user" ? addNotification(state, { app: "weather", title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route }) : null;
+      notification = source !== "user" ? addNotification(state, { app: "weather", title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route, source: "model", severity: "info" }, userId) : null;
       activity = addActivity(state, { kind: "weather", title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
     } else if (action === "tracker") {
       const trackerId2 = text2(payload.trackerId ?? payload.tracker_id ?? payload.id, 120);
@@ -1876,19 +2223,25 @@ async function applyAction(input, userId, source = "model") {
       state.trackers = state.trackers.slice(-MAX_TRACKERS);
       const route = { app: "trackers", trackerId: next.id, view: "detail" };
       const trackerSummary = next.kind === "state" ? next.state : `${Number(next.value.toFixed(2))}${next.unit}`;
-      notification = source !== "user" ? addNotification(state, { app: "trackers", title: next.label, body: trackerSummary, route }) : null;
+      notification = source !== "user" ? addNotification(state, { app: "trackers", title: next.label, body: trackerSummary, route, source: "model", severity: "info" }, userId) : null;
       result.trackerId = next.id;
       activity = addActivity(state, { kind: "tracker-change", title: next.label, summary: trackerSummary, route, source: { messageId: text2(input.messageId, 180) || undefined, trackerId: next.id } }, command);
     } else if (action === "notify") {
       const requestedApp = text2(payload.app ?? input.app, 40);
       const allowedApps = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
-      notification = addNotification(state, {
+      const notifyTitle = text2(payload.title ?? input.title, 160) || "Pocket";
+      const notifyBody = text2(payload.body ?? payload.text ?? payload.content, 1000);
+      const notifyRoute = normalizePocketRoute(payload.route, { app: allowedApps.has(requestedApp) ? requestedApp : "home" });
+      notification = source === "user" ? null : addNotification(state, {
         app: allowedApps.has(requestedApp) ? requestedApp : "home",
-        title: text2(payload.title ?? input.title, 160) || "Pocket",
-        body: text2(payload.body ?? payload.text ?? payload.content, 1000),
-        route: normalizePocketRoute(payload.route, { app: allowedApps.has(requestedApp) ? requestedApp : "home" })
-      });
-      activity = addActivity(state, { kind: "system", title: notification.title, summary: notification.body, route: notification.route || { app: "home" }, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
+        title: notifyTitle,
+        body: notifyBody,
+        route: notifyRoute,
+        source: "model",
+        severity: payload.severity === "important" || payload.severity === "error" ? payload.severity : "info"
+      }, userId);
+      if (source !== "user")
+        activity = addActivity(state, { kind: "system", title: notifyTitle, summary: notifyBody, route: notifyRoute, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
     } else {
       throw new Error(`Unsupported phone action: ${action || "(empty)"}`);
     }
@@ -1897,6 +2250,10 @@ async function applyAction(input, userId, source = "model") {
       await maybePush(state, preferences, notification, userId);
     await sendState(state, userId, action, source !== "user" && preferences.autoOpenOnModelAction);
     sendActivity(activity, userId);
+    sendNotification(notification, userId);
+    if (action === "message" && source === "user" && preferences.autoReplyAfterSend && typeof result.conversationId === "string") {
+      maybeReplyAfterSend(context.chatId, context.characterId, result.conversationId, userId);
+    }
     return { ...result, activityId: activity?.id };
   });
 }
@@ -1911,7 +2268,21 @@ async function handleFrontend(payload, userId) {
         const state = await loadState(context.chatId, context.characterId, userId);
         const preferences = await loadPreferences(userId);
         const swarmProfile = await resolveSwarmProfile(context.chatId, context.characterId, preferences);
-        send({ type: "lumiphone:state", requestId, state, preferences, capabilities: capabilities(), swarmProfile, reason: "load" }, userId);
+        let generation = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory };
+        try {
+          generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
+        } catch {}
+        send({ type: "lumiphone:state", requestId, state, preferences, capabilities: capabilities(), swarmProfile, generation, reason: "load" }, userId);
+        break;
+      }
+      case "lumiphone:view_state": {
+        frontendViews.set(viewKey(userId), {
+          chatId: context.chatId,
+          characterId: context.characterId,
+          open: bool2(payload.open),
+          route: normalizePocketRoute(payload.route),
+          updatedAt: Date.now()
+        });
         break;
       }
       case "lumiphone:list_contact_sources": {
@@ -2035,6 +2406,7 @@ async function handleFrontend(payload, userId) {
           state.roleplayNow = nextRoleplayNow;
           await saveState(state, userId);
           await sendState(state, userId, "calendar");
+          considerAmbientMessage(context.chatId, context.characterId, "roleplay-time", userId);
         });
         break;
       }
@@ -2058,6 +2430,25 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:generate_message":
         await generateMessage(payload, userId);
         break;
+      case "lumiphone:test_generation": {
+        const testRequestId = requestId || id("connection_test");
+        const existing = await loadPreferences(userId);
+        await savePreferences({
+          ...existing,
+          generationMode: payload.generationMode === "sidecar" ? "sidecar" : "roleplay",
+          sidecarConnectionId: text2(payload.sidecarConnectionId, 180)
+        }, userId);
+        const started = Date.now();
+        const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "connection-test", testRequestId, {
+          type: "quiet",
+          messages: [{ role: "user", content: "Reply with exactly POCKET_OK" }],
+          parameters: { temperature: 0, max_tokens: 16 },
+          userId
+        }, userId);
+        send({ type: "lumiphone:generation_test_result", requestId: testRequestId, ok: text2(response.content, 100).includes("POCKET_OK"), latencyMs: Date.now() - started }, userId);
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, "generation_test");
+        break;
+      }
       case "lumiphone:gallery_list":
         send({ type: "lumiphone:gallery", requestId, scope: payload.scope, ...await listGallery(payload, userId) }, userId);
         break;
@@ -2077,10 +2468,9 @@ async function handleFrontend(payload, userId) {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           const app = text2(payload.app, 40);
-          state.notifications.forEach((entry) => {
-            if (!app || entry.app === app)
-              entry.read = true;
-          });
+          const notificationId = text2(payload.notificationId, 180);
+          if (notificationId)
+            markNotificationRead(state.notifications, notificationId);
           const conversationId = text2(payload.conversationId, 180);
           const legacyContactId = text2(payload.contactId, 180);
           const conversation = state.conversations.find((entry) => entry.id === conversationId) || state.conversations.find((entry) => entry.kind === "direct" && entry.participantContactIds[0] === legacyContactId);
@@ -2090,9 +2480,34 @@ async function handleFrontend(payload, userId) {
               message.read = true;
               message.status = "read";
             });
+            state.notifications.forEach((entry) => {
+              if (entry.route?.app === "messages" && entry.route.conversationId === conversation.id)
+                entry.read = true;
+            });
+          } else if (app && app !== "messages") {
+            state.notifications.forEach((entry) => {
+              if (entry.app === app)
+                entry.read = true;
+            });
           }
           await saveState(state, userId);
           await sendState(state, userId, "read");
+        });
+        break;
+      }
+      case "lumiphone:notification_dismiss":
+      case "lumiphone:notification_mark_read":
+      case "lumiphone:notifications_clear": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          if (payload.type === "lumiphone:notification_dismiss")
+            dismissNotification(state.notifications, text2(payload.notificationId, 180), nowIso());
+          else if (payload.type === "lumiphone:notification_mark_read")
+            markNotificationRead(state.notifications, text2(payload.notificationId, 180));
+          else
+            clearNotifications(state.notifications, payload.mode === "read" ? "read" : "all", nowIso());
+          await saveState(state, userId);
+          await sendState(state, userId, "notifications");
         });
         break;
       }
@@ -2212,10 +2627,11 @@ ${projectPhoneContext(state)}` };
 }
 spindle.frontendCapabilities.declare("message_tag_interceptor");
 spindle.onFrontendMessage(handleFrontend);
-spindle.on("TOOL_INVOCATION", async (payload) => {
+spindle.on("TOOL_INVOCATION", async (payload, eventUserId) => {
   if (payload.toolName !== "phone_action")
     return "";
   try {
+    const userId = eventUserId || text2(payload.userId, 180) || undefined;
     const args = isRecord(payload.args) ? payload.args : {};
     const merged = {
       ...args,
@@ -2224,7 +2640,7 @@ spindle.on("TOOL_INVOCATION", async (payload) => {
       idempotencyKey: text2(payload.requestId, 240),
       messageId: text2(payload.messageId, 180)
     };
-    const result = await applyAction(merged, undefined, "model");
+    const result = await applyAction(merged, userId, "model");
     return JSON.stringify(result);
   } catch (error) {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -2257,6 +2673,16 @@ spindle.on("CHAT_SWITCHED", async (payload, userId) => {
     const chat = spindle.permissions.has("chats") ? await spindle.chats.get(chatId, userId) : null;
     const characterId = text2(chat?.character_id, 180) || "_none";
     await sendState(await loadState(chatId, characterId, userId), userId, "chat_switched");
+  } catch {}
+});
+spindle.on("CHARACTER_MESSAGE_RENDERED", async (payload, userId) => {
+  const chatId = text2(payload?.chatId, 180);
+  if (!chatId)
+    return;
+  try {
+    const chat = spindle.permissions.has("chats") ? await spindle.chats.get(chatId, userId) : null;
+    const characterId = text2(chat?.character_id, 180) || "_none";
+    considerAmbientMessage(chatId, characterId, "turn", userId);
   } catch {}
 });
 spindle.log.info("Pocket backend loaded.");

@@ -1,4 +1,4 @@
-import type { DevicePreferences, PhoneCapabilities, PhoneSettings, SwarmVisualProfile } from '../../types.js'
+import type { DevicePreferences, PhoneCapabilities, PhoneSettings, PocketGenerationInfo, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
 import { button, el, inputValue } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -10,6 +10,7 @@ export interface SettingsViewHost {
   preferences: DevicePreferences
   capabilities: PhoneCapabilities | null
   swarmProfile: SwarmVisualProfile | null
+  generation: PocketGenerationInfo | null
   page(title: string, subtitle: string, action: PageAction): Page
   field(label: string, value?: string, type?: string): Field
   preview(preferences: DevicePreferences, options?: { appearance?: boolean; resize?: boolean; rerender?: boolean }): void
@@ -122,6 +123,66 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
     toggleSetting('Camera scene planner', settings.sceneEnhancer, (value) => { settings.sceneEnhancer = value }),
   )
 
+  const generation = el('section', 'lp-card lp-settings-section')
+  generation.dataset.settingsSection = 'generation'
+  generation.appendChild(el('div', 'lp-eyebrow', 'Pocket Generation'))
+  const generationMode = el('select', 'lp-select')
+  for (const [value, label] of [['roleplay', 'Follow roleplay model'], ['sidecar', 'Pocket sidecar']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = settings.generationMode === value; generationMode.appendChild(option)
+  }
+  const modeLabel = el('label', 'lp-label', 'Generation mode'); modeLabel.appendChild(generationMode)
+  const connectionSelect = el('select', 'lp-select')
+  const none = el('option', '', 'Choose a connection'); none.value = ''; connectionSelect.appendChild(none)
+  for (const entry of host.generation?.connections || []) {
+    const option = el('option', '', `${entry.name} · ${entry.model || entry.provider}`)
+    option.value = entry.id; option.selected = settings.sidecarConnectionId === entry.id; connectionSelect.appendChild(option)
+  }
+  connectionSelect.disabled = settings.generationMode !== 'sidecar'
+  const connectionLabel = el('label', 'lp-label', 'Pocket sidecar connection'); connectionLabel.appendChild(connectionSelect)
+  generationMode.addEventListener('change', () => {
+    settings.generationMode = generationMode.value === 'sidecar' ? 'sidecar' : 'roleplay'
+    connectionSelect.disabled = settings.generationMode !== 'sidecar'
+  })
+  const effective = host.generation?.effective
+  const effectiveCard = el('div', 'lp-generation-effective')
+  effectiveCard.append(
+    el('strong', '', effective ? effective.name : 'No effective connection'),
+    el('span', 'lp-copy', effective ? `${effective.provider} · ${effective.model || 'profile model not set'} · ${host.generation?.mode === 'sidecar' ? 'Pocket sidecar' : 'active roleplay source'}` : 'Configure an LLM connection in Lumiverse.'),
+  )
+  const test = button('Test Pocket generation', 'lp-button')
+  const activeTest = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test')
+  let testResult: HTMLElement | null = null
+  test.disabled = activeTest?.status === 'started' || !host.capabilities?.generation
+  test.addEventListener('click', () => host.send('lumiphone:test_generation', {
+    generationMode: generationMode.value === 'sidecar' ? 'sidecar' : 'roleplay',
+    sidecarConnectionId: connectionSelect.value,
+  }))
+  if (activeTest) {
+    const result = activeTest.status === 'started' ? 'Testing…'
+      : activeTest.status === 'completed' ? `Success · ${activeTest.latencyMs ?? 0} ms · ${activeTest.connectionName} / ${activeTest.model}`
+        : `Failed · ${activeTest.error || 'Unknown provider error'} · ${activeTest.connectionName} / ${activeTest.model}`
+    testResult = el('p', activeTest.status === 'failed' ? 'lp-warning' : 'lp-copy', result)
+  }
+  const ambientLabel = el('label', 'lp-label', 'Ambient messages')
+  const ambient = el('select', 'lp-select')
+  for (const [value, label] of [['off', 'Off (conservative default)'], ['sparse', 'Sparse'], ['normal', 'Normal']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = settings.ambientMessaging === value; ambient.appendChild(option)
+  }
+  ambientLabel.appendChild(ambient)
+  const history = el('div', 'lp-generation-history')
+  for (const run of [...(host.generation?.history || [])].reverse().slice(0, 6)) {
+    const row = el('div', 'lp-generation-run')
+    row.dataset.status = run.status
+    row.append(el('strong', '', run.task), el('span', 'lp-copy', `${run.connectionName || run.mode} · ${run.model || 'unknown model'} · ${run.status}${run.error ? ` · ${run.error}` : ''}`))
+    history.appendChild(row)
+  }
+  generation.append(
+    modeLabel, connectionLabel, effectiveCard,
+    toggleSetting('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => { settings.autoReplyAfterSend = value }),
+    ambientLabel, test, history,
+  )
+  if (testResult) generation.insertBefore(testResult, history)
+
   const visual = el('section', 'lp-card lp-settings-section')
   visual.dataset.settingsSection = 'camera'
   visual.appendChild(el('div', 'lp-eyebrow', 'Camera visual profile'))
@@ -176,11 +237,14 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   const resetPrefs = button('Reset device preferences', 'lp-button lp-button-danger')
   resetPrefs.addEventListener('click', () => { if (window.confirm('Reset theme, size, animations, notification behavior, and camera profile? Roleplay data will remain.')) host.send('lumiphone:reset_preferences') })
   data.append(exportButton, importButton, file, resetCurrent, resetAll, resetPrefs)
-  content.append(appearance, behavior, visual, access, data)
+  content.append(appearance, behavior, generation, visual, access, data)
 
   saveSettings = () => {
     settings.animation = animation.value as PhoneSettings['animation']
     settings.animationDurationMs = Number(duration.value)
+    settings.generationMode = generationMode.value === 'sidecar' ? 'sidecar' : 'roleplay'
+    settings.sidecarConnectionId = connectionSelect.value
+    settings.ambientMessaging = ambient.value === 'sparse' || ambient.value === 'normal' ? ambient.value : 'off'
     settings.manualVisualProfile.positive = positive.value.trim()
     settings.manualVisualProfile.negative = negative.value.trim()
     settings.manualVisualProfile.model = inputValue(model.input)

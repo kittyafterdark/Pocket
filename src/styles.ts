@@ -45,9 +45,11 @@ export const PHONE_STYLES = `
   .lumiphone-dismiss svg { width:14px; height:14px; }
   .lumiphone-time { padding-top: 3px; }
   .lumiphone-island {
+    appearance:none; padding:0 9px; color:inherit; cursor:pointer;
     width: 92px; height: 23px; border-radius: 999px; background: #050506; border: 1px solid rgba(255,255,255,.07);
-    display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 0 9px;
+    display: flex; align-items: center; justify-content: flex-end; gap: 6px;
   }
+  .lumiphone-island[data-unread="true"] { box-shadow:0 0 0 2px color-mix(in srgb,var(--lp-accent) 70%,transparent); }
   .lumiphone-island::before { content:""; width: 31px; height: 5px; border-radius: 99px; background: #111; }
   .lumiphone-island::after { content:""; width: 5px; height: 5px; border-radius: 50%; background: #17203c; box-shadow: inset 0 0 0 1px #253568; }
   .lumiphone-signals { padding-top: 3px; display: flex; justify-content: flex-end; align-items: center; gap: 5px; }
@@ -90,6 +92,7 @@ export const PHONE_STYLES = `
   .lp-home-activity-item strong { font-size:10px; }
   .lp-home-activity-item > span:not(.lp-home-activity-arrow) { opacity:.68; font-size:9px; }
   .lp-home-activity-arrow { font-size:17px; }
+  .lp-home-notifications-all { appearance:none; min-height:25px; border:0; background:transparent; color:#fff; opacity:.78; font:inherit; font-size:9px; cursor:pointer; }
   .lp-icon-messages { background:linear-gradient(145deg,#4ee580,#12aa4b); }
   .lp-icon-contacts { background:linear-gradient(145deg,#63b8ff,#3468d9); }
   .lp-icon-camera { background:linear-gradient(145deg,#74757c,#18191d); }
@@ -139,7 +142,7 @@ export const PHONE_STYLES = `
   .lp-list-separator { height:1px; margin-left:52px; background:var(--lp-border); }
   .lp-unread { min-width:20px; height:20px; padding:0 5px; display:grid; place-items:center; border-radius:99px; background:var(--lp-accent); color:#fff; font-size:9px; font-weight:800; }
 
-  .lp-thread { min-height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:var(--lp-chat-wallpaper),var(--lp-bg); }
+  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:var(--lp-chat-wallpaper),var(--lp-bg); }
   .lp-thread .lp-nav { position:relative; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
@@ -159,6 +162,28 @@ export const PHONE_STYLES = `
   .lp-compose:has(.lp-speaker-select[hidden]) { grid-template-columns:auto minmax(0,1fr) auto; }
   .lp-compose .lp-textarea { min-height:34px; max-height:96px; padding:8px 10px; resize:none; border-radius:17px; }
   .lp-compose .lp-button-icon { border-radius:50%; }
+
+  .lp-operation-progress { padding:10px; display:grid; gap:7px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:12px; background:var(--lp-surface); font-size:10px; }
+  .lp-indeterminate { display:block; height:4px; overflow:hidden; border-radius:99px; background:color-mix(in srgb,var(--lp-accent) 16%,var(--lp-surface-2)); position:relative; }
+  .lp-indeterminate::after { content:""; position:absolute; inset:0 auto 0 -42%; width:42%; border-radius:inherit; background:var(--lp-accent); animation:lp-indeterminate 1.1s ease-in-out infinite; }
+  @keyframes lp-indeterminate { to { left:100%; } }
+
+  .lp-notification-group { display:grid; gap:7px; }
+  .lp-notification-row { padding:0; display:grid; grid-template-columns:minmax(0,1fr) auto; overflow:hidden; }
+  .lp-notification-row[data-read="false"] { border-left:3px solid var(--lp-accent); }
+  .lp-notification-row[data-severity="error"] { border-left-color:#ff6a80; }
+  .lp-notification-open { appearance:none; min-width:0; padding:11px 8px 11px 12px; border:0; display:flex; text-align:left; background:transparent; color:var(--lp-text); font:inherit; cursor:pointer; }
+  .lp-notification-open > span { display:grid; gap:2px; }
+  .lp-notification-open strong,.lp-notification-open span { overflow-wrap:anywhere; }
+  .lp-notification-dismiss { appearance:none; width:38px; border:0; background:transparent; color:var(--lp-muted); font-size:20px; cursor:pointer; }
+  .lp-notification-empty { margin:36px 12px; color:var(--lp-muted); font-size:10px; line-height:1.5; text-align:center; }
+  .lp-floating-notification { appearance:none; position:absolute; z-index:45; top:39px; left:10px; right:10px; min-height:54px; padding:8px 10px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:15px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:8px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-text); backdrop-filter:blur(22px); box-shadow:0 14px 36px rgba(0,0,0,.28); text-align:left; cursor:pointer; }
+  .lp-floating-notification > span:first-child svg { width:20px; height:20px; }
+  .lp-floating-notification > .lp-grow { display:grid; gap:2px; }
+  .lp-floating-notification > .lp-grow span { color:var(--lp-muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-generation-effective,.lp-generation-run { padding:8px 9px; border:1px solid var(--lp-border); border-radius:10px; display:grid; gap:2px; }
+  .lp-generation-history { display:grid; gap:5px; }
+  .lp-generation-run[data-status="failed"] { border-color:color-mix(in srgb,#ff6a80 42%,var(--lp-border)); }
 
   .lp-contact-list,.lp-contact-checklist,.lp-contact-source-section,.lp-contact-import { display:grid; gap:7px; }
   .lp-contact-row { width:100%; display:flex; align-items:center; gap:10px; text-align:left; }
@@ -248,10 +273,11 @@ export const PHONE_STYLES = `
     .lp-app-icon-box { width:58px; height:58px; border-radius:17px; }
     .lp-gallery-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   }
-  .lumiphone-widget-root[data-fullscreen="true"] { width:100dvw; height:100dvh; overflow:hidden; }
+  .lumiphone-widget-root[data-fullscreen="true"] { width:100%; height:var(--lp-visual-height,100%); max-width:none; overflow:hidden; contain:layout paint; }
   .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; grid-template-rows:calc(34px + env(safe-area-inset-top)) minmax(0,1fr) calc(24px + env(safe-area-inset-bottom)); }
   .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-statusbar { height:calc(34px + env(safe-area-inset-top)); padding-top:calc(5px + env(safe-area-inset-top)); }
   .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-homebar { padding-bottom:env(safe-area-inset-bottom); }
+  .lumiphone-widget-root[data-fullscreen="true"] .lp-compose { padding-bottom:max(8px,env(safe-area-inset-bottom)); }
   @media (max-width: 360px) {
     .lp-app-icon-box { width:50px; height:50px; border-radius:15px; }
     .lp-fields { grid-template-columns:1fr; }

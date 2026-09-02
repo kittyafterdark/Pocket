@@ -8,6 +8,7 @@ export type PhoneApp =
   | 'weather'
   | 'calendar'
   | 'trackers'
+  | 'notifications'
   | 'settings'
 
 export type PhoneTheme = 'midnight' | 'porcelain' | 'rose' | 'forest' | 'custom'
@@ -23,6 +24,7 @@ export type PocketRoute =
   | { app: 'gallery'; imageId?: string }
   | { app: 'camera' }
   | { app: 'weather' }
+  | { app: 'notifications' }
   | { app: 'settings'; section?: string }
 
 export interface PhonePalette {
@@ -47,8 +49,49 @@ export interface ManualVisualProfile {
 }
 
 /** Device-wide preferences. These never belong to a chat/character state file. */
+export type PocketGenerationMode = 'roleplay' | 'sidecar'
+export type AmbientMessageFrequency = 'off' | 'sparse' | 'normal'
+
+export interface PocketGenerationRun {
+  requestId: string
+  task: 'npc-contact' | 'scene-sync' | 'message-reply' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
+  mode: PocketGenerationMode
+  connectionId: string
+  connectionName: string
+  provider: string
+  model: string
+  status: 'started' | 'completed' | 'failed'
+  startedAt: string
+  completedAt?: string
+  latencyMs?: number
+  error?: string
+}
+
+export interface PocketConnectionSummary {
+  id: string
+  name: string
+  provider: string
+  model: string
+  isDefault: boolean
+  configured: boolean
+}
+
+export interface PocketGenerationInfo {
+  mode: PocketGenerationMode
+  effective: PocketConnectionSummary | null
+  connections: PocketConnectionSummary[]
+  history: PocketGenerationRun[]
+}
+
+export interface PocketOperationProgress {
+  task: 'npc-contact' | 'scene-sync'
+  requestId: string
+  phase: 'request' | 'generating' | 'parsing' | 'saving' | 'complete' | 'error'
+  message: string
+}
+
 export interface DevicePreferences {
-  version: 1
+  version: 2
   theme: PhoneTheme
   colors: PhonePalette
   handsetScale: number
@@ -59,6 +102,11 @@ export interface DevicePreferences {
   pushNotifications: boolean
   useSwarmProfile: boolean
   sceneEnhancer: boolean
+  generationMode: PocketGenerationMode
+  sidecarConnectionId: string
+  autoReplyAfterSend: boolean
+  ambientMessaging: AmbientMessageFrequency
+  generationHistory: PocketGenerationRun[]
   manualVisualProfile: ManualVisualProfile
 }
 
@@ -92,6 +140,13 @@ export interface PocketContact {
   source: PocketContactSource
   presence: { inScene: boolean; lastSceneAt: string }
   contextPolicy: { pinned: boolean }
+  generationPolicy: { relevant: boolean }
+  messagingPolicy: {
+    remoteEligible: boolean
+    allowAmbientInScene: boolean
+    lastInitiatedMessageAt: string
+    lastInitiatedRoleplayAt: string
+  }
   createdAt: string
   updatedAt: string
 }
@@ -226,6 +281,9 @@ export interface PhoneNotification {
   body: string
   createdAt: string
   read: boolean
+  dismissedAt?: string
+  source?: 'model' | 'automatic' | 'system'
+  severity?: 'info' | 'important' | 'error'
   route?: PocketRoute
   /** Migrated on read; retained only for older backups. */
   action?: string

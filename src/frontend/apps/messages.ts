@@ -18,6 +18,7 @@ export interface MessagesViewHost {
   openContact(contactId: string): void
   send(type: string, payload?: Record<string, unknown>): void
   generateReply(conversationId: string, speakerContactId?: string): void
+  back(): void
 }
 
 function conversationTitle(state: PhoneState, conversation: PocketConversation): string {
@@ -99,7 +100,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const page = el('div', 'lp-thread')
   const nav = el('header', 'lp-nav')
   const back = button('‹ Back', 'lp-nav-action')
-  back.addEventListener('click', () => host.selectConversation(''))
+  back.addEventListener('click', () => host.back())
   const title = el('div', 'lp-nav-title', titleText)
   title.appendChild(el('span', 'lp-nav-subtitle', conversation.kind === 'group' ? `${conversation.participantContactIds.length} contacts` : 'Direct message'))
   const info = button('Info', 'lp-nav-action')
@@ -169,4 +170,3 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   })
   return page
 }
-

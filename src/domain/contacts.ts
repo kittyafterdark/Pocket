@@ -73,6 +73,8 @@ export function normalizePocketContact(value: unknown, context: {
   const source = normalizeSource(value.source, contactId, context.characterId, description)
   const presence = record(value.presence) ? value.presence : {}
   const contextPolicy = record(value.contextPolicy) ? value.contextPolicy : {}
+  const generationPolicy = record(value.generationPolicy) ? value.generationPolicy : {}
+  const messagingPolicy = record(value.messagingPolicy) ? value.messagingPolicy : {}
   const createdAt = timestamp(value.createdAt, context.now)
   return {
     id: contactId,
@@ -87,6 +89,13 @@ export function normalizePocketContact(value: unknown, context: {
       lastSceneAt: timestamp(presence.lastSceneAt, ''),
     },
     contextPolicy: { pinned: flag(contextPolicy.pinned) },
+    generationPolicy: { relevant: flag(generationPolicy.relevant, true) },
+    messagingPolicy: {
+      remoteEligible: flag(messagingPolicy.remoteEligible, true),
+      allowAmbientInScene: flag(messagingPolicy.allowAmbientInScene, false),
+      lastInitiatedMessageAt: timestamp(messagingPolicy.lastInitiatedMessageAt, ''),
+      lastInitiatedRoleplayAt: timestamp(messagingPolicy.lastInitiatedRoleplayAt, ''),
+    },
     createdAt,
     updatedAt: timestamp(value.updatedAt, createdAt),
   }
@@ -153,6 +162,8 @@ function activeContact(context: { characterId: string; characterName: string; no
     source: { kind: 'character', characterId: contactId },
     presence: { inScene: true, lastSceneAt: context.now },
     contextPolicy: { pinned: false },
+    generationPolicy: { relevant: true },
+    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
     createdAt: context.now,
     updatedAt: context.now,
   }
@@ -236,4 +247,3 @@ export function normalizeContactCollections(value: AnyRecord, context: {
   ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId)
   return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy }
 }
-

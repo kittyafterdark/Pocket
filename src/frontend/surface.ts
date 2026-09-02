@@ -36,12 +36,35 @@ export function calculatePhoneSurface(scale: number, viewport = currentViewport(
 /** Only the dedicated fullscreen handset float is resized here. Desktop handsets live in an interactive dock. */
 export function applyMobilePhoneSurface(widget: SpindleFloatWidgetHandle, scale: number): PhoneSurfaceGeometry {
   const geometry = calculatePhoneSurface(scale)
-  widget.setFullscreen(geometry.fullscreen)
+  if (widget.isFullscreen() !== geometry.fullscreen) widget.setFullscreen(geometry.fullscreen)
   if (!geometry.fullscreen) {
     widget.setSize(geometry.width, geometry.height)
     widget.moveTo(geometry.x, geometry.y)
   }
   return geometry
+}
+
+/** Size the handset to the visual viewport without resizing the fullscreen host while an IME is open. */
+export function applyVisualViewportSurface(host: HTMLElement): SurfaceViewport & { offsetLeft: number; offsetTop: number } {
+  const visual = window.visualViewport
+  const width = Math.max(1, Math.round(visual?.width || window.innerWidth))
+  const height = Math.max(1, Math.round(visual?.height || window.innerHeight))
+  const offsetLeft = Math.round(visual?.offsetLeft || 0)
+  const offsetTop = Math.round(visual?.offsetTop || 0)
+  host.style.width = `${width}px`
+  host.style.height = `${height}px`
+  host.style.position = 'absolute'
+  host.style.left = '0'
+  host.style.top = '0'
+  host.style.transform = `translate3d(${offsetLeft}px,${offsetTop}px,0)`
+  host.style.margin = '0'
+  host.style.setProperty('--lp-visual-height', `${height}px`)
+  return { width, height, offsetLeft, offsetTop }
+}
+
+export function clearVisualViewportSurface(host: HTMLElement): void {
+  for (const property of ['width', 'height', 'position', 'left', 'top', 'transform', 'margin']) host.style.removeProperty(property)
+  host.style.removeProperty('--lp-visual-height')
 }
 
 export function desktopDockSize(scale: number, viewport = currentViewport()): number {

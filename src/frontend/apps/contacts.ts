@@ -1,4 +1,4 @@
-import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactSourceOption } from '../../types.js'
+import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactSourceOption, PocketOperationProgress } from '../../types.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
 
@@ -10,6 +10,7 @@ export interface ContactsViewHost {
   selectedView: 'list' | 'detail' | 'config' | 'import' | 'new'
   sources: PocketContactSourceOption[]
   capabilities: PhoneCapabilities | null
+  operations: Map<string, PocketOperationProgress>
   page(title: string, subtitle?: string, action?: PageAction): Page
   empty(title: string, copy: string): HTMLDivElement
   select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'new'): void
@@ -40,16 +41,28 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null): H
   const sceneRow = el('label', 'lp-card lp-row-between'); sceneRow.append(el('span', 'lp-title', 'Here in current scene'), inScene)
   const pinned = el('input'); pinned.type = 'checkbox'; pinned.checked = contact?.contextPolicy.pinned || false
   const pinRow = el('label', 'lp-card lp-row-between'); pinRow.append(el('span', 'lp-title', 'Pin compact brief to model context'), pinned)
+  const relevant = el('input'); relevant.type = 'checkbox'; relevant.checked = contact?.generationPolicy.relevant ?? true
+  const relevantRow = el('label', 'lp-card lp-row-between'); relevantRow.append(el('span', 'lp-title', 'Relevant to Pocket generation'), relevant)
+  const remote = el('input'); remote.type = 'checkbox'; remote.checked = contact?.messagingPolicy.remoteEligible ?? true
+  const remoteRow = el('label', 'lp-card lp-row-between'); remoteRow.append(el('span', 'lp-title', 'Eligible for remote messages'), remote)
+  const ambientHere = el('input'); ambientHere.type = 'checkbox'; ambientHere.checked = contact?.messagingPolicy.allowAmbientInScene || false
+  const ambientHereRow = el('label', 'lp-card lp-row-between'); ambientHereRow.append(el('span', 'lp-title', 'Allow ambient texts while in scene'), ambientHere)
   saveContact = () => {
     if (!name.value.trim()) { host.showError('A contact needs a name.'); return }
     host.send('lumiphone:save_contact', { contact: {
       id: contact?.id, name: name.value.trim(), role: role.value.trim(), description: description.value.trim(), accent: accent.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
       contextPolicy: { pinned: pinned.checked },
+      generationPolicy: { relevant: relevant.checked },
+      messagingPolicy: {
+        remoteEligible: remote.checked, allowAmbientInScene: ambientHere.checked,
+        lastInitiatedMessageAt: contact?.messagingPolicy.lastInitiatedMessageAt || '',
+        lastInitiatedRoleplayAt: contact?.messagingPolicy.lastInitiatedRoleplayAt || '',
+      },
     } })
     host.select(contact?.id || '', 'list')
   }
-  content.append(name, role, description, colorRow, sceneRow, pinRow)
+  content.append(name, role, description, colorRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
   if (contact) {
     const remove = button('Delete contact', 'lp-button lp-button-danger')
     remove.addEventListener('click', () => { host.send('lumiphone:delete', { kind: 'contact', id: contact.id }); host.select('', 'list') })
@@ -64,7 +77,8 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   manual.appendChild(el('div', 'lp-eyebrow', 'Pocket NPC'))
   const description = el('textarea', 'lp-textarea'); description.placeholder = 'Describe someone; Pocket will generate one compact contact profile.'; description.maxLength = 2_000
   const generate = button('Generate NPC')
-  generate.disabled = !host.capabilities?.generation
+  const npcOperation = [...host.operations.values()].find((entry) => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
+  generate.disabled = !host.capabilities?.generation || Boolean(npcOperation)
   generate.addEventListener('click', () => {
     if (!description.value.trim()) { host.showError('Describe the NPC first.'); return }
     host.send('lumiphone:generate_contact', { description: description.value.trim() })
@@ -72,6 +86,12 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   const primitive = button('Create manually', 'lp-button lp-button-quiet')
   primitive.addEventListener('click', () => host.select('', 'new'))
   manual.append(description, generate, primitive)
+  if (npcOperation) {
+    const progress = el('div', 'lp-operation-progress')
+    progress.setAttribute('role', 'status')
+    progress.append(el('span', 'lp-indeterminate'), el('strong', '', npcOperation.message || 'Generating contact…'))
+    manual.appendChild(progress)
+  }
   content.appendChild(manual)
 
   const grouped = new Map<string, PocketContactSourceOption[]>()
@@ -105,7 +125,11 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
     hero.append(el('span', 'lp-eyebrow', source))
     const presence = el('div', 'lp-card')
-    presence.append(el('div', 'lp-title', contact.presence.inScene ? 'Here now' : 'Not in current scene'), el('p', 'lp-copy', `${contact.contextPolicy.pinned ? 'Pinned to model context' : 'Included only while in scene'}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ''}`))
+    presence.append(
+      el('div', 'lp-title', contact.presence.inScene ? 'Here now' : 'Not in current scene'),
+      el('p', 'lp-copy', `${contact.contextPolicy.pinned ? 'Pinned to model context' : 'Included only while in scene'}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ''}`),
+      el('p', 'lp-copy', `${contact.generationPolicy.relevant ? 'Generation-relevant' : 'Excluded from Pocket generation'} · ${contact.messagingPolicy.remoteEligible ? 'Remote-message eligible' : 'No remote messages'}${contact.messagingPolicy.allowAmbientInScene ? ' · ambient override while here' : ''}`),
+    )
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
     content.append(hero, presence, message)
@@ -118,7 +142,8 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   const all = button('All', 'lp-chip'); const here = button('Here', 'lp-chip'); const recent = button('Recent', 'lp-chip')
   all.setAttribute('aria-pressed', 'true'); filters.append(all, here, recent)
   const sync = button('Sync current scene', 'lp-button lp-button-quiet')
-  sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync
+  const sceneOperation = [...host.operations.values()].find((entry) => entry.task === 'scene-sync' && entry.phase !== 'complete' && entry.phase !== 'error')
+  sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation)
   sync.addEventListener('click', () => host.send('lumiphone:sync_scene_contacts'))
   const list = el('div', 'lp-contact-list')
   const renderList = (filter: 'all' | 'here' | 'recent' = 'all') => {
@@ -144,7 +169,13 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   all.addEventListener('click', () => useFilter('all')); here.addEventListener('click', () => useFilter('here')); recent.addEventListener('click', () => useFilter('recent'))
   search.addEventListener('input', () => renderList(active))
   renderList()
-  content.append(search, filters, sync, list)
+  content.append(search, filters, sync)
+  if (sceneOperation) {
+    const progress = el('div', 'lp-operation-progress')
+    progress.setAttribute('role', 'status')
+    progress.append(el('span', 'lp-indeterminate'), el('strong', '', sceneOperation.message || 'Syncing scene…'))
+    content.appendChild(progress)
+  }
+  content.appendChild(list)
   return page
 }
-

@@ -5,6 +5,9 @@ import { calculatePhoneSurface } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
+import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
+import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
+import { PocketRouteHistory } from '../src/frontend/router.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
 describe('device preference schema', () => {
@@ -14,7 +17,7 @@ describe('device preference schema', () => {
       wallpaper: 'url(javascript:alert(1))', chatWallpaper: 'var(--host-secret)',
       animation: 'slide', autoOpenOnModelAction: true,
     })
-    expect(migrated.version).toBe(1)
+    expect(migrated.version).toBe(2)
     expect(migrated.colors.accent).toBe('#abcdef')
     expect(migrated.colors.bezel).toBe('#010203')
     expect(JSON.stringify(migrated)).not.toContain('javascript')
@@ -61,7 +64,8 @@ describe('model context projection', () => {
       contacts: Array.from({ length: 30 }, (_, contactIndex) => ({
         id: `c${contactIndex}`, name: `Contact ${contactIndex}`, role: 'NPC', description: 'x'.repeat(600), avatarUrl: '', accent: '#8b7dff',
         source: { kind: 'npc' as const, origin: 'manual' as const, description: 'x'.repeat(600) },
-        presence: { inScene: true, lastSceneAt: now }, contextPolicy: { pinned: false }, createdAt: now, updatedAt: now,
+        presence: { inScene: true, lastSceneAt: now }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
+        messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' }, createdAt: now, updatedAt: now,
       })),
       conversations: Array.from({ length: 30 }, (_, contactIndex) => ({
         id: `d${contactIndex}`, kind: 'direct' as const, title: `Contact ${contactIndex}`, participantContactIds: [`c${contactIndex}`], unread: 0, createdAt: now, updatedAt: now,
@@ -130,6 +134,56 @@ describe('contacts and conversations', () => {
     }, { characterId: 'alice', characterName: 'Alice', now, makeId: (prefix) => `${prefix}-active` })
     const thread = normalized.conversations.find((entry) => entry.id === 'ghost-thread')
     expect(thread?.messages[0]).toMatchObject({ senderName: 'Mira', senderAccent: '#ef6f9a', text: 'Remember me.' })
+  })
+})
+
+describe('notification provenance and history routing', () => {
+  test('suppresses only an exact visible message or tracker destination', () => {
+    expect(destinationIsVisible(true, { app: 'messages', conversationId: 'a' }, { app: 'messages', conversationId: 'a' })).toBe(true)
+    expect(destinationIsVisible(true, { app: 'messages', conversationId: 'a' }, { app: 'messages', conversationId: 'b' })).toBe(false)
+    expect(destinationIsVisible(false, { app: 'trackers', trackerId: 'trust' }, { app: 'trackers', trackerId: 'trust' })).toBe(false)
+  })
+
+  test('dismiss and clear never mutate the routed domain object', () => {
+    const notifications = [
+      { id: 'n1', app: 'messages' as const, title: 'Alice', body: 'Hi', createdAt: '2026-01-01T00:00:00.000Z', read: false, route: { app: 'messages' as const, conversationId: 'dm' } },
+      { id: 'n2', app: 'trackers' as const, title: 'Trust', body: '50', createdAt: '2026-01-01T00:00:00.000Z', read: true, route: { app: 'trackers' as const, trackerId: 'trust' } },
+    ]
+    const messages = [{ id: 'message', text: 'Hi' }]
+    dismissNotification(notifications, 'n1', '2026-01-02T00:00:00.000Z')
+    clearNotifications(notifications, 'read', '2026-01-02T00:00:00.000Z')
+    expect(activeNotifications(notifications)).toHaveLength(0)
+    expect(messages).toEqual([{ id: 'message', text: 'Hi' }])
+  })
+
+  test('tracks tracker config to detail to root to home', () => {
+    const router = new PocketRouteHistory()
+    router.navigate({ app: 'trackers' })
+    router.navigate({ app: 'trackers', trackerId: 'trust', view: 'detail' })
+    router.navigate({ app: 'trackers', trackerId: 'trust', view: 'config' })
+    expect(router.back()).toEqual({ app: 'trackers', trackerId: 'trust', view: 'detail' })
+    expect(router.back()).toEqual({ app: 'trackers' })
+    expect(router.back()).toEqual({ app: 'home' })
+  })
+})
+
+describe('ambient message eligibility', () => {
+  test('excludes in-scene contacts while retaining off-scene eligible actors', () => {
+    const now = '2026-01-02T00:00:00.000Z'
+    const contacts = normalizeContactCollections({ version: 3, contacts: [
+      { id: 'here', name: 'Here', presence: { inScene: true }, messagingPolicy: { remoteEligible: true } },
+      { id: 'away', name: 'Away', presence: { inScene: false }, messagingPolicy: { remoteEligible: true } },
+    ] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` }).contacts
+    expect(ambientEligibleContacts(contacts).map((entry) => entry.id)).toContain('away')
+    expect(ambientEligibleContacts(contacts).map((entry) => entry.id)).not.toContain('here')
+  })
+
+  test('uses bounded wall/roleplay cooldowns when chronology is valid', () => {
+    const contact = normalizeContactCollections({ version: 3, contacts: [{
+      id: 'away', name: 'Away', presence: { inScene: false },
+      messagingPolicy: { remoteEligible: true, lastInitiatedMessageAt: '2026-01-01T23:50:00.000Z', lastInitiatedRoleplayAt: '2026-01-01T23:00:00.000Z' },
+    }] }, { characterId: 'active', characterName: 'Active', now: '2026-01-02T00:00:00.000Z', makeId: (prefix) => `${prefix}-id` }).contacts.find((entry) => entry.id === 'away')!
+    expect(contactCooldownReady(contact, 'normal', '2026-01-02T00:00:00.000Z', Date.parse('2026-01-02T00:00:00.000Z'))).toBe(false)
   })
 })
 

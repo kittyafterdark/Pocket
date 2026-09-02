@@ -93,6 +93,13 @@ globalThis.spindle = {
     }),
   },
   generate: { quiet: async (request) => { quietRequests.push(request); return { content: 'Meet me by the station.', finish_reason: 'stop' } } },
+  connections: {
+    list: async () => [
+      { id: 'rp-default', name: 'Roleplay Default', provider: 'openai', model: 'test-model', is_default: true, has_api_key: true },
+      { id: 'pocket-sidecar', name: 'Pocket Sidecar', provider: 'openrouter', model: 'sidecar-model', is_default: false, has_api_key: true },
+    ],
+    get: async (id) => id === 'rp-default' ? { id, name: 'Roleplay Default', provider: 'openai', model: 'test-model', is_default: true, has_api_key: true } : null,
+  },
   images: { list: async () => ({ data: [], total: 0 }) },
   imageGen: {
     listConnections: async () => [],
@@ -132,6 +139,61 @@ await frontendHandler({
 const latestState = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state
 assert.equal(latestState.conversations[0].messages.at(-1).text, 'Hello from the phone.')
 assert.equal(latestState.conversations[0].messages.at(-1).sender, 'persona')
+assert.equal(latestState.notifications.length, 0, 'user send must not notify the sender')
+
+const firstConversationId = latestState.conversations[0].id
+await frontendHandler({ type: 'lumiphone:view_state', requestId: 'view-thread', chatId: 'chat-a', characterId: 'char-a', open: true, route: { app: 'messages', conversationId: firstConversationId } }, 'user-a')
+const visibleNotificationsBefore = storage.get('phones/chat-a__char-a.json').notifications.length
+await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'visible-incoming', args: {
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { conversationId: firstConversationId, text: 'Visible incoming', senderContactId: 'char-a' },
+  },
+}, 'user-a')
+let notificationState = storage.get('phones/chat-a__char-a.json')
+assert.equal(notificationState.notifications.length, visibleNotificationsBefore, 'exact visible destination must suppress notification')
+assert.equal(notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.at(-1).status, 'read')
+
+await frontendHandler({ type: 'lumiphone:view_state', requestId: 'view-home', chatId: 'chat-a', characterId: 'char-a', open: true, route: { app: 'home' } }, 'user-a')
+await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'elsewhere-incoming', args: {
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { conversationId: firstConversationId, text: 'Elsewhere incoming', senderContactId: 'char-a' },
+  },
+}, 'user-a')
+notificationState = storage.get('phones/chat-a__char-a.json')
+const elsewhereNotification = notificationState.notifications.find((entry) => entry.body === 'Elsewhere incoming')
+assert.equal(elsewhereNotification.route.conversationId, firstConversationId, 'notification must retain a typed deep link')
+const messageCountBeforeDismiss = notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.length
+await frontendHandler({ type: 'lumiphone:notification_dismiss', requestId: 'dismiss-incoming', chatId: 'chat-a', characterId: 'char-a', notificationId: elsewhereNotification.id }, 'user-a')
+notificationState = storage.get('phones/chat-a__char-a.json')
+assert.equal(notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.length, messageCountBeforeDismiss, 'dismiss must not delete its message')
+assert.ok(notificationState.notifications.find((entry) => entry.id === elsewhereNotification.id).dismissedAt)
+
+await frontendHandler({ type: 'lumiphone:save_preferences', requestId: 'auto-reply-on', chatId: 'chat-a', characterId: 'char-a', preferences: { autoReplyAfterSend: true, generationMode: 'roleplay' } }, 'user-a')
+const autoQuiet = spindle.generate.quiet
+let autoDecisionCalls = 0
+spindle.generate.quiet = async () => { autoDecisionCalls += 1; return { content: '{"reply":false}' } }
+let autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
+const beforeFalseDecision = autoConversation.messages.length
+await frontendHandler({ type: 'lumiphone:action', requestId: 'auto-false-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'No response needed', sender: 'persona' } }, 'user-a')
+await new Promise((resolve) => setTimeout(resolve, 40))
+autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
+assert.equal(autoDecisionCalls, 1, 'false decision must perform only the bounded decision call')
+assert.equal(autoConversation.messages.length, beforeFalseDecision + 1, 'false decision must not generate a reply')
+
+autoDecisionCalls = 0
+spindle.generate.quiet = async () => {
+  autoDecisionCalls += 1
+  return autoDecisionCalls === 1 ? { content: '{"reply":true}' } : { content: 'I can reply now.' }
+}
+const beforeTrueDecision = autoConversation.messages.length
+await frontendHandler({ type: 'lumiphone:action', requestId: 'auto-true-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'Please reply', sender: 'persona' } }, 'user-a')
+await new Promise((resolve) => setTimeout(resolve, 60))
+autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
+assert.equal(autoDecisionCalls, 2, 'true decision must trigger exactly one separate reply generation')
+assert.equal(autoConversation.messages.length, beforeTrueDecision + 2)
+assert.equal(autoConversation.messages.at(-1).text, 'I can reply now.')
+spindle.generate.quiet = autoQuiet
+await frontendHandler({ type: 'lumiphone:save_preferences', requestId: 'auto-reply-off', chatId: 'chat-a', characterId: 'char-a', preferences: { autoReplyAfterSend: false } }, 'user-a')
 
 const intercepted = await interceptorHandler([{ role: 'user', content: 'Continue.' }], {
   chatId: 'chat-a', characterId: 'char-a', userId: 'user-a',
@@ -198,6 +260,9 @@ assert.equal(JSON.parse(allowedTrackerTool).ok, true)
 const writableTracker = storage.get('phones/chat-a__char-a.json').trackers.find((tracker) => tracker.id === 'writable-tracker')
 assert.equal(writableTracker.value, 5)
 assert.equal(writableTracker.history.at(-1).source, 'model')
+const trackerCountBeforeClear = storage.get('phones/chat-a__char-a.json').trackers.length
+await frontendHandler({ type: 'lumiphone:notifications_clear', requestId: 'clear-notifications', chatId: 'chat-a', characterId: 'char-a', mode: 'all' }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, trackerCountBeforeClear, 'clear all must not delete trackers')
 
 await frontendHandler({
   type: 'lumiphone:model_action', requestId: 'tag-action', chatId: 'chat-a', characterId: 'char-a', messageId: 'host-message-a',
@@ -234,6 +299,11 @@ await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'group-in
 assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:error' && message.requestId === 'group-invalid-speaker'))
 
 const sceneQuiet = spindle.generate.quiet
+spindle.generate.quiet = async () => ({ content: '{"name":"Kestrel","role":"Courier","description":"An off-scene courier."}' })
+await frontendHandler({ type: 'lumiphone:generate_contact', requestId: 'npc-progress', chatId: 'chat-a', characterId: 'char-a', description: 'A courier named Kestrel' }, 'user-a')
+const npcPhases = frontendMessages.filter((message) => message.type === 'lumiphone:operation_progress' && message.requestId === 'npc-progress').map((message) => message.phase)
+assert.deepEqual(npcPhases, ['generating', 'parsing', 'saving', 'complete'])
+assert.ok(storage.get('phones/chat-a__char-a.json').contacts.some((contact) => contact.name === 'Kestrel'))
 spindle.generate.quiet = async () => ({ content: '{"contacts":[{"name":"Mira","role":"Flower seller","description":"A bright-eyed merchant at the market."}]}' })
 await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene-one', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
 let mira = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => contact.name === 'Mira')
@@ -243,6 +313,14 @@ await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene
 mira = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => contact.name === 'Mira')
 assert.equal(mira.presence.inScene, false, 'absent scene-derived contacts must be retained and marked away')
 spindle.generate.quiet = sceneQuiet
+
+await frontendHandler({
+  type: 'lumiphone:test_generation', requestId: 'sidecar-test', chatId: 'chat-a', characterId: 'char-a',
+  generationMode: 'sidecar', sidecarConnectionId: 'pocket-sidecar',
+}, 'user-a')
+assert.equal(quietRequests.at(-1).connection_id, 'pocket-sidecar', 'sidecar test must use the selected connection')
+const sidecarRun = storage.get('device/preferences.json').generationHistory.find((entry) => entry.requestId === 'sidecar-test')
+assert.deepEqual({ connectionId: sidecarRun.connectionId, model: sidecarRun.model, status: sidecarRun.status }, { connectionId: 'pocket-sidecar', model: 'sidecar-model', status: 'completed' })
 
 const originalQuiet = spindle.generate.quiet
 spindle.generate.quiet = async () => { throw new Error('planner unavailable') }
