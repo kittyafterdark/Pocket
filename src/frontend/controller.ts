@@ -6,15 +6,23 @@ import type {
   PhoneCapabilities,
   PhoneContact,
   PhoneNote,
+  PocketActivity,
+  PocketRoute,
   PhoneState,
   PhoneTracker,
   SwarmVisualProfile,
 } from '../types.js'
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
-import { applyPhoneSurface, calculatePhoneSurface, currentViewport } from './surface.js'
+import { normalizePocketRoute } from '../domain/navigation.js'
+import { applyMobilePhoneSurface, calculatePhoneSurface, currentViewport, desktopDockSize } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
+import { renderTrackersView } from './apps/trackers.js'
+import { renderMessagesView } from './apps/messages.js'
+import { activityReceipt } from './activity.js'
+import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type {
   SpindleDrawerTabHandle,
+  SpindleDockPanelHandle,
   SpindleFloatWidgetHandle,
   SpindleFrontendContext,
 } from 'lumiverse-spindle-types'
@@ -52,22 +60,9 @@ const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boole
   { app: 'settings', label: 'Settings', icon: 'settings' },
 ]
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', content = ''): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  if (className) node.className = className
-  if (content) node.textContent = content
-  return node
-}
-
 function icon(name: string): HTMLSpanElement {
   const node = el('span')
   node.innerHTML = ICONS[name] || ICONS.home
-  return node
-}
-
-function button(label: string, className = 'lp-button'): HTMLButtonElement {
-  const node = el('button', className, label)
-  node.type = 'button'
   return node
 }
 
@@ -78,41 +73,15 @@ function iconButton(name: string, label: string): HTMLButtonElement {
   return node
 }
 
-function formatTime(value: string | number | Date): string {
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date)
-}
-
-function formatDate(value: string | number | Date, detail = false): string {
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value || '')
-  return new Intl.DateTimeFormat(undefined, detail
-    ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
-    : { month: 'short', day: 'numeric' }).format(date)
-}
-
-function dateTimeLocal(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-}
-
-function inputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement): string {
-  return input.value.trim()
-}
-
-function requestId(prefix = 'req'): string {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`
-}
-
-class LumiPhoneController {
+class PocketController {
   private ctx: SpindleFrontendContext
   private cleanups: Cleanup[] = []
   private drawer: SpindleDrawerTabHandle
+  private dockPanel: SpindleDockPanelHandle | null = null
   private widget: SpindleFloatWidgetHandle | null = null
+  private mobileWidget: SpindleFloatWidgetHandle | null = null
   private widgetRoot: HTMLDivElement | null = null
+  private handsetHost: HTMLDivElement
   private launcher: HTMLButtonElement
   private launcherBadge: HTMLSpanElement
   private shell: HTMLDivElement
@@ -128,9 +97,13 @@ class LumiPhoneController {
   private gallery: GalleryResult = { data: [], total: 0 }
   private galleryScope = 'chat'
   private selectedContactId = ''
+  private selectedMessageId = ''
   private selectedNoteId = ''
   private selectedEventId = ''
   private selectedTrackerId = ''
+  private selectedGalleryImageId = ''
+  private selectedSettingsSection = ''
+  private selectedTrackerView: 'detail' | 'config' = 'detail'
   private cameraPreview = ''
   private cameraProgress = ''
   private cameraBusy = false
@@ -142,26 +115,34 @@ class LumiPhoneController {
   private collapseTimer = 0
   private alertTimer = 0
   private launcherFocus: HTMLElement | null = null
+  private suppressLauncherClick = false
+  private launcherPointer: { x: number; y: number } | null = null
+  private pendingRoute: PocketRoute | null = null
+  private injectedActivities = new Map<string, Element>()
+  private pendingActivities = new Map<string, PocketActivity>()
+  private viewCleanups: Cleanup[] = []
+  private receiptSweepTimer = 0
 
   constructor(ctx: SpindleFrontendContext) {
     this.ctx = ctx
     this.drawer = ctx.ui.registerDrawerTab({
       id: 'lumiphone',
-      title: 'LumiPhone',
-      shortName: 'Phone',
-      headerTitle: 'LumiPhone',
+      title: 'Pocket',
+      shortName: 'Pocket',
+      headerTitle: 'Pocket',
       description: 'Open the character-aware roleplay phone',
       keywords: ['phone', 'messages', 'camera', 'gallery', 'journal', 'calendar', 'timeline', 'tracker'],
       iconSvg: PHONE_ICON,
     })
     this.launcher = el('button', 'lumiphone-launcher')
     this.launcher.type = 'button'
-    this.launcher.title = 'Open LumiPhone'
-    this.launcher.setAttribute('aria-label', 'Open LumiPhone')
+    this.launcher.title = 'Open Pocket'
+    this.launcher.setAttribute('aria-label', 'Open Pocket')
     this.launcher.innerHTML = PHONE_ICON
     this.launcherBadge = el('span', 'lumiphone-badge')
     this.launcherBadge.hidden = true
     this.launcher.appendChild(this.launcherBadge)
+    this.handsetHost = el('div', 'lumiphone-widget-root lumiphone-handset-host')
     this.shell = el('div', 'lumiphone-shell')
     this.shell.hidden = true
     const status = el('div', 'lumiphone-statusbar')
@@ -183,7 +164,17 @@ class LumiPhoneController {
     homeButton.setAttribute('aria-label', 'Home or dismiss phone')
     homebar.appendChild(homeButton)
     this.shell.append(status, this.screen, homebar, this.alert)
-    this.launcher.addEventListener('click', () => this.open())
+    this.launcher.addEventListener('pointerdown', (event) => { this.launcherPointer = { x: event.clientX, y: event.clientY } })
+    this.launcher.addEventListener('pointermove', (event) => {
+      if (!this.launcherPointer) return
+      if (Math.hypot(event.clientX - this.launcherPointer.x, event.clientY - this.launcherPointer.y) > 7) this.suppressLauncherClick = true
+    })
+    this.launcher.addEventListener('pointerup', () => { this.launcherPointer = null })
+    this.launcher.addEventListener('pointercancel', () => { this.launcherPointer = null })
+    this.launcher.addEventListener('click', (event) => {
+      if (this.suppressLauncherClick) { event.preventDefault(); this.suppressLauncherClick = false; return }
+      this.open()
+    })
     homeButton.addEventListener('click', () => {
       if (this.currentApp !== 'home') this.openApp('home')
       else this.close()
@@ -199,10 +190,16 @@ class LumiPhoneController {
     this.destroyed = true
     window.clearTimeout(this.collapseTimer)
     window.clearTimeout(this.alertTimer)
+    window.clearInterval(this.receiptSweepTimer)
     for (const cleanup of this.cleanups.splice(0)) {
       try { cleanup() } catch { /* best effort */ }
     }
     this.widget?.destroy()
+    this.mobileWidget?.destroy()
+    this.dockPanel?.destroy()
+    for (const injected of this.injectedActivities.values()) this.ctx.dom.uninject(injected)
+    this.injectedActivities.clear()
+    for (const cleanup of this.viewCleanups.splice(0)) cleanup()
     this.drawer.destroy()
   }
 
@@ -213,7 +210,7 @@ class LumiPhoneController {
     }))
     const action = this.ctx.ui.registerInputBarAction({
       id: 'open-lumiphone',
-      label: 'Open LumiPhone',
+      label: 'Open Pocket',
       subtitle: 'Open the character-aware roleplay phone',
       iconSvg: PHONE_ICON,
     })
@@ -246,7 +243,11 @@ class LumiPhoneController {
       },
     ))
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
-    this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => this.refresh()))
+    this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
+      this.pendingActivities.clear()
+      this.refresh()
+      window.setTimeout(() => this.sweepActivityReceipts(), 0)
+    }))
     const returned = (event: Event) => {
       const detail = (event as CustomEvent).detail
       if (detail?.extensionId === 'lumiphone') this.refresh()
@@ -290,7 +291,7 @@ class LumiPhoneController {
         height: 58,
         initialPosition: { x: Math.max(12, window.innerWidth - 82), y: Math.max(58, window.innerHeight * .22) },
         snapToEdge: true,
-        tooltip: 'LumiPhone',
+        tooltip: 'Pocket',
         chromeless: true,
         resizable: false,
         aspectLock: 9 / 16,
@@ -298,8 +299,11 @@ class LumiPhoneController {
       } as any)
       this.widgetRoot = el('div', 'lumiphone-widget-root')
       this.widget.root.appendChild(this.widgetRoot)
-      this.widgetRoot.append(this.launcher, this.shell)
-      this.shell.hidden = true
+      this.widgetRoot.append(this.launcher)
+      this.cleanups.push(this.widget.onDragEnd(() => {
+        this.suppressLauncherClick = true
+        window.setTimeout(() => { this.suppressLauncherClick = false }, 180)
+      }))
       this.launcher.hidden = false
       this.renderDrawerLanding()
     } catch {
@@ -314,7 +318,7 @@ class LumiPhoneController {
     const card = el('div', 'lumiphone-drawer-card')
     const logo = el('div', 'lumiphone-drawer-icon')
     logo.innerHTML = PHONE_ICON
-    const title = el('h2', 'lumiphone-drawer-title', 'LumiPhone')
+    const title = el('h2', 'lumiphone-drawer-title', 'Pocket')
     const copy = el('p', 'lumiphone-drawer-copy', 'A persistent phone for each chat and character—messages, photos, journals, roleplay weather, timeline events, and live trackers in one place.')
     const actions = el('div', 'lumiphone-drawer-actions')
     const open = button('Open phone', 'lumiphone-drawer-button')
@@ -328,17 +332,85 @@ class LumiPhoneController {
     this.drawer.root.appendChild(outer)
   }
 
+  private ensureDockPanel(): SpindleDockPanelHandle | null {
+    if (this.dockPanel) return this.dockPanel
+    try {
+      this.dockPanel = this.ctx.ui.requestDockPanel({
+        edge: 'right', title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
+        minSize: 292, maxSize: 620, resizable: false, startCollapsed: true,
+      })
+      this.cleanups.push(this.dockPanel.onVisibilityChange((visible) => {
+        if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
+          this.expanded = false
+          this.shell.hidden = true
+          this.launcher.hidden = false
+        }
+      }))
+      return this.dockPanel
+    } catch {
+      this.dockPanel = null
+      return null
+    }
+  }
+
+  private ensureMobileWidget(): SpindleFloatWidgetHandle | null {
+    if (this.mobileWidget) return this.mobileWidget
+    try {
+      const viewport = currentViewport()
+      this.mobileWidget = this.ctx.ui.createFloatWidget({
+        width: viewport.width, height: viewport.height, initialPosition: { x: 0, y: 0 },
+        fullscreen: true, chromeless: true, snapToEdge: false, persistGeometry: false,
+      } as any)
+      this.mobileWidget.setVisible(false)
+      return this.mobileWidget
+    } catch {
+      this.mobileWidget = null
+      return null
+    }
+  }
+
+  private mountInteractiveSurface(): boolean {
+    const geometry = calculatePhoneSurface(this.preferences.handsetScale)
+    if (geometry.fullscreen) {
+      this.dockPanel?.collapse()
+      const mobile = this.ensureMobileWidget()
+      if (!mobile) return false
+      mobile.root.replaceChildren(this.handsetHost)
+      this.handsetHost.replaceChildren(this.shell)
+      this.handsetHost.dataset.fullscreen = 'true'
+      applyMobilePhoneSurface(mobile, this.preferences.handsetScale)
+      mobile.setVisible(true)
+      return true
+    }
+    if (this.mobileWidget) {
+      this.mobileWidget.setFullscreen(false)
+      this.mobileWidget.setVisible(false)
+    }
+    const panel = this.ensureDockPanel()
+    if (!panel) return false
+    panel.root.replaceChildren(this.handsetHost)
+    this.handsetHost.replaceChildren(this.shell)
+    this.handsetHost.dataset.fullscreen = 'false'
+    const setSize = (panel as SpindleDockPanelHandle & { setSize?: (size: number) => void }).setSize
+    if (typeof setSize === 'function') setSize.call(panel, desktopDockSize(this.preferences.handsetScale))
+    panel.expand()
+    const desktop = calculatePhoneSurface(this.preferences.handsetScale, currentViewport(), false)
+    this.handsetHost.style.width = `${desktop.width}px`
+    this.handsetHost.style.height = `${desktop.height}px`
+    return true
+  }
+
   private mountPhoneInDrawer(): void {
-    if (this.widget) return
+    if (this.widget && (this.dockPanel || this.mobileWidget)) return
     this.drawer.root.replaceChildren()
-    const host = el('div', 'lumiphone-widget-root')
+    const host = this.handsetHost
     const viewport = currentViewport()
     const geometry = calculatePhoneSurface(this.preferences.handsetScale, { width: Math.min(viewport.width, 620), height: Math.max(320, viewport.height - 130) }, false)
     host.style.width = geometry.fullscreen ? '100%' : `${geometry.width}px`
     host.style.height = geometry.fullscreen ? 'calc(100dvh - 110px)' : `${geometry.height}px`
     host.style.aspectRatio = '9 / 16'
     this.drawer.root.appendChild(host)
-    host.appendChild(this.shell)
+    host.replaceChildren(this.shell)
     this.launcher.hidden = true
     this.shell.hidden = false
     this.expanded = true
@@ -349,7 +421,7 @@ class LumiPhoneController {
     try {
       await this.ctx.permissions.request([
         'ui_panels', 'chats', 'characters', 'personas', 'generation', 'tools', 'interceptor', 'images', 'image_gen', 'push_notification',
-      ], { reason: 'LumiPhone uses these permissions for its floating phone, per-chat character state, generated text messages, model actions, gallery, camera, and optional push notifications.' })
+      ], { reason: 'Pocket uses these permissions for its launcher and handset, per-chat character state, generated text messages, model actions, gallery, camera, and optional push notifications.' })
       await this.ensureWidget()
       this.refresh()
     } catch (error) {
@@ -382,7 +454,6 @@ class LumiPhoneController {
   private tickClock(): void {
     const timer = window.setInterval(() => {
       this.clock.textContent = formatTime(new Date())
-      if (this.currentApp === 'trackers' && this.expanded) this.render()
     }, 30_000)
     this.cleanups.push(() => window.clearInterval(timer))
   }
@@ -417,13 +488,21 @@ class LumiPhoneController {
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile
+      for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
       this.applyAppearance()
       this.updateBadge()
       if (payload.open) this.open()
-      if (this.expanded) this.render()
+      const pending = this.pendingRoute
+      this.pendingRoute = null
+      if (pending) this.openPocket(pending)
+      else if (this.expanded) this.render()
       if (this.unreadCount() > previousUnread && !this.expanded) this.launcher.animate([
         { transform: 'scale(1)' }, { transform: 'scale(1.13) rotate(-4deg)' }, { transform: 'scale(1)' },
       ], { duration: 420, easing: 'ease-out' })
+      return
+    }
+    if (payload.type === 'lumiphone:activity' && payload.activity) {
+      this.queueActivityReceipt(payload.activity as PocketActivity)
       return
     }
     if (payload.type === 'lumiphone:capabilities') {
@@ -488,7 +567,7 @@ class LumiPhoneController {
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `lumiphone-${this.state?.chatId || 'backup'}.json`
+      anchor.download = `pocket-${this.state?.chatId || 'backup'}.json`
       anchor.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 0)
       return
@@ -496,7 +575,7 @@ class LumiPhoneController {
     if (payload.type === 'lumiphone:error') {
       if (payload.requestId === this.cameraRequestId) this.cameraBusy = false
       this.messageRequests.delete(payload.requestId)
-      this.showError(payload.error || 'LumiPhone could not complete that action.')
+      this.showError(payload.error || 'Pocket could not complete that action.')
       if (this.expanded) this.render()
     }
   }
@@ -538,6 +617,12 @@ class LumiPhoneController {
     this.expanded = true
     window.clearTimeout(this.collapseTimer)
     this.launcherFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (!this.mountInteractiveSurface()) {
+      this.expanded = false
+      this.drawer.activate()
+      this.mountPhoneInDrawer()
+      return
+    }
     this.launcher.hidden = true
     this.shell.hidden = false
     this.resizeExpanded()
@@ -550,34 +635,99 @@ class LumiPhoneController {
   }
 
   private close(): void {
-    if (!this.widget) return
+    if (!this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
-    if (this.widget.isFullscreen()) this.widget.setFullscreen(false)
     this.shell.hidden = true
     this.launcher.hidden = false
+    this.dockPanel?.collapse()
+    if (this.mobileWidget) {
+      this.mobileWidget.setFullscreen(false)
+      this.mobileWidget.setVisible(false)
+    }
     window.clearTimeout(this.collapseTimer)
     this.collapseTimer = window.setTimeout(() => {
-      if (!this.expanded && this.widget) this.widget.setSize(58, 58)
       this.launcherFocus?.focus({ preventScroll: true })
       this.launcherFocus = null
     }, this.preferences.reducedMotion || this.preferences.animation === 'none' ? 0 : this.preferences.animationDurationMs)
   }
 
   private resizeExpanded(): void {
-    if (!this.widget) return
-    const geometry = applyPhoneSurface(this.widget, this.preferences.handsetScale)
-    this.widgetRoot?.setAttribute('data-fullscreen', String(geometry.fullscreen))
+    if (!this.expanded) return
+    this.mountInteractiveSurface()
   }
 
   private openApp(app: PhoneApp): void {
-    this.currentApp = app
-    if (app === 'gallery') this.requestGallery(this.galleryScope)
-    if (app === 'messages') this.send('lumiphone:mark_read', { app: 'messages' })
-    else if (app !== 'home') this.send('lumiphone:mark_read', { app })
+    this.openPocket({ app } as PocketRoute)
+  }
+
+  private openPocket(routeInput: PocketRoute): void {
+    const route = normalizePocketRoute(routeInput)
+    if (!this.state) {
+      this.pendingRoute = route
+      this.open()
+      this.refresh()
+      return
+    }
+    if (!this.expanded) this.open()
+    this.currentApp = route.app
+    if (route.app === 'messages') {
+      const contact = route.contactId ? this.state.contacts.find((entry) => entry.id === route.contactId) : null
+      this.selectedContactId = contact?.id || ''
+      this.selectedMessageId = contact && route.messageId && contact.messages.some((entry) => entry.id === route.messageId) ? route.messageId : ''
+      this.send('lumiphone:mark_read', contact ? { app: 'messages', contactId: contact.id } : { app: 'messages' })
+    } else if (route.app === 'trackers') {
+      const tracker = route.trackerId ? this.state.trackers.find((entry) => entry.id === route.trackerId) : null
+      this.selectedTrackerId = tracker?.id || ''
+      this.selectedTrackerView = route.view || 'detail'
+      this.send('lumiphone:mark_read', { app: 'trackers' })
+    } else if (route.app === 'calendar') {
+      this.selectedEventId = route.eventId && this.state.events.some((entry) => entry.id === route.eventId) ? route.eventId : ''
+      this.send('lumiphone:mark_read', { app: 'calendar' })
+    } else if (route.app === 'notes') {
+      this.selectedNoteId = route.noteId && this.state.notes.some((entry) => entry.id === route.noteId) ? route.noteId : ''
+      this.send('lumiphone:mark_read', { app: 'notes' })
+    } else if (route.app === 'gallery') {
+      this.selectedGalleryImageId = route.imageId || ''
+      this.requestGallery(this.galleryScope)
+      this.send('lumiphone:mark_read', { app: 'gallery' })
+    } else if (route.app === 'settings') {
+      this.selectedSettingsSection = route.section || ''
+      this.send('lumiphone:mark_read', { app: 'settings' })
+    } else if (route.app !== 'home') {
+      this.send('lumiphone:mark_read', { app: route.app })
+    }
     this.render()
   }
 
+  private queueActivityReceipt(activity: PocketActivity): void {
+    const active = this.activeContext()
+    if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) return
+    if (this.injectedActivities.has(activity.id) || !activity.source?.messageId) return
+    this.pendingActivities.set(activity.id, activity)
+    this.sweepActivityReceipts()
+  }
+
+  private sweepActivityReceipts(): void {
+    for (const [activityId, activity] of this.pendingActivities) {
+      const injected = activityReceipt(this.ctx, activity, (route) => this.openPocket(route))
+      if (!injected) continue
+      this.pendingActivities.delete(activityId)
+      this.injectedActivities.set(activityId, injected)
+    }
+    if (this.pendingActivities.size && !this.receiptSweepTimer) {
+      this.receiptSweepTimer = window.setInterval(() => {
+        if (!this.pendingActivities.size) {
+          window.clearInterval(this.receiptSweepTimer)
+          this.receiptSweepTimer = 0
+          return
+        }
+        this.sweepActivityReceipts()
+      }, 1_500)
+    }
+  }
+
   private render(): void {
+    for (const cleanup of this.viewCleanups.splice(0)) cleanup()
     if (!this.state) {
       this.screen.replaceChildren(this.loadingView())
       return
@@ -604,7 +754,7 @@ class LumiPhoneController {
   private loadingView(): HTMLElement {
     const node = el('div', 'lp-page lp-empty')
     const inner = el('div')
-    inner.innerHTML = `${PHONE_ICON}<p>Waking LumiPhone…</p>`
+    inner.innerHTML = `${PHONE_ICON}<p>Waking Pocket…</p>`
     node.appendChild(inner)
     return node
   }
@@ -638,9 +788,19 @@ class LumiPhoneController {
     head.append(left, weather)
     const grid = el('div', 'lp-app-grid')
     for (const meta of APP_META.filter((entry) => !entry.dock)) grid.appendChild(this.appIcon(meta))
+    const activity = el('div', 'lp-home-activity')
+    for (const item of [...(state.activities || [])].reverse().slice(0, 2)) {
+      const receipt = button('', 'lp-home-activity-item')
+      receipt.append(el('strong', '', item.title), el('span', '', item.summary || item.kind), el('span', 'lp-home-activity-arrow', '›'))
+      receipt.setAttribute('aria-label', `Open ${item.title}`)
+      receipt.addEventListener('click', () => this.openPocket(item.route))
+      activity.appendChild(receipt)
+    }
     const dock = el('div', 'lp-home-dock')
     for (const meta of APP_META.filter((entry) => entry.dock)) dock.appendChild(this.appIcon(meta))
-    home.append(head, grid, dock)
+    home.append(head, grid)
+    if (activity.childElementCount) home.appendChild(activity)
+    home.appendChild(dock)
     return home
   }
 
@@ -659,85 +819,21 @@ class LumiPhoneController {
   }
 
   private renderMessages(): HTMLDivElement {
-    const state = this.state!
-    const contact = state.contacts.find((item) => item.id === this.selectedContactId)
-    if (contact) return this.renderThread(contact)
-    const { page, content } = this.page('Messages', `${state.contacts.length} conversation${state.contacts.length === 1 ? '' : 's'}`)
-    for (const item of state.contacts) {
-      const card = el('div', 'lp-card')
-      card.dataset.clickable = 'true'
-      const row = el('div', 'lp-row')
-      const avatar = el('div', 'lp-avatar', item.name.slice(0, 1).toUpperCase())
-      if (item.avatarUrl) {
-        const image = el('img')
-        image.src = item.avatarUrl
-        image.alt = ''
-        avatar.replaceChildren(image)
-      }
-      const latest = item.messages.at(-1)
-      const copy = el('div', 'lp-grow')
-      const nameRow = el('div', 'lp-row-between')
-      nameRow.append(el('h3', 'lp-title', item.name), el('span', 'lp-copy', latest ? formatTime(latest.createdAt) : ''))
-      copy.append(nameRow, el('p', 'lp-copy', latest?.text || item.subtitle || 'Start a conversation'))
-      row.append(avatar, copy)
-      if (item.unread) row.appendChild(el('span', 'lp-unread', String(item.unread)))
-      card.appendChild(row)
-      card.addEventListener('click', () => {
-        this.selectedContactId = item.id
-        this.send('lumiphone:mark_read', { app: 'messages', contactId: item.id })
+    return renderMessagesView({
+      state: this.state!, selectedContactId: this.selectedContactId,
+      selectedMessageId: this.selectedMessageId,
+      generationAvailable: Boolean(this.caps?.generation), busyContacts: new Set(this.messageRequests.values()),
+      page: (title, subtitle) => this.page(title, subtitle),
+      empty: (title, copy) => this.empty('messages', title, copy), iconButton,
+      selectContact: (contactId) => {
+        this.selectedContactId = contactId
+        this.selectedMessageId = ''
+        if (contactId) this.send('lumiphone:mark_read', { app: 'messages', contactId })
         this.render()
-      })
-      content.appendChild(card)
-    }
-    if (!state.contacts.length) content.appendChild(this.empty('messages', 'No conversations yet', 'A model phone action or your first message will create one.'))
-    return page
-  }
-
-  private renderThread(contact: PhoneContact): HTMLDivElement {
-    const page = el('div', 'lp-thread')
-    const nav = el('header', 'lp-nav')
-    const back = button('‹ Back', 'lp-nav-action')
-    back.addEventListener('click', () => { this.selectedContactId = ''; this.render() })
-    const title = el('div', 'lp-nav-title', contact.name)
-    title.appendChild(el('span', 'lp-nav-subtitle', contact.subtitle || 'Messages'))
-    const generate = button('Reply ✦', 'lp-nav-action')
-    const replyBusy = [...this.messageRequests.values()].includes(contact.id)
-    generate.textContent = replyBusy ? 'Writing…' : 'Reply ✦'
-    generate.disabled = !this.caps?.generation || replyBusy
-    generate.addEventListener('click', () => this.generateReply(contact.id))
-    nav.append(back, title, generate)
-    const bubbles = el('div', 'lp-bubbles')
-    for (const message of contact.messages) {
-      const bubble = el('div', 'lp-bubble', message.text)
-      bubble.dataset.sender = message.sender
-      bubble.appendChild(el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
-      bubbles.appendChild(bubble)
-    }
-    if (replyBusy) {
-      const pending = el('div', 'lp-bubble lp-bubble-pending', 'Writing…')
-      pending.dataset.sender = 'character'
-      bubbles.appendChild(pending)
-    }
-    if (!contact.messages.length) bubbles.appendChild(this.empty('messages', 'Say hello', `This conversation belongs to ${this.state!.characterName} in this chat.`))
-    const compose = el('form', 'lp-compose')
-    const sparkle = iconButton('sparkle', 'Generate character reply')
-    sparkle.disabled = !this.caps?.generation || replyBusy
-    sparkle.addEventListener('click', () => this.generateReply(contact.id))
-    const textarea = el('textarea', 'lp-textarea')
-    textarea.rows = 1
-    textarea.placeholder = 'Message…'
-    const submit = iconButton('send', 'Send message')
-    compose.append(sparkle, textarea, submit)
-    compose.addEventListener('submit', (event) => {
-      event.preventDefault()
-      const message = inputValue(textarea)
-      if (!message) return
-      this.send('lumiphone:action', { action: 'message', payload: { contactId: contact.id, contactName: contact.name, text: message, sender: 'user' } })
-      textarea.value = ''
+      },
+      send: (type, payload) => { this.send(type, payload) },
+      generateReply: (contactId) => this.generateReply(contactId),
     })
-    page.append(nav, bubbles, compose)
-    requestAnimationFrame(() => { bubbles.scrollTop = bubbles.scrollHeight })
-    return page
   }
 
   private generateReply(contactId: string): void {
@@ -756,7 +852,7 @@ class LumiPhoneController {
   private renderGallery(): HTMLDivElement {
     const { page, content } = this.page('Gallery', `${this.gallery.total} assets`, 'Refresh', () => this.requestGallery(this.galleryScope))
     const chips = el('div', 'lp-chipbar')
-    for (const [scope, label] of [['chat', 'This chat'], ['character', 'Character'], ['phone', 'LumiPhone'], ['all', 'All']] as const) {
+    for (const [scope, label] of [['chat', 'This chat'], ['character', 'Character'], ['phone', 'Pocket'], ['all', 'All']] as const) {
       const chip = button(label, 'lp-chip')
       chip.setAttribute('aria-pressed', String(this.galleryScope === scope))
       chip.addEventListener('click', () => this.requestGallery(scope))
@@ -771,6 +867,8 @@ class LumiPhoneController {
     for (const item of this.gallery.data) {
       const tile = el('button', 'lp-gallery-item')
       tile.type = 'button'
+      tile.dataset.selected = String(item.id === this.selectedGalleryImageId)
+      if (item.id === this.selectedGalleryImageId) tile.setAttribute('aria-current', 'true')
       const image = el('img')
       image.loading = 'lazy'
       image.src = item.url
@@ -789,10 +887,10 @@ class LumiPhoneController {
   }
 
   private inspectImage(url: string, title: string): void {
-    const modal = this.ctx.ui.showModal({ title: title || 'LumiPhone photo', size: 'lg' } as any)
+    const modal = this.ctx.ui.showModal({ title: title || 'Pocket photo', size: 'lg' } as any)
     const image = el('img')
     image.src = url
-    image.alt = title || 'LumiPhone photo'
+    image.alt = title || 'Pocket photo'
     image.style.cssText = 'display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808'
     modal.root.appendChild(image)
   }
@@ -1041,81 +1139,21 @@ class LumiPhoneController {
     return page
   }
 
-  private materializedTracker(tracker: PhoneTracker): PhoneTracker {
-    if (!tracker.ratePerHour) return tracker
-    const elapsed = (Date.now() - Date.parse(tracker.lastUpdated)) / 3_600_000
-    if (!Number.isFinite(elapsed) || elapsed <= 0) return tracker
-    return { ...tracker, value: Math.max(tracker.min, Math.min(tracker.max, tracker.value + elapsed * tracker.ratePerHour)) }
-  }
-
   private renderTrackers(): HTMLDivElement {
-    const trackers = this.state!.trackers.map((item) => this.materializedTracker(item))
-    const selected = trackers.find((item) => item.id === this.selectedTrackerId)
-    if (this.selectedTrackerId === '__new__' || selected) return this.renderTrackerEditor(selected || null)
-    const { page, content } = this.page('Trackers', 'Live roleplay state', 'Add', () => { this.selectedTrackerId = '__new__'; this.render() })
-    for (const tracker of trackers) {
-      const card = el('div', 'lp-card')
-      card.dataset.clickable = 'true'
-      const row = el('div', 'lp-row-between')
-      const left = el('div')
-      left.append(el('div', 'lp-eyebrow', tracker.visibleToModel ? 'Visible to character' : 'Private'), el('h3', 'lp-title', tracker.label))
-      row.append(left, el('div', 'lp-tracker-value', `${Number(tracker.value.toFixed(2))}${tracker.unit}`))
-      const denominator = Math.max(.00001, tracker.max - tracker.min)
-      const percent = Math.max(0, Math.min(100, ((tracker.value - tracker.min) / denominator) * 100))
-      const progress = el('div', 'lp-progress')
-      const fill = el('span')
-      fill.style.setProperty('--progress', `${percent}%`)
-      fill.style.setProperty('--tracker-color', tracker.color)
-      progress.appendChild(fill)
-      card.append(row, progress)
-      if (tracker.ratePerHour) card.appendChild(el('div', 'lp-rate', `${tracker.ratePerHour > 0 ? '+' : ''}${tracker.ratePerHour}${tracker.unit} per in-app hour · updates automatically`))
-      card.addEventListener('click', () => { this.selectedTrackerId = tracker.id; this.render() })
-      content.appendChild(card)
-    }
-    if (!trackers.length) content.appendChild(this.empty('trackers', 'No live trackers', 'Track affinity, health, money, time, quest progress, or any self-updating value.'))
-    return page
-  }
-
-  private renderTrackerEditor(tracker: PhoneTracker | null): HTMLDivElement {
-    const { page, content } = this.page(tracker ? 'Edit Tracker' : 'New Tracker', 'Live roleplay state', 'Save')
-    const label = this.field('Label', tracker?.label || '')
-    const value = this.field('Value', String(tracker?.value ?? 0), 'number')
-    const unit = this.field('Unit', tracker?.unit || '')
-    const rate = this.field('Change per hour', String(tracker?.ratePerHour ?? 0), 'number')
-    const min = this.field('Minimum', String(tracker?.min ?? 0), 'number')
-    const max = this.field('Maximum', String(tracker?.max ?? 100), 'number')
-    const color = el('input', 'lp-color-input')
-    color.type = 'color'
-    color.value = /^#[0-9a-f]{6}$/i.test(tracker?.color || '') ? tracker!.color : this.preferences.colors.accent
-    const colorRow = el('label', 'lp-card lp-row-between')
-    colorRow.append(el('span', 'lp-title', 'Tracker color'), color)
-    const visible = el('button', 'lp-toggle')
-    visible.type = 'button'
-    visible.setAttribute('aria-pressed', String(tracker?.visibleToModel !== false))
-    visible.addEventListener('click', () => visible.setAttribute('aria-pressed', String(visible.getAttribute('aria-pressed') !== 'true')))
-    const visibleRow = el('div', 'lp-card lp-row-between')
-    visibleRow.append(el('div', '', 'Visible to the model'), visible)
-    content.append(label.label, value.label, unit.label, rate.label, min.label, max.label, colorRow, visibleRow)
-    const save = page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!
-    save.addEventListener('click', () => {
-      this.send('lumiphone:action', { action: 'tracker', payload: {
-        id: tracker?.id, label: inputValue(label.input), value: Number(value.input.value), unit: inputValue(unit.input),
-        ratePerHour: Number(rate.input.value), min: Number(min.input.value), max: Number(max.input.value), color: color.value,
-        visibleToModel: visible.getAttribute('aria-pressed') === 'true',
-      } })
-      this.selectedTrackerId = ''
-      this.render()
+    return renderTrackersView({
+      state: this.state!, selectedId: this.selectedTrackerId, selectedView: this.selectedTrackerView,
+      accent: this.preferences.colors.accent,
+      page: (title, subtitle, rightLabel, onRight) => this.page(title, subtitle, rightLabel, onRight),
+      field: (label, value, type) => this.field(label, value, type),
+      send: (type, payload) => { this.send(type, payload) },
+      select: (id, view = 'detail') => { this.selectedTrackerId = id; this.selectedTrackerView = view; this.render() },
+      back: () => { this.selectedTrackerId = ''; this.selectedTrackerView = 'detail'; this.render() },
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
     })
-    if (tracker) {
-      const remove = button('Delete tracker', 'lp-button lp-button-danger')
-      remove.addEventListener('click', () => { this.send('lumiphone:delete', { kind: 'tracker', id: tracker.id }); this.selectedTrackerId = ''; this.render() })
-      content.appendChild(remove)
-    }
-    return page
   }
 
   private renderSettings(): HTMLDivElement {
-    return renderSettingsView({
+    const view = renderSettingsView({
       preferences: this.preferences,
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
@@ -1132,6 +1170,10 @@ class LumiPhoneController {
       showError: (message) => this.showError(message),
       openHome: () => this.openApp('home'),
     })
+    if (this.selectedSettingsSection) requestAnimationFrame(() => {
+      view.querySelector<HTMLElement>(`[data-settings-section="${CSS.escape(this.selectedSettingsSection)}"]`)?.scrollIntoView({ block: 'start' })
+    })
+    return view
   }
   private field(labelText: string, value = '', type = 'text'): { label: HTMLLabelElement; input: HTMLInputElement } {
     const label = el('label', 'lp-label', labelText)
@@ -1159,7 +1201,7 @@ class LumiPhoneController {
 }
 
 export function setupPhone(ctx: SpindleFrontendContext): Cleanup {
-  const controller = new LumiPhoneController(ctx)
+  const controller = new PocketController(ctx)
   ctx.ready()
   return () => controller.destroy()
 }

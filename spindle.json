@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0",
-  "name": "LumiPhone",
+  "version": "0.2.0",
+  "name": "Pocket",
   "identifier": "lumiphone",
   "author": "kittyafterdark",
-  "github": "https://github.com/kittyafterdark/LumiPhone",
-  "homepage": "https://github.com/kittyafterdark/LumiPhone",
-  "description": "A character-aware roleplay phone with messages, camera, gallery, notes, weather, calendar timelines, trackers, model tools, and Swarm Studio visual-profile sync.",
+  "github": "https://github.com/kittyafterdark/Pocket",
+  "homepage": "https://github.com/kittyafterdark/Pocket",
+  "description": "A character-aware roleplay phone with messages, camera, gallery, notes, weather, calendar timelines, typed trackers, model tools, and Swarm Studio visual-profile sync.",
   "permissions": [
     "generation",
     "interceptor",

@@ -1,4 +1,5 @@
 import type { PhoneState } from '../types.js'
+import { trackerBand } from './trackers.js'
 
 export const MODEL_CONTEXT_BUDGET = 5_600
 
@@ -19,7 +20,10 @@ function serializeWithinBudget(value: Record<string, unknown>, budget = MODEL_CO
       serialized = JSON.stringify(compact)
     }
   }
-  return serialized.length <= budget ? serialized : serialized.slice(0, budget)
+  if (serialized.length <= budget) return serialized
+  const fallback = JSON.stringify({ roleplayNow: String(value.roleplayNow || '').slice(0, Math.max(0, budget - 24)), truncated: true })
+  if (fallback.length <= budget) return fallback
+  return '{}'
 }
 
 export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BUDGET): string {
@@ -33,7 +37,12 @@ export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BU
   const trackers = state.trackers
     .filter((tracker) => tracker.visibleToModel)
     .slice(0, 12)
-    .map((tracker) => `${tracker.label.slice(0, 120)}: ${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`)
+    .map((tracker) => {
+      const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || 'unassigned'}`
+      const value = tracker.kind === 'state' ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`
+      const band = tracker.kind === 'state' ? '' : trackerBand(tracker)?.label || ''
+      return `${tracker.label.slice(0, 120)} [${target}] = ${value}${band ? ` (${band})` : ''}`
+    })
   const upcoming = state.events
     .filter((event) => !event.completed)
     .sort((a, b) => safeTime(a.start) - safeTime(b.start))

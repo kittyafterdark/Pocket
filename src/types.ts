@@ -12,6 +12,17 @@ export type PhoneApp =
 export type PhoneTheme = 'midnight' | 'porcelain' | 'rose' | 'forest' | 'custom'
 export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 
+export type PocketRoute =
+  | { app: 'home' }
+  | { app: 'messages'; contactId?: string; messageId?: string }
+  | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
+  | { app: 'calendar'; eventId?: string }
+  | { app: 'notes'; noteId?: string }
+  | { app: 'gallery'; imageId?: string }
+  | { app: 'camera' }
+  | { app: 'weather' }
+  | { app: 'settings'; section?: string }
+
 export interface PhonePalette {
   accent: string
   bezel: string
@@ -105,18 +116,70 @@ export interface RoleplayWeather {
   updatedAt: string
 }
 
-export interface PhoneTracker {
+export type TrackerKind = 'meter' | 'counter' | 'state' | 'timer'
+export type TrackerClock = 'real' | 'roleplay'
+export type TrackerUpdateMode = 'manual' | 'model' | 'automatic'
+export type TrackerOperation = 'set' | 'add' | 'subtract' | 'reset' | 'set_state'
+export type TrackerPresentation = 'relationship' | 'meter' | 'vitals' | 'segmented' | 'counter' | 'timer' | 'state' | 'compact'
+
+export interface TrackerTarget {
+  type: 'character' | 'persona' | 'relationship' | 'scene' | 'world' | 'custom'
   id: string
   label: string
+}
+
+export interface TrackerBand {
+  min: number
+  max: number
+  label: string
+  color: string
+}
+
+export interface TrackerHistoryEntry {
+  id: string
+  previous: number | string
+  next: number | string
+  operation: TrackerOperation | 'automatic'
+  amount?: number
+  reason: string
+  source: 'user' | 'model' | 'tag' | 'automatic' | 'migration'
+  createdAt: string
+  roleplayAt?: string
+}
+
+interface TrackerBase {
+  id: string
+  key: string
+  label: string
+  kind: TrackerKind
   value: number
+  initialValue: number
   min: number
   max: number
   unit: string
   color: string
+  target: TrackerTarget
+  updateMode: TrackerUpdateMode
+  clock: TrackerClock
+  allowModelWrite: boolean
+  presentation: TrackerPresentation
+  bands: TrackerBand[]
+  history: TrackerHistoryEntry[]
   ratePerHour: number
   lastUpdated: string
+  lastRoleplayAt: string
+  pausedReason: string
   visibleToModel: boolean
+  createdAt: string
+  updatedAt: string
 }
+
+export interface MeterTracker extends TrackerBase { kind: 'meter' }
+export interface CounterTracker extends TrackerBase { kind: 'counter'; step: number }
+export interface TimerTracker extends TrackerBase { kind: 'timer'; direction: 'up' | 'down' }
+export interface StateTracker extends TrackerBase { kind: 'state'; state: string; initialState: string; states: string[] }
+
+export type PhoneTracker = MeterTracker | CounterTracker | TimerTracker | StateTracker
 
 export interface PhoneNotification {
   id: string
@@ -125,11 +188,39 @@ export interface PhoneNotification {
   body: string
   createdAt: string
   read: boolean
+  route?: PocketRoute
+  /** Migrated on read; retained only for older backups. */
   action?: string
 }
 
+export interface PocketActivity {
+  id: string
+  kind: 'message' | 'tracker-change' | 'timeline' | 'note' | 'image' | 'weather' | 'system'
+  title: string
+  summary?: string
+  route: PocketRoute
+  createdAt: string
+  scope: { chatId: string; characterId: string }
+  source?: {
+    commandId?: string
+    messageId?: string
+    trackerId?: string
+    contactId?: string
+    eventId?: string
+    noteId?: string
+    imageId?: string
+  }
+}
+
+export interface ProcessedPocketCommand {
+  id: string
+  semanticKey: string
+  createdAt: string
+  activityId?: string
+}
+
 export interface PhoneState {
-  version: 1
+  version: 2
   chatId: string
   characterId: string
   characterName: string
@@ -140,7 +231,8 @@ export interface PhoneState {
   weather: RoleplayWeather
   trackers: PhoneTracker[]
   notifications: PhoneNotification[]
-  processedCommands: Array<{ id: string; semanticKey: string; createdAt: string }>
+  activities: PocketActivity[]
+  processedCommands: ProcessedPocketCommand[]
   updatedAt: string
 }
 

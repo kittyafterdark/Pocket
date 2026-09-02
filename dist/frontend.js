@@ -140,6 +140,40 @@ function wallpaperCss(primary, secondary) {
   return `linear-gradient(145deg, ${safeColor(primary, "#171327")} 0%, ${safeColor(secondary, "#123a4a")} 100%)`;
 }
 
+// src/domain/navigation.ts
+var APPS = new Set(["home", "messages", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
+function shortId(value) {
+  if (typeof value !== "string")
+    return;
+  const clean = value.trim().slice(0, 180);
+  return clean || undefined;
+}
+function normalizePocketRoute(value, fallback = { app: "home" }) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return fallback;
+  const raw = value;
+  const app = typeof raw.app === "string" && APPS.has(raw.app) ? raw.app : fallback.app;
+  if (app === "messages")
+    return { app, contactId: shortId(raw.contactId), messageId: shortId(raw.messageId) };
+  if (app === "trackers")
+    return {
+      app,
+      trackerId: shortId(raw.trackerId),
+      view: raw.view === "config" ? "config" : raw.view === "detail" ? "detail" : undefined
+    };
+  if (app === "calendar")
+    return { app, eventId: shortId(raw.eventId) };
+  if (app === "notes")
+    return { app, noteId: shortId(raw.noteId) };
+  if (app === "gallery")
+    return { app, imageId: shortId(raw.imageId) };
+  if (app === "settings")
+    return { app, section: shortId(raw.section) };
+  if (app === "camera" || app === "weather" || app === "home")
+    return { app };
+  return fallback;
+}
+
 // src/frontend/surface.ts
 var PHONE_ASPECT = 9 / 16;
 var PHONE_BASE_WIDTH = 360;
@@ -169,7 +203,7 @@ function calculatePhoneSurface(scale, viewport = currentViewport(), allowFullscr
     y: Math.max(12, Math.floor((viewport.height - height) / 2))
   };
 }
-function applyPhoneSurface(widget, scale) {
+function applyMobilePhoneSurface(widget, scale) {
   const geometry = calculatePhoneSurface(scale);
   widget.setFullscreen(geometry.fullscreen);
   if (!geometry.fullscreen) {
@@ -178,8 +212,12 @@ function applyPhoneSurface(widget, scale) {
   }
   return geometry;
 }
+function desktopDockSize(scale, viewport = currentViewport()) {
+  const geometry = calculatePhoneSurface(scale, viewport, false);
+  return Math.min(viewport.width - 40, Math.max(geometry.width + 32, 292));
+}
 
-// src/frontend/apps/settings.ts
+// src/frontend/shared.ts
 function el(tag, className = "", content = "") {
   const node = document.createElement(tag);
   if (className)
@@ -193,9 +231,33 @@ function button(label, className = "lp-button") {
   node.type = "button";
   return node;
 }
+function formatTime(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return "";
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+function formatDate(value, detail = false) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return String(value || "");
+  return new Intl.DateTimeFormat(undefined, detail ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" }).format(date);
+}
+function dateTimeLocal(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
 function inputValue(input) {
   return input.value.trim();
 }
+function requestId(prefix = "req") {
+  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
+}
+
+// src/frontend/apps/settings.ts
 function colorSetting(label, value, update) {
   const row = el("div", "lp-row-between");
   row.appendChild(el("span", "lp-title", label));
@@ -224,6 +286,7 @@ function renderSettingsView(host) {
   const settings = structuredClone(host.preferences);
   const { page, content } = host.page("Settings", "Device-wide preferences", "Save");
   const appearance = el("section", "lp-card lp-settings-section");
+  appearance.dataset.settingsSection = "appearance";
   appearance.appendChild(el("div", "lp-eyebrow", "Appearance"));
   const themes = el("div", "lp-row");
   const themeColors = [["midnight", "#201a37"], ["porcelain", "#eeeae6"], ["rose", "#7a294e"], ["forest", "#1d5a41"], ["custom", settings.colors.accent]];
@@ -293,6 +356,7 @@ function renderSettingsView(host) {
   });
   appearance.append(themes, palette, scaleRow, animationLabel, durationRow, reducedMotion);
   const behavior = el("section", "lp-card lp-settings-section");
+  behavior.dataset.settingsSection = "behavior";
   behavior.appendChild(el("div", "lp-eyebrow", "Character actions"));
   behavior.append(toggleSetting("Open phone on model action", settings.autoOpenOnModelAction, (value) => {
     settings.autoOpenOnModelAction = value;
@@ -302,6 +366,7 @@ function renderSettingsView(host) {
     settings.sceneEnhancer = value;
   }));
   const visual = el("section", "lp-card lp-settings-section");
+  visual.dataset.settingsSection = "camera";
   visual.appendChild(el("div", "lp-eyebrow", "Camera visual profile"));
   const swarm = toggleSetting("Sync active Swarm Studio profile", settings.useSwarmProfile, (value) => {
     settings.useSwarmProfile = value;
@@ -324,6 +389,7 @@ function renderSettingsView(host) {
   parameters.value = Object.keys(settings.manualVisualProfile.parameters).length ? JSON.stringify(settings.manualVisualProfile.parameters, null, 2) : "";
   visual.append(swarm, status, positive, negative, model.label, connection.label, loras, parameters);
   const access = el("section", "lp-card lp-settings-section");
+  access.dataset.settingsSection = "access";
   access.appendChild(el("div", "lp-eyebrow", "Lumiverse access"));
   const grid = el("div", "lp-permission-grid");
   const caps = host.capabilities;
@@ -346,6 +412,7 @@ function renderSettingsView(host) {
   manage.addEventListener("click", () => host.requestPermissions());
   access.append(grid, manage);
   const data = el("section", "lp-card lp-settings-section");
+  data.dataset.settingsSection = "data";
   data.append(el("div", "lp-eyebrow", "Backup and reset"), el("p", "lp-copy", "Exports include this roleplay phone and device preferences. Imports are validated and forced into the current chat/character scope."));
   const exportButton = button("Export current phone");
   exportButton.addEventListener("click", () => host.send("lumiphone:export_data"));
@@ -362,7 +429,7 @@ function renderSettingsView(host) {
     try {
       host.send("lumiphone:import_data", { data: JSON.parse(await selected.text()) });
     } catch {
-      host.showError("That file is not valid LumiPhone JSON.");
+      host.showError("That file is not valid Pocket JSON.");
     } finally {
       file.value = "";
     }
@@ -374,7 +441,7 @@ function renderSettingsView(host) {
   });
   const resetAll = button("Reset all roleplay phones", "lp-button lp-button-danger");
   resetAll.addEventListener("click", () => {
-    if (window.confirm("Delete every LumiPhone chat/character state? Device preferences will remain."))
+    if (window.confirm("Delete every Pocket chat/character state? Device preferences will remain."))
       host.send("lumiphone:reset_all_roleplay");
   });
   const resetPrefs = button("Reset device preferences", "lp-button lp-button-danger");
@@ -412,9 +479,500 @@ function renderSettingsView(host) {
   return page;
 }
 
+// src/domain/trackers.ts
+var TRACKER_HISTORY_LIMIT = 40;
+var KINDS = new Set(["meter", "counter", "state", "timer"]);
+var CLOCKS = new Set(["real", "roleplay"]);
+var MODES = new Set(["manual", "model", "automatic"]);
+var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
+var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
+function clean(value, max = 160) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function trackerId(prefix = "trk") {
+  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
+}
+function trackerKey(value, fallback = "tracker") {
+  const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return key || fallback;
+}
+var TRACKER_TEMPLATES = [
+  { group: "Character", name: "Health", values: { kind: "meter", label: "Health", key: "health", value: 100, initialValue: 100, min: 0, max: 100, unit: "%", presentation: "vitals" } },
+  { group: "Character", name: "Hunger", values: { kind: "meter", label: "Hunger", key: "hunger", value: 20, initialValue: 20, min: 0, max: 100, unit: "%", updateMode: "automatic", ratePerHour: 3, clock: "roleplay" } },
+  { group: "Relationship", name: "Trust", values: { kind: "meter", label: "Trust", key: "trust", value: 50, initialValue: 50, min: 0, max: 100, unit: "%", presentation: "relationship", target: { type: "relationship", id: "", label: "Current relationship" } } },
+  { group: "Relationship", name: "Relationship Status", values: { kind: "state", label: "Relationship Status", key: "relationship_status", state: "Acquaintances", initialState: "Acquaintances", states: ["Strangers", "Acquaintances", "Friends", "Close", "Partners"], presentation: "state", target: { type: "relationship", id: "", label: "Current relationship" } } },
+  { group: "Scene", name: "Tension", values: { kind: "meter", label: "Scene Tension", key: "scene_tension", value: 10, initialValue: 10, min: 0, max: 100, unit: "%", target: { type: "scene", id: "", label: "Current scene" } } },
+  { group: "Resource", name: "Ammo", values: { kind: "counter", label: "Ammo", key: "ammo", value: 12, initialValue: 12, min: 0, max: 999, unit: " rounds", presentation: "counter" } },
+  { group: "World", name: "World Alert", values: { kind: "state", label: "World Alert", key: "world_alert", state: "Calm", initialState: "Calm", states: ["Calm", "Watchful", "Alarmed", "Crisis"], target: { type: "world", id: "", label: "Current world" } } },
+  { group: "Timer", name: "Countdown", values: { kind: "timer", label: "Countdown", key: "countdown", value: 60, initialValue: 60, min: 0, max: 60, unit: " min", direction: "down", updateMode: "automatic", ratePerHour: -60, clock: "roleplay", presentation: "timer" } },
+  { group: "State", name: "Condition", values: { kind: "state", label: "Condition", key: "condition", state: "Stable", initialState: "Stable", states: ["Stable", "Wounded", "Critical", "Recovering"], presentation: "state" } },
+  { group: "Blank", name: "Blank meter", values: { kind: "meter", label: "New tracker", key: "new_tracker", value: 0, initialValue: 0, min: 0, max: 100, presentation: "meter" } }
+];
+function addHistory(tracker, entry) {
+  return { ...tracker, history: [...tracker.history, { ...entry, id: trackerId("hist") }].slice(-TRACKER_HISTORY_LIMIT) };
+}
+function trackerBand(tracker, value = tracker.value) {
+  return tracker.bands.find((band, index) => value >= band.min && (value < band.max || index === tracker.bands.length - 1)) || null;
+}
+function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
+  if (tracker.kind === "state" || tracker.updateMode !== "automatic" || !tracker.ratePerHour)
+    return { tracker, changed: false };
+  const current = tracker.clock === "roleplay" ? Date.parse(roleplayNow) : Date.parse(wallNow);
+  const previous = tracker.clock === "roleplay" ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated);
+  if (!Number.isFinite(current)) {
+    const pausedReason = tracker.clock === "roleplay" ? "Roleplay time is approximate or unavailable." : "Real-time clock is unavailable.";
+    return { tracker: { ...tracker, pausedReason }, changed: tracker.pausedReason !== pausedReason };
+  }
+  if (!Number.isFinite(previous)) {
+    const anchor2 = new Date(current).toISOString();
+    return {
+      tracker: {
+        ...tracker,
+        pausedReason: "",
+        lastUpdated: tracker.clock === "real" ? anchor2 : tracker.lastUpdated,
+        lastRoleplayAt: tracker.clock === "roleplay" ? anchor2 : tracker.lastRoleplayAt
+      },
+      changed: true
+    };
+  }
+  if (current <= previous)
+    return { tracker: tracker.pausedReason ? { ...tracker, pausedReason: "" } : tracker, changed: Boolean(tracker.pausedReason) };
+  const nextValue = Math.max(tracker.min, Math.min(tracker.max, tracker.value + (current - previous) / 3600000 * tracker.ratePerHour));
+  const anchor = new Date(current).toISOString();
+  let next = {
+    ...tracker,
+    value: nextValue,
+    pausedReason: "",
+    updatedAt: wallNow,
+    lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
+    lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
+  };
+  if (nextValue !== tracker.value)
+    next = addHistory(next, {
+      previous: tracker.value,
+      next: nextValue,
+      operation: "automatic",
+      amount: nextValue - tracker.value,
+      reason: tracker.clock === "roleplay" ? "Roleplay time advanced" : "Real time advanced",
+      source: "automatic",
+      createdAt: wallNow,
+      roleplayAt: clean(roleplayNow, 80) || undefined
+    });
+  return { tracker: next, changed: true };
+}
+
+// src/frontend/apps/trackers.ts
+function selectField(labelText, options, selected) {
+  const label = el("label", "lp-label", labelText);
+  const select = el("select", "lp-select");
+  for (const [value, name] of options) {
+    const option = el("option", "", name);
+    option.value = value;
+    option.selected = selected === value;
+    select.appendChild(option);
+  }
+  label.appendChild(select);
+  return { label, select };
+}
+function toggle(labelText, initial) {
+  const row = el("div", "lp-card lp-row-between");
+  const copy = el("div");
+  copy.appendChild(el("div", "lp-title", labelText));
+  const control = button("", "lp-toggle");
+  control.setAttribute("aria-pressed", String(initial));
+  control.setAttribute("aria-label", labelText);
+  control.addEventListener("click", () => control.setAttribute("aria-pressed", String(control.getAttribute("aria-pressed") !== "true")));
+  row.append(copy, control);
+  return { row, button: control };
+}
+function displayValue(tracker) {
+  return tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit}`;
+}
+function liveTracker(tracker, roleplayNow) {
+  return tracker.clock === "real" ? materializeTracker(tracker, roleplayNow).tracker : tracker;
+}
+function percent(tracker) {
+  return Math.max(0, Math.min(100, (tracker.value - tracker.min) / Math.max(0.00001, tracker.max - tracker.min) * 100));
+}
+function targetLabel(target) {
+  return `${target.type[0].toUpperCase()}${target.type.slice(1)} · ${target.label || target.id || "Unassigned"}`;
+}
+function renderPresentation(tracker, roleplayNow) {
+  const current = liveTracker(tracker, roleplayNow);
+  const card = el("div", `lp-card lp-tracker-card lp-tracker-${current.presentation}`);
+  card.dataset.trackerId = current.id;
+  card.dataset.kind = current.kind;
+  card.dataset.target = current.target.type;
+  const heading = el("div", "lp-row-between");
+  const left = el("div");
+  left.append(el("div", "lp-eyebrow", targetLabel(current.target)), el("h3", "lp-title", current.label));
+  const value = el("div", "lp-tracker-value", displayValue(current));
+  value.dataset.trackerLiveValue = current.id;
+  heading.append(left, value);
+  card.appendChild(heading);
+  if (current.kind !== "state" && current.presentation !== "counter" && current.presentation !== "compact") {
+    const progress = el("div", current.presentation === "segmented" ? "lp-progress lp-progress-segmented" : "lp-progress");
+    const fill = el("span");
+    fill.dataset.trackerLiveFill = current.id;
+    fill.style.setProperty("--progress", `${percent(current)}%`);
+    fill.style.setProperty("--tracker-color", current.color);
+    progress.appendChild(fill);
+    card.appendChild(progress);
+  }
+  const band = current.kind === "state" ? null : trackerBand(current);
+  const footer = el("div", "lp-tracker-meta");
+  footer.append(el("span", "", band?.label || current.kind), el("span", "", current.updateMode === "automatic" ? `${current.clock === "roleplay" ? "Roleplay" : "Human"} clock` : current.updateMode));
+  card.appendChild(footer);
+  return card;
+}
+function dashboard(host) {
+  const { page, content } = host.page("Trackers", "Live roleplay state", "Add", () => host.select("__template:9", "config"));
+  const filters = el("div", "lp-tracker-filters");
+  const all = button("All", "lp-chip");
+  all.setAttribute("aria-pressed", "true");
+  filters.appendChild(all);
+  const choices = [...new Set(host.state.trackers.flatMap((tracker) => [tracker.kind, tracker.target.type]))];
+  for (const choice of choices) {
+    const filter = button(choice[0].toUpperCase() + choice.slice(1), "lp-chip");
+    filter.dataset.filter = choice;
+    filters.appendChild(filter);
+  }
+  const applyFilter = (choice = "") => {
+    for (const card of content.querySelectorAll(".lp-tracker-card")) {
+      card.hidden = Boolean(choice && card.dataset.kind !== choice && card.dataset.target !== choice);
+    }
+    for (const chip of filters.querySelectorAll(".lp-chip"))
+      chip.setAttribute("aria-pressed", String((chip.dataset.filter || "") === choice));
+  };
+  all.addEventListener("click", () => applyFilter());
+  for (const filter of filters.querySelectorAll("[data-filter]"))
+    filter.addEventListener("click", () => applyFilter(filter.dataset.filter));
+  content.appendChild(filters);
+  for (const tracker of host.state.trackers) {
+    const card = renderPresentation(tracker, host.state.roleplayNow);
+    card.dataset.clickable = "true";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    const open = () => host.select(tracker.id, "detail");
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+    content.appendChild(card);
+  }
+  if (!host.state.trackers.length) {
+    const empty = el("div", "lp-empty");
+    empty.appendChild(el("p", "lp-copy", "Add Health, Trust, Hunger, Ammo, a roleplay countdown, a state, or a blank custom tracker."));
+    content.appendChild(empty);
+  }
+  const timer = window.setInterval(() => {
+    for (const tracker of host.state.trackers) {
+      if (tracker.clock !== "real" || tracker.updateMode !== "automatic")
+        continue;
+      const current = liveTracker(tracker, host.state.roleplayNow);
+      const value = content.querySelector(`[data-tracker-live-value="${CSS.escape(tracker.id)}"]`);
+      const fill = content.querySelector(`[data-tracker-live-fill="${CSS.escape(tracker.id)}"]`);
+      if (value)
+        value.textContent = displayValue(current);
+      if (fill)
+        fill.style.setProperty("--progress", `${percent(current)}%`);
+    }
+  }, 15000);
+  host.onCleanup(() => window.clearInterval(timer));
+  return page;
+}
+function detail(host, tracker) {
+  const { page, content } = host.page(tracker.label, targetLabel(tracker.target), "⚙", () => host.select(tracker.id, "config"));
+  content.appendChild(renderPresentation(tracker, host.state.roleplayNow));
+  const policy = el("div", "lp-card lp-tracker-policy");
+  policy.append(el("div", "lp-row-between", ""), el("p", "lp-copy", `${tracker.visibleToModel ? "Visible" : "Hidden"} in model context · ${tracker.allowModelWrite ? "Model may write" : "Model read-only"} · ${tracker.updateMode} updates`));
+  if (tracker.pausedReason)
+    policy.appendChild(el("p", "lp-warning", tracker.pausedReason));
+  content.appendChild(policy);
+  const operations = el("section", "lp-card lp-tracker-operations");
+  operations.appendChild(el("div", "lp-eyebrow", "Update"));
+  if (tracker.kind === "state") {
+    const state = selectField("State", tracker.states.map((value) => [value, value]), tracker.state);
+    const apply = button("Set state");
+    apply.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "set_state", state: state.select.value, reason: "Changed in Pocket" } }));
+    operations.append(state.label, apply);
+  } else {
+    const amount = el("input", "lp-input");
+    amount.type = "number";
+    amount.step = "any";
+    amount.value = tracker.kind === "counter" ? String(tracker.step) : "1";
+    amount.setAttribute("aria-label", "Tracker amount");
+    const row = el("div", "lp-tracker-operation-row");
+    for (const [operation, label] of [["subtract", "−"], ["add", "+"], ["set", "Set"]]) {
+      const control = button(label);
+      control.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation, amount: Number(amount.value), reason: "Changed in Pocket" } }));
+      row.appendChild(control);
+    }
+    const reset = button("Reset", "lp-button lp-button-quiet");
+    reset.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "reset", reason: "Reset in Pocket" } }));
+    operations.append(amount, row, reset);
+  }
+  content.appendChild(operations);
+  const history = el("section", "lp-tracker-history");
+  history.appendChild(el("div", "lp-eyebrow", `History · last ${tracker.history.length}`));
+  for (const entry of [...tracker.history].reverse()) {
+    const row = el("div", "lp-card lp-history-row");
+    row.append(el("strong", "", `${entry.previous} → ${entry.next}`), el("span", "lp-copy", `${entry.operation} · ${entry.source}${entry.reason ? ` · ${entry.reason}` : ""}`), el("time", "lp-copy", entry.roleplayAt || entry.createdAt));
+    history.appendChild(row);
+  }
+  if (!tracker.history.length)
+    history.appendChild(el("p", "lp-copy", "No changes recorded yet."));
+  content.appendChild(history);
+  return page;
+}
+function config(host, current, templateIndex = 9) {
+  const template = TRACKER_TEMPLATES[Math.max(0, Math.min(TRACKER_TEMPLATES.length - 1, templateIndex))];
+  const source = current || template.values;
+  const templateTarget = template.group === "Character" ? { type: "character", id: host.state.characterId, label: host.state.characterName } : template.group === "Scene" ? { type: "scene", id: "", label: "Current scene" } : template.group === "World" ? { type: "world", id: "", label: "Current world" } : { type: "custom", id: "", label: "Unassigned" };
+  const selectedTarget = source.target || templateTarget;
+  const { page, content } = host.page(current ? "Tracker Settings" : "New Tracker", "Configuration", "Save");
+  if (!current) {
+    const templateField = selectField("Template", TRACKER_TEMPLATES.map((entry, index) => [String(index), `${entry.group} · ${entry.name}`]), String(templateIndex));
+    templateField.select.addEventListener("change", () => host.select(`__template:${templateField.select.value}`, "config"));
+    content.appendChild(templateField.label);
+  }
+  const label = host.field("Label", String(source.label || ""));
+  const key = host.field("Stable key", String(source.key || trackerKey(source.label)));
+  const kind = selectField("Type", [["meter", "Meter"], ["counter", "Counter"], ["state", "State"], ["timer", "Timer"]], String(source.kind || "meter"));
+  const presentation = selectField("Presentation", ["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"].map((value2) => [value2, value2[0].toUpperCase() + value2.slice(1)]), String(source.presentation || source.kind || "meter"));
+  const value = host.field("Current value", String(source.value ?? 0), "number");
+  const initial = host.field("Reset value", String(source.initialValue ?? source.value ?? 0), "number");
+  const min = host.field("Minimum", String(source.min ?? 0), "number");
+  const max = host.field("Maximum", String(source.max ?? 100), "number");
+  const unit = host.field("Unit", String(source.unit || ""));
+  const state = host.field("Current state", source.kind === "state" ? String(source.state || "") : "");
+  const states = el("textarea", "lp-textarea");
+  states.placeholder = "Allowed states, one per line";
+  states.value = source.kind === "state" ? (source.states || []).join(`
+`) : "";
+  const targetType = selectField("Target", ["character", "persona", "relationship", "scene", "world", "custom"].map((value2) => [value2, value2[0].toUpperCase() + value2.slice(1)]), selectedTarget.type);
+  const targetId = host.field("Target ID", selectedTarget.id);
+  const targetName = host.field("Target label", selectedTarget.label);
+  const mode = selectField("Update mode", [["manual", "Manual"], ["model", "Model-directed"], ["automatic", "Automatic"]], source.updateMode || (source.ratePerHour ? "automatic" : "manual"));
+  const clock = selectField("Automatic clock", [["real", "Human time (real clock)"], ["roleplay", "Roleplay time (timeline clock)"]], source.clock || "roleplay");
+  const rate = host.field("Change per hour", String(source.ratePerHour ?? 0), "number");
+  const color = el("input", "lp-color-input");
+  color.type = "color";
+  color.value = /^#[0-9a-f]{6}$/i.test(String(source.color || "")) ? String(source.color) : host.accent;
+  const colorRow = el("label", "lp-card lp-row-between");
+  colorRow.append(el("span", "lp-title", "Tracker color"), color);
+  const bands = el("textarea", "lp-textarea");
+  bands.placeholder = "Semantic bands: min | max | label | #color";
+  bands.value = (source.bands || []).map((band) => `${band.min} | ${band.max} | ${band.label} | ${band.color}`).join(`
+`);
+  const visible = toggle("Visible in model context", source.visibleToModel !== false);
+  const writable = toggle("Allow model changes", source.allowModelWrite === true);
+  const configFields = el("div", "lp-tracker-config-fields");
+  configFields.append(label.label, key.label, kind.label, presentation.label, value.label, initial.label, min.label, max.label, unit.label, state.label, states, targetType.label, targetId.label, targetName.label, mode.label, clock.label, rate.label, colorRow, bands, visible.row, writable.row);
+  content.appendChild(configFields);
+  const save = page.querySelector(".lp-nav-action:last-child");
+  save.addEventListener("click", () => {
+    const parsedBands = bands.value.split(`
+`).flatMap((line) => {
+      const [rawMin, rawMax, bandLabel, bandColor] = line.split("|").map((part) => part.trim());
+      if (!bandLabel || !Number.isFinite(Number(rawMin)) || !Number.isFinite(Number(rawMax)))
+        return [];
+      return [{ min: Number(rawMin), max: Number(rawMax), label: bandLabel, color: /^#[0-9a-f]{6}$/i.test(bandColor) ? bandColor : color.value }];
+    });
+    host.send("lumiphone:action", { action: "tracker", payload: {
+      id: current?.id,
+      label: label.input.value.trim(),
+      key: key.input.value.trim(),
+      kind: kind.select.value,
+      presentation: presentation.select.value,
+      value: Number(value.input.value),
+      initialValue: Number(initial.input.value),
+      min: Number(min.input.value),
+      max: Number(max.input.value),
+      unit: unit.input.value.trim(),
+      color: color.value,
+      state: state.input.value.trim(),
+      initialState: current?.kind === "state" ? current.initialState : state.input.value.trim(),
+      states: states.value.split(`
+`).map((entry) => entry.trim()).filter(Boolean),
+      target: { type: targetType.select.value, id: targetId.input.value.trim(), label: targetName.input.value.trim() },
+      updateMode: mode.select.value,
+      clock: clock.select.value,
+      ratePerHour: Number(rate.input.value),
+      bands: parsedBands,
+      visibleToModel: visible.button.getAttribute("aria-pressed") === "true",
+      allowModelWrite: writable.button.getAttribute("aria-pressed") === "true"
+    } });
+    host.back();
+  });
+  if (current) {
+    const remove = button("Delete tracker", "lp-button lp-button-danger");
+    remove.addEventListener("click", () => {
+      host.send("lumiphone:delete", { kind: "tracker", id: current.id });
+      host.back();
+    });
+    content.appendChild(remove);
+  }
+  return page;
+}
+function renderTrackersView(host) {
+  const selected = host.state.trackers.find((tracker) => tracker.id === host.selectedId) || null;
+  if (selected && host.selectedView === "config")
+    return config(host, selected);
+  if (selected)
+    return detail(host, selected);
+  if (host.selectedId.startsWith("__template:"))
+    return config(host, null, Number(host.selectedId.split(":")[1]));
+  return dashboard(host);
+}
+
+// src/frontend/apps/messages.ts
+function renderMessagesView(host) {
+  const contact = host.state.contacts.find((item) => item.id === host.selectedContactId);
+  if (!contact) {
+    const { page: page2, content } = host.page("Messages", `${host.state.contacts.length} conversation${host.state.contacts.length === 1 ? "" : "s"}`);
+    for (const item of host.state.contacts) {
+      const card = el("div", "lp-card");
+      card.dataset.clickable = "true";
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      const row = el("div", "lp-row");
+      const avatar = el("div", "lp-avatar", item.name.slice(0, 1).toUpperCase());
+      if (item.avatarUrl) {
+        const image = el("img");
+        image.src = item.avatarUrl;
+        image.alt = "";
+        avatar.replaceChildren(image);
+      }
+      const latest = item.messages.at(-1);
+      const copy = el("div", "lp-grow");
+      const nameRow = el("div", "lp-row-between");
+      nameRow.append(el("h3", "lp-title", item.name), el("span", "lp-copy", latest ? formatTime(latest.createdAt) : ""));
+      copy.append(nameRow, el("p", "lp-copy", latest?.text || item.subtitle || "Start a conversation"));
+      row.append(avatar, copy);
+      if (item.unread)
+        row.appendChild(el("span", "lp-unread", String(item.unread)));
+      card.appendChild(row);
+      const open = () => host.selectContact(item.id);
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      });
+      content.appendChild(card);
+    }
+    if (!host.state.contacts.length)
+      content.appendChild(host.empty("No conversations yet", "A model phone action or your first message will create one."));
+    return page2;
+  }
+  const page = el("div", "lp-thread");
+  const nav = el("header", "lp-nav");
+  const back = button("‹ Back", "lp-nav-action");
+  back.addEventListener("click", () => host.selectContact(""));
+  const title = el("div", "lp-nav-title", contact.name);
+  title.appendChild(el("span", "lp-nav-subtitle", contact.subtitle || "Messages"));
+  const replyBusy = host.busyContacts.has(contact.id);
+  const generate = button(replyBusy ? "Writing…" : "Reply ✦", "lp-nav-action");
+  generate.disabled = !host.generationAvailable || replyBusy;
+  generate.addEventListener("click", () => host.generateReply(contact.id));
+  nav.append(back, title, generate);
+  const bubbles = el("div", "lp-bubbles");
+  for (const message of contact.messages) {
+    const bubble = el("div", "lp-bubble", message.text);
+    bubble.dataset.messageId = message.id;
+    bubble.dataset.selected = String(message.id === host.selectedMessageId);
+    bubble.dataset.sender = message.sender;
+    bubble.appendChild(el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
+    bubbles.appendChild(bubble);
+  }
+  if (replyBusy) {
+    const pending = el("div", "lp-bubble lp-bubble-pending", "Writing…");
+    pending.dataset.sender = "character";
+    bubbles.appendChild(pending);
+  }
+  if (!contact.messages.length)
+    bubbles.appendChild(host.empty("Say hello", `This conversation belongs to ${host.state.characterName} in this chat.`));
+  const compose = el("form", "lp-compose");
+  const sparkle = host.iconButton("sparkle", "Generate character reply");
+  sparkle.disabled = !host.generationAvailable || replyBusy;
+  sparkle.addEventListener("click", () => host.generateReply(contact.id));
+  const textarea = el("textarea", "lp-textarea");
+  textarea.rows = 1;
+  textarea.placeholder = "Message…";
+  const submit = host.iconButton("send", "Send message");
+  compose.append(sparkle, textarea, submit);
+  compose.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const message = inputValue(textarea);
+    if (!message)
+      return;
+    host.send("lumiphone:action", { action: "message", payload: { contactId: contact.id, contactName: contact.name, text: message, sender: "user" } });
+    textarea.value = "";
+  });
+  page.append(nav, bubbles, compose);
+  requestAnimationFrame(() => {
+    const selected = host.selectedMessageId ? bubbles.querySelector(`[data-message-id="${CSS.escape(host.selectedMessageId)}"]`) : null;
+    if (selected)
+      selected.scrollIntoView({ block: "center" });
+    else
+      bubbles.scrollTop = bubbles.scrollHeight;
+  });
+  return page;
+}
+
+// src/frontend/activity.ts
+var ICONS = {
+  message: "Message",
+  "tracker-change": "Tracker",
+  timeline: "Timeline",
+  note: "Journal",
+  image: "Photo",
+  weather: "Weather",
+  system: "Pocket"
+};
+function activityReceipt(ctx, activity, openRoute) {
+  const messageId = activity.source?.messageId;
+  if (!messageId)
+    return null;
+  const bubble = ctx.dom.findMessageElement(messageId);
+  if (!bubble)
+    return null;
+  const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
+  const button2 = document.createElement("button");
+  button2.type = "button";
+  button2.className = "pocket-receipt";
+  button2.setAttribute("aria-label", `Open ${activity.title} in Pocket`);
+  const label = document.createElement("span");
+  label.className = "pocket-receipt-kind";
+  label.textContent = ICONS[activity.kind];
+  const copy = document.createElement("span");
+  copy.className = "pocket-receipt-copy";
+  const title = document.createElement("strong");
+  title.textContent = activity.title;
+  copy.appendChild(title);
+  if (activity.summary) {
+    const summary = document.createElement("span");
+    summary.textContent = activity.summary;
+    copy.appendChild(summary);
+  }
+  const arrow = document.createElement("span");
+  arrow.className = "pocket-receipt-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = "›";
+  button2.append(label, copy, arrow);
+  button2.addEventListener("click", () => openRoute(activity.route));
+  wrapper.replaceChildren(button2);
+  return wrapper;
+}
+
 // src/frontend/controller.ts
 var PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>';
-var ICONS = {
+var ICONS2 = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
   messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
   camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h3l1.5-2h7l1.5 2h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
@@ -440,62 +998,27 @@ var APP_META = [
   { app: "trackers", label: "Trackers", icon: "trackers" },
   { app: "settings", label: "Settings", icon: "settings" }
 ];
-function el2(tag, className = "", content = "") {
-  const node = document.createElement(tag);
-  if (className)
-    node.className = className;
-  if (content)
-    node.textContent = content;
-  return node;
-}
 function icon(name) {
-  const node = el2("span");
-  node.innerHTML = ICONS[name] || ICONS.home;
-  return node;
-}
-function button2(label, className = "lp-button") {
-  const node = el2("button", className, label);
-  node.type = "button";
+  const node = el("span");
+  node.innerHTML = ICONS2[name] || ICONS2.home;
   return node;
 }
 function iconButton(name, label) {
-  const node = button2("", "lp-button lp-button-icon");
+  const node = button("", "lp-button lp-button-icon");
   node.setAttribute("aria-label", label);
   node.appendChild(icon(name));
   return node;
 }
-function formatTime(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return "";
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
-}
-function formatDate(value, detail = false) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return String(value || "");
-  return new Intl.DateTimeFormat(undefined, detail ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" }).format(date);
-}
-function dateTimeLocal(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return "";
-  const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-function inputValue2(input) {
-  return input.value.trim();
-}
-function requestId(prefix = "req") {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
-}
 
-class LumiPhoneController {
+class PocketController {
   ctx;
   cleanups = [];
   drawer;
+  dockPanel = null;
   widget = null;
+  mobileWidget = null;
   widgetRoot = null;
+  handsetHost;
   launcher;
   launcherBadge;
   shell;
@@ -511,9 +1034,13 @@ class LumiPhoneController {
   gallery = { data: [], total: 0 };
   galleryScope = "chat";
   selectedContactId = "";
+  selectedMessageId = "";
   selectedNoteId = "";
   selectedEventId = "";
   selectedTrackerId = "";
+  selectedGalleryImageId = "";
+  selectedSettingsSection = "";
+  selectedTrackerView = "detail";
   cameraPreview = "";
   cameraProgress = "";
   cameraBusy = false;
@@ -525,48 +1052,78 @@ class LumiPhoneController {
   collapseTimer = 0;
   alertTimer = 0;
   launcherFocus = null;
+  suppressLauncherClick = false;
+  launcherPointer = null;
+  pendingRoute = null;
+  injectedActivities = new Map;
+  pendingActivities = new Map;
+  viewCleanups = [];
+  receiptSweepTimer = 0;
   constructor(ctx) {
     this.ctx = ctx;
     this.drawer = ctx.ui.registerDrawerTab({
       id: "lumiphone",
-      title: "LumiPhone",
-      shortName: "Phone",
-      headerTitle: "LumiPhone",
+      title: "Pocket",
+      shortName: "Pocket",
+      headerTitle: "Pocket",
       description: "Open the character-aware roleplay phone",
       keywords: ["phone", "messages", "camera", "gallery", "journal", "calendar", "timeline", "tracker"],
       iconSvg: PHONE_ICON
     });
-    this.launcher = el2("button", "lumiphone-launcher");
+    this.launcher = el("button", "lumiphone-launcher");
     this.launcher.type = "button";
-    this.launcher.title = "Open LumiPhone";
-    this.launcher.setAttribute("aria-label", "Open LumiPhone");
+    this.launcher.title = "Open Pocket";
+    this.launcher.setAttribute("aria-label", "Open Pocket");
     this.launcher.innerHTML = PHONE_ICON;
-    this.launcherBadge = el2("span", "lumiphone-badge");
+    this.launcherBadge = el("span", "lumiphone-badge");
     this.launcherBadge.hidden = true;
     this.launcher.appendChild(this.launcherBadge);
-    this.shell = el2("div", "lumiphone-shell");
+    this.handsetHost = el("div", "lumiphone-widget-root lumiphone-handset-host");
+    this.shell = el("div", "lumiphone-shell");
     this.shell.hidden = true;
-    const status = el2("div", "lumiphone-statusbar");
+    const status = el("div", "lumiphone-statusbar");
     const dismiss = iconButton("back", "Dismiss phone");
     dismiss.className = "lumiphone-dismiss";
     dismiss.addEventListener("click", () => this.close());
-    this.clock = el2("span", "lumiphone-time", formatTime(new Date));
-    const island = el2("span", "lumiphone-island");
-    const signals = el2("span", "lumiphone-signals");
-    const bars = el2("span", "lumiphone-signal-bars");
+    this.clock = el("span", "lumiphone-time", formatTime(new Date));
+    const island = el("span", "lumiphone-island");
+    const signals = el("span", "lumiphone-signals");
+    const bars = el("span", "lumiphone-signal-bars");
     for (let i = 0;i < 4; i += 1)
-      bars.appendChild(el2("i"));
-    signals.append(bars, el2("span", "", "5G"), el2("span", "lumiphone-battery"));
+      bars.appendChild(el("i"));
+    signals.append(bars, el("span", "", "5G"), el("span", "lumiphone-battery"));
     status.append(dismiss, this.clock, island, signals);
-    this.screen = el2("main", "lumiphone-screen");
-    this.alert = el2("div", "lp-alert");
+    this.screen = el("main", "lumiphone-screen");
+    this.alert = el("div", "lp-alert");
     this.alert.hidden = true;
-    const homebar = el2("div", "lumiphone-homebar");
-    const homeButton = button2("");
+    const homebar = el("div", "lumiphone-homebar");
+    const homeButton = button("");
     homeButton.setAttribute("aria-label", "Home or dismiss phone");
     homebar.appendChild(homeButton);
     this.shell.append(status, this.screen, homebar, this.alert);
-    this.launcher.addEventListener("click", () => this.open());
+    this.launcher.addEventListener("pointerdown", (event) => {
+      this.launcherPointer = { x: event.clientX, y: event.clientY };
+    });
+    this.launcher.addEventListener("pointermove", (event) => {
+      if (!this.launcherPointer)
+        return;
+      if (Math.hypot(event.clientX - this.launcherPointer.x, event.clientY - this.launcherPointer.y) > 7)
+        this.suppressLauncherClick = true;
+    });
+    this.launcher.addEventListener("pointerup", () => {
+      this.launcherPointer = null;
+    });
+    this.launcher.addEventListener("pointercancel", () => {
+      this.launcherPointer = null;
+    });
+    this.launcher.addEventListener("click", (event) => {
+      if (this.suppressLauncherClick) {
+        event.preventDefault();
+        this.suppressLauncherClick = false;
+        return;
+      }
+      this.open();
+    });
     homeButton.addEventListener("click", () => {
       if (this.currentApp !== "home")
         this.openApp("home");
@@ -583,12 +1140,20 @@ class LumiPhoneController {
     this.destroyed = true;
     window.clearTimeout(this.collapseTimer);
     window.clearTimeout(this.alertTimer);
+    window.clearInterval(this.receiptSweepTimer);
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup();
       } catch {}
     }
     this.widget?.destroy();
+    this.mobileWidget?.destroy();
+    this.dockPanel?.destroy();
+    for (const injected of this.injectedActivities.values())
+      this.ctx.dom.uninject(injected);
+    this.injectedActivities.clear();
+    for (const cleanup of this.viewCleanups.splice(0))
+      cleanup();
     this.drawer.destroy();
   }
   installHostIntegrations() {
@@ -600,7 +1165,7 @@ class LumiPhoneController {
     }));
     const action = this.ctx.ui.registerInputBarAction({
       id: "open-lumiphone",
-      label: "Open LumiPhone",
+      label: "Open Pocket",
       subtitle: "Open the character-aware roleplay phone",
       iconSvg: PHONE_ICON
     });
@@ -633,10 +1198,14 @@ class LumiPhoneController {
       });
     }));
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
-    this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => this.refresh()));
+    this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
+      this.pendingActivities.clear();
+      this.refresh();
+      window.setTimeout(() => this.sweepActivityReceipts(), 0);
+    }));
     const returned = (event) => {
-      const detail = event.detail;
-      if (detail?.extensionId === "lumiphone")
+      const detail2 = event.detail;
+      if (detail2?.extensionId === "lumiphone")
         this.refresh();
     };
     window.addEventListener("spindle:desktop-widget-returned", returned);
@@ -692,16 +1261,21 @@ class LumiPhoneController {
         height: 58,
         initialPosition: { x: Math.max(12, window.innerWidth - 82), y: Math.max(58, window.innerHeight * 0.22) },
         snapToEdge: true,
-        tooltip: "LumiPhone",
+        tooltip: "Pocket",
         chromeless: true,
         resizable: false,
         aspectLock: 9 / 16,
         persistGeometry: false
       });
-      this.widgetRoot = el2("div", "lumiphone-widget-root");
+      this.widgetRoot = el("div", "lumiphone-widget-root");
       this.widget.root.appendChild(this.widgetRoot);
-      this.widgetRoot.append(this.launcher, this.shell);
-      this.shell.hidden = true;
+      this.widgetRoot.append(this.launcher);
+      this.cleanups.push(this.widget.onDragEnd(() => {
+        this.suppressLauncherClick = true;
+        window.setTimeout(() => {
+          this.suppressLauncherClick = false;
+        }, 180);
+      }));
       this.launcher.hidden = false;
       this.renderDrawerLanding();
     } catch {
@@ -711,35 +1285,115 @@ class LumiPhoneController {
   }
   renderDrawerLanding() {
     this.drawer.root.replaceChildren();
-    const outer = el2("div", "lumiphone-drawer");
-    const card = el2("div", "lumiphone-drawer-card");
-    const logo = el2("div", "lumiphone-drawer-icon");
+    const outer = el("div", "lumiphone-drawer");
+    const card = el("div", "lumiphone-drawer-card");
+    const logo = el("div", "lumiphone-drawer-icon");
     logo.innerHTML = PHONE_ICON;
-    const title = el2("h2", "lumiphone-drawer-title", "LumiPhone");
-    const copy = el2("p", "lumiphone-drawer-copy", "A persistent phone for each chat and character—messages, photos, journals, roleplay weather, timeline events, and live trackers in one place.");
-    const actions = el2("div", "lumiphone-drawer-actions");
-    const open = button2("Open phone", "lumiphone-drawer-button");
+    const title = el("h2", "lumiphone-drawer-title", "Pocket");
+    const copy = el("p", "lumiphone-drawer-copy", "A persistent phone for each chat and character—messages, photos, journals, roleplay weather, timeline events, and live trackers in one place.");
+    const actions = el("div", "lumiphone-drawer-actions");
+    const open = button("Open phone", "lumiphone-drawer-button");
     open.dataset.primary = "true";
     open.addEventListener("click", () => this.open());
-    const permission = button2("Manage access", "lumiphone-drawer-button");
+    const permission = button("Manage access", "lumiphone-drawer-button");
     permission.addEventListener("click", () => this.requestPermissions());
     actions.append(open, permission);
     card.append(logo, title, copy, actions);
     outer.appendChild(card);
     this.drawer.root.appendChild(outer);
   }
+  ensureDockPanel() {
+    if (this.dockPanel)
+      return this.dockPanel;
+    try {
+      this.dockPanel = this.ctx.ui.requestDockPanel({
+        edge: "right",
+        title: "Pocket",
+        size: desktopDockSize(this.preferences.handsetScale),
+        minSize: 292,
+        maxSize: 620,
+        resizable: false,
+        startCollapsed: true
+      });
+      this.cleanups.push(this.dockPanel.onVisibilityChange((visible) => {
+        if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
+          this.expanded = false;
+          this.shell.hidden = true;
+          this.launcher.hidden = false;
+        }
+      }));
+      return this.dockPanel;
+    } catch {
+      this.dockPanel = null;
+      return null;
+    }
+  }
+  ensureMobileWidget() {
+    if (this.mobileWidget)
+      return this.mobileWidget;
+    try {
+      const viewport = currentViewport();
+      this.mobileWidget = this.ctx.ui.createFloatWidget({
+        width: viewport.width,
+        height: viewport.height,
+        initialPosition: { x: 0, y: 0 },
+        fullscreen: true,
+        chromeless: true,
+        snapToEdge: false,
+        persistGeometry: false
+      });
+      this.mobileWidget.setVisible(false);
+      return this.mobileWidget;
+    } catch {
+      this.mobileWidget = null;
+      return null;
+    }
+  }
+  mountInteractiveSurface() {
+    const geometry = calculatePhoneSurface(this.preferences.handsetScale);
+    if (geometry.fullscreen) {
+      this.dockPanel?.collapse();
+      const mobile = this.ensureMobileWidget();
+      if (!mobile)
+        return false;
+      mobile.root.replaceChildren(this.handsetHost);
+      this.handsetHost.replaceChildren(this.shell);
+      this.handsetHost.dataset.fullscreen = "true";
+      applyMobilePhoneSurface(mobile, this.preferences.handsetScale);
+      mobile.setVisible(true);
+      return true;
+    }
+    if (this.mobileWidget) {
+      this.mobileWidget.setFullscreen(false);
+      this.mobileWidget.setVisible(false);
+    }
+    const panel = this.ensureDockPanel();
+    if (!panel)
+      return false;
+    panel.root.replaceChildren(this.handsetHost);
+    this.handsetHost.replaceChildren(this.shell);
+    this.handsetHost.dataset.fullscreen = "false";
+    const setSize = panel.setSize;
+    if (typeof setSize === "function")
+      setSize.call(panel, desktopDockSize(this.preferences.handsetScale));
+    panel.expand();
+    const desktop = calculatePhoneSurface(this.preferences.handsetScale, currentViewport(), false);
+    this.handsetHost.style.width = `${desktop.width}px`;
+    this.handsetHost.style.height = `${desktop.height}px`;
+    return true;
+  }
   mountPhoneInDrawer() {
-    if (this.widget)
+    if (this.widget && (this.dockPanel || this.mobileWidget))
       return;
     this.drawer.root.replaceChildren();
-    const host = el2("div", "lumiphone-widget-root");
+    const host = this.handsetHost;
     const viewport = currentViewport();
     const geometry = calculatePhoneSurface(this.preferences.handsetScale, { width: Math.min(viewport.width, 620), height: Math.max(320, viewport.height - 130) }, false);
     host.style.width = geometry.fullscreen ? "100%" : `${geometry.width}px`;
     host.style.height = geometry.fullscreen ? "calc(100dvh - 110px)" : `${geometry.height}px`;
     host.style.aspectRatio = "9 / 16";
     this.drawer.root.appendChild(host);
-    host.appendChild(this.shell);
+    host.replaceChildren(this.shell);
     this.launcher.hidden = true;
     this.shell.hidden = false;
     this.expanded = true;
@@ -758,7 +1412,7 @@ class LumiPhoneController {
         "images",
         "image_gen",
         "push_notification"
-      ], { reason: "LumiPhone uses these permissions for its floating phone, per-chat character state, generated text messages, model actions, gallery, camera, and optional push notifications." });
+      ], { reason: "Pocket uses these permissions for its launcher and handset, per-chat character state, generated text messages, model actions, gallery, camera, and optional push notifications." });
       await this.ensureWidget();
       this.refresh();
     } catch (error) {
@@ -794,8 +1448,6 @@ class LumiPhoneController {
   tickClock() {
     const timer = window.setInterval(() => {
       this.clock.textContent = formatTime(new Date);
-      if (this.currentApp === "trackers" && this.expanded)
-        this.render();
     }, 30000);
     this.cleanups.push(() => window.clearInterval(timer));
   }
@@ -829,11 +1481,17 @@ class LumiPhoneController {
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
       this.caps = payload.capabilities || this.caps;
       this.swarmProfile = payload.swarmProfile || this.swarmProfile;
+      for (const activity of this.state.activities || [])
+        this.queueActivityReceipt(activity);
       this.applyAppearance();
       this.updateBadge();
       if (payload.open)
         this.open();
-      if (this.expanded)
+      const pending = this.pendingRoute;
+      this.pendingRoute = null;
+      if (pending)
+        this.openPocket(pending);
+      else if (this.expanded)
         this.render();
       if (this.unreadCount() > previousUnread && !this.expanded)
         this.launcher.animate([
@@ -841,6 +1499,10 @@ class LumiPhoneController {
           { transform: "scale(1.13) rotate(-4deg)" },
           { transform: "scale(1)" }
         ], { duration: 420, easing: "ease-out" });
+      return;
+    }
+    if (payload.type === "lumiphone:activity" && payload.activity) {
+      this.queueActivityReceipt(payload.activity);
       return;
     }
     if (payload.type === "lumiphone:capabilities") {
@@ -923,7 +1585,7 @@ class LumiPhoneController {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `lumiphone-${this.state?.chatId || "backup"}.json`;
+      anchor.download = `pocket-${this.state?.chatId || "backup"}.json`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
       return;
@@ -932,7 +1594,7 @@ class LumiPhoneController {
       if (payload.requestId === this.cameraRequestId)
         this.cameraBusy = false;
       this.messageRequests.delete(payload.requestId);
-      this.showError(payload.error || "LumiPhone could not complete that action.");
+      this.showError(payload.error || "Pocket could not complete that action.");
       if (this.expanded)
         this.render();
     }
@@ -972,6 +1634,12 @@ class LumiPhoneController {
     this.expanded = true;
     window.clearTimeout(this.collapseTimer);
     this.launcherFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!this.mountInteractiveSurface()) {
+      this.expanded = false;
+      this.drawer.activate();
+      this.mountPhoneInDrawer();
+      return;
+    }
     this.launcher.hidden = true;
     this.shell.hidden = false;
     this.resizeExpanded();
@@ -983,38 +1651,100 @@ class LumiPhoneController {
     });
   }
   close() {
-    if (!this.widget)
+    if (!this.widget && !this.dockPanel && !this.mobileWidget)
       return;
     this.expanded = false;
-    if (this.widget.isFullscreen())
-      this.widget.setFullscreen(false);
     this.shell.hidden = true;
     this.launcher.hidden = false;
+    this.dockPanel?.collapse();
+    if (this.mobileWidget) {
+      this.mobileWidget.setFullscreen(false);
+      this.mobileWidget.setVisible(false);
+    }
     window.clearTimeout(this.collapseTimer);
     this.collapseTimer = window.setTimeout(() => {
-      if (!this.expanded && this.widget)
-        this.widget.setSize(58, 58);
       this.launcherFocus?.focus({ preventScroll: true });
       this.launcherFocus = null;
     }, this.preferences.reducedMotion || this.preferences.animation === "none" ? 0 : this.preferences.animationDurationMs);
   }
   resizeExpanded() {
-    if (!this.widget)
+    if (!this.expanded)
       return;
-    const geometry = applyPhoneSurface(this.widget, this.preferences.handsetScale);
-    this.widgetRoot?.setAttribute("data-fullscreen", String(geometry.fullscreen));
+    this.mountInteractiveSurface();
   }
   openApp(app) {
-    this.currentApp = app;
-    if (app === "gallery")
+    this.openPocket({ app });
+  }
+  openPocket(routeInput) {
+    const route = normalizePocketRoute(routeInput);
+    if (!this.state) {
+      this.pendingRoute = route;
+      this.open();
+      this.refresh();
+      return;
+    }
+    if (!this.expanded)
+      this.open();
+    this.currentApp = route.app;
+    if (route.app === "messages") {
+      const contact = route.contactId ? this.state.contacts.find((entry) => entry.id === route.contactId) : null;
+      this.selectedContactId = contact?.id || "";
+      this.selectedMessageId = contact && route.messageId && contact.messages.some((entry) => entry.id === route.messageId) ? route.messageId : "";
+      this.send("lumiphone:mark_read", contact ? { app: "messages", contactId: contact.id } : { app: "messages" });
+    } else if (route.app === "trackers") {
+      const tracker = route.trackerId ? this.state.trackers.find((entry) => entry.id === route.trackerId) : null;
+      this.selectedTrackerId = tracker?.id || "";
+      this.selectedTrackerView = route.view || "detail";
+      this.send("lumiphone:mark_read", { app: "trackers" });
+    } else if (route.app === "calendar") {
+      this.selectedEventId = route.eventId && this.state.events.some((entry) => entry.id === route.eventId) ? route.eventId : "";
+      this.send("lumiphone:mark_read", { app: "calendar" });
+    } else if (route.app === "notes") {
+      this.selectedNoteId = route.noteId && this.state.notes.some((entry) => entry.id === route.noteId) ? route.noteId : "";
+      this.send("lumiphone:mark_read", { app: "notes" });
+    } else if (route.app === "gallery") {
+      this.selectedGalleryImageId = route.imageId || "";
       this.requestGallery(this.galleryScope);
-    if (app === "messages")
-      this.send("lumiphone:mark_read", { app: "messages" });
-    else if (app !== "home")
-      this.send("lumiphone:mark_read", { app });
+      this.send("lumiphone:mark_read", { app: "gallery" });
+    } else if (route.app === "settings") {
+      this.selectedSettingsSection = route.section || "";
+      this.send("lumiphone:mark_read", { app: "settings" });
+    } else if (route.app !== "home") {
+      this.send("lumiphone:mark_read", { app: route.app });
+    }
     this.render();
   }
+  queueActivityReceipt(activity) {
+    const active = this.activeContext();
+    if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId)
+      return;
+    if (this.injectedActivities.has(activity.id) || !activity.source?.messageId)
+      return;
+    this.pendingActivities.set(activity.id, activity);
+    this.sweepActivityReceipts();
+  }
+  sweepActivityReceipts() {
+    for (const [activityId, activity] of this.pendingActivities) {
+      const injected = activityReceipt(this.ctx, activity, (route) => this.openPocket(route));
+      if (!injected)
+        continue;
+      this.pendingActivities.delete(activityId);
+      this.injectedActivities.set(activityId, injected);
+    }
+    if (this.pendingActivities.size && !this.receiptSweepTimer) {
+      this.receiptSweepTimer = window.setInterval(() => {
+        if (!this.pendingActivities.size) {
+          window.clearInterval(this.receiptSweepTimer);
+          this.receiptSweepTimer = 0;
+          return;
+        }
+        this.sweepActivityReceipts();
+      }, 1500);
+    }
+  }
   render() {
+    for (const cleanup of this.viewCleanups.splice(0))
+      cleanup();
     if (!this.state) {
       this.screen.replaceChildren(this.loadingView());
       return;
@@ -1030,151 +1760,95 @@ class LumiPhoneController {
     this.screen.replaceChildren(view);
   }
   loadingView() {
-    const node = el2("div", "lp-page lp-empty");
-    const inner = el2("div");
-    inner.innerHTML = `${PHONE_ICON}<p>Waking LumiPhone…</p>`;
+    const node = el("div", "lp-page lp-empty");
+    const inner = el("div");
+    inner.innerHTML = `${PHONE_ICON}<p>Waking Pocket…</p>`;
     node.appendChild(inner);
     return node;
   }
   page(title, subtitle = "", rightLabel = "", onRight) {
-    const page = el2("div", "lp-page");
-    const nav = el2("header", "lp-nav");
-    const back = button2("‹ Home", "lp-nav-action");
+    const page = el("div", "lp-page");
+    const nav = el("header", "lp-nav");
+    const back = button("‹ Home", "lp-nav-action");
     back.addEventListener("click", () => this.openApp("home"));
-    const heading = el2("div", "lp-nav-title", title);
+    const heading = el("div", "lp-nav-title", title);
     if (subtitle)
-      heading.appendChild(el2("span", "lp-nav-subtitle", subtitle));
-    const right = button2(rightLabel, "lp-nav-action");
+      heading.appendChild(el("span", "lp-nav-subtitle", subtitle));
+    const right = button(rightLabel, "lp-nav-action");
     if (rightLabel && onRight)
       right.addEventListener("click", onRight);
     else
       right.disabled = true;
     nav.append(back, heading, right);
-    const content = el2("div", "lp-content");
+    const content = el("div", "lp-content");
     page.append(nav, content);
     return { page, content };
   }
   renderHome() {
     const state = this.state;
-    const home = el2("div", "lp-home");
-    const head = el2("div", "lp-home-head");
-    const left = el2("div");
-    left.append(el2("div", "lp-home-date", formatDate(state.roleplayNow, false)), el2("div", "lp-home-clock", formatTime(state.roleplayNow)));
-    const weather = el2("button", "lp-home-weather");
+    const home = el("div", "lp-home");
+    const head = el("div", "lp-home-head");
+    const left = el("div");
+    left.append(el("div", "lp-home-date", formatDate(state.roleplayNow, false)), el("div", "lp-home-clock", formatTime(state.roleplayNow)));
+    const weather = el("button", "lp-home-weather");
     weather.type = "button";
-    weather.append(icon("weather"), el2("span", "", `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`));
+    weather.append(icon("weather"), el("span", "", `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`));
     weather.addEventListener("click", () => this.openApp("weather"));
     head.append(left, weather);
-    const grid = el2("div", "lp-app-grid");
+    const grid = el("div", "lp-app-grid");
     for (const meta of APP_META.filter((entry) => !entry.dock))
       grid.appendChild(this.appIcon(meta));
-    const dock = el2("div", "lp-home-dock");
+    const activity = el("div", "lp-home-activity");
+    for (const item of [...state.activities || []].reverse().slice(0, 2)) {
+      const receipt = button("", "lp-home-activity-item");
+      receipt.append(el("strong", "", item.title), el("span", "", item.summary || item.kind), el("span", "lp-home-activity-arrow", "›"));
+      receipt.setAttribute("aria-label", `Open ${item.title}`);
+      receipt.addEventListener("click", () => this.openPocket(item.route));
+      activity.appendChild(receipt);
+    }
+    const dock = el("div", "lp-home-dock");
     for (const meta of APP_META.filter((entry) => entry.dock))
       dock.appendChild(this.appIcon(meta));
-    home.append(head, grid, dock);
+    home.append(head, grid);
+    if (activity.childElementCount)
+      home.appendChild(activity);
+    home.appendChild(dock);
     return home;
   }
   appIcon(meta) {
-    const node = el2("button", "lp-app-icon");
+    const node = el("button", "lp-app-icon");
     node.type = "button";
-    const box = el2("span", `lp-app-icon-box lp-icon-${meta.icon}`);
+    const box = el("span", `lp-app-icon-box lp-icon-${meta.icon}`);
     box.appendChild(icon(meta.icon));
     const unread = meta.app === "messages" ? this.state.contacts.reduce((sum, contact) => sum + contact.unread, 0) : this.state.notifications.filter((item) => !item.read && item.app === meta.app).length;
     if (unread)
-      box.appendChild(el2("span", "lp-app-dot", unread > 99 ? "99+" : String(unread)));
-    node.append(box, el2("span", "lp-app-label", meta.label));
+      box.appendChild(el("span", "lp-app-dot", unread > 99 ? "99+" : String(unread)));
+    node.append(box, el("span", "lp-app-label", meta.label));
     node.addEventListener("click", () => this.openApp(meta.app));
     return node;
   }
   renderMessages() {
-    const state = this.state;
-    const contact = state.contacts.find((item) => item.id === this.selectedContactId);
-    if (contact)
-      return this.renderThread(contact);
-    const { page, content } = this.page("Messages", `${state.contacts.length} conversation${state.contacts.length === 1 ? "" : "s"}`);
-    for (const item of state.contacts) {
-      const card = el2("div", "lp-card");
-      card.dataset.clickable = "true";
-      const row = el2("div", "lp-row");
-      const avatar = el2("div", "lp-avatar", item.name.slice(0, 1).toUpperCase());
-      if (item.avatarUrl) {
-        const image = el2("img");
-        image.src = item.avatarUrl;
-        image.alt = "";
-        avatar.replaceChildren(image);
-      }
-      const latest = item.messages.at(-1);
-      const copy = el2("div", "lp-grow");
-      const nameRow = el2("div", "lp-row-between");
-      nameRow.append(el2("h3", "lp-title", item.name), el2("span", "lp-copy", latest ? formatTime(latest.createdAt) : ""));
-      copy.append(nameRow, el2("p", "lp-copy", latest?.text || item.subtitle || "Start a conversation"));
-      row.append(avatar, copy);
-      if (item.unread)
-        row.appendChild(el2("span", "lp-unread", String(item.unread)));
-      card.appendChild(row);
-      card.addEventListener("click", () => {
-        this.selectedContactId = item.id;
-        this.send("lumiphone:mark_read", { app: "messages", contactId: item.id });
+    return renderMessagesView({
+      state: this.state,
+      selectedContactId: this.selectedContactId,
+      selectedMessageId: this.selectedMessageId,
+      generationAvailable: Boolean(this.caps?.generation),
+      busyContacts: new Set(this.messageRequests.values()),
+      page: (title, subtitle) => this.page(title, subtitle),
+      empty: (title, copy) => this.empty("messages", title, copy),
+      iconButton,
+      selectContact: (contactId) => {
+        this.selectedContactId = contactId;
+        this.selectedMessageId = "";
+        if (contactId)
+          this.send("lumiphone:mark_read", { app: "messages", contactId });
         this.render();
-      });
-      content.appendChild(card);
-    }
-    if (!state.contacts.length)
-      content.appendChild(this.empty("messages", "No conversations yet", "A model phone action or your first message will create one."));
-    return page;
-  }
-  renderThread(contact) {
-    const page = el2("div", "lp-thread");
-    const nav = el2("header", "lp-nav");
-    const back = button2("‹ Back", "lp-nav-action");
-    back.addEventListener("click", () => {
-      this.selectedContactId = "";
-      this.render();
+      },
+      send: (type, payload) => {
+        this.send(type, payload);
+      },
+      generateReply: (contactId) => this.generateReply(contactId)
     });
-    const title = el2("div", "lp-nav-title", contact.name);
-    title.appendChild(el2("span", "lp-nav-subtitle", contact.subtitle || "Messages"));
-    const generate = button2("Reply ✦", "lp-nav-action");
-    const replyBusy = [...this.messageRequests.values()].includes(contact.id);
-    generate.textContent = replyBusy ? "Writing…" : "Reply ✦";
-    generate.disabled = !this.caps?.generation || replyBusy;
-    generate.addEventListener("click", () => this.generateReply(contact.id));
-    nav.append(back, title, generate);
-    const bubbles = el2("div", "lp-bubbles");
-    for (const message of contact.messages) {
-      const bubble = el2("div", "lp-bubble", message.text);
-      bubble.dataset.sender = message.sender;
-      bubble.appendChild(el2("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
-      bubbles.appendChild(bubble);
-    }
-    if (replyBusy) {
-      const pending = el2("div", "lp-bubble lp-bubble-pending", "Writing…");
-      pending.dataset.sender = "character";
-      bubbles.appendChild(pending);
-    }
-    if (!contact.messages.length)
-      bubbles.appendChild(this.empty("messages", "Say hello", `This conversation belongs to ${this.state.characterName} in this chat.`));
-    const compose = el2("form", "lp-compose");
-    const sparkle = iconButton("sparkle", "Generate character reply");
-    sparkle.disabled = !this.caps?.generation || replyBusy;
-    sparkle.addEventListener("click", () => this.generateReply(contact.id));
-    const textarea = el2("textarea", "lp-textarea");
-    textarea.rows = 1;
-    textarea.placeholder = "Message…";
-    const submit = iconButton("send", "Send message");
-    compose.append(sparkle, textarea, submit);
-    compose.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const message = inputValue2(textarea);
-      if (!message)
-        return;
-      this.send("lumiphone:action", { action: "message", payload: { contactId: contact.id, contactName: contact.name, text: message, sender: "user" } });
-      textarea.value = "";
-    });
-    page.append(nav, bubbles, compose);
-    requestAnimationFrame(() => {
-      bubbles.scrollTop = bubbles.scrollHeight;
-    });
-    return page;
   }
   generateReply(contactId) {
     if ([...this.messageRequests.values()].includes(contactId))
@@ -1190,9 +1864,9 @@ class LumiPhoneController {
   }
   renderGallery() {
     const { page, content } = this.page("Gallery", `${this.gallery.total} assets`, "Refresh", () => this.requestGallery(this.galleryScope));
-    const chips = el2("div", "lp-chipbar");
-    for (const [scope, label] of [["chat", "This chat"], ["character", "Character"], ["phone", "LumiPhone"], ["all", "All"]]) {
-      const chip = button2(label, "lp-chip");
+    const chips = el("div", "lp-chipbar");
+    for (const [scope, label] of [["chat", "This chat"], ["character", "Character"], ["phone", "Pocket"], ["all", "All"]]) {
+      const chip = button(label, "lp-chip");
       chip.setAttribute("aria-pressed", String(this.galleryScope === scope));
       chip.addEventListener("click", () => this.requestGallery(scope));
       chips.appendChild(chip);
@@ -1202,19 +1876,22 @@ class LumiPhoneController {
       content.appendChild(this.empty("gallery", "Gallery access is off", "Grant Images permission from Settings to browse Lumiverse assets."));
       return page;
     }
-    const grid = el2("div", "lp-gallery-grid");
+    const grid = el("div", "lp-gallery-grid");
     for (const item of this.gallery.data) {
-      const tile = el2("button", "lp-gallery-item");
+      const tile = el("button", "lp-gallery-item");
       tile.type = "button";
-      const image = el2("img");
+      tile.dataset.selected = String(item.id === this.selectedGalleryImageId);
+      if (item.id === this.selectedGalleryImageId)
+        tile.setAttribute("aria-current", "true");
+      const image = el("img");
       image.loading = "lazy";
       image.src = item.url;
       image.alt = item.filename || "Gallery image";
       image.addEventListener("error", () => {
         tile.dataset.missing = "true";
-        image.replaceWith(el2("span", "lp-gallery-missing", "Image unavailable"));
+        image.replaceWith(el("span", "lp-gallery-missing", "Image unavailable"));
       }, { once: true });
-      tile.append(image, el2("span", "lp-gallery-meta", item.filename || formatDate(item.createdAt * 1000)));
+      tile.append(image, el("span", "lp-gallery-meta", item.filename || formatDate(item.createdAt * 1000)));
       tile.addEventListener("click", () => this.inspectImage(item.url, item.filename));
       grid.appendChild(tile);
     }
@@ -1224,49 +1901,49 @@ class LumiPhoneController {
     return page;
   }
   inspectImage(url, title) {
-    const modal = this.ctx.ui.showModal({ title: title || "LumiPhone photo", size: "lg" });
-    const image = el2("img");
+    const modal = this.ctx.ui.showModal({ title: title || "Pocket photo", size: "lg" });
+    const image = el("img");
     image.src = url;
-    image.alt = title || "LumiPhone photo";
+    image.alt = title || "Pocket photo";
     image.style.cssText = "display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808";
     modal.root.appendChild(image);
   }
   renderCamera() {
-    const page = el2("div", "lp-camera");
-    const nav = el2("header", "lp-nav");
-    const back = button2("‹ Home", "lp-nav-action");
+    const page = el("div", "lp-camera");
+    const nav = el("header", "lp-nav");
+    const back = button("‹ Home", "lp-nav-action");
     back.addEventListener("click", () => this.openApp("home"));
     const profileLabel = this.swarmProfile?.available ? "Swarm profile linked" : "Manual profile";
-    const title = el2("div", "lp-nav-title", "Camera");
-    title.appendChild(el2("span", "lp-nav-subtitle", profileLabel));
-    const gallery = button2("Gallery", "lp-nav-action");
+    const title = el("div", "lp-nav-title", "Camera");
+    title.appendChild(el("span", "lp-nav-subtitle", profileLabel));
+    const gallery = button("Gallery", "lp-nav-action");
     gallery.addEventListener("click", () => this.openApp("gallery"));
     nav.append(back, title, gallery);
-    const viewfinder = el2("div", "lp-viewfinder");
+    const viewfinder = el("div", "lp-viewfinder");
     if (this.cameraPreview) {
-      const image = el2("img");
+      const image = el("img");
       image.src = this.cameraPreview;
       image.alt = "Camera preview";
       viewfinder.appendChild(image);
     } else {
-      const placeholder = el2("div", "lp-camera-placeholder");
-      placeholder.append(icon("camera"), el2("div", "", "Frame an in-world moment. The optional scene planner expands your brief before the image connection develops it."));
+      const placeholder = el("div", "lp-camera-placeholder");
+      placeholder.append(icon("camera"), el("div", "", "Frame an in-world moment. The optional scene planner expands your brief before the image connection develops it."));
       viewfinder.appendChild(placeholder);
     }
-    const controls = el2("form", "lp-camera-controls");
-    const prompt = el2("textarea", "lp-textarea");
+    const controls = el("form", "lp-camera-controls");
+    const prompt = el("textarea", "lp-textarea");
     prompt.placeholder = "Describe the photo or moment…";
     prompt.rows = 2;
-    const optionRow = el2("div", "lp-row-between");
-    const enhanceLabel = el2("label", "lp-row");
-    const enhance = el2("input");
+    const optionRow = el("div", "lp-row-between");
+    const enhanceLabel = el("label", "lp-row");
+    const enhance = el("input");
     enhance.type = "checkbox";
     enhance.checked = this.preferences.sceneEnhancer;
-    enhanceLabel.append(enhance, el2("span", "lp-copy", "Scene planner sidecar"));
-    const source = el2("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Primitive/manual");
+    enhanceLabel.append(enhance, el("span", "lp-copy", "Scene planner sidecar"));
+    const source = el("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Primitive/manual");
     optionRow.append(enhanceLabel, source);
-    const shutterRow = el2("div", "lp-shutter-row");
-    const cancel = button2(this.cameraBusy ? "Cancel" : "", "lp-button");
+    const shutterRow = el("div", "lp-shutter-row");
+    const cancel = button(this.cameraBusy ? "Cancel" : "", "lp-button");
     cancel.style.visibility = this.cameraBusy ? "visible" : "hidden";
     cancel.addEventListener("click", () => {
       this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
@@ -1274,16 +1951,16 @@ class LumiPhoneController {
       this.cameraProgress = "Cancelled";
       this.render();
     });
-    const shutter = el2("button", "lp-shutter");
+    const shutter = el("button", "lp-shutter");
     shutter.type = "submit";
     shutter.disabled = this.cameraBusy || !this.caps?.imageGen;
-    const spacer = el2("span");
+    const spacer = el("span");
     shutterRow.append(cancel, shutter, spacer);
-    const progress = el2("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
+    const progress = el("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
     controls.append(prompt, optionRow, shutterRow, progress);
     controls.addEventListener("submit", (event) => {
       event.preventDefault();
-      const scene = inputValue2(prompt);
+      const scene = inputValue(prompt);
       if (!scene || this.cameraBusy)
         return;
       this.cameraRequestId = requestId("camera");
@@ -1306,14 +1983,14 @@ class LumiPhoneController {
     });
     const sorted = [...state.notes].sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     for (const note of sorted) {
-      const card = el2("div", "lp-card lp-note-card");
+      const card = el("div", "lp-card lp-note-card");
       card.dataset.clickable = "true";
       card.dataset.pinned = String(note.pinned);
-      const head = el2("div", "lp-row-between");
-      head.append(el2("h3", "lp-title", note.title), el2("span", "lp-copy", formatDate(note.updatedAt)));
-      const preview = el2("p", "lp-copy lp-note-preview", note.body || "Empty note");
+      const head = el("div", "lp-row-between");
+      head.append(el("h3", "lp-title", note.title), el("span", "lp-copy", formatDate(note.updatedAt)));
+      const preview = el("p", "lp-copy lp-note-preview", note.body || "Empty note");
       card.append(head, preview);
-      card.appendChild(el2("span", "lp-eyebrow", [note.author, note.mood].filter(Boolean).join(" · ")));
+      card.appendChild(el("span", "lp-eyebrow", [note.author, note.mood].filter(Boolean).join(" · ")));
       card.addEventListener("click", () => {
         this.selectedNoteId = note.id;
         this.render();
@@ -1327,31 +2004,31 @@ class LumiPhoneController {
   renderNoteEditor(note) {
     const { page, content } = this.page(note ? "Edit Note" : "New Note", note?.mood || "Character journal", "Save");
     const navSave = page.querySelector(".lp-nav-action:last-child");
-    const title = el2("input", "lp-input");
+    const title = el("input", "lp-input");
     title.placeholder = "Title";
     title.value = note?.title || "";
-    const mood = el2("input", "lp-input");
+    const mood = el("input", "lp-input");
     mood.placeholder = "Mood or tag";
     mood.value = note?.mood || "";
-    const body = el2("textarea", "lp-textarea");
+    const body = el("textarea", "lp-textarea");
     body.style.minHeight = "270px";
     body.placeholder = "Write a memory, thought, or journal entry…";
     body.value = note?.body || "";
-    const pinRow = el2("label", "lp-row-between lp-card");
-    pinRow.append(el2("span", "lp-title", "Pin for model memory"));
-    const pinned = el2("input");
+    const pinRow = el("label", "lp-row-between lp-card");
+    pinRow.append(el("span", "lp-title", "Pin for model memory"));
+    const pinned = el("input");
     pinned.type = "checkbox";
     pinned.checked = note?.pinned || false;
     pinRow.appendChild(pinned);
     const save = () => {
-      this.send("lumiphone:action", { action: "note", payload: { id: note?.id, title: inputValue2(title), body: body.value, mood: inputValue2(mood), pinned: pinned.checked } });
+      this.send("lumiphone:action", { action: "note", payload: { id: note?.id, title: inputValue(title), body: body.value, mood: inputValue(mood), pinned: pinned.checked } });
       this.selectedNoteId = "";
       this.render();
     };
     navSave.addEventListener("click", save);
     content.append(title, mood, body, pinRow);
     if (note) {
-      const remove = button2("Delete note", "lp-button lp-button-danger");
+      const remove = button("Delete note", "lp-button lp-button-danger");
       remove.addEventListener("click", () => {
         this.send("lumiphone:delete", { kind: "note", id: note.id });
         this.selectedNoteId = "";
@@ -1364,37 +2041,37 @@ class LumiPhoneController {
   renderWeather() {
     const weather = this.state.weather;
     const { page, content } = this.page("Weather", weather.location, "Save");
-    const hero = el2("div", "lp-weather-hero");
-    const top = el2("div");
-    top.append(el2("div", "lp-weather-condition", weather.condition), el2("div", "lp-copy", weather.location));
-    const temp = el2("div", "lp-weather-temp", `${weather.temperature}°`);
-    const bottom = el2("div", "lp-row-between");
-    bottom.append(el2("span", "lp-weather-range", `H:${weather.high}°  L:${weather.low}°`), el2("span", "lp-weather-range", weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ""));
+    const hero = el("div", "lp-weather-hero");
+    const top = el("div");
+    top.append(el("div", "lp-weather-condition", weather.condition), el("div", "lp-copy", weather.location));
+    const temp = el("div", "lp-weather-temp", `${weather.temperature}°`);
+    const bottom = el("div", "lp-row-between");
+    bottom.append(el("span", "lp-weather-range", `H:${weather.high}°  L:${weather.low}°`), el("span", "lp-weather-range", weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ""));
     hero.append(top, temp, bottom);
-    const fields = el2("div", "lp-fields");
+    const fields = el("div", "lp-fields");
     const location = this.field("Location", weather.location);
     const condition = this.field("Condition", weather.condition);
     const temperature = this.field("Temperature", String(weather.temperature), "number");
-    const unit = el2("select", "lp-select");
+    const unit = el("select", "lp-select");
     for (const value of ["C", "F"]) {
-      const option = el2("option", "", `°${value}`);
+      const option = el("option", "", `°${value}`);
       option.value = value;
       option.selected = weather.unit === value;
       unit.appendChild(option);
     }
-    const unitLabel = el2("label", "lp-label", "Unit");
+    const unitLabel = el("label", "lp-label", "Unit");
     unitLabel.appendChild(unit);
     const high = this.field("High", String(weather.high), "number");
     const low = this.field("Low", String(weather.low), "number");
     fields.append(location.label, condition.label, temperature.label, unitLabel, high.label, low.label);
-    const details = el2("textarea", "lp-textarea");
+    const details = el("textarea", "lp-textarea");
     details.placeholder = "Atmosphere and roleplay weather details…";
     details.value = weather.details;
     content.append(hero, fields, details);
     const save = page.querySelector(".lp-nav-action:last-child");
     save.addEventListener("click", () => this.send("lumiphone:action", { action: "weather", payload: {
-      location: inputValue2(location.input),
-      condition: inputValue2(condition.input),
+      location: inputValue(location.input),
+      condition: inputValue(condition.input),
       temperature: Number(temperature.input.value),
       unit: unit.value,
       high: Number(high.input.value),
@@ -1412,30 +2089,30 @@ class LumiPhoneController {
       this.selectedEventId = "__new__";
       this.render();
     });
-    const nowCard = el2("div", "lp-card");
-    const nowField = el2("input", "lp-input");
+    const nowCard = el("div", "lp-card");
+    const nowField = el("input", "lp-input");
     nowField.type = "datetime-local";
     nowField.value = dateTimeLocal(state.roleplayNow);
-    const setNow = button2("Set roleplay now", "lp-button");
+    const setNow = button("Set roleplay now", "lp-button");
     setNow.addEventListener("click", () => {
       const parsed = new Date(nowField.value);
       if (!Number.isNaN(parsed.getTime()))
         this.send("lumiphone:save_roleplay_time", { roleplayNow: parsed.toISOString() });
     });
-    nowCard.append(el2("div", "lp-eyebrow", "Roleplay clock"), nowField, setNow);
+    nowCard.append(el("div", "lp-eyebrow", "Roleplay clock"), nowField, setNow);
     content.appendChild(nowCard);
-    const timeline = el2("div", "lp-timeline");
+    const timeline = el("div", "lp-timeline");
     const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
     for (const event of events) {
-      const row = el2("div", "lp-event");
+      const row = el("div", "lp-event");
       row.dataset.completed = String(event.completed);
-      const dot = el2("span", "lp-event-dot");
+      const dot = el("span", "lp-event-dot");
       dot.style.setProperty("--event-color", event.color);
-      const card = el2("div", "lp-card");
+      const card = el("div", "lp-card");
       card.dataset.clickable = "true";
-      card.append(el2("div", "lp-eyebrow", `${event.lane} · ${event.whenText || formatDate(event.start, true)}`), el2("h3", "lp-title", event.title));
+      card.append(el("div", "lp-eyebrow", `${event.lane} · ${event.whenText || formatDate(event.start, true)}`), el("h3", "lp-title", event.title));
       if (event.description)
-        card.appendChild(el2("p", "lp-copy", event.description));
+        card.appendChild(el("p", "lp-copy", event.description));
       card.addEventListener("click", () => {
         this.selectedEventId = event.id;
         this.render();
@@ -1452,10 +2129,10 @@ class LumiPhoneController {
     const { page, content } = this.page(event ? "Edit Event" : "New Event", "Roleplay timeline", "Save");
     const title = this.field("Title", event?.title || "");
     const lane = this.field("Timeline lane", event?.lane || "Main timeline");
-    const whenKindLabel = el2("label", "lp-label", "Time precision");
-    const whenKind = el2("select", "lp-select");
+    const whenKindLabel = el("label", "lp-label", "Time precision");
+    const whenKind = el("select", "lp-select");
     for (const [value, label] of [["exact", "Exact date/time"], ["approximate", "Approximate"], ["relative", "Relative to story"], ["unscheduled", "Unscheduled"]]) {
-      const option = el2("option", "", label);
+      const option = el("option", "", label);
       option.value = value;
       option.selected = (event?.whenKind || "exact") === value;
       whenKind.appendChild(option);
@@ -1464,14 +2141,14 @@ class LumiPhoneController {
     const whenText = this.field("Timeline label", event?.whenText || (event ? formatDate(event.start, true) : ""));
     const start = this.field("Start", event ? dateTimeLocal(event.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
     const end = this.field("End", event ? dateTimeLocal(event.end) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
-    const description = el2("textarea", "lp-textarea");
+    const description = el("textarea", "lp-textarea");
     description.placeholder = "What happens?";
     description.value = event?.description || "";
-    const completed = el2("input");
+    const completed = el("input");
     completed.type = "checkbox";
     completed.checked = event?.completed || false;
-    const completeRow = el2("label", "lp-card lp-row-between");
-    completeRow.append(el2("span", "lp-title", "Completed"), completed);
+    const completeRow = el("label", "lp-card lp-row-between");
+    completeRow.append(el("span", "lp-title", "Completed"), completed);
     content.append(title.label, lane.label, whenKindLabel, whenText.label, start.label, end.label, description, completeRow);
     const save = page.querySelector(".lp-nav-action:last-child");
     save.addEventListener("click", () => {
@@ -1479,20 +2156,20 @@ class LumiPhoneController {
       const endDate = new Date(end.input.value);
       this.send("lumiphone:action", { action: "event", payload: {
         id: event?.id,
-        title: inputValue2(title.input),
-        lane: inputValue2(lane.input),
+        title: inputValue(title.input),
+        lane: inputValue(lane.input),
         description: description.value,
         start: Number.isNaN(startDate.getTime()) ? this.state.roleplayNow : startDate.toISOString(),
         end: Number.isNaN(endDate.getTime()) ? this.state.roleplayNow : endDate.toISOString(),
         whenKind: whenKind.value,
-        whenText: inputValue2(whenText.input),
+        whenText: inputValue(whenText.input),
         completed: completed.checked
       } });
       this.selectedEventId = "";
       this.render();
     });
     if (event) {
-      const remove = button2("Delete event", "lp-button lp-button-danger");
+      const remove = button("Delete event", "lp-button lp-button-danger");
       remove.addEventListener("click", () => {
         this.send("lumiphone:delete", { kind: "event", id: event.id });
         this.selectedEventId = "";
@@ -1502,99 +2179,32 @@ class LumiPhoneController {
     }
     return page;
   }
-  materializedTracker(tracker) {
-    if (!tracker.ratePerHour)
-      return tracker;
-    const elapsed = (Date.now() - Date.parse(tracker.lastUpdated)) / 3600000;
-    if (!Number.isFinite(elapsed) || elapsed <= 0)
-      return tracker;
-    return { ...tracker, value: Math.max(tracker.min, Math.min(tracker.max, tracker.value + elapsed * tracker.ratePerHour)) };
-  }
   renderTrackers() {
-    const trackers = this.state.trackers.map((item) => this.materializedTracker(item));
-    const selected = trackers.find((item) => item.id === this.selectedTrackerId);
-    if (this.selectedTrackerId === "__new__" || selected)
-      return this.renderTrackerEditor(selected || null);
-    const { page, content } = this.page("Trackers", "Live roleplay state", "Add", () => {
-      this.selectedTrackerId = "__new__";
-      this.render();
-    });
-    for (const tracker of trackers) {
-      const card = el2("div", "lp-card");
-      card.dataset.clickable = "true";
-      const row = el2("div", "lp-row-between");
-      const left = el2("div");
-      left.append(el2("div", "lp-eyebrow", tracker.visibleToModel ? "Visible to character" : "Private"), el2("h3", "lp-title", tracker.label));
-      row.append(left, el2("div", "lp-tracker-value", `${Number(tracker.value.toFixed(2))}${tracker.unit}`));
-      const denominator = Math.max(0.00001, tracker.max - tracker.min);
-      const percent = Math.max(0, Math.min(100, (tracker.value - tracker.min) / denominator * 100));
-      const progress = el2("div", "lp-progress");
-      const fill = el2("span");
-      fill.style.setProperty("--progress", `${percent}%`);
-      fill.style.setProperty("--tracker-color", tracker.color);
-      progress.appendChild(fill);
-      card.append(row, progress);
-      if (tracker.ratePerHour)
-        card.appendChild(el2("div", "lp-rate", `${tracker.ratePerHour > 0 ? "+" : ""}${tracker.ratePerHour}${tracker.unit} per in-app hour · updates automatically`));
-      card.addEventListener("click", () => {
-        this.selectedTrackerId = tracker.id;
+    return renderTrackersView({
+      state: this.state,
+      selectedId: this.selectedTrackerId,
+      selectedView: this.selectedTrackerView,
+      accent: this.preferences.colors.accent,
+      page: (title, subtitle, rightLabel, onRight) => this.page(title, subtitle, rightLabel, onRight),
+      field: (label, value, type) => this.field(label, value, type),
+      send: (type, payload) => {
+        this.send(type, payload);
+      },
+      select: (id, view = "detail") => {
+        this.selectedTrackerId = id;
+        this.selectedTrackerView = view;
         this.render();
-      });
-      content.appendChild(card);
-    }
-    if (!trackers.length)
-      content.appendChild(this.empty("trackers", "No live trackers", "Track affinity, health, money, time, quest progress, or any self-updating value."));
-    return page;
-  }
-  renderTrackerEditor(tracker) {
-    const { page, content } = this.page(tracker ? "Edit Tracker" : "New Tracker", "Live roleplay state", "Save");
-    const label = this.field("Label", tracker?.label || "");
-    const value = this.field("Value", String(tracker?.value ?? 0), "number");
-    const unit = this.field("Unit", tracker?.unit || "");
-    const rate = this.field("Change per hour", String(tracker?.ratePerHour ?? 0), "number");
-    const min = this.field("Minimum", String(tracker?.min ?? 0), "number");
-    const max = this.field("Maximum", String(tracker?.max ?? 100), "number");
-    const color = el2("input", "lp-color-input");
-    color.type = "color";
-    color.value = /^#[0-9a-f]{6}$/i.test(tracker?.color || "") ? tracker.color : this.preferences.colors.accent;
-    const colorRow = el2("label", "lp-card lp-row-between");
-    colorRow.append(el2("span", "lp-title", "Tracker color"), color);
-    const visible = el2("button", "lp-toggle");
-    visible.type = "button";
-    visible.setAttribute("aria-pressed", String(tracker?.visibleToModel !== false));
-    visible.addEventListener("click", () => visible.setAttribute("aria-pressed", String(visible.getAttribute("aria-pressed") !== "true")));
-    const visibleRow = el2("div", "lp-card lp-row-between");
-    visibleRow.append(el2("div", "", "Visible to the model"), visible);
-    content.append(label.label, value.label, unit.label, rate.label, min.label, max.label, colorRow, visibleRow);
-    const save = page.querySelector(".lp-nav-action:last-child");
-    save.addEventListener("click", () => {
-      this.send("lumiphone:action", { action: "tracker", payload: {
-        id: tracker?.id,
-        label: inputValue2(label.input),
-        value: Number(value.input.value),
-        unit: inputValue2(unit.input),
-        ratePerHour: Number(rate.input.value),
-        min: Number(min.input.value),
-        max: Number(max.input.value),
-        color: color.value,
-        visibleToModel: visible.getAttribute("aria-pressed") === "true"
-      } });
-      this.selectedTrackerId = "";
-      this.render();
-    });
-    if (tracker) {
-      const remove = button2("Delete tracker", "lp-button lp-button-danger");
-      remove.addEventListener("click", () => {
-        this.send("lumiphone:delete", { kind: "tracker", id: tracker.id });
+      },
+      back: () => {
         this.selectedTrackerId = "";
+        this.selectedTrackerView = "detail";
         this.render();
-      });
-      content.appendChild(remove);
-    }
-    return page;
+      },
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup)
+    });
   }
   renderSettings() {
-    return renderSettingsView({
+    const view = renderSettingsView({
       preferences: this.preferences,
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
@@ -1618,19 +2228,24 @@ class LumiPhoneController {
       showError: (message) => this.showError(message),
       openHome: () => this.openApp("home")
     });
+    if (this.selectedSettingsSection)
+      requestAnimationFrame(() => {
+        view.querySelector(`[data-settings-section="${CSS.escape(this.selectedSettingsSection)}"]`)?.scrollIntoView({ block: "start" });
+      });
+    return view;
   }
   field(labelText, value = "", type = "text") {
-    const label = el2("label", "lp-label", labelText);
-    const input = el2("input", "lp-input");
+    const label = el("label", "lp-label", labelText);
+    const input = el("input", "lp-input");
     input.type = type;
     input.value = value;
     label.appendChild(input);
     return { label, input };
   }
   empty(iconName, title, copy) {
-    const node = el2("div", "lp-empty");
-    const inner = el2("div");
-    inner.append(icon(iconName), el2("h3", "lp-title", title), el2("p", "lp-copy", copy));
+    const node = el("div", "lp-empty");
+    const inner = el("div");
+    inner.append(icon(iconName), el("h3", "lp-title", title), el("p", "lp-copy", copy));
     node.appendChild(inner);
     return node;
   }
@@ -1644,7 +2259,7 @@ class LumiPhoneController {
   }
 }
 function setupPhone(ctx) {
-  const controller = new LumiPhoneController(ctx);
+  const controller = new PocketController(ctx);
   ctx.ready();
   return () => controller.destroy();
 }
@@ -1656,6 +2271,7 @@ var PHONE_STYLES = `
     width: 100%; height: 100%; display: grid; place-items: center; overflow: visible;
     color: #f7f5ff; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
+  .lumiphone-handset-host { margin:auto; cursor:default; overscroll-behavior:contain; }
   .lumiphone-launcher {
     appearance: none; width: 58px; height: 58px; padding: 0; border: 1px solid rgba(255,255,255,.2);
     border-radius: 19px; display: grid; place-items: center; position: relative; cursor: pointer;
@@ -1735,6 +2351,12 @@ var PHONE_STYLES = `
   .lp-home-dock { margin-top:auto; min-height:74px; padding:10px; border:1px solid rgba(255,255,255,.18); border-radius:24px; background:rgba(15,13,24,.28); backdrop-filter:blur(24px) saturate(1.3); display:grid; grid-template-columns:repeat(4,1fr); align-items:center; }
   .lp-home-dock .lp-app-icon-box { width:50px; height:50px; }
   .lp-home-dock .lp-app-label { display:none; }
+  .lp-home-activity { margin:12px 0; display:grid; gap:5px; }
+  .lp-home-activity-item { appearance:none; min-height:38px; padding:7px 9px; border:1px solid rgba(255,255,255,.16); border-radius:13px; display:grid; grid-template-columns:minmax(0,auto) minmax(0,1fr) auto; align-items:center; gap:7px; background:rgba(15,13,24,.28); color:#fff; backdrop-filter:blur(18px); font:inherit; text-align:left; cursor:pointer; }
+  .lp-home-activity-item strong,.lp-home-activity-item span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-home-activity-item strong { font-size:10px; }
+  .lp-home-activity-item > span:not(.lp-home-activity-arrow) { opacity:.68; font-size:9px; }
+  .lp-home-activity-arrow { font-size:17px; }
   .lp-icon-messages { background:linear-gradient(145deg,#4ee580,#12aa4b); }
   .lp-icon-camera { background:linear-gradient(145deg,#74757c,#18191d); }
   .lp-icon-gallery { background:linear-gradient(145deg,#fff,#e9e8ec); color:#6d49da; }
@@ -1887,6 +2509,43 @@ var PHONE_STYLES = `
     .lumiphone-app-view, .lumiphone-launcher, .lp-app-icon-box, .lp-gallery-item img, .lp-progress span { animation:none !important; transition:none !important; }
   }
   .lumiphone-shell[data-reduced-motion="true"] *, .lumiphone-shell[data-reduced-motion="true"] *::before, .lumiphone-shell[data-reduced-motion="true"] *::after { animation-duration:0ms !important; transition-duration:0ms !important; }
+  .lp-gallery-item[data-selected="true"] { outline:3px solid var(--lp-accent); outline-offset:2px; }
+  .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
+
+  .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,420px); }
+  .pocket-receipt {
+    appearance:none; width:100%; min-height:48px; padding:8px 10px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 32%,transparent);
+    border-radius:13px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:9px;
+    background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,var(--lumiverse-primary,#8b7dff) 8%); color:var(--lumiverse-text,#f7f5ff);
+    font:inherit; text-align:left; cursor:pointer; box-shadow:0 8px 22px rgba(0,0,0,.12); transition:transform .15s ease,border-color .15s ease;
+  }
+  .pocket-receipt:hover { transform:translateY(-1px); border-color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 68%,transparent); }
+  .pocket-receipt:focus-visible { outline:3px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 55%,white); outline-offset:2px; }
+  .pocket-receipt-kind { padding:4px 7px; border-radius:8px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 18%,transparent); font-size:10px; font-weight:800; }
+  .pocket-receipt-copy { min-width:0; display:grid; gap:1px; }
+  .pocket-receipt-copy strong,.pocket-receipt-copy span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pocket-receipt-copy strong { font-size:12px; }
+  .pocket-receipt-copy span { opacity:.68; font-size:10px; }
+  .pocket-receipt-arrow { font-size:22px; opacity:.7; }
+  .lp-tracker-filters { display:flex; gap:6px; overflow:auto; padding-bottom:2px; scrollbar-width:none; }
+  .lp-tracker-card { display:grid; gap:9px; border-left:3px solid color-mix(in srgb,var(--lp-accent) 68%,transparent); }
+  .lp-tracker-card[role="button"]:focus-visible { outline:3px solid color-mix(in srgb,var(--lp-accent) 52%,white); outline-offset:2px; }
+  .lp-tracker-relationship { background:linear-gradient(135deg,color-mix(in srgb,#ec7eb5 12%,var(--lp-surface)),var(--lp-surface)); }
+  .lp-tracker-vitals { border-left-color:#ef6b73; }
+  .lp-tracker-counter .lp-tracker-value { padding:5px 9px; border-radius:10px; background:color-mix(in srgb,var(--lp-accent) 16%,transparent); }
+  .lp-tracker-timer { border-left-color:#62b8e8; }
+  .lp-tracker-state { border-left-color:#d59c50; }
+  .lp-tracker-compact { padding-block:9px; }
+  .lp-progress-segmented { background:repeating-linear-gradient(90deg,var(--lp-surface-2) 0 calc(10% - 2px),transparent calc(10% - 2px) 10%); }
+  .lp-tracker-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--lp-muted); font-size:9px; font-weight:720; text-transform:capitalize; }
+  .lp-tracker-policy { display:grid; gap:5px; }
+  .lp-warning { margin:0; color:#f3bd65; font-size:10px; line-height:1.4; }
+  .lp-tracker-operations { display:grid; gap:9px; }
+  .lp-tracker-operation-row { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+  .lp-tracker-history { display:grid; gap:7px; }
+  .lp-history-row { display:grid; gap:3px; }
+  .lp-history-row time { overflow-wrap:anywhere; }
+  .lp-tracker-config-fields { display:grid; gap:9px; }
 `;
 
 // src/frontend.ts

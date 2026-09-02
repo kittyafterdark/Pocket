@@ -33,7 +33,8 @@ export function calculatePhoneSurface(scale: number, viewport = currentViewport(
   }
 }
 
-export function applyPhoneSurface(widget: SpindleFloatWidgetHandle, scale: number): PhoneSurfaceGeometry {
+/** Only the dedicated fullscreen handset float is resized here. Desktop handsets live in an interactive dock. */
+export function applyMobilePhoneSurface(widget: SpindleFloatWidgetHandle, scale: number): PhoneSurfaceGeometry {
   const geometry = calculatePhoneSurface(scale)
   widget.setFullscreen(geometry.fullscreen)
   if (!geometry.fullscreen) {
@@ -41,4 +42,9 @@ export function applyPhoneSurface(widget: SpindleFloatWidgetHandle, scale: numbe
     widget.moveTo(geometry.x, geometry.y)
   }
   return geometry
+}
+
+export function desktopDockSize(scale: number, viewport = currentViewport()): number {
+  const geometry = calculatePhoneSurface(scale, viewport, false)
+  return Math.min(viewport.width - 40, Math.max(geometry.width + 32, 292))
 }

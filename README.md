@@ -1,11 +1,13 @@
-# LumiPhone
+# Pocket
 
-LumiPhone is a live-mounted Lumiverse Spindle extension that gives every chat + character pair its own persistent in-world phone.
+Pocket is a live-mounted Lumiverse Spindle extension that gives every chat + character pair its own persistent in-world phone.
+
+The extension identifier and storage namespace intentionally remain `lumiphone` so existing installations and roleplay data upgrade in place.
 
 ## Included apps
 
 - **Messages** — durable per-contact threads plus one-tap character-voice generation.
-- **Gallery** — chat, character, LumiPhone-owned, or full Lumiverse image filters.
+- **Gallery** — chat, character, Pocket-owned, or full Lumiverse image filters.
 - **Camera** — native Lumiverse image generation, streamed previews where supported, an optional LLM scene-planning sidecar, and automatic chat/character image ownership.
 - **Notes** — a private or model-visible character journal with pinned memory entries.
 - **Weather** — fictional scene weather rather than an external real-world feed.
@@ -17,7 +19,7 @@ On desktop, the 58px draggable launcher opens a strict 9:16 phone at the right s
 
 ## Model integration
 
-With `tools` permission, LumiPhone registers `phone_action` with these actions:
+With `tools` permission, Pocket registers `phone_action` with these actions:
 
 ```text
 message | note | event | weather | tracker | camera | notify | open

@@ -1,5 +1,6 @@
 import type { DevicePreferences, PhoneCapabilities, PhoneSettings, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
+import { button, el, inputValue } from '../shared.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
@@ -15,23 +16,6 @@ export interface SettingsViewHost {
   requestPermissions(): void
   showError(message: string): void
   openHome(): void
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', content = ''): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  if (className) node.className = className
-  if (content) node.textContent = content
-  return node
-}
-
-function button(label: string, className = 'lp-button'): HTMLButtonElement {
-  const node = el('button', className, label)
-  node.type = 'button'
-  return node
-}
-
-function inputValue(input: HTMLInputElement): string {
-  return input.value.trim()
 }
 
 function colorSetting(label: string, value: string, update: (value: string) => void): HTMLDivElement {
@@ -64,6 +48,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   const settings = structuredClone(host.preferences)
   const { page, content } = host.page('Settings', 'Device-wide preferences', 'Save')
   const appearance = el('section', 'lp-card lp-settings-section')
+  appearance.dataset.settingsSection = 'appearance'
   appearance.appendChild(el('div', 'lp-eyebrow', 'Appearance'))
   const themes = el('div', 'lp-row')
   const themeColors: Array<[PhoneSettings['theme'], string]> = [['midnight', '#201a37'], ['porcelain', '#eeeae6'], ['rose', '#7a294e'], ['forest', '#1d5a41'], ['custom', settings.colors.accent]]
@@ -127,6 +112,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   appearance.append(themes, palette, scaleRow, animationLabel, durationRow, reducedMotion)
 
   const behavior = el('section', 'lp-card lp-settings-section')
+  behavior.dataset.settingsSection = 'behavior'
   behavior.appendChild(el('div', 'lp-eyebrow', 'Character actions'))
   behavior.append(
     toggleSetting('Open phone on model action', settings.autoOpenOnModelAction, (value) => { settings.autoOpenOnModelAction = value }),
@@ -135,6 +121,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   )
 
   const visual = el('section', 'lp-card lp-settings-section')
+  visual.dataset.settingsSection = 'camera'
   visual.appendChild(el('div', 'lp-eyebrow', 'Camera visual profile'))
   const swarm = toggleSetting('Sync active Swarm Studio profile', settings.useSwarmProfile, (value) => { settings.useSwarmProfile = value })
   const status = el('div', 'lp-copy', host.swarmProfile?.available
@@ -149,6 +136,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   visual.append(swarm, status, positive, negative, model.label, connection.label, loras, parameters)
 
   const access = el('section', 'lp-card lp-settings-section')
+  access.dataset.settingsSection = 'access'
   access.appendChild(el('div', 'lp-eyebrow', 'Lumiverse access'))
   const grid = el('div', 'lp-permission-grid')
   const caps = host.capabilities
@@ -166,6 +154,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   access.append(grid, manage)
 
   const data = el('section', 'lp-card lp-settings-section')
+  data.dataset.settingsSection = 'data'
   data.append(el('div', 'lp-eyebrow', 'Backup and reset'), el('p', 'lp-copy', 'Exports include this roleplay phone and device preferences. Imports are validated and forced into the current chat/character scope.'))
   const exportButton = button('Export current phone'); exportButton.addEventListener('click', () => host.send('lumiphone:export_data'))
   const importButton = button('Import into current phone')
@@ -175,13 +164,13 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
     const selected = file.files?.[0]
     if (!selected) return
     try { host.send('lumiphone:import_data', { data: JSON.parse(await selected.text()) }) }
-    catch { host.showError('That file is not valid LumiPhone JSON.') }
+    catch { host.showError('That file is not valid Pocket JSON.') }
     finally { file.value = '' }
   })
   const resetCurrent = button('Reset this roleplay phone', 'lp-button lp-button-danger')
   resetCurrent.addEventListener('click', () => { if (window.confirm('Reset the phone for only this chat and character?')) host.send('lumiphone:reset_current') })
   const resetAll = button('Reset all roleplay phones', 'lp-button lp-button-danger')
-  resetAll.addEventListener('click', () => { if (window.confirm('Delete every LumiPhone chat/character state? Device preferences will remain.')) host.send('lumiphone:reset_all_roleplay') })
+  resetAll.addEventListener('click', () => { if (window.confirm('Delete every Pocket chat/character state? Device preferences will remain.')) host.send('lumiphone:reset_all_roleplay') })
   const resetPrefs = button('Reset device preferences', 'lp-button lp-button-danger')
   resetPrefs.addEventListener('click', () => { if (window.confirm('Reset theme, size, animations, notification behavior, and camera profile? Roleplay data will remain.')) host.send('lumiphone:reset_preferences') })
   data.append(exportButton, importButton, file, resetCurrent, resetAll, resetPrefs)

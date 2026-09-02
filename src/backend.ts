@@ -7,6 +7,9 @@ import type {
   PhoneMessage,
   PhoneNote,
   PhoneNotification,
+  PocketActivity,
+  PocketRoute,
+  ProcessedPocketCommand,
   PhoneState,
   PhoneTracker,
   RoleplayWeather,
@@ -14,25 +17,28 @@ import type {
 } from './types.js'
 import { defaultPreferences, isFuturePreferences, normalizePreferences, PREFERENCES_PATH } from './domain/preferences.js'
 import { projectPhoneContext } from './domain/projection.js'
+import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
+import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey } from './domain/trackers.js'
 
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 type AnyRecord = Record<string, unknown>
 
-const STATE_VERSION = 1 as const
+const STATE_VERSION = 2 as const
 const MAX_MESSAGES = 240
 const MAX_NOTIFICATIONS = 80
 const MAX_NOTES = 120
 const MAX_EVENTS = 200
 const MAX_TRACKERS = 40
+const MAX_ACTIVITIES = 120
 const stateLocks = new Map<string, Promise<unknown>>()
 interface CameraJob { controller: AbortController; cancelled: boolean; chatId: string; characterId: string; userId?: string }
 const cameraJobs = new Map<string, CameraJob>()
 const notificationThrottle = new Map<string, number>()
 
-const PHONE_GUIDANCE = `LumiPhone is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
+const PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
 <lumi-phone action="message|note|event|weather|tracker|camera|notify|open" app="messages|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
-Do not explain the tag. Do not use it for ordinary narration. Phone messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`
+Do not explain the tag. Do not use it for ordinary narration. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`
 
 function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -106,6 +112,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     weather: defaultWeather(),
     trackers: [],
     notifications: [],
+    activities: [],
     processedCommands: [],
     updatedAt: createdAt,
   }
@@ -181,35 +188,45 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       lane: text(item.lane, 80) || 'Main timeline', completed: bool(item.completed), createdBy,
     }]
   })
-  const trackers: PhoneTracker[] = (Array.isArray(value.trackers) ? value.trackers : []).slice(0, MAX_TRACKERS).flatMap((item) => {
-    if (!isRecord(item)) return []
-    const label = text(item.label, 120)
-    if (!label) return []
-    const min = numberValue(item.min, 0)
-    const max = Math.max(min, numberValue(item.max, 100))
-    return [{
-      id: text(item.id, 120) || id('trk'), label,
-      value: Math.max(min, Math.min(max, numberValue(item.value, min))), min, max,
-      unit: text(item.unit, 40), color: text(item.color, 40) || '#8b7dff',
-      ratePerHour: Math.max(-100_000, Math.min(100_000, numberValue(item.ratePerHour, 0))),
-      lastUpdated: text(item.lastUpdated, 40) || nowIso(), visibleToModel: item.visibleToModel !== false,
-    }]
-  })
+  const trackers: PhoneTracker[] = (Array.isArray(value.trackers) ? value.trackers : [])
+    .slice(0, MAX_TRACKERS)
+    .map((item) => normalizeTracker(item, { roleplayNow: text(value.roleplayNow, 80), characterId, characterName }))
+    .filter((item): item is PhoneTracker => Boolean(item))
   const notifications: PhoneNotification[] = (Array.isArray(value.notifications) ? value.notifications : []).slice(0, MAX_NOTIFICATIONS).flatMap((item) => {
     if (!isRecord(item)) return []
     const title = text(item.title, 160)
     if (!title) return []
+    const app = text(item.app, 40) as PhoneNotification['app'] || 'home'
     return [{
-      id: text(item.id, 120) || id('ntf'), app: text(item.app, 40) as PhoneNotification['app'] || 'home',
+      id: text(item.id, 120) || id('ntf'), app,
       title, body: text(item.body, 1_000), createdAt: text(item.createdAt, 40) || nowIso(),
-      read: bool(item.read), action: text(item.action, 120) || undefined,
+      read: bool(item.read), route: normalizePocketRoute(item.route, legacyActionRoute(app, text(item.action, 120))),
+      action: text(item.action, 120) || undefined,
+    }]
+  })
+  const activities: PocketActivity[] = (Array.isArray(value.activities) ? value.activities : []).slice(-MAX_ACTIVITIES).flatMap((item) => {
+    if (!isRecord(item)) return []
+    const title = text(item.title, 160)
+    if (!title) return []
+    const source = isRecord(item.source) ? item.source : {}
+    return [{
+      id: text(item.id, 160) || id('act'),
+      kind: item.kind === 'message' || item.kind === 'tracker-change' || item.kind === 'timeline' || item.kind === 'note' || item.kind === 'image' || item.kind === 'weather' ? item.kind : 'system',
+      title, summary: text(item.summary, 500) || undefined, route: normalizePocketRoute(item.route),
+      createdAt: text(item.createdAt, 40) || nowIso(), scope: { chatId, characterId },
+      source: {
+        commandId: text(source.commandId, 240) || undefined, messageId: text(source.messageId, 180) || undefined,
+        trackerId: text(source.trackerId, 180) || undefined, contactId: text(source.contactId, 180) || undefined,
+        eventId: text(source.eventId, 180) || undefined, noteId: text(source.noteId, 180) || undefined,
+        imageId: text(source.imageId, 180) || undefined,
+      },
     }]
   })
   const processedCommands = (Array.isArray(value.processedCommands) ? value.processedCommands : []).slice(-160).flatMap((item) => {
     if (!isRecord(item)) return []
     const commandId = text(item.id, 240)
     if (!commandId) return []
-    return [{ id: commandId, semanticKey: text(item.semanticKey, 500), createdAt: text(item.createdAt, 40) || nowIso() }]
+    return [{ id: commandId, semanticKey: text(item.semanticKey, 500), createdAt: text(item.createdAt, 40) || nowIso(), activityId: text(item.activityId, 180) || undefined }]
   })
   const weatherValue = isRecord(value.weather) ? value.weather : {}
   const weather: RoleplayWeather = {
@@ -229,7 +246,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     characterName: characterName || text(value.characterName, 120) || fallback.characterName,
     roleplayNow: text(value.roleplayNow, 80) || fallback.roleplayNow,
     contacts: contacts.length ? contacts : fallback.contacts,
-    notes, events, weather, trackers, notifications, processedCommands,
+    notes, events, weather, trackers, notifications, activities, processedCommands,
     updatedAt: text(value.updatedAt, 40) || fallback.updatedAt,
   }
 }
@@ -250,16 +267,19 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
     fallback: null,
     userId,
   })
-  if (isRecord(raw) && Number(raw.version) > STATE_VERSION) throw new Error('This phone state was created by a newer LumiPhone version.')
+  if (isRecord(raw) && Number(raw.version) > STATE_VERSION) throw new Error('This phone state was created by a newer Pocket version.')
   const state = normalizeState(raw, chatId, characterId, characterName)
   await loadPreferences(userId, isRecord(raw) ? raw.settings : undefined)
-  if (isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION)) {
-    await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId })
-  }
-  state.trackers = materializeTrackers(state.trackers)
+  let stateChanged = Boolean(isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION))
+  state.trackers = state.trackers.map((tracker) => {
+    const result = materializeTracker(tracker, state.roleplayNow)
+    stateChanged ||= result.changed
+    return result.tracker
+  })
   const contact = state.contacts.find((item) => item.id === characterId)
   if (contact && characterName !== 'Character') contact.name = characterName
   state.characterName = characterName
+  if (stateChanged) await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId })
   return state
 }
 
@@ -267,7 +287,7 @@ async function loadPreferences(userId?: string, legacy?: unknown): Promise<Devic
   const raw = await spindle.userStorage.getJson<unknown>(PREFERENCES_PATH, { fallback: null, userId })
   const preferences = normalizePreferences(raw ?? legacy)
   if (isFuturePreferences(raw)) {
-    spindle.log.warn('LumiPhone left newer device preferences untouched and used safe defaults for this session.')
+    spindle.log.warn('Pocket left newer device preferences untouched and used safe defaults for this session.')
     return preferences
   }
   if (raw === null || Number((isRecord(raw) ? raw.version : 0)) !== preferences.version) {
@@ -287,28 +307,14 @@ async function saveState(state: PhoneState, userId?: string): Promise<void> {
   await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId })
 }
 
-function materializeTrackers(trackers: PhoneTracker[]): PhoneTracker[] {
-  const now = Date.now()
-  return trackers.map((tracker) => {
-    if (!tracker.ratePerHour) return tracker
-    const last = Date.parse(tracker.lastUpdated)
-    if (!Number.isFinite(last) || last >= now) return tracker
-    const elapsedHours = (now - last) / 3_600_000
-    return {
-      ...tracker,
-      value: Math.max(tracker.min, Math.min(tracker.max, tracker.value + elapsedHours * tracker.ratePerHour)),
-      lastUpdated: new Date(now).toISOString(),
-    }
-  })
-}
-
 function withStateLock<T>(key: string, task: () => Promise<T>): Promise<T> {
   const previous = stateLocks.get(key) || Promise.resolve()
   const current = previous.catch(() => undefined).then(task)
   stateLocks.set(key, current)
-  void current.finally(() => {
+  const release = () => {
     if (stateLocks.get(key) === current) stateLocks.delete(key)
-  })
+  }
+  void current.then(release, release)
   return current
 }
 
@@ -337,6 +343,28 @@ function addNotification(state: PhoneState, notification: Omit<PhoneNotification
   return entry
 }
 
+function addActivity(
+  state: PhoneState,
+  activity: Omit<PocketActivity, 'id' | 'createdAt' | 'scope'>,
+  command?: ProcessedPocketCommand,
+): PocketActivity {
+  const entry: PocketActivity = {
+    ...activity,
+    id: id('act'),
+    createdAt: nowIso(),
+    scope: { chatId: state.chatId, characterId: state.characterId },
+    source: { ...activity.source, commandId: command?.id || activity.source?.commandId },
+  }
+  state.activities.push(entry)
+  state.activities = state.activities.slice(-MAX_ACTIVITIES)
+  if (command) command.activityId = entry.id
+  return entry
+}
+
+function sendActivity(activity: PocketActivity | undefined, userId?: string): void {
+  if (activity) send({ type: 'lumiphone:activity', activity }, userId)
+}
+
 async function maybePush(state: PhoneState, preferences: DevicePreferences, notification: PhoneNotification, userId?: string): Promise<void> {
   if (!preferences.pushNotifications || !spindle.permissions.has('push_notification')) return
   const throttleKey = `${userId || '_default'}:${stateKey(state.chatId, state.characterId)}:${notification.app}`
@@ -348,12 +376,12 @@ async function maybePush(state: PhoneState, preferences: DevicePreferences, noti
     if (!status.available) return
     await spindle.push.send({
       title: notification.title,
-      body: notification.body || `Open ${notification.app} on LumiPhone`,
+      body: notification.body || `Open ${notification.app} in Pocket`,
       tag: `lumiphone-${stateKey(state.chatId, state.characterId)}-${notification.app}`,
       url: `/chat/${state.chatId}`,
     }, userId)
   } catch (error) {
-    spindle.log.warn(`LumiPhone push notification failed: ${error instanceof Error ? error.message : String(error)}`)
+    spindle.log.warn(`Pocket push notification failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -458,7 +486,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
     try {
       expanded = await enhanceScene(scene, state, preferences, profile, userId)
     } catch (error) {
-      spindle.log.warn(`LumiPhone scene planner fell back to the original brief: ${error instanceof Error ? error.message : String(error)}`)
+      spindle.log.warn(`Pocket scene planner fell back to the original brief: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   if (job.cancelled) return { ok: false, cancelled: true }
@@ -515,12 +543,19 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   if (!result) throw new Error('The camera did not return an image.')
   const imageUrl = text(result.imageUrl, 2_000)
   const imageId = text(result.imageId, 200)
+  const route: PocketRoute = imageId ? { app: 'gallery', imageId } : { app: 'gallery' }
   const notification = addNotification(state, {
-    app: 'camera', title: 'Photo ready', body: scene.slice(0, 180), action: imageId || undefined,
+    app: 'camera', title: 'Photo ready', body: scene.slice(0, 180), route,
   })
+  const command = state.processedCommands.find((entry) => entry.id === text(input.__commandId, 240))
+  const activity = addActivity(state, {
+    kind: 'image', title: 'Photo ready', summary: scene.slice(0, 280), route,
+    source: { messageId: text(input.__sourceMessageId, 180) || undefined, imageId: imageId || undefined },
+  }, command)
   await saveState(state, userId)
   await maybePush(state, preferences, notification, userId)
   await sendState(state, userId, 'camera', false)
+  sendActivity(activity, userId)
   send({ type: 'lumiphone:camera_done', requestId, imageId, imageUrl, prompt: expanded, profile }, userId)
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source }
 }
@@ -555,10 +590,14 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     contact.messages.push({ id: id('msg'), sender: 'character', text: reply, createdAt: nowIso(), read: false, status: 'delivered' })
     contact.messages = contact.messages.slice(-MAX_MESSAGES)
     contact.unread += 1
-    const notification = addNotification(state, { app: 'messages', title: contact.name, body: reply.slice(0, 220), action: contact.id })
+    const phoneMessageId = contact.messages.at(-1)?.id
+    const route: PocketRoute = { app: 'messages', contactId: contact.id, messageId: phoneMessageId }
+    const notification = addNotification(state, { app: 'messages', title: contact.name, body: reply.slice(0, 220), route })
+    const activity = addActivity(state, { kind: 'message', title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id } })
     await saveState(state, userId)
     await maybePush(state, preferences, notification, userId)
     await sendState(state, userId, 'message', preferences.autoOpenOnModelAction)
+    sendActivity(activity, userId)
     send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, contactId: contact.id, phase: 'done' }, userId)
   })
 }
@@ -585,15 +624,18 @@ function actionSemanticKey(action: string, input: AnyRecord, payload: AnyRecord)
   return `${action}:${JSON.stringify(normalized).slice(0, 4_000)}`
 }
 
-function reserveCommand(state: PhoneState, input: AnyRecord, action: string, payload: AnyRecord, source: 'model' | 'user' | 'tag'): boolean {
+function reserveCommand(state: PhoneState, input: AnyRecord, action: string, payload: AnyRecord, source: 'model' | 'user' | 'tag'): { accepted: boolean; command: ProcessedPocketCommand } {
   const commandId = text(input.idempotencyKey ?? input.commandId ?? input.command_id ?? input.requestId, 240)
   const semanticKey = actionSemanticKey(action, input, payload)
   const cutoff = Date.now() - 20_000
-  if (commandId && state.processedCommands.some((entry) => entry.id === commandId)) return false
-  if (source !== 'user' && state.processedCommands.some((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff)) return false
-  state.processedCommands.push({ id: commandId || id('cmd'), semanticKey, createdAt: nowIso() })
+  const duplicate = commandId
+    ? state.processedCommands.find((entry) => entry.id === commandId)
+    : source !== 'user' ? state.processedCommands.find((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff) : undefined
+  if (duplicate) return { accepted: false, command: duplicate }
+  const command: ProcessedPocketCommand = { id: commandId || id('cmd'), semanticKey, createdAt: nowIso() }
+  state.processedCommands.push(command)
   state.processedCommands = state.processedCommands.slice(-160)
-  return true
+  return { accepted: true, command }
 }
 
 async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 'user' | 'tag' = 'model'): Promise<AnyRecord> {
@@ -604,17 +646,28 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
   if (action === 'camera') {
     const reserved = await withStateLock(key, async () => {
       const state = await loadState(context.chatId, context.characterId, userId)
-      if (!reserveCommand(state, input, action, payload, source)) return false
+      const reservation = reserveCommand(state, input, action, payload, source)
+      if (!reservation.accepted) {
+        sendActivity(state.activities.find((entry) => entry.id === reservation.command.activityId), userId)
+        return null
+      }
       await saveState(state, userId)
-      return true
+      return reservation.command
     })
-    return reserved ? cameraGenerate(input, userId) : { ok: true, action, deduplicated: true }
+    return reserved ? cameraGenerate({ ...input, __commandId: reserved.id, __sourceMessageId: input.messageId }, userId) : { ok: true, action, deduplicated: true }
   }
   return withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
-    if (!reserveCommand(state, input, action, payload, source)) return { ok: true, action, deduplicated: true }
+    const reservation = reserveCommand(state, input, action, payload, source)
+    if (!reservation.accepted) {
+      const duplicateActivity = state.activities.find((entry) => entry.id === reservation.command.activityId)
+      sendActivity(duplicateActivity, userId)
+      return { ok: true, action, deduplicated: true, activityId: duplicateActivity?.id }
+    }
+    const command = reservation.command
     let notification: PhoneNotification | null = null
+    let activity: PocketActivity | undefined
     let result: AnyRecord = { ok: true, action }
     if (action === 'open') {
       await saveState(state, userId)
@@ -634,8 +687,11 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       contact.messages.push({ id: id('msg'), sender, text: messageText, createdAt: nowIso(), read: sender === 'user', status: sender === 'user' ? 'sent' : 'delivered' })
       contact.messages = contact.messages.slice(-MAX_MESSAGES)
       if (sender === 'character') contact.unread += 1
-      notification = sender === 'character' ? addNotification(state, { app: 'messages', title: contact.name, body: messageText.slice(0, 220), action: contact.id }) : null
+      const phoneMessageId = contact.messages.at(-1)?.id
+      const route: PocketRoute = { app: 'messages', contactId: contact.id, messageId: phoneMessageId }
+      notification = sender === 'character' ? addNotification(state, { app: 'messages', title: contact.name, body: messageText.slice(0, 220), route }) : null
       result = { ...result, contactId: contact.id, messageId: contact.messages.at(-1)?.id }
+      activity = addActivity(state, { kind: 'message', title: contact.name, summary: messageText.slice(0, 280), route, source: { messageId: text(input.messageId, 180) || undefined, contactId: contact.id } }, command)
     } else if (action === 'note') {
       const noteId = text(payload.id, 120)
       const existing = state.notes.find((item) => item.id === noteId)
@@ -650,7 +706,9 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         state.notes = state.notes.slice(0, MAX_NOTES)
         result.noteId = note.id
       }
-      if (source !== 'user') notification = addNotification(state, { app: 'notes', title: 'Journal updated', body: title, action: String(result.noteId) })
+      const route: PocketRoute = { app: 'notes', noteId: String(result.noteId) }
+      if (source !== 'user') notification = addNotification(state, { app: 'notes', title: 'Journal updated', body: title, route })
+      activity = addActivity(state, { kind: 'note', title: 'Journal updated', summary: title, route, source: { messageId: text(input.messageId, 180) || undefined, noteId: String(result.noteId) } }, command)
     } else if (action === 'event') {
       const eventId = text(payload.id, 120)
       const existing = state.events.find((item) => item.id === eventId)
@@ -667,8 +725,10 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       if (existing) Object.assign(existing, event)
       else state.events.push(event)
       state.events = state.events.slice(-MAX_EVENTS)
-      notification = source !== 'user' ? addNotification(state, { app: 'calendar', title: 'Timeline updated', body: title, action: event.id }) : null
+      const route: PocketRoute = { app: 'calendar', eventId: event.id }
+      notification = source !== 'user' ? addNotification(state, { app: 'calendar', title: 'Timeline updated', body: title, route }) : null
       result.eventId = event.id
+      activity = addActivity(state, { kind: 'timeline', title: 'Timeline updated', summary: title, route, source: { messageId: text(input.messageId, 180) || undefined, eventId: event.id } }, command)
     } else if (action === 'weather') {
       state.weather = {
         location: text(payload.location, 160) || state.weather.location,
@@ -678,38 +738,66 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         high: numberValue(payload.high, state.weather.high), low: numberValue(payload.low, state.weather.low),
         details: text(payload.details ?? payload.text, 2_000) || state.weather.details, updatedAt: nowIso(),
       }
-      notification = source !== 'user' ? addNotification(state, { app: 'weather', title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}°${state.weather.unit}` }) : null
+      const route: PocketRoute = { app: 'weather' }
+      notification = source !== 'user' ? addNotification(state, { app: 'weather', title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}°${state.weather.unit}`, route }) : null
+      activity = addActivity(state, { kind: 'weather', title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}°${state.weather.unit}`, route, source: { messageId: text(input.messageId, 180) || undefined } }, command)
     } else if (action === 'tracker') {
-      const trackerId = text(payload.id, 120)
-      const existing = state.trackers.find((item) => item.id === trackerId || item.label.toLowerCase() === text(payload.label, 120).toLowerCase())
-      const min = numberValue(payload.min, existing?.min ?? 0)
-      const max = Math.max(min, numberValue(payload.max, existing?.max ?? 100))
-      const next: PhoneTracker = {
-        id: existing?.id || id('trk'), label: text(payload.label, 120) || existing?.label || 'Tracker',
-        value: Math.max(min, Math.min(max, numberValue(payload.value, existing?.value ?? min))), min, max,
-        unit: text(payload.unit, 40) || existing?.unit || '', color: text(payload.color, 40) || existing?.color || preferences.colors.accent,
-        ratePerHour: numberValue(payload.ratePerHour ?? payload.rate_per_hour, existing?.ratePerHour ?? 0),
-        lastUpdated: nowIso(), visibleToModel: payload.visibleToModel === undefined ? existing?.visibleToModel !== false : bool(payload.visibleToModel),
+      const trackerId = text(payload.trackerId ?? payload.tracker_id ?? payload.id, 120)
+      const requestedKey = trackerKey(payload.key, '')
+      let existing = trackerId ? state.trackers.find((item) => item.id === trackerId) : undefined
+      if (!existing && requestedKey) existing = state.trackers.find((item) => item.key === requestedKey)
+      if (!existing && !trackerId && !requestedKey && text(payload.label, 120)) {
+        const matches = state.trackers.filter((item) => item.label.toLocaleLowerCase() === text(payload.label, 120).toLocaleLowerCase())
+        if (matches.length > 1) throw new Error('Tracker label is ambiguous; use trackerId or key.')
+        existing = matches[0]
       }
-      if (existing) Object.assign(existing, next)
+      if (existing && source !== 'user' && (!existing.allowModelWrite || existing.updateMode !== 'model')) {
+        throw new Error(`Tracker ${existing.label} does not allow model updates.`)
+      }
+      const operation = text(payload.operation ?? payload.op, 30) as import('./types.js').TrackerOperation
+      let next: PhoneTracker
+      if (existing && operation) {
+        next = applyTrackerOperation(existing, {
+          operation, amount: numberValue(payload.amount ?? payload.value, 0), state: text(payload.state ?? payload.value, 80),
+          reason: text(payload.reason, 300), source, roleplayNow: state.roleplayNow,
+        })
+      } else {
+        const candidate = normalizeTracker({
+          ...(existing || {}), ...payload,
+          id: existing?.id || trackerId || id('trk'), key: text(payload.key, 120) || existing?.key || text(payload.label, 120),
+          label: text(payload.label, 120) || existing?.label || 'Tracker',
+          color: text(payload.color, 40) || existing?.color || preferences.colors.accent,
+          ratePerHour: payload.ratePerHour ?? payload.rate_per_hour ?? existing?.ratePerHour,
+          updatedAt: nowIso(), lastUpdated: existing?.lastUpdated || nowIso(),
+        }, { roleplayNow: state.roleplayNow, characterId: state.characterId, characterName: state.characterName })
+        if (!candidate) throw new Error('Tracker configuration is invalid.')
+        next = candidate
+      }
+      if (existing) state.trackers[state.trackers.indexOf(existing)] = next
       else state.trackers.push(next)
       state.trackers = state.trackers.slice(-MAX_TRACKERS)
-      notification = source !== 'user' ? addNotification(state, { app: 'trackers', title: next.label, body: `${Number(next.value.toFixed(2))}${next.unit}` }) : null
+      const route: PocketRoute = { app: 'trackers', trackerId: next.id, view: 'detail' }
+      const trackerSummary = next.kind === 'state' ? next.state : `${Number(next.value.toFixed(2))}${next.unit}`
+      notification = source !== 'user' ? addNotification(state, { app: 'trackers', title: next.label, body: trackerSummary, route }) : null
       result.trackerId = next.id
+      activity = addActivity(state, { kind: 'tracker-change', title: next.label, summary: trackerSummary, route, source: { messageId: text(input.messageId, 180) || undefined, trackerId: next.id } }, command)
     } else if (action === 'notify') {
       const requestedApp = text(payload.app ?? input.app, 40)
       const allowedApps = new Set(['home', 'messages', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'settings'])
       notification = addNotification(state, {
         app: (allowedApps.has(requestedApp) ? requestedApp : 'home') as PhoneNotification['app'],
-        title: text(payload.title ?? input.title, 160) || 'LumiPhone', body: text(payload.body ?? payload.text ?? payload.content, 1_000),
+        title: text(payload.title ?? input.title, 160) || 'Pocket', body: text(payload.body ?? payload.text ?? payload.content, 1_000),
+        route: normalizePocketRoute(payload.route, { app: (allowedApps.has(requestedApp) ? requestedApp : 'home') as PhoneNotification['app'] } as PocketRoute),
       })
+      activity = addActivity(state, { kind: 'system', title: notification.title, summary: notification.body, route: notification.route || { app: 'home' }, source: { messageId: text(input.messageId, 180) || undefined } }, command)
     } else {
       throw new Error(`Unsupported phone action: ${action || '(empty)'}`)
     }
     await saveState(state, userId)
     if (notification) await maybePush(state, preferences, notification, userId)
     await sendState(state, userId, action, source !== 'user' && preferences.autoOpenOnModelAction)
-    return result
+    sendActivity(activity, userId)
+    return { ...result, activityId: activity?.id }
   })
 }
 
@@ -736,7 +824,9 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:save_roleplay_time': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
-          state.roleplayNow = text(payload.roleplayNow, 80) || state.roleplayNow
+          const nextRoleplayNow = text(payload.roleplayNow, 80) || state.roleplayNow
+          state.trackers = state.trackers.map((tracker) => materializeTracker(tracker, nextRoleplayNow).tracker)
+          state.roleplayNow = nextRoleplayNow
           await saveState(state, userId)
           await sendState(state, userId, 'calendar')
         })
@@ -750,6 +840,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const tagPayload = {
           ...parseTagContent(text(payload.content, 40_000)), ...attrs,
           action: text(attrs.action, 40), chat_id: context.chatId, character_id: context.characterId,
+          messageId: text(payload.messageId, 180),
           idempotencyKey: text(payload.idempotencyKey, 240) || `tag:${text(payload.messageId, 180)}:${text(payload.fullMatch, 1_000)}`,
         }
         await applyAction(tagPayload, userId, 'tag')
@@ -778,8 +869,12 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const app = text(payload.app, 40)
           state.notifications.forEach((entry) => { if (!app || entry.app === app) entry.read = true })
           const contactId = text(payload.contactId, 180)
-          const contacts = contactId ? state.contacts.filter((entry) => entry.id === contactId) : state.contacts
-          contacts.forEach((contact) => { contact.unread = 0; contact.messages.forEach((message) => { message.read = true; message.status = 'read' }) })
+          if (contactId) {
+            state.contacts.filter((entry) => entry.id === contactId).forEach((contact) => {
+              contact.unread = 0
+              contact.messages.forEach((message) => { message.read = true; message.status = 'read' })
+            })
+          }
           await saveState(state, userId)
           await sendState(state, userId, 'read')
         })
@@ -804,13 +899,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:export_data': {
         const state = await loadState(context.chatId, context.characterId, userId)
-        send({ type: 'lumiphone:export_data', requestId, data: { exportVersion: 1, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId)
+        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 2, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId)
         break
       }
       case 'lumiphone:import_data': {
-        if (!isRecord(payload.data)) throw new Error('Import must be a LumiPhone JSON object.')
+        if (!isRecord(payload.data)) throw new Error('Import must be a Pocket JSON object.')
         const rawState = isRecord(payload.data.state) ? payload.data.state : payload.data
-        if (Number(rawState.version) > STATE_VERSION) throw new Error('This backup uses a newer LumiPhone state schema.')
+        if (Number(rawState.version) > STATE_VERSION) throw new Error('This backup uses a newer Pocket state schema.')
         const characterName = await characterNameFor(context.characterId, userId)
         const state = normalizeState(rawState, context.chatId, context.characterId, characterName)
         await saveState(state, userId)
@@ -842,7 +937,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    spindle.log.error(`LumiPhone request failed: ${message}`)
+    spindle.log.error(`Pocket request failed: ${message}`)
     send({ type: 'lumiphone:error', requestId, error: message }, userId)
   }
 }
@@ -851,8 +946,8 @@ function registerTool(): void {
   if (!spindle.permissions.has('tools')) return
   spindle.registerTool({
     name: 'phone_action',
-    display_name: 'LumiPhone Action',
-    description: 'Use the character-aware roleplay phone: send a text, write a journal note, schedule a calendar/timeline event, change fictional weather, create or update a tracker, take an AI camera photo, show a phone notification, or open the phone. State persists per chat and character.',
+    display_name: 'Pocket Action',
+    description: 'Use Pocket, the character-aware roleplay phone: send a text, write a journal note, schedule a timeline event, change fictional weather, create or update a typed tracker, take an AI camera photo, show a notification, or open the phone. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
@@ -861,7 +956,7 @@ function registerTool(): void {
         character_id: { type: 'string', description: 'Current character id when known.' },
         payload: {
           type: 'object',
-          description: 'Action data. message: text/contact_name; note: title/body/mood/pinned; event: title/description/start/end/lane; weather: location/condition/temperature/unit; tracker: label/value/min/max/unit/ratePerHour; camera: prompt/enhance; notify: app/title/body.',
+          description: 'Action data. tracker operations target trackerId or stable key (label is legacy fallback) and use operation set/add/subtract/reset/set_state plus amount/state/reason. Tracker configuration supports kind, target, updateMode, clock real|roleplay, visibility and allowModelWrite. Other actions use message text/contact_name; note title/body; event title/start/end; weather fields; camera prompt; notify route/title/body.',
           additionalProperties: true,
         },
       },
@@ -880,8 +975,8 @@ function ensureInterceptor(): void {
       const chatId = context.chatId || '_lobby'
       const characterId = context.characterId || '_none'
       const state = await loadState(chatId, characterId, context.userId)
-      const injected = { role: 'system' as const, content: `${PHONE_GUIDANCE}\nCurrent LumiPhone snapshot:\n${projectPhoneContext(state)}` }
-      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: 'LumiPhone memory' }] }
+      const injected = { role: 'system' as const, content: `${PHONE_GUIDANCE}\nCurrent Pocket snapshot:\n${projectPhoneContext(state)}` }
+      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: 'Pocket memory' }] }
     } catch {
       return messages
     }
@@ -894,11 +989,14 @@ spindle.on('TOOL_INVOCATION', async (payload) => {
   if (payload.toolName !== 'phone_action') return ''
   try {
     const args = isRecord(payload.args) ? payload.args : {}
-    const merged = { ...args, ...(isRecord(args.payload) ? args.payload : {}), payload: args.payload, idempotencyKey: text(payload.requestId, 240) }
+    const merged = {
+      ...args, ...(isRecord(args.payload) ? args.payload : {}), payload: args.payload,
+      idempotencyKey: text(payload.requestId, 240), messageId: text((payload as any).messageId, 180),
+    }
     const result = await applyAction(merged, undefined, 'model')
     return JSON.stringify(result)
   } catch (error) {
-    return `LumiPhone action failed: ${error instanceof Error ? error.message : String(error)}`
+    return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`
   }
 })
 
@@ -929,4 +1027,4 @@ spindle.on('CHAT_SWITCHED', async (payload: any, userId?: string) => {
   } catch { /* frontend will request a fresh state */ }
 })
 
-spindle.log.info('LumiPhone backend loaded.')
+spindle.log.info('Pocket backend loaded.')

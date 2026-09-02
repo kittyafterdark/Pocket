@@ -143,6 +143,228 @@ function isFuturePreferences(value) {
   return Number.isFinite(Number(raw.version)) && Number(raw.version) > PREFERENCES_VERSION;
 }
 
+// src/domain/trackers.ts
+var TRACKER_HISTORY_LIMIT = 40;
+var KINDS = new Set(["meter", "counter", "state", "timer"]);
+var CLOCKS = new Set(["real", "roleplay"]);
+var MODES = new Set(["manual", "model", "automatic"]);
+var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
+var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
+function record2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean(value, max = 160) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function finite(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function iso(value, fallback) {
+  const text2 = clean(value, 80);
+  return Number.isFinite(Date.parse(text2)) ? text2 : fallback;
+}
+function trackerId(prefix = "trk") {
+  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
+}
+function trackerKey(value, fallback = "tracker") {
+  const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return key || fallback;
+}
+function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
+  if (!record2(value))
+    return fallback;
+  const type = TARGETS.has(value.type) ? value.type : fallback.type;
+  return { type, id: clean(value.id, 180), label: clean(value.label, 160) || fallback.label };
+}
+function normalizeBands(value, min, max, color) {
+  const bands = (Array.isArray(value) ? value : []).flatMap((item) => {
+    if (!record2(item))
+      return [];
+    const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
+    const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
+    const label = clean(item.label, 80);
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color }] : [];
+  }).slice(0, 12);
+  if (bands.length || max <= min)
+    return bands;
+  const span = max - min;
+  return [
+    { min, max: min + span * 0.33, label: "Low", color: "#ef6b73" },
+    { min: min + span * 0.33, max: min + span * 0.67, label: "Steady", color },
+    { min: min + span * 0.67, max, label: "High", color: "#62c994" }
+  ];
+}
+function normalizeHistory(value) {
+  return (Array.isArray(value) ? value : []).flatMap((item) => {
+    if (!record2(item))
+      return [];
+    const operation = ["set", "add", "subtract", "reset", "set_state", "automatic"].includes(String(item.operation)) ? item.operation : "set";
+    const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" ? item.source : "user";
+    const createdAt = iso(item.createdAt, new Date().toISOString());
+    return [{
+      id: clean(item.id, 160) || trackerId("hist"),
+      previous: typeof item.previous === "string" ? clean(item.previous, 160) : finite(item.previous, 0),
+      next: typeof item.next === "string" ? clean(item.next, 160) : finite(item.next, 0),
+      operation,
+      amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
+      reason: clean(item.reason, 300),
+      source,
+      createdAt,
+      roleplayAt: clean(item.roleplayAt, 80) || undefined
+    }];
+  }).slice(-TRACKER_HISTORY_LIMIT);
+}
+function normalizeTracker(value, context = {}) {
+  if (!record2(value))
+    return null;
+  const now = context.now || new Date().toISOString();
+  const label = clean(value.label, 120);
+  if (!label)
+    return null;
+  const legacy = !KINDS.has(value.kind);
+  const kind = legacy ? "meter" : value.kind;
+  const min = finite(value.min, kind === "counter" ? 0 : 0);
+  const max = Math.max(min, finite(value.max, kind === "counter" ? 999999 : 100));
+  const numeric = Math.max(min, Math.min(max, finite(value.value, min)));
+  const initialValue = Math.max(min, Math.min(max, finite(value.initialValue, numeric)));
+  const color = clean(value.color, 40) || "#8b7dff";
+  const ratePerHour = Math.max(-1e5, Math.min(1e5, finite(value.ratePerHour, 0)));
+  const target = legacy ? { type: "custom", id: "", label: "Unassigned" } : normalizeTrackerTarget(value.target, context.characterId ? { type: "character", id: context.characterId, label: context.characterName || "Character" } : { type: "custom", id: "", label: "Unassigned" });
+  const clock = legacy ? "real" : CLOCKS.has(value.clock) ? value.clock : "real";
+  const updateMode = MODES.has(value.updateMode) ? value.updateMode : ratePerHour ? "automatic" : "manual";
+  const presentation = PRESENTATIONS.has(value.presentation) ? value.presentation : kind === "counter" ? "counter" : kind === "timer" ? "timer" : kind === "state" ? "state" : "meter";
+  const base = {
+    id: clean(value.id, 120) || trackerId(),
+    key: trackerKey(value.key || label),
+    label,
+    kind,
+    value: numeric,
+    initialValue,
+    min,
+    max,
+    unit: clean(value.unit, 40),
+    color,
+    target,
+    updateMode,
+    clock,
+    allowModelWrite: legacy ? false : value.allowModelWrite === true,
+    presentation,
+    bands: normalizeBands(value.bands, min, max, color),
+    history: normalizeHistory(value.history),
+    ratePerHour,
+    lastUpdated: iso(value.lastUpdated, now),
+    lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
+    pausedReason: clean(value.pausedReason, 240),
+    visibleToModel: value.visibleToModel !== false,
+    createdAt: iso(value.createdAt, now),
+    updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
+  };
+  if (kind === "state") {
+    const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean(entry, 80)).filter(Boolean).slice(0, 24);
+    const initialState = clean(value.initialState, 80) || states[0] || "Unknown";
+    const state = clean(value.state, 80) || initialState;
+    return { ...base, kind, state, initialState, states: states.includes(state) ? states : [...states, state].slice(0, 24) };
+  }
+  if (kind === "counter")
+    return { ...base, kind, step: Math.max(0.0001, Math.abs(finite(value.step, 1))) };
+  if (kind === "timer")
+    return { ...base, kind, direction: value.direction === "up" ? "up" : "down" };
+  return { ...base, kind };
+}
+function addHistory(tracker, entry) {
+  return { ...tracker, history: [...tracker.history, { ...entry, id: trackerId("hist") }].slice(-TRACKER_HISTORY_LIMIT) };
+}
+function trackerBand(tracker, value = tracker.value) {
+  return tracker.bands.find((band, index) => value >= band.min && (value < band.max || index === tracker.bands.length - 1)) || null;
+}
+function applyTrackerOperation(tracker, input) {
+  const now = input.now || new Date().toISOString();
+  if (tracker.kind === "state") {
+    if (input.operation !== "set_state" && input.operation !== "reset")
+      throw new Error("State trackers accept set_state or reset.");
+    const next2 = input.operation === "reset" ? tracker.initialState : clean(input.state, 80);
+    if (!next2)
+      throw new Error("set_state requires a state value.");
+    if (tracker.states.length && !tracker.states.includes(next2))
+      throw new Error(`State must be one of: ${tracker.states.join(", ")}`);
+    if (next2 === tracker.state)
+      return tracker;
+    return addHistory({ ...tracker, state: next2, updatedAt: now }, {
+      previous: tracker.state,
+      next: next2,
+      operation: input.operation,
+      reason: clean(input.reason, 300),
+      source: input.source,
+      createdAt: now,
+      roleplayAt: clean(input.roleplayNow, 80) || undefined
+    });
+  }
+  const amount = finite(input.amount, 0);
+  const rawNext = input.operation === "reset" ? tracker.initialValue : input.operation === "add" ? tracker.value + amount : input.operation === "subtract" ? tracker.value - amount : input.operation === "set" ? amount : (() => {
+    throw new Error("Numeric trackers accept set, add, subtract, or reset.");
+  })();
+  const next = Math.max(tracker.min, Math.min(tracker.max, rawNext));
+  if (next === tracker.value)
+    return tracker;
+  return addHistory({ ...tracker, value: next, updatedAt: now, lastUpdated: now }, {
+    previous: tracker.value,
+    next,
+    operation: input.operation,
+    amount: input.operation === "reset" ? undefined : amount,
+    reason: clean(input.reason, 300),
+    source: input.source,
+    createdAt: now,
+    roleplayAt: clean(input.roleplayNow, 80) || undefined
+  });
+}
+function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
+  if (tracker.kind === "state" || tracker.updateMode !== "automatic" || !tracker.ratePerHour)
+    return { tracker, changed: false };
+  const current = tracker.clock === "roleplay" ? Date.parse(roleplayNow) : Date.parse(wallNow);
+  const previous = tracker.clock === "roleplay" ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated);
+  if (!Number.isFinite(current)) {
+    const pausedReason = tracker.clock === "roleplay" ? "Roleplay time is approximate or unavailable." : "Real-time clock is unavailable.";
+    return { tracker: { ...tracker, pausedReason }, changed: tracker.pausedReason !== pausedReason };
+  }
+  if (!Number.isFinite(previous)) {
+    const anchor2 = new Date(current).toISOString();
+    return {
+      tracker: {
+        ...tracker,
+        pausedReason: "",
+        lastUpdated: tracker.clock === "real" ? anchor2 : tracker.lastUpdated,
+        lastRoleplayAt: tracker.clock === "roleplay" ? anchor2 : tracker.lastRoleplayAt
+      },
+      changed: true
+    };
+  }
+  if (current <= previous)
+    return { tracker: tracker.pausedReason ? { ...tracker, pausedReason: "" } : tracker, changed: Boolean(tracker.pausedReason) };
+  const nextValue = Math.max(tracker.min, Math.min(tracker.max, tracker.value + (current - previous) / 3600000 * tracker.ratePerHour));
+  const anchor = new Date(current).toISOString();
+  let next = {
+    ...tracker,
+    value: nextValue,
+    pausedReason: "",
+    updatedAt: wallNow,
+    lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
+    lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
+  };
+  if (nextValue !== tracker.value)
+    next = addHistory(next, {
+      previous: tracker.value,
+      next: nextValue,
+      operation: "automatic",
+      amount: nextValue - tracker.value,
+      reason: tracker.clock === "roleplay" ? "Roleplay time advanced" : "Real time advanced",
+      source: "automatic",
+      createdAt: wallNow,
+      roleplayAt: clean(roleplayNow, 80) || undefined
+    });
+  return { tracker: next, changed: true };
+}
+
 // src/domain/projection.ts
 var MODEL_CONTEXT_BUDGET = 5600;
 function safeTime(value) {
@@ -162,14 +384,24 @@ function serializeWithinBudget(value, budget = MODEL_CONTEXT_BUDGET) {
       serialized = JSON.stringify(compact);
     }
   }
-  return serialized.length <= budget ? serialized : serialized.slice(0, budget);
+  if (serialized.length <= budget)
+    return serialized;
+  const fallback = JSON.stringify({ roleplayNow: String(value.roleplayNow || "").slice(0, Math.max(0, budget - 24)), truncated: true });
+  if (fallback.length <= budget)
+    return fallback;
+  return "{}";
 }
 function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
   const contacts = state.contacts.map((contact) => ({
     name: contact.name.slice(0, 120),
     recent: contact.messages.slice(-3).map((message) => `${message.sender}: ${message.text.slice(0, 180)}`)
   })).filter((contact) => contact.recent.length).slice(0, 8);
-  const trackers = state.trackers.filter((tracker) => tracker.visibleToModel).slice(0, 12).map((tracker) => `${tracker.label.slice(0, 120)}: ${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`);
+  const trackers = state.trackers.filter((tracker) => tracker.visibleToModel).slice(0, 12).map((tracker) => {
+    const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
+    const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
+    const band = tracker.kind === "state" ? "" : trackerBand(tracker)?.label || "";
+    return `${tracker.label.slice(0, 120)} [${target}] = ${value}${band ? ` (${band})` : ""}`;
+  });
   const upcoming = state.events.filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
   return serializeWithinBudget({
     roleplayNow: state.roleplayNow,
@@ -187,19 +419,70 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
   }, budget);
 }
 
+// src/domain/navigation.ts
+var APPS = new Set(["home", "messages", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
+function shortId(value) {
+  if (typeof value !== "string")
+    return;
+  const clean2 = value.trim().slice(0, 180);
+  return clean2 || undefined;
+}
+function normalizePocketRoute(value, fallback = { app: "home" }) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return fallback;
+  const raw = value;
+  const app = typeof raw.app === "string" && APPS.has(raw.app) ? raw.app : fallback.app;
+  if (app === "messages")
+    return { app, contactId: shortId(raw.contactId), messageId: shortId(raw.messageId) };
+  if (app === "trackers")
+    return {
+      app,
+      trackerId: shortId(raw.trackerId),
+      view: raw.view === "config" ? "config" : raw.view === "detail" ? "detail" : undefined
+    };
+  if (app === "calendar")
+    return { app, eventId: shortId(raw.eventId) };
+  if (app === "notes")
+    return { app, noteId: shortId(raw.noteId) };
+  if (app === "gallery")
+    return { app, imageId: shortId(raw.imageId) };
+  if (app === "settings")
+    return { app, section: shortId(raw.section) };
+  if (app === "camera" || app === "weather" || app === "home")
+    return { app };
+  return fallback;
+}
+function legacyActionRoute(app, action) {
+  const id = shortId(action);
+  if (app === "messages")
+    return { app, contactId: id };
+  if (app === "trackers")
+    return { app, trackerId: id, view: id ? "detail" : undefined };
+  if (app === "calendar")
+    return { app, eventId: id };
+  if (app === "notes")
+    return { app, noteId: id };
+  if (app === "gallery")
+    return { app, imageId: id };
+  if (app === "settings")
+    return { app, section: id };
+  return { app };
+}
+
 // src/backend.ts
-var STATE_VERSION = 1;
+var STATE_VERSION = 2;
 var MAX_MESSAGES = 240;
 var MAX_NOTIFICATIONS = 80;
 var MAX_NOTES = 120;
 var MAX_EVENTS = 200;
 var MAX_TRACKERS = 40;
+var MAX_ACTIVITIES = 120;
 var stateLocks = new Map;
 var cameraJobs = new Map;
 var notificationThrottle = new Map;
-var PHONE_GUIDANCE = `LumiPhone is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
+var PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
 <lumi-phone action="message|note|event|weather|tracker|camera|notify|open" app="messages|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
-Do not explain the tag. Do not use it for ordinary narration. Phone messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`;
+Do not explain the tag. Do not use it for ordinary narration. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`;
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -262,6 +545,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
     weather: defaultWeather(),
     trackers: [],
     notifications: [],
+    activities: [],
     processedCommands: [],
     updatedAt: createdAt
   };
@@ -345,41 +629,49 @@ function normalizeState(value, chatId, characterId, characterName) {
       createdBy
     }];
   });
-  const trackers = (Array.isArray(value.trackers) ? value.trackers : []).slice(0, MAX_TRACKERS).flatMap((item) => {
-    if (!isRecord(item))
-      return [];
-    const label = text2(item.label, 120);
-    if (!label)
-      return [];
-    const min = numberValue(item.min, 0);
-    const max = Math.max(min, numberValue(item.max, 100));
-    return [{
-      id: text2(item.id, 120) || id("trk"),
-      label,
-      value: Math.max(min, Math.min(max, numberValue(item.value, min))),
-      min,
-      max,
-      unit: text2(item.unit, 40),
-      color: text2(item.color, 40) || "#8b7dff",
-      ratePerHour: Math.max(-1e5, Math.min(1e5, numberValue(item.ratePerHour, 0))),
-      lastUpdated: text2(item.lastUpdated, 40) || nowIso(),
-      visibleToModel: item.visibleToModel !== false
-    }];
-  });
+  const trackers = (Array.isArray(value.trackers) ? value.trackers : []).slice(0, MAX_TRACKERS).map((item) => normalizeTracker(item, { roleplayNow: text2(value.roleplayNow, 80), characterId, characterName })).filter((item) => Boolean(item));
   const notifications = (Array.isArray(value.notifications) ? value.notifications : []).slice(0, MAX_NOTIFICATIONS).flatMap((item) => {
     if (!isRecord(item))
       return [];
     const title = text2(item.title, 160);
     if (!title)
       return [];
+    const app = text2(item.app, 40) || "home";
     return [{
       id: text2(item.id, 120) || id("ntf"),
-      app: text2(item.app, 40) || "home",
+      app,
       title,
       body: text2(item.body, 1000),
       createdAt: text2(item.createdAt, 40) || nowIso(),
       read: bool2(item.read),
+      route: normalizePocketRoute(item.route, legacyActionRoute(app, text2(item.action, 120))),
       action: text2(item.action, 120) || undefined
+    }];
+  });
+  const activities = (Array.isArray(value.activities) ? value.activities : []).slice(-MAX_ACTIVITIES).flatMap((item) => {
+    if (!isRecord(item))
+      return [];
+    const title = text2(item.title, 160);
+    if (!title)
+      return [];
+    const source = isRecord(item.source) ? item.source : {};
+    return [{
+      id: text2(item.id, 160) || id("act"),
+      kind: item.kind === "message" || item.kind === "tracker-change" || item.kind === "timeline" || item.kind === "note" || item.kind === "image" || item.kind === "weather" ? item.kind : "system",
+      title,
+      summary: text2(item.summary, 500) || undefined,
+      route: normalizePocketRoute(item.route),
+      createdAt: text2(item.createdAt, 40) || nowIso(),
+      scope: { chatId, characterId },
+      source: {
+        commandId: text2(source.commandId, 240) || undefined,
+        messageId: text2(source.messageId, 180) || undefined,
+        trackerId: text2(source.trackerId, 180) || undefined,
+        contactId: text2(source.contactId, 180) || undefined,
+        eventId: text2(source.eventId, 180) || undefined,
+        noteId: text2(source.noteId, 180) || undefined,
+        imageId: text2(source.imageId, 180) || undefined
+      }
     }];
   });
   const processedCommands = (Array.isArray(value.processedCommands) ? value.processedCommands : []).slice(-160).flatMap((item) => {
@@ -388,7 +680,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     const commandId = text2(item.id, 240);
     if (!commandId)
       return [];
-    return [{ id: commandId, semanticKey: text2(item.semanticKey, 500), createdAt: text2(item.createdAt, 40) || nowIso() }];
+    return [{ id: commandId, semanticKey: text2(item.semanticKey, 500), createdAt: text2(item.createdAt, 40) || nowIso(), activityId: text2(item.activityId, 180) || undefined }];
   });
   const weatherValue = isRecord(value.weather) ? value.weather : {};
   const weather = {
@@ -413,6 +705,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     weather,
     trackers,
     notifications,
+    activities,
     processedCommands,
     updatedAt: text2(value.updatedAt, 40) || fallback.updatedAt
   };
@@ -434,24 +727,28 @@ async function loadState(chatId, characterId, userId) {
     userId
   });
   if (isRecord(raw) && Number(raw.version) > STATE_VERSION)
-    throw new Error("This phone state was created by a newer LumiPhone version.");
+    throw new Error("This phone state was created by a newer Pocket version.");
   const state = normalizeState(raw, chatId, characterId, characterName);
   await loadPreferences(userId, isRecord(raw) ? raw.settings : undefined);
-  if (isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION)) {
-    await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId });
-  }
-  state.trackers = materializeTrackers(state.trackers);
+  let stateChanged = Boolean(isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION));
+  state.trackers = state.trackers.map((tracker) => {
+    const result = materializeTracker(tracker, state.roleplayNow);
+    stateChanged ||= result.changed;
+    return result.tracker;
+  });
   const contact = state.contacts.find((item) => item.id === characterId);
   if (contact && characterName !== "Character")
     contact.name = characterName;
   state.characterName = characterName;
+  if (stateChanged)
+    await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId });
   return state;
 }
 async function loadPreferences(userId, legacy) {
   const raw = await spindle.userStorage.getJson(PREFERENCES_PATH, { fallback: null, userId });
   const preferences = normalizePreferences(raw ?? legacy);
   if (isFuturePreferences(raw)) {
-    spindle.log.warn("LumiPhone left newer device preferences untouched and used safe defaults for this session.");
+    spindle.log.warn("Pocket left newer device preferences untouched and used safe defaults for this session.");
     return preferences;
   }
   if (raw === null || Number(isRecord(raw) ? raw.version : 0) !== preferences.version) {
@@ -468,32 +765,17 @@ async function saveState(state, userId) {
   state.updatedAt = nowIso();
   await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId });
 }
-function materializeTrackers(trackers) {
-  const now = Date.now();
-  return trackers.map((tracker) => {
-    if (!tracker.ratePerHour)
-      return tracker;
-    const last = Date.parse(tracker.lastUpdated);
-    if (!Number.isFinite(last) || last >= now)
-      return tracker;
-    const elapsedHours = (now - last) / 3600000;
-    return {
-      ...tracker,
-      value: Math.max(tracker.min, Math.min(tracker.max, tracker.value + elapsedHours * tracker.ratePerHour)),
-      lastUpdated: new Date(now).toISOString()
-    };
-  });
-}
 function withStateLock(key, task) {
   const previous = stateLocks.get(key) || Promise.resolve();
   const current = previous.catch(() => {
     return;
   }).then(task);
   stateLocks.set(key, current);
-  current.finally(() => {
+  const release = () => {
     if (stateLocks.get(key) === current)
       stateLocks.delete(key);
-  });
+  };
+  current.then(release, release);
   return current;
 }
 function capabilities() {
@@ -522,6 +804,24 @@ function addNotification(state, notification) {
   state.notifications = state.notifications.slice(0, MAX_NOTIFICATIONS);
   return entry;
 }
+function addActivity(state, activity, command) {
+  const entry = {
+    ...activity,
+    id: id("act"),
+    createdAt: nowIso(),
+    scope: { chatId: state.chatId, characterId: state.characterId },
+    source: { ...activity.source, commandId: command?.id || activity.source?.commandId }
+  };
+  state.activities.push(entry);
+  state.activities = state.activities.slice(-MAX_ACTIVITIES);
+  if (command)
+    command.activityId = entry.id;
+  return entry;
+}
+function sendActivity(activity, userId) {
+  if (activity)
+    send({ type: "lumiphone:activity", activity }, userId);
+}
 async function maybePush(state, preferences, notification, userId) {
   if (!preferences.pushNotifications || !spindle.permissions.has("push_notification"))
     return;
@@ -536,12 +836,12 @@ async function maybePush(state, preferences, notification, userId) {
       return;
     await spindle.push.send({
       title: notification.title,
-      body: notification.body || `Open ${notification.app} on LumiPhone`,
+      body: notification.body || `Open ${notification.app} in Pocket`,
       tag: `lumiphone-${stateKey(state.chatId, state.characterId)}-${notification.app}`,
       url: `/chat/${state.chatId}`
     }, userId);
   } catch (error) {
-    spindle.log.warn(`LumiPhone push notification failed: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`Pocket push notification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 async function resolveContext(input, userId) {
@@ -658,7 +958,7 @@ async function cameraGenerate(input, userId) {
     try {
       expanded = await enhanceScene(scene, state, preferences, profile, userId);
     } catch (error) {
-      spindle.log.warn(`LumiPhone scene planner fell back to the original brief: ${error instanceof Error ? error.message : String(error)}`);
+      spindle.log.warn(`Pocket scene planner fell back to the original brief: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   if (job.cancelled)
@@ -722,15 +1022,25 @@ async function cameraGenerate(input, userId) {
     throw new Error("The camera did not return an image.");
   const imageUrl = text2(result.imageUrl, 2000);
   const imageId = text2(result.imageId, 200);
+  const route = imageId ? { app: "gallery", imageId } : { app: "gallery" };
   const notification = addNotification(state, {
     app: "camera",
     title: "Photo ready",
     body: scene.slice(0, 180),
-    action: imageId || undefined
+    route
   });
+  const command = state.processedCommands.find((entry) => entry.id === text2(input.__commandId, 240));
+  const activity = addActivity(state, {
+    kind: "image",
+    title: "Photo ready",
+    summary: scene.slice(0, 280),
+    route,
+    source: { messageId: text2(input.__sourceMessageId, 180) || undefined, imageId: imageId || undefined }
+  }, command);
   await saveState(state, userId);
   await maybePush(state, preferences, notification, userId);
   await sendState(state, userId, "camera", false);
+  sendActivity(activity, userId);
   send({ type: "lumiphone:camera_done", requestId, imageId, imageUrl, prompt: expanded, profile }, userId);
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source };
 }
@@ -770,10 +1080,14 @@ Direction: ${instruction}` }
     contact.messages.push({ id: id("msg"), sender: "character", text: reply, createdAt: nowIso(), read: false, status: "delivered" });
     contact.messages = contact.messages.slice(-MAX_MESSAGES);
     contact.unread += 1;
-    const notification = addNotification(state, { app: "messages", title: contact.name, body: reply.slice(0, 220), action: contact.id });
+    const phoneMessageId = contact.messages.at(-1)?.id;
+    const route = { app: "messages", contactId: contact.id, messageId: phoneMessageId };
+    const notification = addNotification(state, { app: "messages", title: contact.name, body: reply.slice(0, 220), route });
+    const activity = addActivity(state, { kind: "message", title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id } });
     await saveState(state, userId);
     await maybePush(state, preferences, notification, userId);
     await sendState(state, userId, "message", preferences.autoOpenOnModelAction);
+    sendActivity(activity, userId);
     send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, contactId: contact.id, phase: "done" }, userId);
   });
 }
@@ -803,13 +1117,13 @@ function reserveCommand(state, input, action, payload, source) {
   const commandId = text2(input.idempotencyKey ?? input.commandId ?? input.command_id ?? input.requestId, 240);
   const semanticKey = actionSemanticKey(action, input, payload);
   const cutoff = Date.now() - 20000;
-  if (commandId && state.processedCommands.some((entry) => entry.id === commandId))
-    return false;
-  if (source !== "user" && state.processedCommands.some((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff))
-    return false;
-  state.processedCommands.push({ id: commandId || id("cmd"), semanticKey, createdAt: nowIso() });
+  const duplicate = commandId ? state.processedCommands.find((entry) => entry.id === commandId) : source !== "user" ? state.processedCommands.find((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff) : undefined;
+  if (duplicate)
+    return { accepted: false, command: duplicate };
+  const command = { id: commandId || id("cmd"), semanticKey, createdAt: nowIso() };
+  state.processedCommands.push(command);
   state.processedCommands = state.processedCommands.slice(-160);
-  return true;
+  return { accepted: true, command };
 }
 async function applyAction(input, userId, source = "model") {
   const context = await resolveContext(input, userId);
@@ -819,19 +1133,28 @@ async function applyAction(input, userId, source = "model") {
   if (action === "camera") {
     const reserved = await withStateLock(key, async () => {
       const state = await loadState(context.chatId, context.characterId, userId);
-      if (!reserveCommand(state, input, action, payload, source))
-        return false;
+      const reservation = reserveCommand(state, input, action, payload, source);
+      if (!reservation.accepted) {
+        sendActivity(state.activities.find((entry) => entry.id === reservation.command.activityId), userId);
+        return null;
+      }
       await saveState(state, userId);
-      return true;
+      return reservation.command;
     });
-    return reserved ? cameraGenerate(input, userId) : { ok: true, action, deduplicated: true };
+    return reserved ? cameraGenerate({ ...input, __commandId: reserved.id, __sourceMessageId: input.messageId }, userId) : { ok: true, action, deduplicated: true };
   }
   return withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId);
     const preferences = await loadPreferences(userId);
-    if (!reserveCommand(state, input, action, payload, source))
-      return { ok: true, action, deduplicated: true };
+    const reservation = reserveCommand(state, input, action, payload, source);
+    if (!reservation.accepted) {
+      const duplicateActivity = state.activities.find((entry) => entry.id === reservation.command.activityId);
+      sendActivity(duplicateActivity, userId);
+      return { ok: true, action, deduplicated: true, activityId: duplicateActivity?.id };
+    }
+    const command = reservation.command;
     let notification = null;
+    let activity;
     let result = { ok: true, action };
     if (action === "open") {
       await saveState(state, userId);
@@ -853,8 +1176,11 @@ async function applyAction(input, userId, source = "model") {
       contact.messages = contact.messages.slice(-MAX_MESSAGES);
       if (sender === "character")
         contact.unread += 1;
-      notification = sender === "character" ? addNotification(state, { app: "messages", title: contact.name, body: messageText.slice(0, 220), action: contact.id }) : null;
+      const phoneMessageId = contact.messages.at(-1)?.id;
+      const route = { app: "messages", contactId: contact.id, messageId: phoneMessageId };
+      notification = sender === "character" ? addNotification(state, { app: "messages", title: contact.name, body: messageText.slice(0, 220), route }) : null;
       result = { ...result, contactId: contact.id, messageId: contact.messages.at(-1)?.id };
+      activity = addActivity(state, { kind: "message", title: contact.name, summary: messageText.slice(0, 280), route, source: { messageId: text2(input.messageId, 180) || undefined, contactId: contact.id } }, command);
     } else if (action === "note") {
       const noteId = text2(payload.id, 120);
       const existing = state.notes.find((item) => item.id === noteId);
@@ -869,8 +1195,10 @@ async function applyAction(input, userId, source = "model") {
         state.notes = state.notes.slice(0, MAX_NOTES);
         result.noteId = note.id;
       }
+      const route = { app: "notes", noteId: String(result.noteId) };
       if (source !== "user")
-        notification = addNotification(state, { app: "notes", title: "Journal updated", body: title, action: String(result.noteId) });
+        notification = addNotification(state, { app: "notes", title: "Journal updated", body: title, route });
+      activity = addActivity(state, { kind: "note", title: "Journal updated", summary: title, route, source: { messageId: text2(input.messageId, 180) || undefined, noteId: String(result.noteId) } }, command);
     } else if (action === "event") {
       const eventId = text2(payload.id, 120);
       const existing = state.events.find((item) => item.id === eventId);
@@ -894,8 +1222,10 @@ async function applyAction(input, userId, source = "model") {
       else
         state.events.push(event);
       state.events = state.events.slice(-MAX_EVENTS);
-      notification = source !== "user" ? addNotification(state, { app: "calendar", title: "Timeline updated", body: title, action: event.id }) : null;
+      const route = { app: "calendar", eventId: event.id };
+      notification = source !== "user" ? addNotification(state, { app: "calendar", title: "Timeline updated", body: title, route }) : null;
       result.eventId = event.id;
+      activity = addActivity(state, { kind: "timeline", title: "Timeline updated", summary: title, route, source: { messageId: text2(input.messageId, 180) || undefined, eventId: event.id } }, command);
     } else if (action === "weather") {
       state.weather = {
         location: text2(payload.location, 160) || state.weather.location,
@@ -907,39 +1237,71 @@ async function applyAction(input, userId, source = "model") {
         details: text2(payload.details ?? payload.text, 2000) || state.weather.details,
         updatedAt: nowIso()
       };
-      notification = source !== "user" ? addNotification(state, { app: "weather", title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}` }) : null;
+      const route = { app: "weather" };
+      notification = source !== "user" ? addNotification(state, { app: "weather", title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route }) : null;
+      activity = addActivity(state, { kind: "weather", title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
     } else if (action === "tracker") {
-      const trackerId = text2(payload.id, 120);
-      const existing = state.trackers.find((item) => item.id === trackerId || item.label.toLowerCase() === text2(payload.label, 120).toLowerCase());
-      const min = numberValue(payload.min, existing?.min ?? 0);
-      const max = Math.max(min, numberValue(payload.max, existing?.max ?? 100));
-      const next = {
-        id: existing?.id || id("trk"),
-        label: text2(payload.label, 120) || existing?.label || "Tracker",
-        value: Math.max(min, Math.min(max, numberValue(payload.value, existing?.value ?? min))),
-        min,
-        max,
-        unit: text2(payload.unit, 40) || existing?.unit || "",
-        color: text2(payload.color, 40) || existing?.color || preferences.colors.accent,
-        ratePerHour: numberValue(payload.ratePerHour ?? payload.rate_per_hour, existing?.ratePerHour ?? 0),
-        lastUpdated: nowIso(),
-        visibleToModel: payload.visibleToModel === undefined ? existing?.visibleToModel !== false : bool2(payload.visibleToModel)
-      };
+      const trackerId2 = text2(payload.trackerId ?? payload.tracker_id ?? payload.id, 120);
+      const requestedKey = trackerKey(payload.key, "");
+      let existing = trackerId2 ? state.trackers.find((item) => item.id === trackerId2) : undefined;
+      if (!existing && requestedKey)
+        existing = state.trackers.find((item) => item.key === requestedKey);
+      if (!existing && !trackerId2 && !requestedKey && text2(payload.label, 120)) {
+        const matches = state.trackers.filter((item) => item.label.toLocaleLowerCase() === text2(payload.label, 120).toLocaleLowerCase());
+        if (matches.length > 1)
+          throw new Error("Tracker label is ambiguous; use trackerId or key.");
+        existing = matches[0];
+      }
+      if (existing && source !== "user" && (!existing.allowModelWrite || existing.updateMode !== "model")) {
+        throw new Error(`Tracker ${existing.label} does not allow model updates.`);
+      }
+      const operation = text2(payload.operation ?? payload.op, 30);
+      let next;
+      if (existing && operation) {
+        next = applyTrackerOperation(existing, {
+          operation,
+          amount: numberValue(payload.amount ?? payload.value, 0),
+          state: text2(payload.state ?? payload.value, 80),
+          reason: text2(payload.reason, 300),
+          source,
+          roleplayNow: state.roleplayNow
+        });
+      } else {
+        const candidate = normalizeTracker({
+          ...existing || {},
+          ...payload,
+          id: existing?.id || trackerId2 || id("trk"),
+          key: text2(payload.key, 120) || existing?.key || text2(payload.label, 120),
+          label: text2(payload.label, 120) || existing?.label || "Tracker",
+          color: text2(payload.color, 40) || existing?.color || preferences.colors.accent,
+          ratePerHour: payload.ratePerHour ?? payload.rate_per_hour ?? existing?.ratePerHour,
+          updatedAt: nowIso(),
+          lastUpdated: existing?.lastUpdated || nowIso()
+        }, { roleplayNow: state.roleplayNow, characterId: state.characterId, characterName: state.characterName });
+        if (!candidate)
+          throw new Error("Tracker configuration is invalid.");
+        next = candidate;
+      }
       if (existing)
-        Object.assign(existing, next);
+        state.trackers[state.trackers.indexOf(existing)] = next;
       else
         state.trackers.push(next);
       state.trackers = state.trackers.slice(-MAX_TRACKERS);
-      notification = source !== "user" ? addNotification(state, { app: "trackers", title: next.label, body: `${Number(next.value.toFixed(2))}${next.unit}` }) : null;
+      const route = { app: "trackers", trackerId: next.id, view: "detail" };
+      const trackerSummary = next.kind === "state" ? next.state : `${Number(next.value.toFixed(2))}${next.unit}`;
+      notification = source !== "user" ? addNotification(state, { app: "trackers", title: next.label, body: trackerSummary, route }) : null;
       result.trackerId = next.id;
+      activity = addActivity(state, { kind: "tracker-change", title: next.label, summary: trackerSummary, route, source: { messageId: text2(input.messageId, 180) || undefined, trackerId: next.id } }, command);
     } else if (action === "notify") {
       const requestedApp = text2(payload.app ?? input.app, 40);
       const allowedApps = new Set(["home", "messages", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
       notification = addNotification(state, {
         app: allowedApps.has(requestedApp) ? requestedApp : "home",
-        title: text2(payload.title ?? input.title, 160) || "LumiPhone",
-        body: text2(payload.body ?? payload.text ?? payload.content, 1000)
+        title: text2(payload.title ?? input.title, 160) || "Pocket",
+        body: text2(payload.body ?? payload.text ?? payload.content, 1000),
+        route: normalizePocketRoute(payload.route, { app: allowedApps.has(requestedApp) ? requestedApp : "home" })
       });
+      activity = addActivity(state, { kind: "system", title: notification.title, summary: notification.body, route: notification.route || { app: "home" }, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
     } else {
       throw new Error(`Unsupported phone action: ${action || "(empty)"}`);
     }
@@ -947,7 +1309,8 @@ async function applyAction(input, userId, source = "model") {
     if (notification)
       await maybePush(state, preferences, notification, userId);
     await sendState(state, userId, action, source !== "user" && preferences.autoOpenOnModelAction);
-    return result;
+    sendActivity(activity, userId);
+    return { ...result, activityId: activity?.id };
   });
 }
 async function handleFrontend(payload, userId) {
@@ -974,7 +1337,9 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:save_roleplay_time": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
-          state.roleplayNow = text2(payload.roleplayNow, 80) || state.roleplayNow;
+          const nextRoleplayNow = text2(payload.roleplayNow, 80) || state.roleplayNow;
+          state.trackers = state.trackers.map((tracker) => materializeTracker(tracker, nextRoleplayNow).tracker);
+          state.roleplayNow = nextRoleplayNow;
           await saveState(state, userId);
           await sendState(state, userId, "calendar");
         });
@@ -991,6 +1356,7 @@ async function handleFrontend(payload, userId) {
           action: text2(attrs.action, 40),
           chat_id: context.chatId,
           character_id: context.characterId,
+          messageId: text2(payload.messageId, 180),
           idempotencyKey: text2(payload.idempotencyKey, 240) || `tag:${text2(payload.messageId, 180)}:${text2(payload.fullMatch, 1000)}`
         };
         await applyAction(tagPayload, userId, "tag");
@@ -1023,14 +1389,15 @@ async function handleFrontend(payload, userId) {
               entry.read = true;
           });
           const contactId = text2(payload.contactId, 180);
-          const contacts = contactId ? state.contacts.filter((entry) => entry.id === contactId) : state.contacts;
-          contacts.forEach((contact) => {
-            contact.unread = 0;
-            contact.messages.forEach((message) => {
-              message.read = true;
-              message.status = "read";
+          if (contactId) {
+            state.contacts.filter((entry) => entry.id === contactId).forEach((contact) => {
+              contact.unread = 0;
+              contact.messages.forEach((message) => {
+                message.read = true;
+                message.status = "read";
+              });
             });
-          });
+          }
           await saveState(state, userId);
           await sendState(state, userId, "read");
         });
@@ -1058,15 +1425,15 @@ async function handleFrontend(payload, userId) {
       }
       case "lumiphone:export_data": {
         const state = await loadState(context.chatId, context.characterId, userId);
-        send({ type: "lumiphone:export_data", requestId, data: { exportVersion: 1, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId);
+        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 2, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId);
         break;
       }
       case "lumiphone:import_data": {
         if (!isRecord(payload.data))
-          throw new Error("Import must be a LumiPhone JSON object.");
+          throw new Error("Import must be a Pocket JSON object.");
         const rawState = isRecord(payload.data.state) ? payload.data.state : payload.data;
         if (Number(rawState.version) > STATE_VERSION)
-          throw new Error("This backup uses a newer LumiPhone state schema.");
+          throw new Error("This backup uses a newer Pocket state schema.");
         const characterName = await characterNameFor(context.characterId, userId);
         const state = normalizeState(rawState, context.chatId, context.characterId, characterName);
         await saveState(state, userId);
@@ -1099,7 +1466,7 @@ async function handleFrontend(payload, userId) {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    spindle.log.error(`LumiPhone request failed: ${message}`);
+    spindle.log.error(`Pocket request failed: ${message}`);
     send({ type: "lumiphone:error", requestId, error: message }, userId);
   }
 }
@@ -1108,8 +1475,8 @@ function registerTool() {
     return;
   spindle.registerTool({
     name: "phone_action",
-    display_name: "LumiPhone Action",
-    description: "Use the character-aware roleplay phone: send a text, write a journal note, schedule a calendar/timeline event, change fictional weather, create or update a tracker, take an AI camera photo, show a phone notification, or open the phone. State persists per chat and character.",
+    display_name: "Pocket Action",
+    description: "Use Pocket, the character-aware roleplay phone: send a text, write a journal note, schedule a timeline event, change fictional weather, create or update a typed tracker, take an AI camera photo, show a notification, or open the phone. State persists per chat and character.",
     parameters: {
       type: "object",
       properties: {
@@ -1118,7 +1485,7 @@ function registerTool() {
         character_id: { type: "string", description: "Current character id when known." },
         payload: {
           type: "object",
-          description: "Action data. message: text/contact_name; note: title/body/mood/pinned; event: title/description/start/end/lane; weather: location/condition/temperature/unit; tracker: label/value/min/max/unit/ratePerHour; camera: prompt/enhance; notify: app/title/body.",
+          description: "Action data. tracker operations target trackerId or stable key (label is legacy fallback) and use operation set/add/subtract/reset/set_state plus amount/state/reason. Tracker configuration supports kind, target, updateMode, clock real|roleplay, visibility and allowModelWrite. Other actions use message text/contact_name; note title/body; event title/start/end; weather fields; camera prompt; notify route/title/body.",
           additionalProperties: true
         }
       },
@@ -1137,9 +1504,9 @@ function ensureInterceptor() {
       const characterId = context.characterId || "_none";
       const state = await loadState(chatId, characterId, context.userId);
       const injected = { role: "system", content: `${PHONE_GUIDANCE}
-Current LumiPhone snapshot:
+Current Pocket snapshot:
 ${projectPhoneContext(state)}` };
-      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: "LumiPhone memory" }] };
+      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: "Pocket memory" }] };
     } catch {
       return messages;
     }
@@ -1152,11 +1519,17 @@ spindle.on("TOOL_INVOCATION", async (payload) => {
     return "";
   try {
     const args = isRecord(payload.args) ? payload.args : {};
-    const merged = { ...args, ...isRecord(args.payload) ? args.payload : {}, payload: args.payload, idempotencyKey: text2(payload.requestId, 240) };
+    const merged = {
+      ...args,
+      ...isRecord(args.payload) ? args.payload : {},
+      payload: args.payload,
+      idempotencyKey: text2(payload.requestId, 240),
+      messageId: text2(payload.messageId, 180)
+    };
     const result = await applyAction(merged, undefined, "model");
     return JSON.stringify(result);
   } catch (error) {
-    return `LumiPhone action failed: ${error instanceof Error ? error.message : String(error)}`;
+    return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`;
   }
 });
 ensureInterceptor();
@@ -1188,4 +1561,4 @@ spindle.on("CHAT_SWITCHED", async (payload, userId) => {
     await sendState(await loadState(chatId, characterId, userId), userId, "chat_switched");
   } catch {}
 });
-spindle.log.info("LumiPhone backend loaded.");
+spindle.log.info("Pocket backend loaded.");
