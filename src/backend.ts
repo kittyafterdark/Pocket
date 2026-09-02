@@ -9,6 +9,7 @@ import type {
   PocketActivity,
   PocketRoute,
   PocketGenerationInfo,
+  PocketGenerationRun,
   ProcessedPocketCommand,
   PhoneState,
   PhoneTracker,
@@ -22,16 +23,18 @@ import { defaultPreferences, isFuturePreferences, normalizePreferences, PREFEREN
 import { projectPhoneContext } from './domain/projection.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey } from './domain/trackers.js'
-import { contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
+import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
+import { parseWithTruncationRetry } from './backend/structured.js'
+import { buildRoleplayContext } from './backend/roleplay-context.js'
 
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 type AnyRecord = Record<string, unknown>
 
-const STATE_VERSION = 3 as const
+const STATE_VERSION = 4 as const
 const MAX_MESSAGES = 240
 const MAX_NOTIFICATIONS = 80
 const MAX_NOTES = 120
@@ -309,7 +312,15 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
   let generation: PocketGenerationInfo = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory }
   try { generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId) }
   catch (error) { spindle.log.warn(`Pocket could not inspect generation profiles: ${error instanceof Error ? error.message : String(error)}`) }
-  send({ type: 'lumiphone:state', state, preferences, capabilities: capabilities(), generation, reason, open }, userId)
+  const swarmProfile = await resolveSwarmProfile(state.chatId, state.characterId, preferences, userId)
+  let activePersona: { id: string; name: string } | null = null
+  if (spindle.permissions.has('personas')) {
+    try {
+      const persona = await spindle.personas.getActive(userId)
+      if (persona) activePersona = { id: text(persona.id, 180), name: text(persona.name, 120) || 'Persona' }
+    } catch { /* appearance falls back to device defaults */ }
+  }
+  send({ type: 'lumiphone:state', state, preferences, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -411,6 +422,7 @@ async function listContactSources(state: PhoneState, userId?: string): Promise<P
           kind: 'character', sourceId, name, role: 'Character',
           description: text(character?.description, 600),
           avatarUrl: text(character?.avatar_url ?? character?.avatarUrl, 2_000),
+          accent: text(character?.color ?? character?.accent ?? character?.metadata?.color, 20),
           importedContactId: state.contacts.find((entry) => sourceMatches(entry, 'character', sourceId))?.id,
         })
       }
@@ -427,6 +439,7 @@ async function listContactSources(state: PhoneState, userId?: string): Promise<P
         kind: 'council', sourceId, itemId, name,
         role: text(member?.role, 120) || 'Council member',
         description: text(member?.definition, 600), avatarUrl: text(member?.avatarUrl, 2_000),
+        accent: text(member?.color ?? member?.accent, 20),
         importedContactId: state.contacts.find((entry) => sourceMatches(entry, 'council', sourceId, itemId))?.id,
       })
     }
@@ -469,11 +482,22 @@ async function resolveContactProfile(contact: PocketContact, userId?: string): P
   }
 }
 
-function parseStrictJson(content: unknown): AnyRecord {
-  const raw = text(content, 30_000).replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-  const parsed = JSON.parse(raw)
-  if (!isRecord(parsed)) throw new Error('Generation returned an invalid JSON object.')
-  return parsed
+async function runStructuredGeneration(
+  task: PocketGenerationRun['task'],
+  requestId: string,
+  request: AnyRecord,
+  userId?: string,
+): Promise<AnyRecord> {
+  const first: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId)
+  return parseWithTruncationRetry(first.content, async () => {
+    const parameters = isRecord(request.parameters) ? request.parameters : {}
+    const maxTokens = Math.min(1_600, Math.max(80, Math.round(numberValue(parameters.max_tokens, 400) * 1.6)))
+    const retry: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, `${requestId}:truncation-retry`, {
+      ...request,
+      parameters: { ...parameters, max_tokens: maxTokens },
+    }, userId)
+    return retry.content
+  })
 }
 
 function upsertContact(state: PhoneState, contact: PocketContact): PocketContact {
@@ -484,6 +508,7 @@ function upsertContact(state: PhoneState, contact: PocketContact): PocketContact
   if (existing) {
     const preserved = {
       createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy,
+      avatarOverrideUrl: existing.avatarOverrideUrl, colorMode: existing.colorMode, sourceAccent: contact.sourceAccent || existing.sourceAccent,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
     }
@@ -502,7 +527,9 @@ function contactFromSource(option: PocketContactSourceOption): PocketContact {
     : { kind: 'council' as const, memberId: option.sourceId, itemId: option.itemId || '' }
   return {
     id: id('contact'), name: option.name, role: option.role, description: option.description,
-    avatarUrl: option.avatarUrl, accent: stableContactAccent(`${option.kind}:${option.sourceId}`), source,
+    identityBrief: option.description, sceneNote: '',
+    avatarUrl: option.avatarUrl, sourceAvatarUrl: option.avatarUrl, avatarOverrideUrl: '',
+    accent: stableContactAccent(`${option.kind}:${option.sourceId}`), sourceAccent: /^#[0-9a-f]{6}$/i.test(option.accent || '') ? option.accent! : '', colorMode: 'pocket', source,
     presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' }, createdAt, updatedAt: createdAt,
   }
@@ -521,10 +548,12 @@ function resolveConversation(state: PhoneState, input: AnyRecord): PocketConvers
   return ensureDirectConversation(state, contact.id, nowIso(), id)
 }
 
-async function resolveSwarmProfile(chatId: string, characterId: string, settings?: DevicePreferences): Promise<SwarmVisualProfile> {
+async function resolveSwarmProfile(chatId: string, characterId: string, settings?: DevicePreferences, userId?: string): Promise<SwarmVisualProfile> {
   const manual = settings?.manualVisualProfile || defaultPreferences().manualVisualProfile
   const fallback: SwarmVisualProfile = {
     available: false,
+    status: settings?.useSwarmProfile === false ? 'disabled' : 'not-detected',
+    error: '',
     characterPositive: manual.positive,
     personaPositive: '',
     negative: manual.negative,
@@ -532,18 +561,35 @@ async function resolveSwarmProfile(chatId: string, characterId: string, settings
     checkpoint: manual.model,
     aspect: '',
     source: 'manual',
+    fields: {
+      char_base: { detected: false, length: 0, preview: '' },
+      persona_base: { detected: false, length: 0, preview: '' },
+      swarm_negative: { detected: false, length: 0, preview: '' },
+      swarm_preset: { detected: false, length: 0, preview: '' },
+      swarm_checkpoint: { detected: false, length: 0, preview: '' },
+      swarm_aspect: { detected: false, length: 0, preview: '' },
+    },
   }
   if (!settings?.useSwarmProfile) return fallback
   try {
     const marker = '\n__LUMIPHONE_PROFILE_FIELD__\n'
     const template = ['{{char_base}}', '{{persona_base}}', '{{swarm_negative}}', '{{swarm_preset}}', '{{swarm_checkpoint}}', '{{swarm_aspect}}'].join(marker)
-    const result = await spindle.macros.resolve(template, { chatId, characterId, commit: false })
+    const result = await spindle.macros.resolve(template, { chatId, characterId, userId, commit: false })
     const fields = result.text.split(marker).map((part) => part.trim().replace(/^\{\{[^}]+\}\}$/, ''))
     const [characterPositive = '', personaPositive = '', negative = '', presets = '', checkpoint = '', aspect = ''] = fields
+    const macroNames = ['char_base', 'persona_base', 'swarm_negative', 'swarm_preset', 'swarm_checkpoint', 'swarm_aspect'] as const
+    const diagnostics = Object.fromEntries(macroNames.map((name, index) => [name, {
+      detected: Boolean(fields[index]), length: fields[index]?.length || 0, preview: (fields[index] || '').slice(0, 120),
+    }])) as SwarmVisualProfile['fields']
     const available = Boolean(characterPositive || personaPositive || negative || presets || checkpoint || aspect)
-    if (!available) return fallback
+    const resolutionWarnings = result.diagnostics.map((entry) => text(entry.message, 240)).filter(Boolean).slice(0, 3)
+    if (!available) return resolutionWarnings.length
+      ? { ...fallback, status: 'error', error: resolutionWarnings.join(' · '), fields: diagnostics }
+      : { ...fallback, fields: diagnostics }
     return {
       available,
+      status: 'connected',
+      error: '',
       characterPositive: [manual.positive, characterPositive].filter(Boolean).join(', '),
       personaPositive,
       negative: [manual.negative, negative].filter(Boolean).join(', '),
@@ -551,9 +597,10 @@ async function resolveSwarmProfile(chatId: string, characterId: string, settings
       checkpoint: manual.model || checkpoint,
       aspect,
       source: 'swarm_studio',
+      fields: diagnostics,
     }
-  } catch {
-    return fallback
+  } catch (error) {
+    return { ...fallback, status: 'error', error: text(error instanceof Error ? error.message : String(error), 500) || 'Macro resolution failed.' }
   }
 }
 
@@ -598,7 +645,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   const requestId = text(input.requestId, 180) || id('cam')
   const scene = text(input.scene ?? input.prompt ?? input.text ?? input.content, 12_000)
   if (!scene) throw new Error('Describe the scene you want the camera to capture.')
-  const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences)
+  const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences, userId)
   const controller = new AbortController()
   const job: CameraJob = { controller, cancelled: false, chatId: context.chatId, characterId: context.characterId, userId }
   cameraJobs.get(requestId)?.controller.abort()
@@ -710,19 +757,28 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
       const currentIndex = participants.findIndex((entry) => entry.id === lastSpeakerId)
       contact = participants[(currentIndex + 1 + participants.length) % participants.length]
     }
+    if (bool(input.autonomous) && (contact.presence.inScene || !contact.messagingPolicy.remoteEligible)) return
     send({
       type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId,
       conversationId: conversation.id, contactId: contact.id, speakerContactId: contact.id, phase: 'pending',
     }, userId)
     const profile = await resolveContactProfile(contact, userId)
     const roster = participants.map((entry) => `${entry.name} (${entry.role || entry.source.kind})`).join('; ').slice(0, 2_000)
-    const history = conversation.messages.slice(-30).map((message) => `${message.sender === 'persona' ? 'User' : message.senderName || 'Pocket'}: ${message.text.slice(0, 1_200)}`).join('\n').slice(-12_000)
+    const replaceMessageId = text(input.replaceMessageId, 180)
+    const replaceIndex = replaceMessageId ? conversation.messages.findIndex((message) => message.id === replaceMessageId && message.sender === 'contact') : -1
+    const historyMessages = replaceIndex >= 0 ? conversation.messages.slice(0, replaceIndex) : conversation.messages
+    const history = historyMessages.slice(-30).map((message) => `${message.sender === 'persona' ? 'User' : message.senderName || 'Pocket'}: ${message.text.slice(0, 1_200)}`).join('\n').slice(-12_000)
+    const roleplayContext = await buildRoleplayContext({
+      state, contact, conversation, preferences,
+      getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
+    })
     const instruction = text(input.instruction, 2_000) || 'Reply naturally to the latest message.'
-    const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'message-reply', requestId, {
+    const generationTask = replaceIndex >= 0 ? 'message-retry' : 'message-reply'
+    const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
       type: 'quiet',
       messages: [
-        { role: 'system', content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML.\nSource: ${profile.source}\nRole: ${profile.role.slice(0, 120)}\nDescription: ${profile.description.slice(0, 8_000)}\nPersonality: ${profile.personality.slice(0, 4_000)}\nBehavior: ${profile.behavior.slice(0, 3_000)}\nConversation roster: ${roster}` },
-        { role: 'user', content: `Recent thread:\n${history || '(no messages yet)'}\n\nDirection: ${instruction}` },
+        { role: 'system', content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML.\n\nACTOR IDENTITY\nSource: ${profile.source}\nRole: ${profile.role.slice(0, 120)}\nStable identity: ${(profile.description || contact.identityBrief).slice(0, 8_000)}\nPersonality: ${profile.personality.slice(0, 4_000)}\nBehavior: ${profile.behavior.slice(0, 3_000)}\nCurrent scene note: ${contact.sceneNote || '(none)'}\nConversation roster: ${roster}` },
+        { role: 'user', content: `${roleplayContext ? `CURRENT ROLEPLAY CONTEXT\n${roleplayContext}\n\n` : ''}PHONE THREAD\n${history || '(no messages yet)'}\n\nDIRECTION\n${instruction}` },
       ],
       parameters: { temperature: 0.85, max_tokens: 500 },
       userId,
@@ -731,21 +787,28 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     if (!reply) throw new Error('The character did not return a phone message.')
     const route: PocketRoute = { app: 'messages', conversationId: conversation.id }
     const visible = notificationDestinationVisible(state, route, userId)
-    conversation.messages.push({
+    const nextMessage: PhoneMessage = {
       id: id('msg'), sender: 'contact', senderContactId: contact.id, senderName: contact.name, senderAccent: contact.accent,
       text: reply, createdAt: nowIso(), read: visible, status: visible ? 'read' : 'delivered',
-    })
+      generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined },
+    }
+    nextMessage.senderAccent = contactAccent(contact)
+    if (replaceIndex >= 0) conversation.messages.splice(replaceIndex, 1, nextMessage)
+    else conversation.messages.push(nextMessage)
     conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
-    if (!visible) conversation.unread += 1
+    if (!visible && replaceIndex < 0) conversation.unread += 1
     conversation.updatedAt = nowIso()
     const phoneMessageId = conversation.messages.at(-1)?.id
     route.messageId = phoneMessageId
-    const notification = addNotification(state, { app: 'messages', title: contact.name, body: reply.slice(0, 220), route, source: bool(input.ambient) ? 'automatic' : 'model', severity: 'important' }, userId)
+    const notification = preferences.notifyMessages && replaceIndex < 0
+      ? addNotification(state, { app: 'messages', title: contact.name, body: preferences.notificationPreviews ? reply.slice(0, 220) : 'New message', route, source: bool(input.ambient) ? 'automatic' : 'model', severity: 'important' }, userId)
+      : null
     if (bool(input.initiated)) {
       contact.messagingPolicy.lastInitiatedMessageAt = nowIso()
       contact.messagingPolicy.lastInitiatedRoleplayAt = state.roleplayNow
     }
-    const activity = addActivity(state, { kind: 'message', title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } })
+    if (replaceIndex < 0) conversation.pause = undefined
+    const activity = replaceIndex < 0 ? addActivity(state, { kind: 'message', title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } }) : undefined
     await saveState(state, userId)
     if (notification) await maybePush(state, preferences, notification, userId)
     await sendState(state, userId, 'message', preferences.autoOpenOnModelAction)
@@ -765,26 +828,28 @@ async function generateNpcContact(input: AnyRecord, userId?: string): Promise<vo
   if (!prompt) throw new Error('Describe the NPC you want to add.')
   const requestId = text(input.requestId, 180) || id('npc')
   send({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId, phase: 'generating', message: 'Generating contact…' }, userId)
-  const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'npc-contact', requestId, {
+  const request: AnyRecord = {
     type: 'quiet',
     messages: [
-      { role: 'system', content: 'Create one compact roleplay phone contact from the user description. Return strict JSON only with exactly these string fields: {"name":"","role":"","description":""}. No markdown. Name and role must each be at most 120 characters; description at most 600 characters.' },
+      { role: 'system', content: 'Create one compact roleplay phone contact from the user description. Return strict JSON only with exactly these string fields: {"name":"","role":"","identityBrief":""}. No markdown. identityBrief contains only stable facts useful across scenes: role, general personality, enduring relationship, distinctive behavior. Do not invent unsupported backstory. Name and role max 120 characters; identityBrief max 900.' },
       { role: 'user', content: prompt },
     ],
     parameters: { temperature: 0.55, max_tokens: 350 }, userId,
-  }, userId)
+  }
+  const parsed = await runStructuredGeneration('npc-contact', requestId, request, userId)
   send({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId, phase: 'parsing', message: 'Parsing profile…' }, userId)
-  const parsed = parseStrictJson(response.content)
   const name = text(parsed.name, 120)
   if (!name) throw new Error('NPC generation did not return a valid name.')
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     send({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId, phase: 'saving', message: 'Saving contact…' }, userId)
     const state = await loadState(context.chatId, context.characterId, userId)
     const createdAt = nowIso()
+    const identityBrief = text(parsed.identityBrief ?? parsed.description, 900)
     const contact = upsertContact(state, {
-      id: id('contact'), name, role: text(parsed.role, 120) || 'Pocket NPC', description: text(parsed.description, 600),
-      avatarUrl: '', accent: stableContactAccent(name),
-      source: { kind: 'npc', origin: 'generated', description: text(parsed.description, 600) },
+      id: id('contact'), name, role: text(parsed.role, 120) || 'Pocket NPC', description: identityBrief,
+      identityBrief, sceneNote: '',
+      avatarUrl: '', sourceAvatarUrl: '', avatarOverrideUrl: '', accent: stableContactAccent(name), sourceAccent: '', colorMode: 'pocket',
+      source: { kind: 'npc', origin: 'generated', description: identityBrief },
       presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
       messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' }, createdAt, updatedAt: createdAt,
     })
@@ -794,6 +859,40 @@ async function generateNpcContact(input: AnyRecord, userId?: string): Promise<vo
     sendActivity(activity, userId)
     send({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId, phase: 'complete', message: 'Contact saved' }, userId)
     send({ type: 'lumiphone:contact_created', requestId, contactId: contact.id }, userId)
+  })
+}
+
+async function refreshCompactContactProfile(input: AnyRecord, userId?: string): Promise<void> {
+  if (!spindle.permissions.has('generation')) throw new Error('Enable Generation to refresh a compact contact profile.')
+  const context = await resolveContext(input, userId)
+  const requestId = text(input.requestId, 180) || id('profile')
+  const state = await loadState(context.chatId, context.characterId, userId)
+  const contact = state.contacts.find((entry) => entry.id === text(input.contactId, 180))
+  if (!contact) throw new Error('That contact no longer exists.')
+  const profile = await resolveContactProfile(contact, userId)
+  send({ type: 'lumiphone:operation_progress', task: 'profile-refresh', requestId, phase: 'generating', message: 'Refreshing compact profile…' }, userId)
+  const parsed = await runStructuredGeneration('profile-refresh', requestId, {
+    type: 'quiet',
+    messages: [
+      { role: 'system', content: 'Condense the authoritative actor profile into stable phone-contact facts. Return strict JSON only: {"identityBrief":""}. Include stable role, personality, relationship, and distinctive behavior when supported. Exclude temporary scene state and do not invent facts. Maximum 900 characters.' },
+      { role: 'user', content: `Name: ${profile.name}\nRole: ${profile.role}\nDescription: ${profile.description}\nPersonality: ${profile.personality}\nBehavior: ${profile.behavior}` },
+    ],
+    parameters: { temperature: 0.15, max_tokens: 320 }, userId,
+  }, userId)
+  const identityBrief = text(parsed.identityBrief, 900)
+  if (!identityBrief) throw new Error('Profile refresh returned no stable identity brief.')
+  await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    const latest = await loadState(context.chatId, context.characterId, userId)
+    const target = latest.contacts.find((entry) => entry.id === contact.id)
+    if (!target) throw new Error('That contact no longer exists.')
+    target.name = profile.name
+    target.role = profile.role || target.role
+    target.identityBrief = identityBrief
+    target.description = identityBrief
+    target.updatedAt = nowIso()
+    await saveState(latest, userId)
+    await sendState(latest, userId, 'contact_profile')
+    send({ type: 'lumiphone:operation_progress', task: 'profile-refresh', requestId, phase: 'complete', message: 'Compact profile refreshed' }, userId)
   })
 }
 
@@ -810,29 +909,32 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
   const messages: any[] = await spindle.chat.getMessages(context.chatId)
   const transcript = messages.slice(-24).map((message) => `${message.role}: ${text(message.content, 1_200)}`).join('\n').slice(-16_000)
   send({ type: 'lumiphone:operation_progress', task: 'scene-sync', requestId, phase: 'generating', message: 'Finding scene contacts…' }, userId)
-  const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'scene-sync', requestId, {
+  const request: AnyRecord = {
     type: 'quiet',
     messages: [
-      { role: 'system', content: 'Identify named non-user actors who are physically or actively present in the most recent roleplay scene. Return strict JSON only: {"contacts":[{"name":"","role":"","description":""}]}. Return at most 8 contacts. Do not include merely mentioned, messaged, absent, historical, or hypothetical people. Name and role max 120 characters; description max 600.' },
+      { role: 'system', content: 'Identify named non-user actors physically present in the most recent roleplay scene. Return strict JSON only: {"contacts":[{"name":"","role":"","identityBrief":"","sceneNote":""}]}. Return at most 6. Exclude merely mentioned, messaged, absent, historical, or hypothetical people. identityBrief is stable role/personality/relationship evidence only; sceneNote is why they are present, what they are doing, or their temporary state. Do not invent unsupported biography. Name/role max 120; identityBrief max 350; sceneNote max 220.' },
       { role: 'user', content: transcript || '(empty chat)' },
     ],
-    parameters: { temperature: 0.2, max_tokens: 900 }, userId,
-  }, userId)
+    parameters: { temperature: 0.2, max_tokens: 1_500 }, userId,
+  }
+  const parsed = await runStructuredGeneration('scene-sync', requestId, request, userId)
   send({ type: 'lumiphone:operation_progress', task: 'scene-sync', requestId, phase: 'parsing', message: 'Parsing scene roster…' }, userId)
-  const parsed = parseStrictJson(response.content)
-  const found = (Array.isArray(parsed.contacts) ? parsed.contacts : []).slice(0, 8).flatMap((entry) => {
+  if (!Array.isArray(parsed.contacts)) throw new Error('Scene Sync returned no contacts array; no contact state was changed.')
+  const found = parsed.contacts.slice(0, 6).flatMap((entry) => {
     if (!isRecord(entry)) return []
     const name = text(entry.name, 120)
     if (!name) return []
-    return [{ name, role: text(entry.role, 120) || 'Scene contact', description: text(entry.description, 600) }]
+    return [{
+      name, role: text(entry.role, 120) || 'Scene contact',
+      identityBrief: text(entry.identityBrief ?? entry.description, 350),
+      sceneNote: text(entry.sceneNote ?? entry.currentState, 220),
+    }]
   })
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     send({ type: 'lumiphone:operation_progress', task: 'scene-sync', requestId, phase: 'saving', message: 'Saving scene contacts…' }, userId)
     const state = await loadState(context.chatId, context.characterId, userId)
     const sceneAt = nowIso()
-    for (const contact of state.contacts) {
-      if (contact.source.kind === 'npc' && contact.source.origin === 'scene') contact.presence.inScene = false
-    }
+    for (const contact of state.contacts) contact.presence.inScene = false
     const contactIds: string[] = []
     for (const candidate of found) {
       const sceneKey = sceneKeyFor(candidate.name)
@@ -841,23 +943,31 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
       if (existing && !(existing.source.kind === 'npc' && existing.source.origin === 'scene')) {
         existing.presence.inScene = true
         existing.presence.lastSceneAt = sceneAt
+        existing.sceneNote = candidate.sceneNote
         existing.updatedAt = sceneAt
         contactIds.push(existing.id)
         continue
       }
       const createdAt = existing?.createdAt || sceneAt
       const contact = upsertContact(state, {
-        id: existing?.id || id('contact'), name: candidate.name, role: candidate.role, description: candidate.description,
-        avatarUrl: existing?.avatarUrl || '', accent: existing?.accent || stableContactAccent(sceneKey),
-        source: { kind: 'npc', origin: 'scene', description: candidate.description, sceneKey },
+        id: existing?.id || id('contact'), name: candidate.name, role: candidate.role,
+        description: existing?.identityBrief || candidate.identityBrief, identityBrief: existing?.identityBrief || candidate.identityBrief,
+        sceneNote: candidate.sceneNote,
+        avatarUrl: existing?.avatarUrl || '', sourceAvatarUrl: existing?.sourceAvatarUrl || '', avatarOverrideUrl: existing?.avatarOverrideUrl || '',
+        accent: existing?.accent || stableContactAccent(sceneKey), sourceAccent: existing?.sourceAccent || '', colorMode: existing?.colorMode || 'pocket',
+        source: { kind: 'npc', origin: 'scene', description: existing?.identityBrief || candidate.identityBrief, sceneKey },
         presence: { inScene: true, lastSceneAt: sceneAt }, contextPolicy: existing?.contextPolicy || { pinned: false },
         generationPolicy: existing?.generationPolicy || { relevant: true },
         messagingPolicy: existing?.messagingPolicy || { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' }, createdAt, updatedAt: sceneAt,
       })
       contactIds.push(contact.id)
     }
-    const active = state.contacts.find((entry) => entry.source.kind === 'character' && entry.source.characterId === state.characterId)
-    if (active) { active.presence.inScene = true; active.presence.lastSceneAt = sceneAt }
+    for (const conversation of state.conversations) {
+      if (conversation.kind !== 'direct' || conversation.pause?.reason !== 'arriving') continue
+      const participant = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])
+      if (participant && !participant.presence.inScene && conversation.pause.source === 'scene') conversation.pause = undefined
+      else if (participant?.presence.inScene) conversation.pause.source = 'scene'
+    }
     const activity = addActivity(state, {
       kind: 'contact', title: 'Scene contacts synced', summary: `${contactIds.length} actor${contactIds.length === 1 ? '' : 's'} present`,
       route: { app: 'contacts' }, source: {},
@@ -874,6 +984,7 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
   const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`
   if (replyDecisionFlights.has(flightKey)) return
   replyDecisionFlights.add(flightKey)
+  let progressRequestId = ''
   try {
     const preferences = await loadPreferences(userId)
     if (!preferences.autoReplyAfterSend || !spindle.permissions.has('generation')) return
@@ -881,23 +992,50 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
     const conversation = state.conversations.find((entry) => entry.id === conversationId)
     if (!conversation || conversation.kind !== 'direct' || conversation.messages.at(-1)?.sender !== 'persona') return
     const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])
-    if (!contact || !contact.generationPolicy.relevant || !contact.messagingPolicy.remoteEligible) return
+    if (!contact || !contact.generationPolicy.relevant || !contact.messagingPolicy.remoteEligible || contact.presence.inScene) return
     const latest = conversation.messages.at(-1)!
     const requestId = id('reply_decision')
-    const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'reply-decision', requestId, {
+    progressRequestId = requestId
+    send({
+      type: 'lumiphone:message_progress', requestId, chatId, characterId,
+      conversationId, contactId: contact.id, speakerContactId: contact.id, phase: 'checking',
+    }, userId)
+    const decision = await runStructuredGeneration('reply-decision', requestId, {
       type: 'quiet',
       messages: [
-        { role: 'system', content: 'Decide whether this fictional phone contact should reply now. Be conservative: silence is normal. Consider whether the message asks or invites a response, the relationship, scene presence, and conversational cadence. Return strict JSON only: {"reply":false} or {"reply":true}. No markdown.' },
+        { role: 'system', content: 'Decide the next state of this fictional phone conversation. Be conservative: silence is normal. Return strict JSON only. Allowed shapes: {"action":"reply"}, {"action":"none"}, or {"action":"pause","reason":"ended|busy|away|arriving|sleeping|unknown"}. Use arriving when the contact says they are physically coming to the user and the remote text arc is handing back to the scene. No markdown and no custom UI copy.' },
         { role: 'user', content: `Contact: ${contact.name} (${contact.role}). Presence: ${contact.presence.inScene ? 'in the active scene' : 'off-scene'}. Recent user text: ${latest.text.slice(0, 2_000)}` },
       ],
-      parameters: { temperature: 0.15, max_tokens: 40 }, userId,
+      parameters: { temperature: 0.15, max_tokens: 80 }, userId,
     }, userId)
-    const decision = parseStrictJson(response.content)
-    if (decision.reply !== true) return
-    await generateMessage({ requestId: id('auto_reply'), chatId, characterId, conversationId, speakerContactId: contact.id, instruction: 'Reply naturally only because the latest user text warrants a response.' }, userId)
+    const action = decision.action === 'reply' || decision.reply === true ? 'reply' : decision.action === 'pause' ? 'pause' : 'none'
+    if (action === 'pause') {
+      const allowed = new Set(['ended', 'busy', 'away', 'arriving', 'sleeping', 'unknown'])
+      const reason = allowed.has(String(decision.reason)) ? String(decision.reason) as NonNullable<PocketConversation['pause']>['reason'] : 'unknown'
+      await withStateLock(stateKey(chatId, characterId), async () => {
+        const latestState = await loadState(chatId, characterId, userId)
+        const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId)
+        if (!latestConversation) return
+        latestConversation.pause = { reason, createdAt: nowIso(), source: 'model' }
+        await saveState(latestState, userId)
+        await sendState(latestState, userId, 'conversation_pause')
+      })
+      send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, contactId: contact.id, phase: 'done' }, userId)
+      progressRequestId = ''
+      return
+    }
+    if (action !== 'reply') {
+      send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, contactId: contact.id, phase: 'done' }, userId)
+      progressRequestId = ''
+      return
+    }
+    send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, contactId: contact.id, phase: 'done' }, userId)
+    progressRequestId = ''
+    await generateMessage({ requestId: id('auto_reply'), chatId, characterId, conversationId, speakerContactId: contact.id, autonomous: true, instruction: 'Reply naturally only because the latest user text warrants a response.' }, userId)
   } catch (error) {
     spindle.log.warn(`Pocket reply decision skipped: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
+    if (progressRequestId) send({ type: 'lumiphone:message_progress', requestId: progressRequestId, chatId, characterId, conversationId, phase: 'done' }, userId)
     replyDecisionFlights.delete(flightKey)
   }
 }
@@ -916,7 +1054,7 @@ async function considerAmbientMessage(chatId: string, characterId: string, oppor
       .slice(0, 16)
     if (!candidates.length) return
     const requestId = id('ambient_decision')
-    const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'ambient-decision', requestId, {
+    const decision = await runStructuredGeneration('ambient-decision', requestId, {
       type: 'quiet',
       messages: [
         { role: 'system', content: 'Choose at most one conservative fictional off-scene phone-message opportunity. Most opportunities should be none. Return strict JSON only: {"action":"none"} or {"action":"message","contactId":"exact id","direction":"short reason or topic"}. Never select an actor marked in-scene. Do not write the actual message.' },
@@ -924,7 +1062,6 @@ async function considerAmbientMessage(chatId: string, characterId: string, oppor
       ],
       parameters: { temperature: 0.35, max_tokens: 120 }, userId,
     }, userId)
-    const decision = parseStrictJson(response.content)
     if (decision.action !== 'message') return
     const contact = candidates.find((entry) => entry.id === text(decision.contactId, 180))
     if (!contact) return
@@ -932,7 +1069,7 @@ async function considerAmbientMessage(chatId: string, characterId: string, oppor
     await saveState(state, userId)
     await generateMessage({
       requestId: id('ambient_message'), chatId, characterId, conversationId: conversation.id, speakerContactId: contact.id,
-      instruction: text(decision.direction, 500) || 'Send a brief natural message appropriate to your off-scene life.', ambient: true, initiated: true,
+      instruction: text(decision.direction, 500) || 'Send a brief natural message appropriate to your off-scene life.', ambient: true, initiated: true, autonomous: true,
     }, userId)
   } catch (error) {
     spindle.log.warn(`Pocket ambient opportunity skipped: ${error instanceof Error ? error.message : String(error)}`)
@@ -1018,11 +1155,12 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       let contact = state.contacts.find((item) => item.id === requestedContactId)
       if (!contact && requestedContactId) {
         const createdAt = nowIso()
+        const identityBrief = text(payload.contact_description ?? payload.contactDescription, 1_200)
         contact = {
           id: requestedContactId, name: text(payload.contact_name ?? payload.contactName, 120) || 'Pocket NPC',
           role: text(payload.contact_role ?? payload.contactRole, 120) || 'Pocket NPC',
-          description: text(payload.contact_description ?? payload.contactDescription, 600), avatarUrl: '',
-          accent: stableContactAccent(requestedContactId), source: { kind: 'npc', origin: 'manual', description: text(payload.contact_description ?? payload.contactDescription, 600) },
+          description: identityBrief, identityBrief, sceneNote: '', avatarUrl: '', sourceAvatarUrl: '', avatarOverrideUrl: '',
+          accent: stableContactAccent(requestedContactId), sourceAccent: '', colorMode: 'pocket', source: { kind: 'npc', origin: 'manual', description: identityBrief },
           presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
           messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' }, createdAt, updatedAt: createdAt,
         }
@@ -1041,19 +1179,20 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       if (sender === 'contact' && (!senderContact || !conversation.participantContactIds.includes(senderContact.id))) throw new Error('The message sender must be a participant in this conversation.')
       const message: PhoneMessage = {
         id: id('msg'), sender, senderContactId, senderName: sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : senderContact!.name,
-        senderAccent: senderContact?.accent || '', text: messageText, createdAt: nowIso(), read: sender !== 'contact',
+        senderAccent: senderContact ? contactAccent(senderContact) : '', text: messageText, createdAt: nowIso(), read: sender !== 'contact',
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : 'delivered',
       }
       conversation.messages.push(message)
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
       conversation.updatedAt = message.createdAt
+      if (sender === 'contact') conversation.pause = undefined
       const visible = sender === 'contact' && notificationDestinationVisible(state, { app: 'messages', conversationId: conversation.id }, userId)
       if (sender === 'contact' && !visible) conversation.unread += 1
       if (visible) { message.read = true; message.status = 'read' }
       const route: PocketRoute = { app: 'messages', conversationId: conversation.id, messageId: message.id }
-      notification = sender === 'contact' ? addNotification(state, { app: 'messages', title: senderContact!.name, body: messageText.slice(0, 220), route, source: source === 'user' ? 'system' : 'model', severity: 'important' }, userId) : null
+      notification = sender === 'contact' && preferences.notifyMessages ? addNotification(state, { app: 'messages', title: senderContact!.name, body: preferences.notificationPreviews ? messageText.slice(0, 220) : 'New message', route, source: source === 'user' ? 'system' : 'model', severity: 'important' }, userId) : null
       result = { ...result, contactId: senderContact?.id || contact?.id, conversationId: conversation.id, messageId: message.id }
-      activity = addActivity(state, { kind: 'message', title: senderContact?.name || conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text(input.messageId, 180) || message.id, contactId: senderContact?.id || contact?.id, conversationId: conversation.id } }, command)
+      if (source !== 'user') activity = addActivity(state, { kind: 'message', title: senderContact?.name || conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text(input.messageId, 180) || undefined, contactId: senderContact?.id || contact?.id, conversationId: conversation.id } }, command)
     } else if (action === 'contact') {
       const contactId = text(payload.contactId ?? payload.contact_id ?? payload.id, 180)
       const existing = state.contacts.find((entry) => entry.id === contactId)
@@ -1061,12 +1200,15 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       if (!name) throw new Error('A contact action needs a name.')
       const createdAt = existing?.createdAt || nowIso()
       const requestedAccent = text(payload.accent, 20)
+      const identityBrief = text(payload.identityBrief ?? payload.description ?? payload.text ?? payload.content, 1_200) || existing?.identityBrief || existing?.description || ''
       const contact = upsertContact(state, {
         id: existing?.id || id('contact'), name,
         role: text(payload.role, 120) || existing?.role || 'Pocket NPC',
-        description: text(payload.description ?? payload.text ?? payload.content, 600) || existing?.description || '',
-        avatarUrl: existing?.avatarUrl || '', accent: /^#[0-9a-f]{6}$/i.test(requestedAccent) ? requestedAccent : existing?.accent || stableContactAccent(name),
-        source: existing?.source || { kind: 'npc', origin: 'manual', description: text(payload.description ?? payload.text ?? payload.content, 600) },
+        description: identityBrief, identityBrief, sceneNote: text(payload.sceneNote, 600) || existing?.sceneNote || '',
+        avatarUrl: existing?.avatarUrl || '', sourceAvatarUrl: existing?.sourceAvatarUrl || '', avatarOverrideUrl: existing?.avatarOverrideUrl || '',
+        accent: /^#[0-9a-f]{6}$/i.test(requestedAccent) ? requestedAccent : existing?.accent || stableContactAccent(name),
+        sourceAccent: existing?.sourceAccent || '', colorMode: payload.colorMode === 'source' ? 'source' : existing?.colorMode || 'pocket',
+        source: existing?.source || { kind: 'npc', origin: 'manual', description: identityBrief },
         presence: {
           inScene: bool(payload.inScene ?? payload.in_scene, existing?.presence.inScene),
           lastSceneAt: bool(payload.inScene ?? payload.in_scene, existing?.presence.inScene) ? nowIso() : existing?.presence.lastSceneAt || '',
@@ -1081,7 +1223,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         }, createdAt, updatedAt: nowIso(),
       })
       const route: PocketRoute = { app: 'contacts', contactId: contact.id, view: 'detail' }
-      notification = source !== 'user' ? addNotification(state, { app: 'contacts', title: contact.name, body: contact.role, route, source: 'model', severity: 'info' }, userId) : null
+      notification = source !== 'user' && preferences.notifyContacts ? addNotification(state, { app: 'contacts', title: contact.name, body: contact.role, route, source: 'model', severity: 'info' }, userId) : null
       result.contactId = contact.id
       activity = addActivity(state, { kind: 'contact', title: contact.name, summary: contact.role, route, source: { messageId: text(input.messageId, 180) || undefined, contactId: contact.id } }, command)
     } else if (action === 'note') {
@@ -1170,7 +1312,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       state.trackers = state.trackers.slice(-MAX_TRACKERS)
       const route: PocketRoute = { app: 'trackers', trackerId: next.id, view: 'detail' }
       const trackerSummary = next.kind === 'state' ? next.state : `${Number(next.value.toFixed(2))}${next.unit}`
-      notification = source !== 'user' ? addNotification(state, { app: 'trackers', title: next.label, body: trackerSummary, route, source: 'model', severity: 'info' }, userId) : null
+      notification = source !== 'user' && preferences.notifyTrackers ? addNotification(state, { app: 'trackers', title: next.label, body: trackerSummary, route, source: 'model', severity: 'info' }, userId) : null
       result.trackerId = next.id
       activity = addActivity(state, { kind: 'tracker-change', title: next.label, summary: trackerSummary, route, source: { messageId: text(input.messageId, 180) || undefined, trackerId: next.id } }, command)
     } else if (action === 'notify') {
@@ -1208,11 +1350,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
     switch (payload.type) {
       case 'lumiphone:get_state': {
         const state = await loadState(context.chatId, context.characterId, userId)
-        const preferences = await loadPreferences(userId)
-        const swarmProfile = await resolveSwarmProfile(context.chatId, context.characterId, preferences)
-        let generation: PocketGenerationInfo = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory }
-        try { generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId) } catch { /* capability card remains empty */ }
-        send({ type: 'lumiphone:state', requestId, state, preferences, capabilities: capabilities(), swarmProfile, generation, reason: 'load' }, userId)
+        await sendState(state, userId, 'load')
         break
       }
       case 'lumiphone:view_state': {
@@ -1266,6 +1404,9 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:generate_contact':
         await generateNpcContact(payload, userId)
+        break
+      case 'lumiphone:refresh_contact_profile':
+        await refreshCompactContactProfile(payload, userId)
         break
       case 'lumiphone:sync_scene_contacts':
         await syncSceneContacts(payload, userId)
@@ -1350,6 +1491,19 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:generate_message':
         await generateMessage(payload, userId)
         break
+      case 'lumiphone:retry_message': {
+        const state = await loadState(context.chatId, context.characterId, userId)
+        const conversation = state.conversations.find((entry) => entry.id === text(payload.conversationId, 180))
+        const message = conversation?.messages.find((entry) => entry.id === text(payload.messageId, 180))
+        if (!conversation || !message || message.sender !== 'contact') throw new Error('That generated message can no longer be retried.')
+        await generateMessage({
+          ...payload,
+          replaceMessageId: message.id,
+          speakerContactId: message.senderContactId,
+          instruction: 'Generate a different natural reply for this same point in the phone conversation.',
+        }, userId)
+        break
+      }
       case 'lumiphone:test_generation': {
         const testRequestId = requestId || id('connection_test')
         const existing = await loadPreferences(userId)
@@ -1370,6 +1524,41 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:gallery_list':
         send({ type: 'lumiphone:gallery', requestId, scope: payload.scope, ...(await listGallery(payload, userId)) }, userId)
         break
+      case 'lumiphone:gallery_add_to_chat': {
+        if (!spindle.permissions.has('chat_mutation')) throw new Error('Enable Chat Mutation to add a Gallery image to the roleplay chat.')
+        const imageUrl = text(payload.imageUrl, 2_000)
+        if (!imageUrl) throw new Error('That Gallery image is unavailable.')
+        const label = text(payload.filename, 180) || 'Pocket photo'
+        const appended = await spindle.chat.appendMessage(context.chatId, {
+          role: 'user',
+          content: `![${label.replace(/[\[\]]/g, '')}](${imageUrl})`,
+          metadata: { source: 'pocket', kind: 'gallery-image', imageId: text(payload.imageId, 180), imageUrl },
+        })
+        send({ type: 'lumiphone:gallery_action_done', requestId, action: 'add-to-chat', messageId: appended.id }, userId)
+        break
+      }
+      case 'lumiphone:gallery_set_wallpaper': {
+        const imageUrl = text(payload.imageUrl, 2_000)
+        if (!imageUrl) throw new Error('That Gallery image is unavailable.')
+        const preferences = await loadPreferences(userId)
+        if (payload.target === 'chat') preferences.chatWallpaperImageUrl = imageUrl
+        else preferences.wallpaperImageUrl = imageUrl
+        await savePreferences(preferences, userId)
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences')
+        break
+      }
+      case 'lumiphone:set_contact_photo': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const contact = state.contacts.find((entry) => entry.id === text(payload.contactId, 180))
+          if (!contact) throw new Error('That contact no longer exists.')
+          contact.avatarOverrideUrl = payload.useSource === true ? '' : text(payload.imageUrl, 2_000)
+          contact.updatedAt = nowIso()
+          await saveState(state, userId)
+          await sendState(state, userId, 'contact_photo')
+        })
+        break
+      }
       case 'lumiphone:camera_generate':
         await cameraGenerate(payload, userId)
         break
@@ -1435,12 +1624,12 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         break
       }
       case 'lumiphone:get_swarm_profile': {
-        send({ type: 'lumiphone:swarm_profile', requestId, profile: await resolveSwarmProfile(context.chatId, context.characterId, await loadPreferences(userId)) }, userId)
+        send({ type: 'lumiphone:swarm_profile', requestId, profile: await resolveSwarmProfile(context.chatId, context.characterId, await loadPreferences(userId), userId) }, userId)
         break
       }
       case 'lumiphone:export_data': {
         const state = await loadState(context.chatId, context.characterId, userId)
-        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 3, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId)
+        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 4, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId)
         break
       }
       case 'lumiphone:import_data': {
@@ -1567,6 +1756,17 @@ spindle.on('CHAT_SWITCHED', async (payload: any, userId?: string) => {
     const characterId = text(chat?.character_id, 180) || '_none'
     await sendState(await loadState(chatId, characterId, userId), userId, 'chat_switched')
   } catch { /* frontend will request a fresh state */ }
+})
+
+spindle.on('PERSONA_CHANGED', async (_payload: any, userId?: string) => {
+  try {
+    if (!spindle.permissions.has('chats')) return
+    const chat: any = await spindle.chats.getActive(userId)
+    const chatId = text(chat?.id, 180)
+    if (!chatId) return
+    const characterId = text(chat?.character_id, 180) || '_none'
+    await sendState(await loadState(chatId, characterId, userId), userId, 'persona_changed')
+  } catch { /* frontend will refresh on its next host event */ }
 })
 
 spindle.on('CHARACTER_MESSAGE_RENDERED', async (payload: any, userId?: string) => {

@@ -33,9 +33,9 @@ export function calculatePhoneSurface(scale: number, viewport = currentViewport(
   }
 }
 
-/** Only the dedicated fullscreen handset float is resized here. Desktop handsets live in an interactive dock. */
-export function applyMobilePhoneSurface(widget: SpindleFloatWidgetHandle, scale: number): PhoneSurfaceGeometry {
-  const geometry = calculatePhoneSurface(scale)
+/** The mobile viewport is the handset. Content density is handled by --pocket-ui-scale. */
+export function applyMobilePhoneSurface(widget: SpindleFloatWidgetHandle, _scale = 1): PhoneSurfaceGeometry {
+  const geometry = calculatePhoneSurface(1)
   if (widget.isFullscreen() !== geometry.fullscreen) widget.setFullscreen(geometry.fullscreen)
   if (!geometry.fullscreen) {
     widget.setSize(geometry.width, geometry.height)

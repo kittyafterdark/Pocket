@@ -1,6 +1,6 @@
 import type { DevicePreferences, PhonePalette, PhoneTheme } from '../types.js'
 
-export const PREFERENCES_VERSION = 2 as const
+export const PREFERENCES_VERSION = 3 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -55,7 +55,10 @@ export function defaultPreferences(): DevicePreferences {
     version: PREFERENCES_VERSION,
     theme: 'midnight',
     colors: themePalette('midnight'),
+    wallpaperImageUrl: '',
+    chatWallpaperImageUrl: '',
     handsetScale: 1,
+    uiScale: 1,
     animation: 'spring',
     animationDurationMs: 280,
     reducedMotion: false,
@@ -67,6 +70,15 @@ export function defaultPreferences(): DevicePreferences {
     sidecarConnectionId: '',
     autoReplyAfterSend: false,
     ambientMessaging: 'off',
+    roleplayContextMode: 'smart',
+    recentRoleplayMessages: 8,
+    notificationSounds: false,
+    notificationPreviews: true,
+    notifyMessages: true,
+    notifyContacts: true,
+    notifyTrackers: true,
+    customCss: '',
+    personaAppearance: {},
     generationHistory: [],
     manualVisualProfile: { positive: '', negative: '', model: '', connectionId: '', loras: [], parameters: {} },
   }
@@ -107,7 +119,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const item = record(entry)
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
-    const tasks = new Set(['npc-contact', 'scene-sync', 'message-reply', 'reply-decision', 'ambient-decision', 'scene-planner', 'connection-test'])
+    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'message-reply', 'message-retry', 'reply-decision', 'ambient-decision', 'scene-planner', 'connection-test'])
     if (!requestId || !tasks.has(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{
@@ -121,11 +133,41 @@ export function normalizePreferences(value: unknown): DevicePreferences {
       error: text(item.error, '', 500) || undefined,
     }]
   })
+  const rawPersonaAppearance = record(raw.personaAppearance)
+  const personaAppearance: DevicePreferences['personaAppearance'] = {}
+  for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
+    if (!personaId || personaId.length > 180) continue
+    const item = record(value)
+    const overrideTheme = allowedThemes.has(item.theme as PhoneTheme) ? item.theme as PhoneTheme : theme
+    const overrideColors = record(item.colors)
+    const overridePreset = themePalette(overrideTheme)
+    personaAppearance[personaId] = {
+      enabled: bool(item.enabled, false),
+      theme: overrideTheme,
+      colors: {
+        accent: safeColor(overrideColors.accent, overridePreset.accent),
+        bezel: safeColor(overrideColors.bezel, overridePreset.bezel),
+        background: safeColor(overrideColors.background, overridePreset.background),
+        surface: safeColor(overrideColors.surface, overridePreset.surface),
+        text: safeColor(overrideColors.text, overridePreset.text),
+        wallpaperPrimary: safeColor(overrideColors.wallpaperPrimary, overridePreset.wallpaperPrimary),
+        wallpaperSecondary: safeColor(overrideColors.wallpaperSecondary, overridePreset.wallpaperSecondary),
+        chatPrimary: safeColor(overrideColors.chatPrimary, overridePreset.chatPrimary),
+        chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary),
+      },
+      customCss: text(item.customCss, '', 30_000),
+    }
+  }
+  const contextMode = raw.roleplayContextMode === 'off' || raw.roleplayContextMode === 'recent' || raw.roleplayContextMode === 'story'
+    ? raw.roleplayContextMode : 'smart'
   return {
     version: PREFERENCES_VERSION,
     theme,
     colors: palette,
+    wallpaperImageUrl: text(raw.wallpaperImageUrl, '', 2_000),
+    chatWallpaperImageUrl: text(raw.chatWallpaperImageUrl, '', 2_000),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
+    uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation as DevicePreferences['animation'] : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
@@ -137,6 +179,15 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     ambientMessaging: raw.ambientMessaging === 'sparse' || raw.ambientMessaging === 'normal' ? raw.ambientMessaging : 'off',
+    roleplayContextMode: contextMode,
+    recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
+    notificationSounds: bool(raw.notificationSounds, fallback.notificationSounds),
+    notificationPreviews: bool(raw.notificationPreviews, fallback.notificationPreviews),
+    notifyMessages: bool(raw.notifyMessages, fallback.notifyMessages),
+    notifyContacts: bool(raw.notifyContacts, fallback.notifyContacts),
+    notifyTrackers: bool(raw.notifyTrackers, fallback.notifyTrackers),
+    customCss: text(raw.customCss, '', 30_000),
+    personaAppearance,
     generationHistory: history,
     manualVisualProfile: {
       positive: text(manual.positive, '', 12_000),

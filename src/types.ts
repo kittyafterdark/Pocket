@@ -51,10 +51,19 @@ export interface ManualVisualProfile {
 /** Device-wide preferences. These never belong to a chat/character state file. */
 export type PocketGenerationMode = 'roleplay' | 'sidecar'
 export type AmbientMessageFrequency = 'off' | 'sparse' | 'normal'
+export type RoleplayContextMode = 'off' | 'recent' | 'story' | 'smart'
+export type ConversationPauseReason = 'ended' | 'busy' | 'away' | 'arriving' | 'sleeping' | 'unknown'
+
+export interface PersonaAppearanceOverride {
+  enabled: boolean
+  theme: PhoneTheme
+  colors: PhonePalette
+  customCss: string
+}
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'scene-sync' | 'message-reply' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'message-reply' | 'message-retry' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -84,17 +93,22 @@ export interface PocketGenerationInfo {
 }
 
 export interface PocketOperationProgress {
-  task: 'npc-contact' | 'scene-sync'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync'
   requestId: string
   phase: 'request' | 'generating' | 'parsing' | 'saving' | 'complete' | 'error'
   message: string
 }
 
 export interface DevicePreferences {
-  version: 2
+  version: 3
   theme: PhoneTheme
   colors: PhonePalette
+  wallpaperImageUrl: string
+  chatWallpaperImageUrl: string
+  /** Desktop-only physical size of the 9:16 handset. */
   handsetScale: number
+  /** Device-wide density of Pocket controls and content. Never scales the host surface. */
+  uiScale: number
   animation: OpenAnimation
   animationDurationMs: number
   reducedMotion: boolean
@@ -106,6 +120,15 @@ export interface DevicePreferences {
   sidecarConnectionId: string
   autoReplyAfterSend: boolean
   ambientMessaging: AmbientMessageFrequency
+  roleplayContextMode: RoleplayContextMode
+  recentRoleplayMessages: number
+  notificationSounds: boolean
+  notificationPreviews: boolean
+  notifyMessages: boolean
+  notifyContacts: boolean
+  notifyTrackers: boolean
+  customCss: string
+  personaAppearance: Record<string, PersonaAppearanceOverride>
   generationHistory: PocketGenerationRun[]
   manualVisualProfile: ManualVisualProfile
 }
@@ -123,6 +146,7 @@ export interface PhoneMessage {
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
   imageId?: string
   imageUrl?: string
+  generation?: { requestId: string; retryOf?: string }
 }
 
 export type PocketContactSource =
@@ -135,8 +159,16 @@ export interface PocketContact {
   name: string
   role: string
   description: string
+  /** Stable compact identity used in generation. Linked actors refresh from their authoritative source. */
+  identityBrief: string
+  /** Ephemeral scene-only note, maintained by Scene Sync. */
+  sceneNote: string
   avatarUrl: string
+  sourceAvatarUrl: string
+  avatarOverrideUrl: string
   accent: string
+  sourceAccent: string
+  colorMode: 'pocket' | 'source'
   source: PocketContactSource
   presence: { inScene: boolean; lastSceneAt: string }
   contextPolicy: { pinned: boolean }
@@ -158,6 +190,7 @@ export interface PocketConversation {
   participantContactIds: string[]
   messages: PhoneMessage[]
   unread: number
+  pause?: { reason: ConversationPauseReason; createdAt: string; source: 'model' | 'scene' }
   createdAt: string
   updatedAt: string
 }
@@ -170,6 +203,7 @@ export interface PocketContactSourceOption {
   role: string
   description: string
   avatarUrl: string
+  accent?: string
   importedContactId?: string
 }
 
@@ -317,7 +351,7 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 3
+  version: 4
   chatId: string
   characterId: string
   characterName: string
@@ -339,6 +373,8 @@ export type PhoneSettings = DevicePreferences
 
 export interface SwarmVisualProfile {
   available: boolean
+  status: 'connected' | 'not-detected' | 'disabled' | 'error'
+  error: string
   characterPositive: string
   personaPositive: string
   negative: string
@@ -346,6 +382,11 @@ export interface SwarmVisualProfile {
   checkpoint: string
   aspect: string
   source: 'swarm_studio' | 'manual'
+  fields: Record<'char_base' | 'persona_base' | 'swarm_negative' | 'swarm_preset' | 'swarm_checkpoint' | 'swarm_aspect', {
+    detected: boolean
+    length: number
+    preview: string
+  }>
 }
 
 export interface PhoneCapabilities {

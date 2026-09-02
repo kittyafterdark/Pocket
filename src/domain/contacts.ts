@@ -1,4 +1,4 @@
-import type { PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
+import type { ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
 
 const MAX_CONTACTS = 80
 const MAX_CONVERSATIONS = 80
@@ -36,6 +36,14 @@ export function contactSourceKey(source: PocketContactSource): string {
   return `npc:${source.sceneKey || ''}`
 }
 
+export function contactAvatar(contact: PocketContact): string {
+  return contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl
+}
+
+export function contactAccent(contact: PocketContact): string {
+  return contact.colorMode === 'source' && contact.sourceAccent ? contact.sourceAccent : contact.accent
+}
+
 function normalizeSource(value: unknown, contactId: string, characterId: string, description: string): PocketContactSource {
   if (record(value) && value.kind === 'character') {
     return { kind: 'character', characterId: clean(value.characterId, 180) || contactId }
@@ -69,7 +77,8 @@ export function normalizePocketContact(value: unknown, context: {
   const contactId = clean(value.id, 180) || context.makeId('contact')
   const name = clean(value.name, 120)
   if (!name) return null
-  const description = clean(value.description, 600) || clean(value.subtitle, 160)
+  const identityBrief = clean(value.identityBrief, 1_200) || clean(value.description, 1_200) || clean(value.subtitle, 160)
+  const description = identityBrief
   const source = normalizeSource(value.source, contactId, context.characterId, description)
   const presence = record(value.presence) ? value.presence : {}
   const contextPolicy = record(value.contextPolicy) ? value.contextPolicy : {}
@@ -81,11 +90,17 @@ export function normalizePocketContact(value: unknown, context: {
     name,
     role: clean(value.role, 120) || clean(value.subtitle, 120) || (source.kind === 'character' ? 'Character' : source.kind === 'council' ? 'Council member' : 'Pocket NPC'),
     description,
+    identityBrief,
+    sceneNote: clean(value.sceneNote, 600),
     avatarUrl: clean(value.avatarUrl, 2_000),
+    sourceAvatarUrl: clean(value.sourceAvatarUrl, 2_000) || clean(value.avatarUrl, 2_000),
+    avatarOverrideUrl: clean(value.avatarOverrideUrl, 2_000),
     accent: /^#[0-9a-f]{6}$/i.test(clean(value.accent, 20)) ? clean(value.accent, 20) : stableContactAccent(contactId),
+    sourceAccent: /^#[0-9a-f]{6}$/i.test(clean(value.sourceAccent, 20)) ? clean(value.sourceAccent, 20) : '',
+    colorMode: value.colorMode === 'source' ? 'source' : 'pocket',
     source,
     presence: {
-      inScene: flag(presence.inScene, source.kind === 'character' && source.characterId === context.characterId),
+      inScene: flag(presence.inScene, false),
       lastSceneAt: timestamp(presence.lastSceneAt, ''),
     },
     contextPolicy: { pinned: flag(contextPolicy.pinned) },
@@ -123,6 +138,10 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     status,
     imageId: clean(value.imageId, 160) || undefined,
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
+    generation: record(value.generation) && clean(value.generation.requestId, 180) ? {
+      requestId: clean(value.generation.requestId, 180),
+      retryOf: clean(value.generation.retryOf, 180) || undefined,
+    } : undefined,
   }
 }
 
@@ -138,6 +157,9 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     .slice(-MAX_MESSAGES)
   const kind = value.kind === 'group' || participantContactIds.length > 1 ? 'group' : 'direct'
   const createdAt = timestamp(value.createdAt, messages[0]?.createdAt || now)
+  const pauseValue = record(value.pause) ? value.pause : null
+  const pauseReasons = new Set<ConversationPauseReason>(['ended', 'busy', 'away', 'arriving', 'sleeping', 'unknown'])
+  const pauseReason = pauseReasons.has(pauseValue?.reason as ConversationPauseReason) ? pauseValue?.reason as ConversationPauseReason : null
   return {
     id: clean(value.id, 180) || makeId('conversation'),
     kind,
@@ -145,6 +167,11 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     participantContactIds,
     messages,
     unread: Math.max(0, Math.min(999, Math.floor(Number(value.unread) || messages.filter((entry) => entry.sender === 'contact' && !entry.read).length))),
+    pause: pauseReason ? {
+      reason: pauseReason,
+      createdAt: timestamp(pauseValue?.createdAt, now),
+      source: pauseValue?.source === 'scene' ? 'scene' : 'model',
+    } : undefined,
     createdAt,
     updatedAt: timestamp(value.updatedAt, messages.at(-1)?.createdAt || createdAt),
   }
@@ -157,10 +184,16 @@ function activeContact(context: { characterId: string; characterName: string; no
     name: context.characterName || 'Character',
     role: 'Character',
     description: '',
+    identityBrief: '',
+    sceneNote: '',
     avatarUrl: '',
+    sourceAvatarUrl: '',
+    avatarOverrideUrl: '',
     accent: stableContactAccent(contactId),
+    sourceAccent: '',
+    colorMode: 'pocket',
     source: { kind: 'character', characterId: contactId },
-    presence: { inScene: true, lastSceneAt: context.now },
+    presence: { inScene: false, lastSceneAt: '' },
     contextPolicy: { pinned: false },
     generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
@@ -197,8 +230,6 @@ export function normalizeContactCollections(value: AnyRecord, context: {
     contacts.unshift(current)
   } else if (context.characterName && context.characterName !== 'Character') {
     current.name = context.characterName
-    current.presence.inScene = true
-    current.presence.lastSceneAt ||= context.now
   }
 
   const legacy = Number(value.version || 0) < 3 || (Array.isArray(value.contacts) && value.contacts.some((entry) => record(entry) && Array.isArray(entry.messages)))

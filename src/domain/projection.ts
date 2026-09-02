@@ -37,7 +37,8 @@ export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BU
       source: contact.source.kind,
       inScene: contact.presence.inScene,
       pinned: contact.contextPolicy.pinned,
-      ...(contact.source.kind === 'npc' ? { brief: (contact.source.description || contact.description).slice(0, 360) } : {}),
+      identityBrief: (contact.identityBrief || contact.description || '').slice(0, 360),
+      sceneNote: (contact.sceneNote || '').slice(0, 240),
     }))
   const trackers = state.trackers
     .filter((tracker) => tracker.visibleToModel)

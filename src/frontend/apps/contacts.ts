@@ -1,4 +1,5 @@
 import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactSourceOption, PocketOperationProgress } from '../../types.js'
+import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
 
@@ -22,9 +23,9 @@ export interface ContactsViewHost {
 
 function avatar(contact: PocketContact): HTMLDivElement {
   const node = el('div', 'lp-avatar', contact.name.slice(0, 1).toUpperCase())
-  node.style.setProperty('--contact-accent', contact.accent)
-  if (contact.avatarUrl) {
-    const image = el('img'); image.src = contact.avatarUrl; image.alt = ''; node.replaceChildren(image)
+  node.style.setProperty('--contact-accent', contactAccent(contact))
+  if (contactAvatar(contact)) {
+    const image = el('img'); image.src = contactAvatar(contact); image.alt = ''; node.replaceChildren(image)
   }
   return node
 }
@@ -34,9 +35,15 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null): H
   const { page, content } = host.page(contact ? 'Contact Settings' : 'New Contact', contact?.source.kind || 'Pocket NPC', { label: 'Save', callback: () => saveContact() })
   const name = el('input', 'lp-input'); name.placeholder = 'Name'; name.value = contact?.name || ''
   const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = contact?.role || ''
-  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Compact roleplay description'; description.maxLength = 600; description.value = contact?.description || ''
+  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Stable identity brief — role, personality, relationship, enduring traits'; description.maxLength = 1_200; description.value = contact?.identityBrief || contact?.description || ''
+  const sceneNote = el('textarea', 'lp-textarea'); sceneNote.placeholder = 'Current scene note — temporary state, objective, or reason they are here'; sceneNote.maxLength = 600; sceneNote.value = contact?.sceneNote || ''
   const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || '') ? contact!.accent : '#8b7dff'
   const colorRow = el('label', 'lp-card lp-row-between'); colorRow.append(el('span', 'lp-title', 'Contact color'), accent)
+  const colorMode = el('select', 'lp-select')
+  for (const [value, label] of [['pocket', 'Pocket color'], ['source', contact?.sourceAccent ? 'Inherit source color' : 'Inherit source color (unavailable)']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = (contact?.colorMode || 'pocket') === value; option.disabled = value === 'source' && !contact?.sourceAccent; colorMode.appendChild(option)
+  }
+  const colorModeLabel = el('label', 'lp-label', 'Color source'); colorModeLabel.appendChild(colorMode)
   const inScene = el('input'); inScene.type = 'checkbox'; inScene.checked = contact?.presence.inScene || false
   const sceneRow = el('label', 'lp-card lp-row-between'); sceneRow.append(el('span', 'lp-title', 'Here in current scene'), inScene)
   const pinned = el('input'); pinned.type = 'checkbox'; pinned.checked = contact?.contextPolicy.pinned || false
@@ -50,7 +57,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null): H
   saveContact = () => {
     if (!name.value.trim()) { host.showError('A contact needs a name.'); return }
     host.send('lumiphone:save_contact', { contact: {
-      id: contact?.id, name: name.value.trim(), role: role.value.trim(), description: description.value.trim(), accent: accent.value,
+      id: contact?.id, name: name.value.trim(), role: role.value.trim(), identityBrief: description.value.trim(), description: description.value.trim(), sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
       contextPolicy: { pinned: pinned.checked },
       generationPolicy: { relevant: relevant.checked },
@@ -62,8 +69,13 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null): H
     } })
     host.select(contact?.id || '', 'list')
   }
-  content.append(name, role, description, colorRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
+  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
   if (contact) {
+    if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
+      const sourcePhoto = button('Use source photo', 'lp-button lp-button-quiet')
+      sourcePhoto.addEventListener('click', () => host.send('lumiphone:set_contact_photo', { contactId: contact.id, useSource: true }))
+      content.appendChild(sourcePhoto)
+    }
     const remove = button('Delete contact', 'lp-button lp-button-danger')
     remove.addEventListener('click', () => { host.send('lumiphone:delete', { kind: 'contact', id: contact.id }); host.select('', 'list') })
     content.appendChild(remove)
@@ -88,8 +100,11 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   manual.append(description, generate, primitive)
   if (npcOperation) {
     const progress = el('div', 'lp-operation-progress')
+    progress.dataset.operationRequest = npcOperation.requestId
+    progress.dataset.phase = npcOperation.phase
     progress.setAttribute('role', 'status')
-    progress.append(el('span', 'lp-indeterminate'), el('strong', '', npcOperation.message || 'Generating contact…'))
+    const message = el('strong', '', npcOperation.message || 'Generating contact…'); message.dataset.operationMessage = 'true'
+    progress.append(el('span', 'lp-indeterminate'), message)
     manual.appendChild(progress)
   }
   content.appendChild(manual)
@@ -121,7 +136,8 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   if (contact && host.selectedView === 'detail') {
     const { page, content } = host.page(contact.name, contact.role, { label: 'Edit', callback: () => host.select(contact.id, 'config') })
     const hero = el('div', 'lp-card lp-contact-detail')
-    hero.append(avatar(contact), el('h2', 'lp-title', contact.name), el('p', 'lp-copy', contact.description || 'No compact description.'))
+    hero.append(avatar(contact), el('h2', 'lp-title', contact.name), el('p', 'lp-copy', contact.identityBrief || contact.description || 'No compact identity brief.'))
+    if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
     hero.append(el('span', 'lp-eyebrow', source))
     const presence = el('div', 'lp-card')
@@ -132,7 +148,19 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     )
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
-    content.append(hero, presence, message)
+    content.append(hero, presence)
+    if (contact.source.kind !== 'npc') {
+      const profileOperation = [...host.operations.values()].find((entry) => entry.task === 'profile-refresh' && entry.phase !== 'complete' && entry.phase !== 'error')
+      const refresh = button('Refresh compact profile ✦', 'lp-button lp-button-quiet')
+      refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation)
+      refresh.addEventListener('click', () => host.send('lumiphone:refresh_contact_profile', { contactId: contact.id }))
+      content.appendChild(refresh)
+      if (profileOperation) {
+        const progress = el('div', 'lp-operation-progress'); progress.dataset.operationRequest = profileOperation.requestId; progress.dataset.phase = profileOperation.phase; progress.setAttribute('role', 'status')
+        const progressMessage = el('strong', '', profileOperation.message); progressMessage.dataset.operationMessage = 'true'; progress.append(el('span', 'lp-indeterminate'), progressMessage); content.appendChild(progress)
+      }
+    }
+    content.append(message)
     return page
   }
 
@@ -172,8 +200,11 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   content.append(search, filters, sync)
   if (sceneOperation) {
     const progress = el('div', 'lp-operation-progress')
+    progress.dataset.operationRequest = sceneOperation.requestId
+    progress.dataset.phase = sceneOperation.phase
     progress.setAttribute('role', 'status')
-    progress.append(el('span', 'lp-indeterminate'), el('strong', '', sceneOperation.message || 'Syncing scene…'))
+    const message = el('strong', '', sceneOperation.message || 'Syncing scene…'); message.dataset.operationMessage = 'true'
+    progress.append(el('span', 'lp-indeterminate'), message)
     content.appendChild(progress)
   }
   content.appendChild(list)

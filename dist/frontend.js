@@ -1,5 +1,5 @@
 // src/domain/preferences.ts
-var PREFERENCES_VERSION = 2;
+var PREFERENCES_VERSION = 3;
 var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
   midnight: {
@@ -72,7 +72,10 @@ function defaultPreferences() {
     version: PREFERENCES_VERSION,
     theme: "midnight",
     colors: themePalette("midnight"),
+    wallpaperImageUrl: "",
+    chatWallpaperImageUrl: "",
     handsetScale: 1,
+    uiScale: 1,
     animation: "spring",
     animationDurationMs: 280,
     reducedMotion: false,
@@ -84,6 +87,15 @@ function defaultPreferences() {
     sidecarConnectionId: "",
     autoReplyAfterSend: false,
     ambientMessaging: "off",
+    roleplayContextMode: "smart",
+    recentRoleplayMessages: 8,
+    notificationSounds: false,
+    notificationPreviews: true,
+    notifyMessages: true,
+    notifyContacts: true,
+    notifyTrackers: true,
+    customCss: "",
+    personaAppearance: {},
     generationHistory: [],
     manualVisualProfile: { positive: "", negative: "", model: "", connectionId: "", loras: [], parameters: {} }
   };
@@ -117,7 +129,7 @@ function normalizePreferences(value) {
     const item = record(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "scene-sync", "message-reply", "reply-decision", "ambient-decision", "scene-planner", "connection-test"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "message-reply", "message-retry", "reply-decision", "ambient-decision", "scene-planner", "connection-test"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -136,11 +148,41 @@ function normalizePreferences(value) {
       error: text(item.error, "", 500) || undefined
     }];
   });
+  const rawPersonaAppearance = record(raw.personaAppearance);
+  const personaAppearance = {};
+  for (const [personaId, value2] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
+    if (!personaId || personaId.length > 180)
+      continue;
+    const item = record(value2);
+    const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
+    const overrideColors = record(item.colors);
+    const overridePreset = themePalette(overrideTheme);
+    personaAppearance[personaId] = {
+      enabled: bool(item.enabled, false),
+      theme: overrideTheme,
+      colors: {
+        accent: safeColor(overrideColors.accent, overridePreset.accent),
+        bezel: safeColor(overrideColors.bezel, overridePreset.bezel),
+        background: safeColor(overrideColors.background, overridePreset.background),
+        surface: safeColor(overrideColors.surface, overridePreset.surface),
+        text: safeColor(overrideColors.text, overridePreset.text),
+        wallpaperPrimary: safeColor(overrideColors.wallpaperPrimary, overridePreset.wallpaperPrimary),
+        wallpaperSecondary: safeColor(overrideColors.wallpaperSecondary, overridePreset.wallpaperSecondary),
+        chatPrimary: safeColor(overrideColors.chatPrimary, overridePreset.chatPrimary),
+        chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary)
+      },
+      customCss: text(item.customCss, "", 30000)
+    };
+  }
+  const contextMode = raw.roleplayContextMode === "off" || raw.roleplayContextMode === "recent" || raw.roleplayContextMode === "story" ? raw.roleplayContextMode : "smart";
   return {
     version: PREFERENCES_VERSION,
     theme,
     colors: palette,
+    wallpaperImageUrl: text(raw.wallpaperImageUrl, "", 2000),
+    chatWallpaperImageUrl: text(raw.chatWallpaperImageUrl, "", 2000),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
+    uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
@@ -152,6 +194,15 @@ function normalizePreferences(value) {
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
+    roleplayContextMode: contextMode,
+    recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
+    notificationSounds: bool(raw.notificationSounds, fallback.notificationSounds),
+    notificationPreviews: bool(raw.notificationPreviews, fallback.notificationPreviews),
+    notifyMessages: bool(raw.notifyMessages, fallback.notifyMessages),
+    notifyContacts: bool(raw.notifyContacts, fallback.notifyContacts),
+    notifyTrackers: bool(raw.notifyTrackers, fallback.notifyTrackers),
+    customCss: text(raw.customCss, "", 30000),
+    personaAppearance,
     generationHistory: history,
     manualVisualProfile: {
       positive: text(manual.positive, "", 12000),
@@ -248,8 +299,8 @@ function calculatePhoneSurface(scale, viewport = currentViewport(), allowFullscr
     y: Math.max(12, Math.floor((viewport.height - height) / 2))
   };
 }
-function applyMobilePhoneSurface(widget, scale) {
-  const geometry = calculatePhoneSurface(scale);
+function applyMobilePhoneSurface(widget, _scale = 1) {
+  const geometry = calculatePhoneSurface(1);
   if (widget.isFullscreen() !== geometry.fullscreen)
     widget.setFullscreen(geometry.fullscreen);
   if (!geometry.fullscreen) {
@@ -325,77 +376,135 @@ function requestId(prefix = "req") {
 }
 
 // src/frontend/apps/settings.ts
-function colorSetting(label, value, update) {
-  const row = el("div", "lp-row-between");
-  row.appendChild(el("span", "lp-title", label));
-  const input = el("input", "lp-color-input");
-  input.type = "color";
-  input.value = /^#[0-9a-f]{6}$/i.test(value) ? value : "#8b7dff";
-  input.addEventListener("input", () => update(input.value));
-  row.appendChild(input);
-  return row;
+function clone(value) {
+  return structuredClone(value);
 }
-function toggleSetting(label, initial, update) {
-  const row = el("div", "lp-row-between");
-  row.appendChild(el("span", "lp-title", label));
-  const toggle = el("button", "lp-toggle");
-  toggle.type = "button";
-  toggle.setAttribute("aria-pressed", String(initial));
-  toggle.addEventListener("click", () => {
-    const next = toggle.getAttribute("aria-pressed") !== "true";
-    toggle.setAttribute("aria-pressed", String(next));
+function row(label, detail = "") {
+  const node = el("div", "lp-row-between");
+  const copy = el("span");
+  copy.append(el("strong", "", label));
+  if (detail)
+    copy.append(el("span", "lp-copy", detail));
+  node.appendChild(copy);
+  return node;
+}
+function toggle(label, initial, update, detail = "") {
+  const node = row(label, detail);
+  node.dataset.setting = label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const control = button("", "lp-toggle");
+  control.setAttribute("aria-pressed", String(initial));
+  control.setAttribute("aria-label", label);
+  control.addEventListener("click", () => {
+    const next = control.getAttribute("aria-pressed") !== "true";
+    control.setAttribute("aria-pressed", String(next));
     update(next);
   });
-  row.appendChild(toggle);
-  return row;
+  node.appendChild(control);
+  return node;
 }
-function renderSettingsView(host) {
-  const settings = structuredClone(host.preferences);
-  let saveSettings = () => {};
-  const { page, content } = host.page("Settings", "Device-wide preferences", { label: "Save", callback: () => saveSettings() });
-  const appearance = el("section", "lp-card lp-settings-section");
-  appearance.dataset.settingsSection = "appearance";
-  appearance.appendChild(el("div", "lp-eyebrow", "Appearance"));
-  const themes = el("div", "lp-row");
-  const themeColors = [["midnight", "#201a37"], ["porcelain", "#eeeae6"], ["rose", "#7a294e"], ["forest", "#1d5a41"], ["custom", settings.colors.accent]];
-  for (const [name, color] of themeColors) {
-    const dot = el("button", "lp-theme-dot");
-    dot.type = "button";
-    dot.title = name;
-    dot.style.background = color;
-    dot.setAttribute("aria-pressed", String(settings.theme === name));
-    dot.addEventListener("click", () => {
-      settings.theme = name;
-      if (name !== "custom")
-        settings.colors = themePalette(name);
-      host.preview(normalizePreferences(settings), { appearance: true, rerender: true });
-    });
-    themes.appendChild(dot);
+function color(label, value, update) {
+  const node = row(label);
+  node.dataset.setting = label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const control = el("input", "lp-color-input");
+  control.type = "color";
+  control.value = /^#[0-9a-f]{6}$/i.test(value) ? value : "#8b7dff";
+  control.addEventListener("input", () => update(control.value));
+  node.appendChild(control);
+  return node;
+}
+function slider(label, value, min, max, step, format, update, detail = "") {
+  const node = el("label", "lp-slider-setting");
+  const head = el("span", "lp-row-between");
+  const display = el("strong", "", format(value));
+  node.dataset.setting = label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  head.append(el("span", "lp-title", label), display);
+  const control = el("input");
+  control.type = "range";
+  control.min = String(min);
+  control.max = String(max);
+  control.step = String(step);
+  control.value = String(value);
+  control.addEventListener("input", () => {
+    const next = Number(control.value);
+    display.textContent = format(next);
+    update(next);
+  });
+  node.append(head, control);
+  if (detail)
+    node.append(el("span", "lp-copy", detail));
+  return node;
+}
+function categories(host) {
+  const { page, content } = host.page("Settings", "Device-wide preferences");
+  const entries = [
+    ["appearance", "Appearance", "Themes, scale, motion, custom CSS"],
+    ["persona", "Persona & Device", "Optional appearance for the active persona"],
+    ["messages", "Messages", "Replies, ambient texts, roleplay context"],
+    ["generation", "Pocket Generation", "Model source and connection diagnostics"],
+    ["camera", "Camera & Swarm Studio", "Visual profile and macro diagnostics"],
+    ["notifications", "Notifications", "Kinds, previews, push, and sound"],
+    ["permissions", "Permissions", "Lumiverse capability access"],
+    ["data", "Data & Backup", "Export, import, and reset"]
+  ];
+  for (const [id, label, detail] of entries) {
+    const open = button("", "lp-card lp-settings-category");
+    open.dataset.settingsCategory = id;
+    const copy = el("span");
+    copy.append(el("strong", "", label), el("span", "lp-copy", detail));
+    open.append(copy, el("span", "lp-settings-chevron", "›"));
+    open.addEventListener("click", () => host.navigate(id));
+    content.appendChild(open);
   }
+  return page;
+}
+function appearance(host) {
+  const settings = host.draft;
+  const commit = (mutate, options) => {
+    const next = clone(settings);
+    mutate(next);
+    host.update(normalizePreferences(next), options);
+  };
+  const { page, content } = host.page("Appearance", "Device defaults");
+  const themes = el("section", "lp-card lp-settings-section");
+  themes.append(el("div", "lp-eyebrow", "Theme"));
+  const themeRow = el("div", "lp-row");
+  for (const [name, swatch] of [["midnight", "#201a37"], ["porcelain", "#eeeae6"], ["rose", "#7a294e"], ["forest", "#1d5a41"], ["custom", settings.colors.accent]]) {
+    const dot = button("", "lp-theme-dot");
+    dot.title = name;
+    dot.style.background = swatch;
+    dot.setAttribute("aria-pressed", String(settings.theme === name));
+    dot.addEventListener("click", () => commit((next) => {
+      next.theme = name;
+      if (name !== "custom")
+        next.colors = themePalette(name);
+    }));
+    themeRow.appendChild(dot);
+  }
+  themes.appendChild(themeRow);
   const palette = el("div", "lp-color-grid");
-  const colorControl = (label, key) => colorSetting(label, settings.colors[key], (value) => {
-    settings.colors[key] = value;
-    settings.theme = "custom";
-    host.preview(normalizePreferences(settings), { appearance: true });
-  });
+  const colorControl = (label, key) => color(label, settings.colors[key], (value) => commit((next) => {
+    next.theme = "custom";
+    next.colors[key] = value;
+  }));
   palette.append(colorControl("Accent", "accent"), colorControl("Bezel", "bezel"), colorControl("UI background", "background"), colorControl("UI surface", "surface"), colorControl("UI text", "text"), colorControl("Home top", "wallpaperPrimary"), colorControl("Home bottom", "wallpaperSecondary"), colorControl("Chat top", "chatPrimary"), colorControl("Chat bottom", "chatSecondary"));
-  const scaleRow = el("label", "lp-slider-setting");
-  const scaleHead = el("span", "lp-row-between");
-  const scaleValue = el("strong", "", `${settings.handsetScale.toFixed(2)}×`);
-  scaleHead.append(el("span", "lp-title", "Phone size"), scaleValue);
-  const scale = el("input");
-  scale.type = "range";
-  scale.min = "0.8";
-  scale.max = "1.25";
-  scale.step = "0.05";
-  scale.value = String(settings.handsetScale);
-  scale.addEventListener("input", () => {
-    settings.handsetScale = Number(scale.value);
-    scaleValue.textContent = `${settings.handsetScale.toFixed(2)}×`;
-    host.preview(normalizePreferences(settings), { resize: true });
-  });
-  scaleRow.append(scaleHead, scale, el("span", "lp-copy", "A semantic scale; dimensions are recalculated from this viewport."));
-  const animationLabel = el("label", "lp-label", "App opening animation");
+  const scaleCard = el("section", "lp-card lp-settings-section");
+  scaleCard.append(el("div", "lp-eyebrow", "Sizing"));
+  const presets = el("div", "lp-row");
+  for (const [label, value] of [["Compact", 0.8], ["Default", 1], ["Large", 1.2]]) {
+    const preset = button(label, "lp-chip");
+    preset.setAttribute("aria-pressed", String(settings.uiScale === value));
+    preset.addEventListener("click", () => commit((next) => {
+      next.uiScale = value;
+    }));
+    presets.appendChild(preset);
+  }
+  scaleCard.append(presets, slider("Interface size", settings.uiScale, 0.7, 1.3, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+    next.uiScale = value;
+  }), "Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport."), slider("Desktop phone size", settings.handsetScale, 0.8, 1.25, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+    next.handsetScale = value;
+  }, { resize: true }), "Controls only the physical 9:16 handset on desktop."));
+  const motion = el("section", "lp-card lp-settings-section");
+  motion.append(el("div", "lp-eyebrow", "Motion"));
   const animation = el("select", "lp-select");
   for (const value of ["spring", "slide", "fade", "none"]) {
     const option = el("option", "", value[0].toUpperCase() + value.slice(1));
@@ -403,151 +512,301 @@ function renderSettingsView(host) {
     option.selected = settings.animation === value;
     animation.appendChild(option);
   }
-  animationLabel.appendChild(animation);
-  const durationRow = el("label", "lp-slider-setting");
-  const durationHead = el("span", "lp-row-between");
-  const durationValue = el("strong", "", `${settings.animationDurationMs} ms`);
-  durationHead.append(el("span", "lp-title", "Animation duration"), durationValue);
-  const duration = el("input");
-  duration.type = "range";
-  duration.min = "0";
-  duration.max = "700";
-  duration.step = "20";
-  duration.value = String(settings.animationDurationMs);
-  duration.addEventListener("input", () => {
-    settings.animationDurationMs = Number(duration.value);
-    durationValue.textContent = `${settings.animationDurationMs} ms`;
-  });
-  durationRow.append(durationHead, duration);
-  const reducedMotion = toggleSetting("Reduce motion", settings.reducedMotion, (value) => {
-    settings.reducedMotion = value;
-  });
-  appearance.append(themes, palette, scaleRow, animationLabel, durationRow, reducedMotion);
-  const behavior = el("section", "lp-card lp-settings-section");
-  behavior.dataset.settingsSection = "behavior";
-  behavior.appendChild(el("div", "lp-eyebrow", "Character actions"));
-  behavior.append(toggleSetting("Open phone on model action", settings.autoOpenOnModelAction, (value) => {
-    settings.autoOpenOnModelAction = value;
-  }), toggleSetting("Push notifications", settings.pushNotifications, (value) => {
-    settings.pushNotifications = value;
-  }), toggleSetting("Camera scene planner", settings.sceneEnhancer, (value) => {
-    settings.sceneEnhancer = value;
+  animation.addEventListener("change", () => commit((next) => {
+    next.animation = animation.value;
   }));
-  const generation = el("section", "lp-card lp-settings-section");
-  generation.dataset.settingsSection = "generation";
-  generation.appendChild(el("div", "lp-eyebrow", "Pocket Generation"));
-  const generationMode = el("select", "lp-select");
-  for (const [value, label] of [["roleplay", "Follow roleplay model"], ["sidecar", "Pocket sidecar"]]) {
-    const option = el("option", "", label);
-    option.value = value;
-    option.selected = settings.generationMode === value;
-    generationMode.appendChild(option);
-  }
-  const modeLabel = el("label", "lp-label", "Generation mode");
-  modeLabel.appendChild(generationMode);
-  const connectionSelect = el("select", "lp-select");
-  const none = el("option", "", "Choose a connection");
-  none.value = "";
-  connectionSelect.appendChild(none);
-  for (const entry of host.generation?.connections || []) {
-    const option = el("option", "", `${entry.name} · ${entry.model || entry.provider}`);
-    option.value = entry.id;
-    option.selected = settings.sidecarConnectionId === entry.id;
-    connectionSelect.appendChild(option);
-  }
-  connectionSelect.disabled = settings.generationMode !== "sidecar";
-  const connectionLabel = el("label", "lp-label", "Pocket sidecar connection");
-  connectionLabel.appendChild(connectionSelect);
-  generationMode.addEventListener("change", () => {
-    settings.generationMode = generationMode.value === "sidecar" ? "sidecar" : "roleplay";
-    connectionSelect.disabled = settings.generationMode !== "sidecar";
-  });
-  const effective = host.generation?.effective;
-  const effectiveCard = el("div", "lp-generation-effective");
-  effectiveCard.append(el("strong", "", effective ? effective.name : "No effective connection"), el("span", "lp-copy", effective ? `${effective.provider} · ${effective.model || "profile model not set"} · ${host.generation?.mode === "sidecar" ? "Pocket sidecar" : "active roleplay source"}` : "Configure an LLM connection in Lumiverse."));
-  const test = button("Test Pocket generation", "lp-button");
-  const activeTest = [...host.generation?.history || []].reverse().find((entry) => entry.task === "connection-test");
-  let testResult = null;
-  test.disabled = activeTest?.status === "started" || !host.capabilities?.generation;
-  test.addEventListener("click", () => host.send("lumiphone:test_generation", {
-    generationMode: generationMode.value === "sidecar" ? "sidecar" : "roleplay",
-    sidecarConnectionId: connectionSelect.value
+  motion.append(animation, slider("Animation duration", settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => {
+    next.animationDurationMs = value;
+  })), toggle("Reduce motion", settings.reducedMotion, (value) => commit((next) => {
+    next.reducedMotion = value;
+  })));
+  const custom = el("section", "lp-card lp-settings-section");
+  custom.append(el("div", "lp-eyebrow", "Advanced custom CSS"), el("p", "lp-copy", "Scoped to .lumiphone-shell. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting."));
+  const css = el("textarea", "lp-textarea lp-code-input");
+  css.value = settings.customCss;
+  css.placeholder = ".lp-bubble { border-radius: 12px; }";
+  css.addEventListener("input", () => commit((next) => {
+    next.customCss = css.value;
+  }, { persist: false }));
+  const apply = button("Apply custom CSS", "lp-button");
+  apply.addEventListener("click", () => commit((next) => {
+    next.customCss = css.value;
   }));
-  if (activeTest) {
-    const result = activeTest.status === "started" ? "Testing…" : activeTest.status === "completed" ? `Success · ${activeTest.latencyMs ?? 0} ms · ${activeTest.connectionName} / ${activeTest.model}` : `Failed · ${activeTest.error || "Unknown provider error"} · ${activeTest.connectionName} / ${activeTest.model}`;
-    testResult = el("p", activeTest.status === "failed" ? "lp-warning" : "lp-copy", result);
+  custom.append(css, apply);
+  content.append(themes, palette, scaleCard, motion, custom);
+  return page;
+}
+function persona(host) {
+  const { page, content } = host.page("Persona & Device", host.activePersona?.name || "No active persona");
+  if (!host.activePersona) {
+    content.append(el("div", "lp-card lp-copy", "Choose an active Lumiverse Persona to create a device appearance override."));
+    return page;
   }
-  const ambientLabel = el("label", "lp-label", "Ambient messages");
+  const persona2 = host.activePersona;
+  const current = host.draft.personaAppearance[persona2.id] || { enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: "" };
+  const commit = (mutate, persist = true) => {
+    const next = clone(host.draft);
+    const value = structuredClone(next.personaAppearance[persona2.id] || current);
+    mutate(value);
+    next.personaAppearance[persona2.id] = value;
+    host.update(next, { persist });
+  };
+  const card = el("section", "lp-card lp-settings-section");
+  card.append(el("div", "lp-eyebrow", "Persona override"), toggle(`Enable for ${persona2.name}`, current.enabled, (value) => commit((item) => {
+    item.enabled = value;
+  }), "Only appearance changes; connections and notifications remain device-wide."));
+  const theme = el("select", "lp-select");
+  for (const name of ["midnight", "porcelain", "rose", "forest", "custom"]) {
+    const option = el("option", "", name);
+    option.value = name;
+    option.selected = current.theme === name;
+    theme.appendChild(option);
+  }
+  theme.addEventListener("change", () => commit((item) => {
+    item.theme = theme.value;
+    if (item.theme !== "custom")
+      item.colors = themePalette(item.theme);
+  }));
+  const colors = el("div", "lp-color-grid");
+  for (const [label, key] of [["Accent", "accent"], ["Bezel", "bezel"], ["Home top", "wallpaperPrimary"], ["Home bottom", "wallpaperSecondary"], ["Chat top", "chatPrimary"], ["Chat bottom", "chatSecondary"]])
+    colors.appendChild(color(label, current.colors[key], (value) => commit((item) => {
+      item.theme = "custom";
+      item.colors[key] = value;
+    })));
+  const css = el("textarea", "lp-textarea lp-code-input");
+  css.placeholder = "Persona-scoped Pocket CSS";
+  css.value = current.customCss;
+  css.addEventListener("input", () => commit((item) => {
+    item.customCss = css.value;
+  }, false));
+  const apply = button("Apply persona CSS", "lp-button");
+  apply.addEventListener("click", () => commit((item) => {
+    item.customCss = css.value;
+  }));
+  card.append(theme, colors, css, apply);
+  content.appendChild(card);
+  return page;
+}
+function messages(host) {
+  const settings = host.draft;
+  const commit = (mutate) => {
+    const next = clone(settings);
+    mutate(next);
+    host.update(next);
+  };
+  const { page, content } = host.page("Messages", "Generation and context bridge");
+  const replies = el("section", "lp-card lp-settings-section");
+  replies.append(el("div", "lp-eyebrow", "Reply behavior"), toggle("Decide on a reply after user DMs", settings.autoReplyAfterSend, (value) => commit((next) => {
+    next.autoReplyAfterSend = value;
+  })));
   const ambient = el("select", "lp-select");
-  for (const [value, label] of [["off", "Off (conservative default)"], ["sparse", "Sparse"], ["normal", "Normal"]]) {
+  for (const [value, label] of [["off", "Off"], ["sparse", "Sparse"], ["normal", "Normal"]]) {
     const option = el("option", "", label);
     option.value = value;
     option.selected = settings.ambientMessaging === value;
     ambient.appendChild(option);
   }
-  ambientLabel.appendChild(ambient);
-  const history = el("div", "lp-generation-history");
-  for (const run of [...host.generation?.history || []].reverse().slice(0, 6)) {
-    const row = el("div", "lp-generation-run");
-    row.dataset.status = run.status;
-    row.append(el("strong", "", run.task), el("span", "lp-copy", `${run.connectionName || run.mode} · ${run.model || "unknown model"} · ${run.status}${run.error ? ` · ${run.error}` : ""}`));
-    history.appendChild(row);
+  ambient.addEventListener("change", () => commit((next) => {
+    next.ambientMessaging = ambient.value;
+  }));
+  replies.append(el("div", "lp-label", "Ambient messages"), ambient);
+  const context = el("section", "lp-card lp-settings-section");
+  context.append(el("div", "lp-eyebrow", "Roleplay context"));
+  const mode = el("select", "lp-select");
+  for (const [value, label] of [["off", "Off"], ["recent", "Recent RP"], ["story", "Story context"], ["smart", "Smart"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = settings.roleplayContextMode === value;
+    mode.appendChild(option);
   }
-  generation.append(modeLabel, connectionLabel, effectiveCard, toggleSetting("Decide on a reply after user DMs", settings.autoReplyAfterSend, (value) => {
-    settings.autoReplyAfterSend = value;
-  }), ambientLabel, test, history);
-  if (testResult)
-    generation.insertBefore(testResult, history);
-  const visual = el("section", "lp-card lp-settings-section");
-  visual.dataset.settingsSection = "camera";
-  visual.appendChild(el("div", "lp-eyebrow", "Camera visual profile"));
-  const swarm = toggleSetting("Sync active Swarm Studio profile", settings.useSwarmProfile, (value) => {
-    settings.useSwarmProfile = value;
-  });
-  const status = el("div", "lp-copy", host.swarmProfile?.available ? `Linked: ${host.swarmProfile.checkpoint || "active checkpoint"}${host.swarmProfile.presets ? ` · ${host.swarmProfile.presets}` : ""}` : "Swarm Studio profile macros were not detected. Manual fields below remain active.");
+  mode.addEventListener("change", () => commit((next) => {
+    next.roleplayContextMode = mode.value;
+  }));
+  context.append(mode, slider("Recent roleplay messages", settings.recentRoleplayMessages, 0, 20, 1, String, (value) => commit((next) => {
+    next.recentRoleplayMessages = value;
+  }), "Bounded host-chat context used by Recent RP and deterministic Smart mode."));
+  content.append(replies, context);
+  return page;
+}
+function generation(host) {
+  const settings = host.draft;
+  const commit = (mutate) => {
+    const next = clone(settings);
+    mutate(next);
+    host.update(next);
+  };
+  const { page, content } = host.page("Pocket Generation", "Text model source");
+  const card = el("section", "lp-card lp-settings-section");
+  const mode = el("select", "lp-select");
+  for (const [value, label] of [["roleplay", "Follow roleplay model"], ["sidecar", "Pocket sidecar"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = settings.generationMode === value;
+    mode.appendChild(option);
+  }
+  const connections = el("select", "lp-select");
+  const none = el("option", "", "Choose a connection");
+  none.value = "";
+  connections.appendChild(none);
+  for (const entry of host.generation?.connections || []) {
+    const option = el("option", "", `${entry.name} · ${entry.model || entry.provider}`);
+    option.value = entry.id;
+    option.selected = settings.sidecarConnectionId === entry.id;
+    connections.appendChild(option);
+  }
+  connections.disabled = settings.generationMode !== "sidecar";
+  mode.addEventListener("change", () => commit((next) => {
+    next.generationMode = mode.value === "sidecar" ? "sidecar" : "roleplay";
+  }));
+  connections.addEventListener("change", () => commit((next) => {
+    next.sidecarConnectionId = connections.value;
+  }));
+  const effective = host.generation?.effective;
+  const effectiveCard = el("div", "lp-generation-effective");
+  effectiveCard.dataset.pocketGenerationEffective = "true";
+  effectiveCard.append(el("strong", "", effective?.name || "No effective connection"), el("span", "lp-copy", effective ? `${effective.provider} · ${effective.model || "model not set"}` : "Configure a Lumiverse LLM connection."));
+  const test = button("Test Pocket generation", "lp-button");
+  test.dataset.pocketGenerationTest = "true";
+  test.disabled = !host.capabilities?.generation;
+  test.addEventListener("click", () => host.send("lumiphone:test_generation", { generationMode: mode.value, sidecarConnectionId: connections.value }));
+  const diagnostic = el("p", "lp-copy", "Not tested yet.");
+  diagnostic.dataset.pocketGenerationDiagnostic = "true";
+  const run = [...host.generation?.history || []].reverse().find((entry) => entry.task === "connection-test");
+  if (run)
+    diagnostic.textContent = run.status === "started" ? "● Testing…" : run.status === "completed" ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || "Unknown provider error"}`;
+  card.append(el("div", "lp-label", "Generation mode"), mode, el("div", "lp-label", "Sidecar connection"), connections, effectiveCard, test, diagnostic);
+  content.appendChild(card);
+  return page;
+}
+function camera(host) {
+  const settings = host.draft;
+  const commit = (mutate, persist = true) => {
+    const next = clone(settings);
+    mutate(next);
+    host.update(next, { persist });
+  };
+  const { page, content } = host.page("Camera & Swarm Studio", "Visual profile");
+  const swarm = el("section", "lp-card lp-settings-section");
+  swarm.append(el("div", "lp-eyebrow", "Swarm Studio"), toggle("Sync active profile", settings.useSwarmProfile, (value) => {
+    const next = clone(settings);
+    next.useSwarmProfile = value;
+    host.update(next, { persist: false });
+    host.send("lumiphone:save_preferences", { preferences: next });
+  }));
+  const status = el("p", "lp-copy", host.swarmProfile?.status === "connected" ? `Connected · ${host.swarmProfile.checkpoint || "profile macros resolved"}` : host.swarmProfile?.status === "error" ? `Error · ${host.swarmProfile.error}` : host.swarmProfile?.status === "disabled" ? "Swarm profile sync is disabled." : "Swarm Studio macros were not detected for this character/persona.");
+  status.dataset.pocketSwarmStatus = "true";
+  status.dataset.status = host.swarmProfile?.status || "not-detected";
+  const refresh = button("Refresh profile", "lp-button");
+  refresh.addEventListener("click", () => host.send("lumiphone:get_swarm_profile"));
+  const diagnostics = el("details", "lp-swarm-diagnostics");
+  diagnostics.appendChild(el("summary", "", "Macro diagnostics"));
+  for (const name of ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect"]) {
+    const field = host.swarmProfile?.fields?.[name];
+    const row2 = el("div", "lp-generation-run", `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`);
+    row2.dataset.pocketSwarmMacro = name;
+    diagnostics.appendChild(row2);
+  }
+  swarm.append(status, refresh, diagnostics);
+  const manual = el("section", "lp-card lp-settings-section");
+  manual.append(el("div", "lp-eyebrow", "Primitive / manual mode"));
   const positive = el("textarea", "lp-textarea");
-  positive.placeholder = "Manual positive / character style";
+  positive.placeholder = "Positive / character style";
   positive.value = settings.manualVisualProfile.positive;
   const negative = el("textarea", "lp-textarea");
-  negative.placeholder = "Manual negative prompt";
+  negative.placeholder = "Negative prompt";
   negative.value = settings.manualVisualProfile.negative;
-  const model = host.field("Checkpoint / model override", settings.manualVisualProfile.model);
-  const connection = host.field("Image connection ID override", settings.manualVisualProfile.connectionId);
+  const model = el("input", "lp-input");
+  model.placeholder = "Checkpoint override";
+  model.value = settings.manualVisualProfile.model;
+  const connection = el("input", "lp-input");
+  connection.placeholder = "Image connection ID";
+  connection.value = settings.manualVisualProfile.connectionId;
   const loras = el("textarea", "lp-textarea");
-  loras.placeholder = "LoRA stack, one per line: name | weight";
+  loras.placeholder = "LoRA stack: name | weight";
   loras.value = settings.manualVisualProfile.loras.map((item) => `${item.name} | ${item.weight}`).join(`
 `);
-  const parameters = el("textarea", "lp-textarea");
-  parameters.placeholder = "Provider parameters as JSON";
+  const parameters = el("textarea", "lp-textarea lp-code-input");
+  parameters.placeholder = "Provider parameters JSON";
   parameters.value = Object.keys(settings.manualVisualProfile.parameters).length ? JSON.stringify(settings.manualVisualProfile.parameters, null, 2) : "";
-  visual.append(swarm, status, positive, negative, model.label, connection.label, loras, parameters);
-  const access = el("section", "lp-card lp-settings-section");
-  access.dataset.settingsSection = "access";
-  access.appendChild(el("div", "lp-eyebrow", "Lumiverse access"));
+  for (const control of [positive, negative, model, connection, loras, parameters])
+    control.addEventListener("input", () => commit((next) => {
+      next.manualVisualProfile.positive = positive.value;
+      next.manualVisualProfile.negative = negative.value;
+      next.manualVisualProfile.model = model.value;
+      next.manualVisualProfile.connectionId = connection.value;
+    }, false));
+  const apply = button("Apply manual profile", "lp-button");
+  apply.addEventListener("click", () => {
+    let parsed = {};
+    try {
+      parsed = parameters.value.trim() ? JSON.parse(parameters.value) : {};
+    } catch {
+      host.showError("Provider parameters must be valid JSON.");
+      return;
+    }
+    commit((next) => {
+      next.manualVisualProfile.positive = positive.value.trim();
+      next.manualVisualProfile.negative = negative.value.trim();
+      next.manualVisualProfile.model = model.value.trim();
+      next.manualVisualProfile.connectionId = connection.value.trim();
+      next.manualVisualProfile.loras = loras.value.split(`
+`).flatMap((line) => {
+        const [name, raw] = line.split("|").map((part) => part.trim());
+        if (!name)
+          return [];
+        const weight = Number(raw);
+        return [{ name, weight: Number.isFinite(weight) ? weight : 1 }];
+      });
+      next.manualVisualProfile.parameters = parsed;
+    });
+  });
+  manual.append(positive, negative, model, connection, loras, parameters, apply);
+  content.append(swarm, manual);
+  return page;
+}
+function notifications(host) {
+  const settings = host.draft;
+  const commit = (mutate) => {
+    const next = clone(settings);
+    mutate(next);
+    host.update(next);
+  };
+  const { page, content } = host.page("Notifications", "Device-wide behavior");
+  const card = el("section", "lp-card lp-settings-section");
+  card.append(toggle("Message notifications", settings.notifyMessages, (value) => commit((next) => {
+    next.notifyMessages = value;
+  })), toggle("Contact notifications", settings.notifyContacts, (value) => commit((next) => {
+    next.notifyContacts = value;
+  })), toggle("Tracker notifications", settings.notifyTrackers, (value) => commit((next) => {
+    next.notifyTrackers = value;
+  })), toggle("Show notification previews", settings.notificationPreviews, (value) => commit((next) => {
+    next.notificationPreviews = value;
+  })), toggle("Notification sounds", settings.notificationSounds, (value) => commit((next) => {
+    next.notificationSounds = value;
+  }), "Reserved for supported host audio surfaces."), toggle("System push notifications", settings.pushNotifications, (value) => commit((next) => {
+    next.pushNotifications = value;
+  })));
+  content.appendChild(card);
+  return page;
+}
+function permissions(host) {
+  const { page, content } = host.page("Permissions", "Lumiverse access");
   const grid = el("div", "lp-permission-grid");
   const caps = host.capabilities;
-  for (const [label, granted] of [
-    ["Generation", Boolean(caps?.generation)],
-    ["Model tools", Boolean(caps?.tools)],
-    ["Prompt memory", Boolean(caps?.interceptor)],
-    ["Gallery", Boolean(caps?.images)],
-    ["Camera", Boolean(caps?.imageGen)],
-    ["Floating phone", Boolean(caps?.panels)],
-    ["Characters", Boolean(caps?.characters)],
-    ["Personas", Boolean(caps?.personas)],
-    ["Scene sync", Boolean(caps?.sceneSync)],
-    ["Push", Boolean(caps?.push)]
-  ]) {
+  for (const [label, granted] of [["Generation", caps?.generation], ["Model tools", caps?.tools], ["Prompt memory", caps?.interceptor], ["Gallery", caps?.images], ["Camera", caps?.imageGen], ["Floating phone", caps?.panels], ["Characters", caps?.characters], ["Personas", caps?.personas], ["Scene sync", caps?.sceneSync], ["Push", caps?.push]]) {
     const cell = el("div", "lp-permission", label);
-    cell.dataset.granted = String(granted);
+    cell.dataset.granted = String(Boolean(granted));
     grid.appendChild(cell);
   }
-  const manage = button("Request or update permissions");
+  const manage = button("Request or update permissions", "lp-button");
   manage.addEventListener("click", () => host.requestPermissions());
-  access.append(grid, manage);
-  const data = el("section", "lp-card lp-settings-section");
-  data.dataset.settingsSection = "data";
-  data.append(el("div", "lp-eyebrow", "Backup and reset"), el("p", "lp-copy", "Exports include this roleplay phone and device preferences. Imports are validated and forced into the current chat/character scope."));
+  content.append(grid, manage);
+  return page;
+}
+function data(host) {
+  const { page, content } = host.page("Data & Backup", "This roleplay and this device");
+  const card = el("section", "lp-card lp-settings-section");
+  card.append(el("p", "lp-copy", "Exports include this roleplay phone and device preferences. Imports are validated into the current chat/character scope."));
   const exportButton = button("Export current phone");
   exportButton.addEventListener("click", () => host.send("lumiphone:export_data"));
   const importButton = button("Import into current phone");
@@ -580,40 +839,33 @@ function renderSettingsView(host) {
   });
   const resetPrefs = button("Reset device preferences", "lp-button lp-button-danger");
   resetPrefs.addEventListener("click", () => {
-    if (window.confirm("Reset theme, size, animations, notification behavior, and camera profile? Roleplay data will remain."))
+    if (window.confirm("Reset Pocket device preferences? Roleplay data will remain."))
       host.send("lumiphone:reset_preferences");
   });
-  data.append(exportButton, importButton, file, resetCurrent, resetAll, resetPrefs);
-  content.append(appearance, behavior, generation, visual, access, data);
-  saveSettings = () => {
-    settings.animation = animation.value;
-    settings.animationDurationMs = Number(duration.value);
-    settings.generationMode = generationMode.value === "sidecar" ? "sidecar" : "roleplay";
-    settings.sidecarConnectionId = connectionSelect.value;
-    settings.ambientMessaging = ambient.value === "sparse" || ambient.value === "normal" ? ambient.value : "off";
-    settings.manualVisualProfile.positive = positive.value.trim();
-    settings.manualVisualProfile.negative = negative.value.trim();
-    settings.manualVisualProfile.model = inputValue(model.input);
-    settings.manualVisualProfile.connectionId = inputValue(connection.input);
-    settings.manualVisualProfile.loras = loras.value.split(`
-`).flatMap((line) => {
-      const [name, rawWeight] = line.split("|").map((part) => part.trim());
-      if (!name)
-        return [];
-      const weight = Number(rawWeight);
-      return [{ name, weight: Number.isFinite(weight) ? weight : 1 }];
-    });
-    try {
-      settings.manualVisualProfile.parameters = parameters.value.trim() ? JSON.parse(parameters.value) : {};
-    } catch {
-      host.showError("Provider parameters must be valid JSON.");
-      return;
-    }
-    host.send("lumiphone:save_preferences", { preferences: settings });
-    host.preview(normalizePreferences(settings), { appearance: true });
-    host.openHome();
-  };
+  card.append(exportButton, importButton, file, resetCurrent, resetAll, resetPrefs);
+  content.appendChild(card);
   return page;
+}
+function renderSettingsView(host) {
+  if (!host.section)
+    return categories(host);
+  if (host.section === "appearance")
+    return appearance(host);
+  if (host.section === "persona")
+    return persona(host);
+  if (host.section === "messages")
+    return messages(host);
+  if (host.section === "generation")
+    return generation(host);
+  if (host.section === "camera")
+    return camera(host);
+  if (host.section === "notifications")
+    return notifications(host);
+  if (host.section === "permissions")
+    return permissions(host);
+  if (host.section === "data")
+    return data(host);
+  return categories(host);
 }
 
 // src/domain/trackers.ts
@@ -711,16 +963,16 @@ function selectField(labelText, options, selected) {
   label.appendChild(select);
   return { label, select };
 }
-function toggle(labelText, initial) {
-  const row = el("div", "lp-card lp-row-between");
+function toggle2(labelText, initial) {
+  const row2 = el("div", "lp-card lp-row-between");
   const copy = el("div");
   copy.appendChild(el("div", "lp-title", labelText));
   const control = button("", "lp-toggle");
   control.setAttribute("aria-pressed", String(initial));
   control.setAttribute("aria-label", labelText);
   control.addEventListener("click", () => control.setAttribute("aria-pressed", String(control.getAttribute("aria-pressed") !== "true")));
-  row.append(copy, control);
-  return { row, button: control };
+  row2.append(copy, control);
+  return { row: row2, button: control };
 }
 function displayValue(tracker) {
   return tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit}`;
@@ -842,23 +1094,23 @@ function detail(host, tracker) {
     amount.step = "any";
     amount.value = tracker.kind === "counter" ? String(tracker.step) : "1";
     amount.setAttribute("aria-label", "Tracker amount");
-    const row = el("div", "lp-tracker-operation-row");
+    const row2 = el("div", "lp-tracker-operation-row");
     for (const [operation, label] of [["subtract", "−"], ["add", "+"], ["set", "Set"]]) {
       const control = button(label);
       control.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation, amount: Number(amount.value), reason: "Changed in Pocket" } }));
-      row.appendChild(control);
+      row2.appendChild(control);
     }
     const reset = button("Reset", "lp-button lp-button-quiet");
     reset.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "reset", reason: "Reset in Pocket" } }));
-    operations.append(amount, row, reset);
+    operations.append(amount, row2, reset);
   }
   content.appendChild(operations);
   const history = el("section", "lp-tracker-history");
   history.appendChild(el("div", "lp-eyebrow", `History · last ${tracker.history.length}`));
   for (const entry of [...tracker.history].reverse()) {
-    const row = el("div", "lp-card lp-history-row");
-    row.append(el("strong", "", `${entry.previous} → ${entry.next}`), el("span", "lp-copy", `${entry.operation} · ${entry.source}${entry.reason ? ` · ${entry.reason}` : ""}`), el("time", "lp-copy", entry.roleplayAt || entry.createdAt));
-    history.appendChild(row);
+    const row2 = el("div", "lp-card lp-history-row");
+    row2.append(el("strong", "", `${entry.previous} → ${entry.next}`), el("span", "lp-copy", `${entry.operation} · ${entry.source}${entry.reason ? ` · ${entry.reason}` : ""}`), el("time", "lp-copy", entry.roleplayAt || entry.createdAt));
+    history.appendChild(row2);
   }
   if (!tracker.history.length)
     history.appendChild(el("p", "lp-copy", "No changes recorded yet."));
@@ -897,17 +1149,17 @@ function config(host, current, templateIndex = 9) {
   const mode = selectField("Update mode", [["manual", "Manual"], ["model", "Model-directed"], ["automatic", "Automatic"]], source.updateMode || (source.ratePerHour ? "automatic" : "manual"));
   const clock = selectField("Automatic clock", [["real", "Human time (real clock)"], ["roleplay", "Roleplay time (timeline clock)"]], source.clock || "roleplay");
   const rate = host.field("Change per hour", String(source.ratePerHour ?? 0), "number");
-  const color = el("input", "lp-color-input");
-  color.type = "color";
-  color.value = /^#[0-9a-f]{6}$/i.test(String(source.color || "")) ? String(source.color) : host.accent;
+  const color2 = el("input", "lp-color-input");
+  color2.type = "color";
+  color2.value = /^#[0-9a-f]{6}$/i.test(String(source.color || "")) ? String(source.color) : host.accent;
   const colorRow = el("label", "lp-card lp-row-between");
-  colorRow.append(el("span", "lp-title", "Tracker color"), color);
+  colorRow.append(el("span", "lp-title", "Tracker color"), color2);
   const bands = el("textarea", "lp-textarea");
   bands.placeholder = "Semantic bands: min | max | label | #color";
   bands.value = (source.bands || []).map((band) => `${band.min} | ${band.max} | ${band.label} | ${band.color}`).join(`
 `);
-  const visible = toggle("Visible in model context", source.visibleToModel !== false);
-  const writable = toggle("Allow model changes", source.allowModelWrite === true);
+  const visible = toggle2("Visible in model context", source.visibleToModel !== false);
+  const writable = toggle2("Allow model changes", source.allowModelWrite === true);
   const configFields = el("div", "lp-tracker-config-fields");
   configFields.append(label.label, key.label, kind.label, presentation.label, value.label, initial.label, min.label, max.label, unit.label, state.label, states, targetType.label, targetId.label, targetName.label, mode.label, clock.label, rate.label, colorRow, bands, visible.row, writable.row);
   content.appendChild(configFields);
@@ -917,7 +1169,7 @@ function config(host, current, templateIndex = 9) {
       const [rawMin, rawMax, bandLabel, bandColor] = line.split("|").map((part) => part.trim());
       if (!bandLabel || !Number.isFinite(Number(rawMin)) || !Number.isFinite(Number(rawMax)))
         return [];
-      return [{ min: Number(rawMin), max: Number(rawMax), label: bandLabel, color: /^#[0-9a-f]{6}$/i.test(bandColor) ? bandColor : color.value }];
+      return [{ min: Number(rawMin), max: Number(rawMax), label: bandLabel, color: /^#[0-9a-f]{6}$/i.test(bandColor) ? bandColor : color2.value }];
     });
     host.send("lumiphone:action", { action: "tracker", payload: {
       id: current?.id,
@@ -930,7 +1182,7 @@ function config(host, current, templateIndex = 9) {
       min: Number(min.input.value),
       max: Number(max.input.value),
       unit: unit.input.value.trim(),
-      color: color.value,
+      color: color2.value,
       state: state.input.value.trim(),
       initialState: current?.kind === "state" ? current.initialState : state.input.value.trim(),
       states: states.value.split(`
@@ -966,7 +1218,23 @@ function renderTrackersView(host) {
   return dashboard(host);
 }
 
+// src/domain/contacts.ts
+function contactAvatar(contact) {
+  return contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl;
+}
+function contactAccent(contact) {
+  return contact.colorMode === "source" && contact.sourceAccent ? contact.sourceAccent : contact.accent;
+}
+
 // src/frontend/apps/messages.ts
+var PAUSE_COPY = {
+  ended: "stopped responding.",
+  busy: "is busy right now.",
+  away: "went unavailable.",
+  arriving: "is here now.",
+  sleeping: "went offline for the night.",
+  unknown: "stopped responding."
+};
 function conversationTitle(state, conversation) {
   if (conversation.kind === "group")
     return conversation.title || "Group";
@@ -981,15 +1249,15 @@ function groupEditor(host, conversation) {
   const choices = el("div", "lp-contact-checklist");
   const selected = new Set(conversation?.participantContactIds || []);
   for (const contact of host.state.contacts) {
-    const row = el("label", "lp-card lp-row-between");
+    const row2 = el("label", "lp-card lp-row-between");
     const copy = el("span");
     copy.append(el("strong", "", contact.name), el("span", "lp-copy", contact.role));
     const checkbox = el("input");
     checkbox.type = "checkbox";
     checkbox.value = contact.id;
     checkbox.checked = selected.has(contact.id);
-    row.append(copy, checkbox);
-    choices.appendChild(row);
+    row2.append(copy, checkbox);
+    choices.appendChild(row2);
   }
   saveGroup = () => {
     const participantContactIds = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
@@ -1025,13 +1293,13 @@ function renderMessagesView(host) {
       card.dataset.clickable = "true";
       card.tabIndex = 0;
       card.setAttribute("role", "button");
-      const row = el("div", "lp-row");
+      const row2 = el("div", "lp-row");
       const titleText2 = conversationTitle(host.state, conversation2);
       const avatar = el("div", "lp-avatar", conversation2.kind === "group" ? String(conversation2.participantContactIds.length) : titleText2.slice(0, 1).toUpperCase());
-      const directContact = conversation2.kind === "direct" ? host.state.contacts.find((entry) => entry.id === conversation2.participantContactIds[0]) : null;
-      if (directContact?.avatarUrl) {
+      const directContact2 = conversation2.kind === "direct" ? host.state.contacts.find((entry) => entry.id === conversation2.participantContactIds[0]) : null;
+      if (directContact2 && contactAvatar(directContact2)) {
         const image = el("img");
-        image.src = directContact.avatarUrl;
+        image.src = contactAvatar(directContact2);
         image.alt = "";
         avatar.replaceChildren(image);
       }
@@ -1040,10 +1308,10 @@ function renderMessagesView(host) {
       const nameRow = el("div", "lp-row-between");
       nameRow.append(el("h3", "lp-title", titleText2), el("span", "lp-copy", latest ? formatTime(latest.createdAt) : ""));
       copy.append(nameRow, el("p", "lp-copy", latest ? `${conversation2.kind === "group" && latest.sender === "contact" ? `${latest.senderName}: ` : ""}${latest.text}` : "Start a conversation"));
-      row.append(avatar, copy);
+      row2.append(avatar, copy);
       if (conversation2.unread)
-        row.appendChild(el("span", "lp-unread", String(conversation2.unread)));
-      card.appendChild(row);
+        row2.appendChild(el("span", "lp-unread", String(conversation2.unread)));
+      card.appendChild(row2);
       const open = () => host.selectConversation(conversation2.id);
       card.addEventListener("click", open);
       card.addEventListener("keydown", (event) => {
@@ -1074,20 +1342,36 @@ function renderMessagesView(host) {
       host.openContact(conversation.participantContactIds[0]);
   });
   nav.append(back, title, info);
-  const busySpeakerId = host.busyConversations.get(conversation.id) || "";
-  const replyBusy = Boolean(busySpeakerId);
+  const busy = host.busyConversations.get(conversation.id);
+  const replyBusy = Boolean(busy);
+  const directContact = conversation.kind === "direct" ? host.state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]) : null;
+  const scenePresent = Boolean(directContact?.presence.inScene);
   const bubbles = el("div", "lp-bubbles");
+  bubbles.dataset.pocketThread = conversation.id;
   for (const message of conversation.messages) {
     const bubble = el("div", "lp-bubble");
     bubble.dataset.messageId = message.id;
     bubble.dataset.selected = String(message.id === host.selectedMessageId);
     bubble.dataset.sender = message.sender;
+    if (message.sender === "contact")
+      bubble.style.setProperty("--message-accent", message.senderAccent || (directContact ? contactAccent(directContact) : ""));
     if (conversation.kind === "group" && message.sender === "contact")
       bubble.appendChild(el("strong", "lp-bubble-sender", message.senderName));
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
+    if (message.generation) {
+      const retry = button("Retry", "lp-bubble-action");
+      retry.type = "button";
+      retry.setAttribute("aria-label", `Retry message from ${message.senderName}`);
+      retry.addEventListener("click", () => host.send("lumiphone:retry_message", { conversationId: conversation.id, messageId: message.id }));
+      bubble.appendChild(retry);
+    }
     bubbles.appendChild(bubble);
   }
-  if (replyBusy) {
+  if (busy?.phase === "checking") {
+    const checking = el("div", "lp-conversation-status", "Checking for reply…");
+    checking.setAttribute("role", "status");
+    bubbles.appendChild(checking);
+  } else if (replyBusy) {
     const pending = el("div", "lp-bubble lp-bubble-pending");
     pending.dataset.sender = "contact";
     pending.setAttribute("role", "status");
@@ -1097,10 +1381,18 @@ function renderMessagesView(host) {
     pending.appendChild(dots);
     bubbles.appendChild(pending);
   }
+  if (!replyBusy && (scenePresent || conversation.pause)) {
+    const reason = scenePresent ? "is currently with you." : PAUSE_COPY[conversation.pause.reason];
+    const banner = el("div", "lp-conversation-status", `${directContact?.name || titleText} ${reason}`);
+    banner.dataset.pauseReason = scenePresent ? "in-scene" : conversation.pause.reason;
+    bubbles.appendChild(banner);
+  }
   if (!conversation.messages.length)
     bubbles.appendChild(host.empty("Say hello", "This thread is private to this Pocket roleplay state."));
   const compose = el("form", "lp-compose");
-  const sparkle = host.iconButton("sparkle", "Generate one contact reply");
+  const sparkle = scenePresent || conversation.pause ? button("⋯", "lp-button lp-button-icon lp-manual-reply") : host.iconButton("sparkle", "Generate one contact reply");
+  sparkle.setAttribute("aria-label", scenePresent ? "Manually generate a reply while contact is here" : conversation.pause ? "Manually generate a reply in paused conversation" : "Generate one contact reply");
+  sparkle.title = scenePresent ? "Manual reply — this contact is currently with you" : conversation.pause ? "Manual reply — conversation is paused" : "Generate one contact reply";
   sparkle.disabled = !host.generationAvailable || replyBusy;
   const speaker = el("select", "lp-speaker-select");
   if (conversation.kind === "group") {
@@ -1122,6 +1414,17 @@ function renderMessagesView(host) {
   const textarea = el("textarea", "lp-textarea");
   textarea.rows = 1;
   textarea.placeholder = "Message…";
+  textarea.value = host.draft;
+  textarea.dataset.pocketComposer = conversation.id;
+  const resizeComposer = () => {
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 112 ? "auto" : "hidden";
+  };
+  textarea.addEventListener("input", () => {
+    host.updateDraft(conversation.id, textarea.value);
+    resizeComposer();
+  });
   const submit = host.iconButton("send", "Send message");
   submit.type = "submit";
   textarea.addEventListener("keydown", (event) => {
@@ -1138,9 +1441,12 @@ function renderMessagesView(host) {
       return;
     host.send("lumiphone:action", { action: "message", payload: { conversationId: conversation.id, text: message, sender: "persona" } });
     textarea.value = "";
+    host.updateDraft(conversation.id, "");
+    resizeComposer();
   });
   page.append(nav, bubbles, compose);
   requestAnimationFrame(() => {
+    resizeComposer();
     const selected = host.selectedMessageId ? bubbles.querySelector(`[data-message-id="${CSS.escape(host.selectedMessageId)}"]`) : null;
     if (selected)
       selected.scrollIntoView({ block: "center" });
@@ -1153,10 +1459,10 @@ function renderMessagesView(host) {
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
-  node.style.setProperty("--contact-accent", contact.accent);
-  if (contact.avatarUrl) {
+  node.style.setProperty("--contact-accent", contactAccent(contact));
+  if (contactAvatar(contact)) {
     const image = el("img");
-    image.src = contact.avatarUrl;
+    image.src = contactAvatar(contact);
     image.alt = "";
     node.replaceChildren(image);
   }
@@ -1172,14 +1478,28 @@ function contactEditor(host, contact) {
   role.placeholder = "Role";
   role.value = contact?.role || "";
   const description = el("textarea", "lp-textarea");
-  description.placeholder = "Compact roleplay description";
-  description.maxLength = 600;
-  description.value = contact?.description || "";
+  description.placeholder = "Stable identity brief — role, personality, relationship, enduring traits";
+  description.maxLength = 1200;
+  description.value = contact?.identityBrief || contact?.description || "";
+  const sceneNote = el("textarea", "lp-textarea");
+  sceneNote.placeholder = "Current scene note — temporary state, objective, or reason they are here";
+  sceneNote.maxLength = 600;
+  sceneNote.value = contact?.sceneNote || "";
   const accent = el("input", "lp-color-input");
   accent.type = "color";
   accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || "") ? contact.accent : "#8b7dff";
   const colorRow = el("label", "lp-card lp-row-between");
   colorRow.append(el("span", "lp-title", "Contact color"), accent);
+  const colorMode = el("select", "lp-select");
+  for (const [value, label] of [["pocket", "Pocket color"], ["source", contact?.sourceAccent ? "Inherit source color" : "Inherit source color (unavailable)"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = (contact?.colorMode || "pocket") === value;
+    option.disabled = value === "source" && !contact?.sourceAccent;
+    colorMode.appendChild(option);
+  }
+  const colorModeLabel = el("label", "lp-label", "Color source");
+  colorModeLabel.appendChild(colorMode);
   const inScene = el("input");
   inScene.type = "checkbox";
   inScene.checked = contact?.presence.inScene || false;
@@ -1214,8 +1534,11 @@ function contactEditor(host, contact) {
       id: contact?.id,
       name: name.value.trim(),
       role: role.value.trim(),
+      identityBrief: description.value.trim(),
       description: description.value.trim(),
+      sceneNote: sceneNote.value.trim(),
       accent: accent.value,
+      colorMode: colorMode.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || "" },
       contextPolicy: { pinned: pinned.checked },
       generationPolicy: { relevant: relevant.checked },
@@ -1228,8 +1551,13 @@ function contactEditor(host, contact) {
     } });
     host.select(contact?.id || "", "list");
   };
-  content.append(name, role, description, colorRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
+    if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
+      const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
+      sourcePhoto.addEventListener("click", () => host.send("lumiphone:set_contact_photo", { contactId: contact.id, useSource: true }));
+      content.appendChild(sourcePhoto);
+    }
     const remove = button("Delete contact", "lp-button lp-button-danger");
     remove.addEventListener("click", () => {
       host.send("lumiphone:delete", { kind: "contact", id: contact.id });
@@ -1261,8 +1589,12 @@ function importView(host) {
   manual.append(description, generate, primitive);
   if (npcOperation) {
     const progress = el("div", "lp-operation-progress");
+    progress.dataset.operationRequest = npcOperation.requestId;
+    progress.dataset.phase = npcOperation.phase;
     progress.setAttribute("role", "status");
-    progress.append(el("span", "lp-indeterminate"), el("strong", "", npcOperation.message || "Generating contact…"));
+    const message = el("strong", "", npcOperation.message || "Generating contact…");
+    message.dataset.operationMessage = "true";
+    progress.append(el("span", "lp-indeterminate"), message);
     manual.appendChild(progress);
   }
   content.appendChild(manual);
@@ -1273,14 +1605,14 @@ function importView(host) {
     const section = el("section", "lp-contact-source-section");
     section.appendChild(el("div", "lp-eyebrow", kind === "character" ? "Lumiverse Characters" : "Active Council"));
     for (const source of sources) {
-      const row = el("div", "lp-card lp-row-between");
+      const row2 = el("div", "lp-card lp-row-between");
       const copy = el("div");
       copy.append(el("strong", "", source.name), el("span", "lp-copy", source.role));
       const add = button(source.importedContactId ? "Imported" : "Add", "lp-button lp-button-quiet");
       add.disabled = Boolean(source.importedContactId);
       add.addEventListener("click", () => host.send("lumiphone:import_contact", { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }));
-      row.append(copy, add);
-      section.appendChild(row);
+      row2.append(copy, add);
+      section.appendChild(row2);
     }
     content.appendChild(section);
   }
@@ -1301,14 +1633,34 @@ function renderContactsView(host) {
   if (contact && host.selectedView === "detail") {
     const { page: page2, content: content2 } = host.page(contact.name, contact.role, { label: "Edit", callback: () => host.select(contact.id, "config") });
     const hero = el("div", "lp-card lp-contact-detail");
-    hero.append(avatar(contact), el("h2", "lp-title", contact.name), el("p", "lp-copy", contact.description || "No compact description."));
+    hero.append(avatar(contact), el("h2", "lp-title", contact.name), el("p", "lp-copy", contact.identityBrief || contact.description || "No compact identity brief."));
+    if (contact.sceneNote)
+      hero.append(el("p", "lp-scene-note", contact.sceneNote));
     const source = contact.source.kind === "character" ? "Linked Character" : contact.source.kind === "council" ? "Linked Council member" : `Pocket NPC · ${contact.source.origin}`;
     hero.append(el("span", "lp-eyebrow", source));
     const presence = el("div", "lp-card");
     presence.append(el("div", "lp-title", contact.presence.inScene ? "Here now" : "Not in current scene"), el("p", "lp-copy", `${contact.contextPolicy.pinned ? "Pinned to model context" : "Included only while in scene"}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ""}`), el("p", "lp-copy", `${contact.generationPolicy.relevant ? "Generation-relevant" : "Excluded from Pocket generation"} · ${contact.messagingPolicy.remoteEligible ? "Remote-message eligible" : "No remote messages"}${contact.messagingPolicy.allowAmbientInScene ? " · ambient override while here" : ""}`));
     const message = button("Message");
     message.addEventListener("click", () => host.openDirect(contact.id));
-    content2.append(hero, presence, message);
+    content2.append(hero, presence);
+    if (contact.source.kind !== "npc") {
+      const profileOperation = [...host.operations.values()].find((entry) => entry.task === "profile-refresh" && entry.phase !== "complete" && entry.phase !== "error");
+      const refresh = button("Refresh compact profile ✦", "lp-button lp-button-quiet");
+      refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation);
+      refresh.addEventListener("click", () => host.send("lumiphone:refresh_contact_profile", { contactId: contact.id }));
+      content2.appendChild(refresh);
+      if (profileOperation) {
+        const progress = el("div", "lp-operation-progress");
+        progress.dataset.operationRequest = profileOperation.requestId;
+        progress.dataset.phase = profileOperation.phase;
+        progress.setAttribute("role", "status");
+        const progressMessage = el("strong", "", profileOperation.message);
+        progressMessage.dataset.operationMessage = "true";
+        progress.append(el("span", "lp-indeterminate"), progressMessage);
+        content2.appendChild(progress);
+      }
+    }
+    content2.append(message);
     return page2;
   }
   const { page, content } = host.page("Contacts", `${host.state.contacts.length} people`, { label: "Add", callback: () => host.select("", "import") });
@@ -1339,12 +1691,12 @@ function renderContactsView(host) {
       return true;
     }).sort((a, b) => Number(b.presence.inScene) - Number(a.presence.inScene) || Date.parse(b.presence.lastSceneAt || "0") - Date.parse(a.presence.lastSceneAt || "0"));
     for (const entry of contacts) {
-      const row = button("", "lp-card lp-contact-row");
+      const row2 = button("", "lp-card lp-contact-row");
       const copy = el("div", "lp-grow");
       copy.append(el("strong", "", entry.name), el("span", "lp-copy", entry.role));
-      row.append(avatar(entry), copy, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
-      row.addEventListener("click", () => host.select(entry.id, "detail"));
-      list.appendChild(row);
+      row2.append(avatar(entry), copy, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
+      row2.addEventListener("click", () => host.select(entry.id, "detail"));
+      list.appendChild(row2);
     }
     if (!contacts.length)
       list.appendChild(host.empty("No matching contacts", "Try another search or sync the current scene."));
@@ -1364,8 +1716,12 @@ function renderContactsView(host) {
   content.append(search, filters, sync);
   if (sceneOperation) {
     const progress = el("div", "lp-operation-progress");
+    progress.dataset.operationRequest = sceneOperation.requestId;
+    progress.dataset.phase = sceneOperation.phase;
     progress.setAttribute("role", "status");
-    progress.append(el("span", "lp-indeterminate"), el("strong", "", sceneOperation.message || "Syncing scene…"));
+    const message = el("strong", "", sceneOperation.message || "Syncing scene…");
+    message.dataset.operationMessage = "true";
+    progress.append(el("span", "lp-indeterminate"), message);
     content.appendChild(progress);
   }
   content.appendChild(list);
@@ -1373,8 +1729,8 @@ function renderContactsView(host) {
 }
 
 // src/domain/notifications.ts
-function activeNotifications(notifications) {
-  return notifications.filter((entry) => !entry.dismissedAt);
+function activeNotifications(notifications2) {
+  return notifications2.filter((entry) => !entry.dismissedAt);
 }
 
 // src/frontend/apps/notifications.ts
@@ -1382,9 +1738,9 @@ function sameDay(left, right) {
   return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate();
 }
 function notificationRow(host, notification) {
-  const row = el("div", "lp-card lp-notification-row");
-  row.dataset.read = String(notification.read);
-  row.dataset.severity = notification.severity || "info";
+  const row2 = el("div", "lp-card lp-notification-row");
+  row2.dataset.read = String(notification.read);
+  row2.dataset.severity = notification.severity || "info";
   const open = button("", "lp-notification-open");
   const copy = el("span", "lp-grow");
   copy.append(el("strong", "", notification.title), el("span", "lp-copy", notification.body), el("time", "lp-copy", formatTime(notification.createdAt)));
@@ -1397,14 +1753,14 @@ function notificationRow(host, notification) {
   const dismiss = button("×", "lp-notification-dismiss");
   dismiss.setAttribute("aria-label", `Dismiss ${notification.title}`);
   dismiss.addEventListener("click", () => host.send("lumiphone:notification_dismiss", { notificationId: notification.id }));
-  row.append(open, dismiss);
-  return row;
+  row2.append(open, dismiss);
+  return row2;
 }
 function renderNotificationsView(host) {
-  const notifications = activeNotifications(host.notifications).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const unread = notifications.filter((entry) => !entry.read).length;
-  const { page, content } = host.page("Notification Center", unread ? `${unread} unread` : "All caught up", { label: notifications.length ? "Clear" : "", enabled: Boolean(notifications.length), callback: () => host.send("lumiphone:notifications_clear", { mode: "all" }) });
-  if (notifications.some((entry) => entry.read)) {
+  const notifications2 = activeNotifications(host.notifications).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const unread = notifications2.filter((entry) => !entry.read).length;
+  const { page, content } = host.page("Notification Center", unread ? `${unread} unread` : "All caught up", { label: notifications2.length ? "Clear" : "", enabled: Boolean(notifications2.length), callback: () => host.send("lumiphone:notifications_clear", { mode: "all" }) });
+  if (notifications2.some((entry) => entry.read)) {
     const clearRead = button("Clear read notifications", "lp-button lp-button-quiet");
     clearRead.addEventListener("click", () => host.send("lumiphone:notifications_clear", { mode: "read" }));
     content.appendChild(clearRead);
@@ -1412,7 +1768,7 @@ function renderNotificationsView(host) {
   const today = [];
   const earlier = [];
   const now = new Date;
-  for (const entry of notifications)
+  for (const entry of notifications2)
     (sameDay(new Date(entry.createdAt), now) ? today : earlier).push(entry);
   for (const [label, entries] of [["Today", today], ["Earlier", earlier]]) {
     if (!entries.length)
@@ -1423,7 +1779,7 @@ function renderNotificationsView(host) {
       group.appendChild(notificationRow(host, entry));
     content.appendChild(group);
   }
-  if (!notifications.length)
+  if (!notifications2.length)
     content.appendChild(el("p", "lp-notification-empty", "No notifications. Messages, trackers, notes, and timeline data remain in their apps."));
   return page;
 }
@@ -1573,6 +1929,9 @@ class PocketController {
   currentApp = "home";
   state = null;
   preferences = defaultPreferences();
+  settingsDraft = null;
+  settingsSaveTimer = 0;
+  activePersona = null;
   caps = null;
   swarmProfile = null;
   generation = null;
@@ -1596,6 +1955,7 @@ class PocketController {
   cameraBusy = false;
   cameraRequestId = "";
   messageRequests = new Map;
+  messageDrafts = new Map;
   contactSources = [];
   contactSourcesRequested = false;
   lastTagKeys = new Set;
@@ -1613,6 +1973,7 @@ class PocketController {
   receiptSweepTimer = 0;
   notificationTimer = 0;
   notificationIsland;
+  customStyle;
   constructor(ctx) {
     this.ctx = ctx;
     this.drawer = ctx.ui.registerDrawerTab({
@@ -1657,7 +2018,9 @@ class PocketController {
     const homeButton = button("");
     homeButton.setAttribute("aria-label", "Home or dismiss phone");
     homebar.appendChild(homeButton);
-    this.shell.append(status, this.screen, homebar, this.alert);
+    this.customStyle = document.createElement("style");
+    this.customStyle.dataset.pocketCustomCss = "true";
+    this.shell.append(status, this.screen, homebar, this.alert, this.customStyle);
     this.launcher.addEventListener("pointerdown", (event) => {
       this.launcherPointer = { x: event.clientX, y: event.clientY };
     });
@@ -1700,6 +2063,7 @@ class PocketController {
     window.clearTimeout(this.alertTimer);
     window.clearInterval(this.receiptSweepTimer);
     window.clearTimeout(this.notificationTimer);
+    window.clearTimeout(this.settingsSaveTimer);
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup();
@@ -1946,7 +2310,7 @@ class PocketController {
       if (this.shell.parentElement !== this.handsetHost)
         this.handsetHost.replaceChildren(this.shell);
       this.handsetHost.dataset.fullscreen = "true";
-      applyMobilePhoneSurface(mobile, this.preferences.handsetScale);
+      applyMobilePhoneSurface(mobile, 1);
       applyVisualViewportSurface(this.handsetHost);
       mobile.setVisible(true);
       return true;
@@ -1989,7 +2353,7 @@ class PocketController {
     this.launcher.hidden = true;
     this.shell.hidden = false;
     this.expanded = true;
-    this.render();
+    this.render(true);
   }
   async requestPermissions() {
     try {
@@ -2095,9 +2459,13 @@ class PocketController {
       const previousUnread = this.unreadCount();
       this.state = payload.state;
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
+      if (payload.reason === "import" || payload.reason === "reset_preferences")
+        this.settingsDraft = structuredClone(this.preferences);
       this.caps = payload.capabilities || this.caps;
       this.swarmProfile = payload.swarmProfile || this.swarmProfile;
       this.generation = payload.generation || this.generation;
+      if ("activePersona" in payload)
+        this.activePersona = payload.activePersona || null;
       for (const activity of this.state.activities || [])
         this.queueActivityReceipt(activity);
       this.applyAppearance();
@@ -2109,8 +2477,10 @@ class PocketController {
       this.pendingRoute = null;
       if (pending)
         this.openPocket(pending);
+      else if (this.expanded && this.currentApp === "settings")
+        this.updateSettingsDiagnostics();
       else if (this.expanded)
-        this.render();
+        this.render(false);
       if (this.unreadCount() > previousUnread && !this.expanded)
         this.launcher.animate([
           { transform: "scale(1)" },
@@ -2134,7 +2504,7 @@ class PocketController {
       if (this.generation)
         this.generation.history = this.preferences.generationHistory;
       if (this.currentApp === "settings")
-        this.render();
+        this.updateSettingsDiagnostics();
       return;
     }
     if (payload.type === "lumiphone:operation_progress" && payload.requestId) {
@@ -2145,13 +2515,13 @@ class PocketController {
         message: payload.message || "Working…"
       };
       this.operations.set(operation.requestId, operation);
-      if (this.currentApp === "contacts")
-        this.render();
+      if (this.currentApp === "contacts" && !this.updateOperationProgress(operation))
+        this.render(false);
       if (operation.phase === "complete")
         window.setTimeout(() => {
           this.operations.delete(operation.requestId);
           if (this.currentApp === "contacts")
-            this.render();
+            this.updateOperationProgress(null, operation.requestId);
         }, 1200);
       return;
     }
@@ -2169,20 +2539,20 @@ class PocketController {
         this.ensureWidget();
       }
       if (this.currentApp === "settings")
-        this.render();
+        this.updateSettingsDiagnostics();
       return;
     }
     if (payload.type === "lumiphone:gallery") {
       this.gallery = { data: payload.data || [], total: Number(payload.total) || 0 };
       if (this.currentApp === "gallery")
-        this.render();
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:contact_sources") {
       this.contactSources = Array.isArray(payload.sources) ? payload.sources : [];
       this.contactSourcesRequested = true;
       if (this.currentApp === "contacts")
-        this.render();
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:conversation_opened" && payload.conversationId) {
@@ -2196,8 +2566,10 @@ class PocketController {
     }
     if (payload.type === "lumiphone:swarm_profile") {
       this.swarmProfile = payload.profile;
-      if (this.currentApp === "settings" || this.currentApp === "camera")
-        this.render();
+      if (this.currentApp === "settings")
+        this.updateSettingsDiagnostics();
+      else if (this.currentApp === "camera")
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:camera_progress") {
@@ -2210,7 +2582,7 @@ class PocketController {
       if (payload.profile)
         this.swarmProfile = payload.profile;
       if (this.currentApp === "camera")
-        this.render();
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:message_progress") {
@@ -2220,9 +2592,9 @@ class PocketController {
       if (payload.phase === "done")
         this.messageRequests.delete(payload.requestId);
       else
-        this.messageRequests.set(payload.requestId, { conversationId: payload.conversationId, speakerContactId: payload.speakerContactId || payload.contactId });
+        this.messageRequests.set(payload.requestId, { conversationId: payload.conversationId, speakerContactId: payload.speakerContactId || payload.contactId, phase: payload.phase === "checking" ? "checking" : "pending" });
       if (this.currentApp === "messages")
-        this.render();
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:camera_done") {
@@ -2234,7 +2606,7 @@ class PocketController {
       if (payload.profile)
         this.swarmProfile = payload.profile;
       if (this.currentApp === "camera")
-        this.render();
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:camera_cancelled") {
@@ -2243,7 +2615,7 @@ class PocketController {
       this.cameraBusy = false;
       this.cameraProgress = "Cancelled";
       if (this.currentApp === "camera")
-        this.render();
+        this.render(false);
       return;
     }
     if (payload.type === "lumiphone:export_data" && payload.data) {
@@ -2265,15 +2637,15 @@ class PocketController {
         this.operations.set(payload.requestId, { ...operation, phase: "error", message: payload.error || "Operation failed" });
       this.showError(payload.error || "Pocket could not complete that action.");
       if (this.expanded)
-        this.render();
+        this.render(false);
     }
   }
   unreadCount() {
     if (!this.state)
       return 0;
-    const notifications = this.state.notifications.filter((item) => !item.read && !item.dismissedAt).length;
-    const messages = this.state.conversations.reduce((sum, conversation) => sum + conversation.unread, 0);
-    return Math.min(999, Math.max(notifications, messages));
+    const notifications2 = this.state.notifications.filter((item) => !item.read && !item.dismissedAt).length;
+    const messages2 = this.state.conversations.reduce((sum, conversation) => sum + conversation.unread, 0);
+    return Math.min(999, Math.max(notifications2, messages2));
   }
   updateBadge() {
     const unread = this.unreadCount();
@@ -2283,6 +2655,70 @@ class PocketController {
     const notificationUnread = this.state?.notifications.filter((entry) => !entry.read && !entry.dismissedAt).length || 0;
     this.notificationIsland.dataset.unread = String(notificationUnread > 0);
     this.notificationIsland.setAttribute("aria-label", notificationUnread ? `Open Notification Center, ${notificationUnread} unread` : "Open Notification Center");
+  }
+  updateOperationProgress(operation, requestId2 = operation?.requestId || "") {
+    if (!requestId2)
+      return false;
+    const node = this.screen.querySelector(`[data-operation-request="${CSS.escape(requestId2)}"]`);
+    if (!node)
+      return false;
+    if (!operation) {
+      node.remove();
+      return true;
+    }
+    const label = node.querySelector("[data-operation-message]");
+    if (label)
+      label.textContent = operation.message;
+    node.dataset.phase = operation.phase;
+    return true;
+  }
+  updateSettingsDiagnostics() {
+    const generationNode = this.screen.querySelector("[data-pocket-generation-diagnostic]");
+    if (generationNode) {
+      const run = [...this.generation?.history || this.preferences.generationHistory || []].reverse().find((entry) => entry.task === "connection-test");
+      generationNode.dataset.status = run?.status || "idle";
+      generationNode.textContent = !run ? "Not tested yet." : run.status === "started" ? "● Testing…" : run.status === "completed" ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || "Unknown provider error"}`;
+      const testButton = this.screen.querySelector("[data-pocket-generation-test]");
+      if (testButton)
+        testButton.disabled = !this.caps?.generation || run?.status === "started";
+    }
+    const effectiveNode = this.screen.querySelector("[data-pocket-generation-effective]");
+    if (effectiveNode) {
+      const effective = this.generation?.effective;
+      const title = effectiveNode.querySelector("strong");
+      const detail2 = effectiveNode.querySelector("span");
+      if (title)
+        title.textContent = effective?.name || "No effective connection";
+      if (detail2)
+        detail2.textContent = effective ? `${effective.provider} · ${effective.model || "model not set"}` : "Configure a Lumiverse LLM connection.";
+    }
+    const swarmNode = this.screen.querySelector("[data-pocket-swarm-status]");
+    if (swarmNode && this.swarmProfile) {
+      swarmNode.dataset.status = this.swarmProfile.status;
+      swarmNode.textContent = this.swarmProfile.status === "connected" ? `Connected · ${this.swarmProfile.checkpoint || "profile macros resolved"}` : this.swarmProfile.status === "disabled" ? "Swarm profile sync is disabled." : this.swarmProfile.status === "error" ? `Error · ${this.swarmProfile.error}` : "Swarm Studio macros were not detected for this character/persona.";
+    }
+    for (const row2 of this.screen.querySelectorAll("[data-pocket-swarm-macro]")) {
+      const name = row2.dataset.pocketSwarmMacro;
+      const field = this.swarmProfile?.fields?.[name];
+      row2.textContent = `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`;
+    }
+  }
+  updatePreferences(next, options = {}) {
+    const normalized = normalizePreferences(next);
+    if (this.settingsDraft)
+      Object.assign(this.settingsDraft, structuredClone(normalized));
+    else
+      this.settingsDraft = structuredClone(normalized);
+    this.preferences = normalized;
+    this.applyAppearance();
+    if (options.resize)
+      this.resizeExpanded();
+    if (options.persist === false)
+      return;
+    window.clearTimeout(this.settingsSaveTimer);
+    this.settingsSaveTimer = window.setTimeout(() => {
+      this.send("lumiphone:save_preferences", { preferences: this.settingsDraft || this.preferences });
+    }, 240);
   }
   showIncomingNotification(notification) {
     if (!this.expanded) {
@@ -2305,17 +2741,25 @@ class PocketController {
     this.notificationTimer = window.setTimeout(() => toast.remove(), 6000);
   }
   applyAppearance() {
-    const settings = this.preferences;
-    this.shell.dataset.theme = settings.theme;
-    this.shell.style.setProperty("--lp-accent", settings.colors.accent);
-    this.shell.style.setProperty("--lp-bezel", settings.colors.bezel);
-    this.shell.style.setProperty("--lp-bg", settings.colors.background);
-    this.shell.style.setProperty("--lp-surface", settings.colors.surface);
-    this.shell.style.setProperty("--lp-text", settings.colors.text);
-    this.shell.style.setProperty("--lp-wallpaper", wallpaperCss(settings.colors.wallpaperPrimary, settings.colors.wallpaperSecondary));
-    this.shell.style.setProperty("--lp-chat-wallpaper", wallpaperCss(settings.colors.chatPrimary, settings.colors.chatSecondary));
+    const settings = this.settingsDraft || this.preferences;
+    const persona2 = this.activePersona ? settings.personaAppearance[this.activePersona.id] : null;
+    const appearance2 = persona2?.enabled ? persona2 : settings;
+    this.shell.dataset.theme = appearance2.theme;
+    this.shell.style.setProperty("--lp-accent", appearance2.colors.accent);
+    this.shell.style.setProperty("--lp-bezel", appearance2.colors.bezel);
+    this.shell.style.setProperty("--lp-bg", appearance2.colors.background);
+    this.shell.style.setProperty("--lp-surface", appearance2.colors.surface);
+    this.shell.style.setProperty("--lp-text", appearance2.colors.text);
+    const homeWallpaper = wallpaperCss(appearance2.colors.wallpaperPrimary, appearance2.colors.wallpaperSecondary);
+    const chatWallpaper = wallpaperCss(appearance2.colors.chatPrimary, appearance2.colors.chatSecondary);
+    this.shell.style.setProperty("--lp-wallpaper", settings.wallpaperImageUrl ? `${homeWallpaper},url(${JSON.stringify(settings.wallpaperImageUrl)})` : homeWallpaper);
+    this.shell.style.setProperty("--lp-chat-wallpaper", settings.chatWallpaperImageUrl ? `${chatWallpaper},url(${JSON.stringify(settings.chatWallpaperImageUrl)})` : chatWallpaper);
+    this.shell.style.setProperty("--pocket-ui-scale", String(settings.uiScale));
     this.shell.style.setProperty("--lp-animation-ms", `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`);
     this.shell.dataset.reducedMotion = String(settings.reducedMotion);
+    const customCss = [settings.customCss, persona2?.enabled ? persona2.customCss : ""].filter(Boolean).join(`
+`);
+    this.customStyle.textContent = customCss ? `@scope (.lumiphone-shell) { ${customCss} }` : "";
   }
   open() {
     if (!this.widget) {
@@ -2335,7 +2779,7 @@ class PocketController {
     this.launcher.hidden = true;
     this.shell.hidden = false;
     this.resizeExpanded();
-    this.render();
+    this.render(true);
     this.refresh();
     this.announceView();
     requestAnimationFrame(() => {
@@ -2386,6 +2830,8 @@ class PocketController {
     }
     if (!this.expanded)
       this.open();
+    if (this.currentApp === "settings" && route.app !== "settings")
+      this.settingsDraft = null;
     this.currentApp = route.app;
     if (route.app === "messages") {
       const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId) : null) || (route.contactId ? this.state.conversations.find((entry) => entry.kind === "direct" && entry.participantContactIds[0] === route.contactId) : null);
@@ -2415,12 +2861,13 @@ class PocketController {
       this.send("lumiphone:mark_read", { app: "gallery" });
     } else if (route.app === "settings") {
       this.selectedSettingsSection = route.section || "";
+      this.settingsDraft ||= structuredClone(this.preferences);
       this.send("lumiphone:mark_read", { app: "settings" });
     } else if (route.app !== "home") {
       this.send("lumiphone:mark_read", { app: route.app });
     }
     this.announceView();
-    this.render();
+    this.render(true);
   }
   queueActivityReceipt(activity) {
     const active = this.activeContext();
@@ -2450,7 +2897,13 @@ class PocketController {
       }, 1500);
     }
   }
-  render() {
+  render(transition = false) {
+    const oldView = this.screen.querySelector(".lumiphone-app-view");
+    const oldViewScroll = oldView?.scrollTop || 0;
+    const oldThread = this.screen.querySelector("[data-pocket-thread]");
+    const oldThreadScroll = oldThread?.scrollTop;
+    const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : "";
+    const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     for (const cleanup of this.viewCleanups.splice(0))
       cleanup();
     if (!this.state) {
@@ -2460,12 +2913,26 @@ class PocketController {
     this.applyAppearance();
     const view = this.currentApp === "home" ? this.renderHome() : this.currentApp === "messages" ? this.renderMessages() : this.currentApp === "contacts" ? this.renderContacts() : this.currentApp === "gallery" ? this.renderGallery() : this.currentApp === "camera" ? this.renderCamera() : this.currentApp === "notes" ? this.renderNotes() : this.currentApp === "weather" ? this.renderWeather() : this.currentApp === "calendar" ? this.renderCalendar() : this.currentApp === "trackers" ? this.renderTrackers() : this.currentApp === "notifications" ? this.renderNotifications() : this.renderSettings();
     view.classList.add("lumiphone-app-view");
+    view.dataset.pocketApp = this.currentApp;
     const animation = this.preferences.reducedMotion ? "none" : this.preferences.animation;
-    if (animation !== "none") {
+    if (transition && animation !== "none") {
       view.dataset.animate = animation;
       view.addEventListener("animationend", () => view.removeAttribute("data-animate"), { once: true });
     }
     this.screen.replaceChildren(view);
+    if (!transition)
+      requestAnimationFrame(() => {
+        view.scrollTop = oldViewScroll;
+        const thread = this.screen.querySelector("[data-pocket-thread]");
+        if (thread && oldThreadScroll !== undefined)
+          thread.scrollTop = oldThreadScroll;
+        if (focusedComposer) {
+          const composer = this.screen.querySelector(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`);
+          composer?.focus({ preventScroll: true });
+          if (composer && selection)
+            composer.setSelectionRange(selection[0], selection[1]);
+        }
+      });
   }
   loadingView() {
     const node = el("div", "lp-page lp-empty");
@@ -2552,7 +3019,14 @@ class PocketController {
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
       generationAvailable: Boolean(this.caps?.generation),
-      busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, entry.speakerContactId])),
+      busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
+      draft: this.messageDrafts.get(this.selectedConversationId) || "",
+      updateDraft: (conversationId, value) => {
+        if (value)
+          this.messageDrafts.set(conversationId, value);
+        else
+          this.messageDrafts.delete(conversationId);
+      },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty("messages", title, copy),
       iconButton,
@@ -2569,7 +3043,7 @@ class PocketController {
     if ([...this.messageRequests.values()].some((entry) => entry.conversationId === conversationId))
       return;
     const id = requestId("reply");
-    this.messageRequests.set(id, { conversationId, speakerContactId });
+    this.messageRequests.set(id, { conversationId, speakerContactId, phase: "pending" });
     this.send("lumiphone:generate_message", { requestId: id, conversationId, speakerContactId });
     this.render();
   }
@@ -2631,7 +3105,7 @@ class PocketController {
         image.replaceWith(el("span", "lp-gallery-missing", "Image unavailable"));
       }, { once: true });
       tile.append(image, el("span", "lp-gallery-meta", item.filename || formatDate(item.createdAt * 1000)));
-      tile.addEventListener("click", () => this.inspectImage(item.url, item.filename));
+      tile.addEventListener("click", () => this.inspectImage(item));
       grid.appendChild(tile);
     }
     content.appendChild(grid);
@@ -2639,13 +3113,41 @@ class PocketController {
       content.appendChild(this.empty("gallery", "Nothing here yet", "Take a photo with Camera or switch the gallery filter."));
     return page;
   }
-  inspectImage(url, title) {
-    const modal = this.ctx.ui.showModal({ title: title || "Pocket photo", size: "lg" });
+  inspectImage(item) {
+    const modal = this.ctx.ui.showModal({ title: item.filename || "Pocket photo", size: "lg" });
     const image = el("img");
-    image.src = url;
-    image.alt = title || "Pocket photo";
+    image.src = item.url;
+    image.alt = item.filename || "Pocket photo";
     image.style.cssText = "display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808";
-    modal.root.appendChild(image);
+    const actions = el("div", "lp-gallery-actions");
+    const open = button("Open image", "lp-button");
+    open.addEventListener("click", () => window.open(item.url, "_blank", "noopener,noreferrer"));
+    const attach = button("Add to current RP chat", "lp-button");
+    attach.disabled = !this.caps?.sceneSync;
+    attach.addEventListener("click", () => this.send("lumiphone:gallery_add_to_chat", { imageId: item.id, imageUrl: item.url, filename: item.filename }));
+    const homeWallpaper = button("Set as home wallpaper", "lp-button lp-button-quiet");
+    homeWallpaper.addEventListener("click", () => this.send("lumiphone:gallery_set_wallpaper", { imageUrl: item.url, target: "home" }));
+    const chatWallpaper = button("Set as chat wallpaper", "lp-button lp-button-quiet");
+    chatWallpaper.addEventListener("click", () => this.send("lumiphone:gallery_set_wallpaper", { imageUrl: item.url, target: "chat" }));
+    const contact = el("select", "lp-select");
+    const choose = el("option", "", "Choose a contact photo…");
+    choose.value = "";
+    contact.appendChild(choose);
+    for (const entry of this.state?.contacts || []) {
+      const option = el("option", "", entry.name);
+      option.value = entry.id;
+      contact.appendChild(option);
+    }
+    const setPhoto = button("Set contact photo", "lp-button lp-button-quiet");
+    setPhoto.addEventListener("click", () => {
+      if (!contact.value) {
+        this.showError("Choose a contact first.");
+        return;
+      }
+      this.send("lumiphone:set_contact_photo", { contactId: contact.value, imageUrl: item.url });
+    });
+    actions.append(open, attach, homeWallpaper, chatWallpaper, contact, setPhoto);
+    modal.root.append(image, actions);
   }
   renderCamera() {
     const page = el("div", "lp-camera");
@@ -2829,8 +3331,8 @@ class PocketController {
     const timeline = el("div", "lp-timeline");
     const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
     for (const event of events) {
-      const row = el("div", "lp-event");
-      row.dataset.completed = String(event.completed);
+      const row2 = el("div", "lp-event");
+      row2.dataset.completed = String(event.completed);
       const dot = el("span", "lp-event-dot");
       dot.style.setProperty("--event-color", event.color);
       const card = el("div", "lp-card");
@@ -2839,8 +3341,8 @@ class PocketController {
       if (event.description)
         card.appendChild(el("p", "lp-copy", event.description));
       card.addEventListener("click", () => this.openPocket({ app: "calendar", eventId: event.id }));
-      row.append(dot, card);
-      timeline.appendChild(row);
+      row2.append(dot, card);
+      timeline.appendChild(row2);
     }
     content.appendChild(timeline);
     if (!events.length)
@@ -2925,36 +3427,25 @@ class PocketController {
     });
   }
   renderSettings() {
-    const view = renderSettingsView({
-      preferences: this.preferences,
+    this.settingsDraft ||= structuredClone(this.preferences);
+    return renderSettingsView({
+      draft: this.settingsDraft,
+      section: this.selectedSettingsSection,
+      activePersona: this.activePersona,
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
       generation: this.generation,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
-      field: (label, value, type) => this.field(label, value, type),
-      preview: (preferences, options) => {
-        this.preferences = preferences;
-        if (options?.appearance)
-          this.applyAppearance();
-        if (options?.resize)
-          this.resizeExpanded();
-        if (options?.rerender)
-          this.render();
-      },
+      update: (preferences, options) => this.updatePreferences(preferences, options),
+      navigate: (section) => this.openPocket({ app: "settings", section }),
       send: (type, payload) => {
         this.send(type, payload);
       },
       requestPermissions: () => {
         this.requestPermissions();
       },
-      showError: (message) => this.showError(message),
-      openHome: () => this.home()
+      showError: (message) => this.showError(message)
     });
-    if (this.selectedSettingsSection)
-      requestAnimationFrame(() => {
-        view.querySelector(`[data-settings-section="${CSS.escape(this.selectedSettingsSection)}"]`)?.scrollIntoView({ block: "start" });
-      });
-    return view;
   }
   field(labelText, value = "", type = "text") {
     const label = el("label", "lp-label", labelText);
@@ -3016,7 +3507,10 @@ var PHONE_STYLES = `
     --lp-chat-wallpaper: linear-gradient(180deg,rgba(139,125,255,.16),rgba(19,17,28,.03));
     --lp-bg: #0d0c12; --lp-surface: rgba(31,29,40,.88); --lp-surface-2: rgba(50,47,62,.78);
     --lp-text: #f7f5ff; --lp-muted: #aaa5b6; --lp-border: rgba(255,255,255,.11); --lp-shadow: rgba(0,0,0,.45);
-    --lp-animation-ms: 280ms;
+    --lp-animation-ms: 280ms; --pocket-ui-scale:1;
+    --pocket-font-xs:calc(8px * var(--pocket-ui-scale)); --pocket-font-sm:calc(10px * var(--pocket-ui-scale));
+    --pocket-font-md:calc(13px * var(--pocket-ui-scale)); --pocket-control-h:calc(38px * var(--pocket-ui-scale));
+    --pocket-gap:calc(10px * var(--pocket-ui-scale)); --pocket-icon:calc(54px * var(--pocket-ui-scale));
     width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: 9 / 16; overflow: hidden; position: relative; isolation: isolate;
     border: 8px solid var(--lp-bezel); border-radius: 45px; background: var(--lp-bg); color: var(--lp-text);
     box-shadow: 0 36px 90px var(--lp-shadow), 0 0 0 1px rgba(255,255,255,.09) inset;
@@ -3313,6 +3807,43 @@ var PHONE_STYLES = `
   .lp-history-row { display:grid; gap:3px; }
   .lp-history-row time { overflow-wrap:anywhere; }
   .lp-tracker-config-fields { display:grid; gap:9px; }
+
+  /* Density primitives. These participate in layout; Pocket never transform-scales its fullscreen surface. */
+  .lumiphone-shell .lp-content { padding:calc(12px * var(--pocket-ui-scale)); gap:var(--pocket-gap); }
+  .lumiphone-shell .lp-card { padding:calc(12px * var(--pocket-ui-scale)); border-radius:calc(17px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }
+  .lumiphone-shell .lp-copy { font-size:var(--pocket-font-sm); }
+  .lumiphone-shell .lp-eyebrow { font-size:var(--pocket-font-xs); }
+  .lumiphone-shell .lp-button { min-height:calc(34px * var(--pocket-ui-scale)); padding:calc(7px * var(--pocket-ui-scale)) calc(11px * var(--pocket-ui-scale)); font-size:var(--pocket-font-sm); }
+  .lumiphone-shell .lp-button-icon { width:calc(34px * var(--pocket-ui-scale)); padding:calc(6px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-input,.lumiphone-shell .lp-textarea,.lumiphone-shell .lp-select { min-height:var(--pocket-control-h); padding:calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); font-size:calc(11px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-label { gap:calc(5px * var(--pocket-ui-scale)); font-size:calc(9px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-nav { min-height:calc(48px * var(--pocket-ui-scale)); padding:calc(7px * var(--pocket-ui-scale)) calc(12px * var(--pocket-ui-scale)); grid-template-columns:calc(74px * var(--pocket-ui-scale)) minmax(0,1fr) calc(74px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-nav-title { font-size:calc(14px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-nav-subtitle { font-size:calc(9px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-nav-action { min-height:calc(30px * var(--pocket-ui-scale)); font-size:calc(11px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-app-grid { gap:calc(18px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-app-icon-box { width:var(--pocket-icon); height:var(--pocket-icon); border-radius:calc(16px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-app-icon-box svg { width:calc(27px * var(--pocket-ui-scale)); height:calc(27px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-app-label { font-size:var(--pocket-font-sm); }
+  .lumiphone-shell .lp-avatar { width:calc(42px * var(--pocket-ui-scale)); height:calc(42px * var(--pocket-ui-scale)); flex-basis:calc(42px * var(--pocket-ui-scale)); font-size:calc(15px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-bubbles { padding:calc(14px * var(--pocket-ui-scale)) calc(12px * var(--pocket-ui-scale)); gap:calc(7px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-bubble { padding:calc(8px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); border-radius:calc(16px * var(--pocket-ui-scale)); font-size:calc(11px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-compose { padding:calc(8px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); gap:calc(6px * var(--pocket-ui-scale)); grid-template-columns:auto minmax(0,calc(78px * var(--pocket-ui-scale))) minmax(0,1fr) auto; }
+  .lumiphone-shell .lp-compose .lp-textarea { min-height:calc(34px * var(--pocket-ui-scale)); max-height:calc(112px * var(--pocket-ui-scale)); border-radius:calc(17px * var(--pocket-ui-scale)); }
+  .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-manual-reply { color:var(--lp-muted); background:transparent; }
+  .lp-bubble-action { appearance:none; margin:5px 0 0 7px; padding:0; border:0; background:transparent; color:inherit; opacity:.58; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; }
+  .lp-bubble-action:hover { opacity:1; text-decoration:underline; }
+  .lp-scene-note { margin:0; padding:7px 9px; border-radius:9px; background:color-mix(in srgb,var(--lp-accent) 10%,transparent); color:var(--lp-muted); font-size:var(--pocket-font-sm); }
+  .lp-settings-category { width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; color:var(--lp-text); text-align:left; cursor:pointer; }
+  .lp-settings-category > span:first-child { display:grid; gap:2px; }
+  .lp-settings-chevron { color:var(--lp-muted); font-size:22px; }
+  .lp-code-input { min-height:150px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre; }
+  .lp-swarm-diagnostics { display:grid; gap:6px; }
+  .lp-swarm-diagnostics summary { cursor:pointer; color:var(--lp-muted); font-size:var(--pocket-font-sm); }
+  .lp-gallery-actions { margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .lp-gallery-actions .lp-select { grid-column:1 / -1; }
 `;
 
 // src/frontend.ts

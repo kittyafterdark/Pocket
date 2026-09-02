@@ -8,6 +8,8 @@ import { ensureDirectConversation, normalizeContactCollections } from '../src/do
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
+import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
+import { buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
 describe('device preference schema', () => {
@@ -17,7 +19,7 @@ describe('device preference schema', () => {
       wallpaper: 'url(javascript:alert(1))', chatWallpaper: 'var(--host-secret)',
       animation: 'slide', autoOpenOnModelAction: true,
     })
-    expect(migrated.version).toBe(2)
+    expect(migrated.version).toBe(3)
     expect(migrated.colors.accent).toBe('#abcdef')
     expect(migrated.colors.bezel).toBe('#010203')
     expect(JSON.stringify(migrated)).not.toContain('javascript')
@@ -26,6 +28,12 @@ describe('device preference schema', () => {
 
   test('fails closed for unknown future schemas', () => {
     expect(normalizePreferences({ version: 999, handsetScale: 99 })).toEqual(defaultPreferences())
+  })
+
+  test('keeps handset geometry and UI density as separate semantic values', () => {
+    const preferences = normalizePreferences({ version: 3, handsetScale: 1.2, uiScale: 0.7 })
+    expect(preferences.handsetScale).toBe(1.2)
+    expect(preferences.uiScale).toBe(0.7)
   })
 })
 
@@ -45,6 +53,39 @@ describe('phone surface', () => {
     expect(short.height).toBeLessThanOrEqual(576)
     expect(short.width / short.height).toBeCloseTo(9 / 16, 2)
     expect(mobile.fullscreen).toBe(true)
+    expect(calculatePhoneSurface(.7, { width: 390, height: 844 })).toEqual(calculatePhoneSurface(1.3, { width: 390, height: 844 }))
+  })
+})
+
+describe('structured generation', () => {
+  test('accepts clean JSON, one fence, and one balanced top-level object', () => {
+    expect(parseGeneratedObject('{"ok":true}')).toEqual({ ok: true })
+    expect(parseGeneratedObject('```json\n{"ok":true}\n```')).toEqual({ ok: true })
+    expect(parseGeneratedObject('Result: {"ok":true}')).toEqual({ ok: true })
+  })
+
+  test('retries only responses which appear truncated', async () => {
+    let retries = 0
+    expect(await parseWithTruncationRetry('{"ok":', async () => { retries += 1; return '{"ok":true}' })).toEqual({ ok: true })
+    expect(retries).toBe(1)
+    await expect(parseWithTruncationRetry('{ nope }', async () => { retries += 1; return '{"ok":true}' })).rejects.toThrow()
+    expect(retries).toBe(1)
+  })
+})
+
+describe('roleplay context bridge', () => {
+  test('bounds recent RP and layers story state without full chat dumping', async () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'zephyr', name: 'Zephyr', sceneNote: 'Walking toward the user.' }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const contact = collections.contacts.find((entry) => entry.id === 'zephyr')!
+    const conversation = ensureDirectConversation(collections, contact.id, now, () => 'dm-zephyr')
+    const state = { version: 4, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, ...collections, notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now, weather: { location: 'Hall', condition: 'Dark', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now } } as PhoneState
+    const preferences = normalizePreferences({ version: 3, roleplayContextMode: 'smart', recentRoleplayMessages: 2 })
+    const context = await buildRoleplayContext({ state, contact, conversation, preferences, getMessages: async () => [{ role: 'user', content: 'old' }, { role: 'assistant', content: 'recent one' }, { role: 'user', content: 'recent two' }] })
+    expect(context).not.toContain('old')
+    expect(context).toContain('RECENT ROLEPLAY')
+    expect(context).toContain('STORY CONTEXT')
+    expect(context.length).toBeLessThanOrEqual(8_000)
   })
 })
 
@@ -60,7 +101,7 @@ describe('model context projection', () => {
   test('enforces a hard serialized budget for huge phone databases', () => {
     const now = new Date().toISOString()
     const state: PhoneState = {
-      version: 3, chatId: 'chat', characterId: 'character', characterName: 'Character', roleplayNow: now,
+      version: 4, chatId: 'chat', characterId: 'character', characterName: 'Character', roleplayNow: now,
       contacts: Array.from({ length: 30 }, (_, contactIndex) => ({
         id: `c${contactIndex}`, name: `Contact ${contactIndex}`, role: 'NPC', description: 'x'.repeat(600), avatarUrl: '', accent: '#8b7dff',
         source: { kind: 'npc' as const, origin: 'manual' as const, description: 'x'.repeat(600) },
@@ -87,7 +128,7 @@ describe('model context projection', () => {
   test('uses a structural emergency fallback instead of slicing JSON', () => {
     const now = new Date().toISOString()
     const state: PhoneState = {
-      version: 3, chatId: 'c', characterId: 'x', characterName: 'X', roleplayNow: 'R'.repeat(2_000),
+      version: 4, chatId: 'c', characterId: 'x', characterName: 'X', roleplayNow: 'R'.repeat(2_000),
       contacts: [], conversations: [], notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now,
       weather: { location: 'L'.repeat(2_000), condition: 'C'.repeat(2_000), temperature: 1, unit: 'C', high: 2, low: 0, details: 'D'.repeat(20_000), updatedAt: now },
     }
