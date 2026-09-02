@@ -1,0 +1,24 @@
+{
+  "version": "0.1.0",
+  "name": "LumiPhone",
+  "identifier": "lumiphone",
+  "author": "kittyafterdark",
+  "github": "https://github.com/kittyafterdark/LumiPhone",
+  "homepage": "https://github.com/kittyafterdark/LumiPhone",
+  "description": "A character-aware roleplay phone with messages, camera, gallery, notes, weather, calendar timelines, trackers, model tools, and Swarm Studio visual-profile sync.",
+  "permissions": [
+    "generation",
+    "interceptor",
+    "tools",
+    "chats",
+    "characters",
+    "personas",
+    "images",
+    "image_gen",
+    "ui_panels",
+    "push_notification"
+  ],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js",
+  "minimum_lumiverse_version": "1.1.6"
+}
