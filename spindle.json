@@ -11,6 +11,7 @@
     "interceptor",
     "tools",
     "chats",
+    "chat_mutation",
     "characters",
     "personas",
     "images",

@@ -1,6 +1,7 @@
 export type PhoneApp =
   | 'home'
   | 'messages'
+  | 'contacts'
   | 'gallery'
   | 'camera'
   | 'notes'
@@ -14,7 +15,8 @@ export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 
 export type PocketRoute =
   | { app: 'home' }
-  | { app: 'messages'; contactId?: string; messageId?: string }
+  | { app: 'messages'; conversationId?: string; contactId?: string; messageId?: string; view?: 'thread' | 'new-group' | 'group-detail' }
+  | { app: 'contacts'; contactId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'new' }
   | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
   | { app: 'calendar'; eventId?: string }
   | { app: 'notes'; noteId?: string }
@@ -62,7 +64,11 @@ export interface DevicePreferences {
 
 export interface PhoneMessage {
   id: string
-  sender: 'user' | 'character' | 'system'
+  sender: 'persona' | 'contact' | 'system'
+  senderContactId?: string
+  /** Stable display fallback when the underlying profile is renamed or removed. */
+  senderName: string
+  senderAccent: string
   text: string
   createdAt: string
   read: boolean
@@ -71,13 +77,45 @@ export interface PhoneMessage {
   imageUrl?: string
 }
 
-export interface PhoneContact {
+export type PocketContactSource =
+  | { kind: 'character'; characterId: string }
+  | { kind: 'council'; memberId: string; itemId: string }
+  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene'; description: string; sceneKey?: string }
+
+export interface PocketContact {
   id: string
   name: string
-  subtitle: string
+  role: string
+  description: string
   avatarUrl: string
+  accent: string
+  source: PocketContactSource
+  presence: { inScene: boolean; lastSceneAt: string }
+  contextPolicy: { pinned: boolean }
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PocketConversation {
+  id: string
+  kind: 'direct' | 'group'
+  title: string
+  participantContactIds: string[]
   messages: PhoneMessage[]
   unread: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PocketContactSourceOption {
+  kind: 'character' | 'council'
+  sourceId: string
+  itemId?: string
+  name: string
+  role: string
+  description: string
+  avatarUrl: string
+  importedContactId?: string
 }
 
 export interface PhoneNote {
@@ -195,7 +233,7 @@ export interface PhoneNotification {
 
 export interface PocketActivity {
   id: string
-  kind: 'message' | 'tracker-change' | 'timeline' | 'note' | 'image' | 'weather' | 'system'
+  kind: 'message' | 'contact' | 'tracker-change' | 'timeline' | 'note' | 'image' | 'weather' | 'system'
   title: string
   summary?: string
   route: PocketRoute
@@ -206,6 +244,7 @@ export interface PocketActivity {
     messageId?: string
     trackerId?: string
     contactId?: string
+    conversationId?: string
     eventId?: string
     noteId?: string
     imageId?: string
@@ -220,12 +259,13 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 2
+  version: 3
   chatId: string
   characterId: string
   characterName: string
   roleplayNow: string
-  contacts: PhoneContact[]
+  contacts: PocketContact[]
+  conversations: PocketConversation[]
   notes: PhoneNote[]
   events: CalendarEvent[]
   weather: RoleplayWeather
@@ -261,6 +301,7 @@ export interface PhoneCapabilities {
   imageGen: boolean
   panels: boolean
   push: boolean
+  sceneSync: boolean
 }
 
 export interface GalleryResult {

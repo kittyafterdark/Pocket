@@ -1,6 +1,6 @@
 import type { PhoneApp, PocketRoute } from '../types.js'
 
-const APPS = new Set<PhoneApp>(['home', 'messages', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'settings'])
+const APPS = new Set<PhoneApp>(['home', 'messages', 'contacts', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'settings'])
 
 function shortId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -12,7 +12,18 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback
   const raw = value as Record<string, unknown>
   const app = typeof raw.app === 'string' && APPS.has(raw.app as PhoneApp) ? raw.app as PhoneApp : fallback.app
-  if (app === 'messages') return { app, contactId: shortId(raw.contactId), messageId: shortId(raw.messageId) }
+  if (app === 'messages') return {
+    app,
+    conversationId: shortId(raw.conversationId),
+    contactId: shortId(raw.contactId),
+    messageId: shortId(raw.messageId),
+    view: raw.view === 'new-group' || raw.view === 'group-detail' || raw.view === 'thread' ? raw.view : undefined,
+  }
+  if (app === 'contacts') return {
+    app,
+    contactId: shortId(raw.contactId),
+    view: raw.view === 'detail' || raw.view === 'config' || raw.view === 'import' || raw.view === 'new' || raw.view === 'list' ? raw.view : undefined,
+  }
   if (app === 'trackers') return {
     app,
     trackerId: shortId(raw.trackerId),
@@ -29,6 +40,7 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
 export function legacyActionRoute(app: PhoneApp, action?: string): PocketRoute {
   const id = shortId(action)
   if (app === 'messages') return { app, contactId: id }
+  if (app === 'contacts') return { app, contactId: id, view: id ? 'detail' : 'list' }
   if (app === 'trackers') return { app, trackerId: id, view: id ? 'detail' : undefined }
   if (app === 'calendar') return { app, eventId: id }
   if (app === 'notes') return { app, noteId: id }

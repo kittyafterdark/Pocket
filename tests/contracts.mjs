@@ -14,14 +14,14 @@ assert.equal(manifest.identifier, 'lumiphone')
 assert.equal(manifest.name, 'Pocket')
 assert.equal(manifest.entry_backend, 'dist/backend.js')
 assert.equal(manifest.entry_frontend, 'dist/frontend.js')
-for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'characters', 'images', 'image_gen', 'ui_panels']) {
+for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_mutation', 'characters', 'images', 'image_gen', 'ui_panels']) {
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker']) {
+for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
-for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt']) {
+for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView']) {
   assert.ok(`${frontendSource}\n${controllerSource}\n${surfaceSource}`.includes(token), `frontend contract missing ${token}`)
 }
 for (const token of ['.lp-thread', '.lp-camera', '.lp-timeline', '.lp-progress', '@media (max-width: 720px)']) {
@@ -37,6 +37,7 @@ const backendEvents = new Map()
 let frontendHandler = null
 let interceptorHandler = null
 let registeredTool = null
+const quietRequests = []
 
 const permissions = new Set(manifest.permissions)
 storage.set('phones/chat-a__char-a.json', {
@@ -66,10 +67,18 @@ globalThis.spindle = {
     list: async (prefix = '') => [...storage.keys()].filter((path) => path.startsWith(prefix)),
     delete: async (path) => { storage.delete(path) },
   },
-  characters: { get: async (id) => ({ id, name: 'Alice', description: 'A curious traveler.', personality: 'Warm and observant.' }) },
+  characters: {
+    get: async (id) => id === 'missing-character' ? null : ({ id, name: id === 'char-b' ? 'Bob' : 'Alice', description: 'A curious traveler.', personality: 'Warm and observant.' }),
+    list: async () => ({ data: [{ id: 'char-a', name: 'Alice', description: 'A curious traveler.' }, { id: 'char-b', name: 'Bob', description: 'A careful scout.' }], total: 2 }),
+  },
   chats: {
     getActive: async () => ({ id: 'chat-a', character_id: 'char-a' }),
     get: async () => ({ id: 'chat-a', character_id: 'char-a' }),
+  },
+  chat: { getMessages: async () => [{ role: 'user', content: 'At the market.' }, { role: 'assistant', content: 'Mira, the flower seller, waves from her stall.' }] },
+  council: {
+    getMembers: async () => [{ memberId: 'member-luna', itemId: 'item-luna', name: 'Luna', role: 'Dream director', avatarUrl: '', definition: 'A lunar dream guide.', personality: 'Gentle', behavior: 'Poetic' }],
+    getAvailableLumiaItems: async () => [],
   },
   macros: {
     resolve: async (template) => ({
@@ -83,7 +92,7 @@ globalThis.spindle = {
       diagnostics: [],
     }),
   },
-  generate: { quiet: async () => ({ content: 'Meet me by the station.', finish_reason: 'stop' }) },
+  generate: { quiet: async (request) => { quietRequests.push(request); return { content: 'Meet me by the station.', finish_reason: 'stop' } } },
   images: { list: async () => ({ data: [], total: 0 }) },
   imageGen: {
     listConnections: async () => [],
@@ -103,7 +112,9 @@ const firstState = frontendMessages.find((message) => message.type === 'lumiphon
 assert.equal(firstState.state.chatId, 'chat-a')
 assert.equal(firstState.state.characterId, 'char-a')
 assert.equal(firstState.state.characterName, 'Alice')
-assert.equal(firstState.state.version, 2)
+assert.equal(firstState.state.version, 3)
+assert.equal(firstState.state.contacts[0].source.kind, 'character')
+assert.equal(firstState.state.conversations.length, 1)
 assert.equal(firstState.state.trackers[0].kind, 'meter')
 assert.equal(firstState.state.trackers[0].clock, 'real')
 assert.equal(firstState.state.trackers[0].target.type, 'custom')
@@ -119,13 +130,15 @@ await frontendHandler({
   action: 'message', payload: { text: 'Hello from the phone.', sender: 'user' },
 }, 'user-a')
 const latestState = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state
-assert.equal(latestState.contacts[0].messages.at(-1).text, 'Hello from the phone.')
+assert.equal(latestState.conversations[0].messages.at(-1).text, 'Hello from the phone.')
+assert.equal(latestState.conversations[0].messages.at(-1).sender, 'persona')
 
 const intercepted = await interceptorHandler([{ role: 'user', content: 'Continue.' }], {
   chatId: 'chat-a', characterId: 'char-a', userId: 'user-a',
 })
 assert.equal(intercepted.messages.length, 2)
 assert.match(intercepted.messages[1].content, /Current Pocket snapshot/)
+assert.doesNotMatch(intercepted.messages[1].content, /Hello from the phone/)
 
 const toolResult = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'tool-1', args: {
@@ -142,18 +155,23 @@ assert.equal(storage.get('phones/chat-a__char-a.json').notes.filter((note) => no
 assert.equal(storage.get('phones/chat-a__char-a.json').activities.filter((activity) => activity.title === 'Journal updated').length, 1)
 
 const readState = storage.get('phones/chat-a__char-a.json')
-readState.contacts = [
-  { id: 'char-a', name: 'Alice', subtitle: '', avatarUrl: '', unread: 1, messages: [{ id: 'm-a', sender: 'character', text: 'A', createdAt: new Date().toISOString(), read: false, status: 'delivered' }] },
-  { id: 'char-b', name: 'Bob', subtitle: '', avatarUrl: '', unread: 1, messages: [{ id: 'm-b', sender: 'character', text: 'B', createdAt: new Date().toISOString(), read: false, status: 'delivered' }] },
+const now = new Date().toISOString()
+readState.contacts.push({
+  id: 'bob-contact', name: 'Bob', role: 'Scout', description: 'A careful scout.', avatarUrl: '', accent: '#55bfa3',
+  source: { kind: 'character', characterId: 'char-b' }, presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, createdAt: now, updatedAt: now,
+})
+readState.conversations = [
+  { id: 'dm-alice', kind: 'direct', title: 'Alice', participantContactIds: ['char-a'], unread: 1, createdAt: now, updatedAt: now, messages: [{ id: 'm-a', sender: 'contact', senderContactId: 'char-a', senderName: 'Alice', senderAccent: '#8b7dff', text: 'A', createdAt: now, read: false, status: 'delivered' }] },
+  { id: 'dm-bob', kind: 'direct', title: 'Bob', participantContactIds: ['bob-contact'], unread: 1, createdAt: now, updatedAt: now, messages: [{ id: 'm-b', sender: 'contact', senderContactId: 'bob-contact', senderName: 'Bob', senderAccent: '#55bfa3', text: 'B', createdAt: now, read: false, status: 'delivered' }] },
 ]
 readState.notifications.push({ id: 'weather-unread', app: 'weather', title: 'Rain', body: '', createdAt: new Date().toISOString(), read: false, route: { app: 'weather' } })
 storage.set('phones/chat-a__char-a.json', readState)
 await frontendHandler({ type: 'lumiphone:mark_read', requestId: 'read-weather', chatId: 'chat-a', characterId: 'char-a', app: 'weather' }, 'user-a')
-assert.deepEqual(storage.get('phones/chat-a__char-a.json').contacts.map((contact) => contact.unread), [1, 1])
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').conversations.map((conversation) => conversation.unread), [1, 1])
 await frontendHandler({ type: 'lumiphone:mark_read', requestId: 'read-messages-root', chatId: 'chat-a', characterId: 'char-a', app: 'messages' }, 'user-a')
-assert.deepEqual(storage.get('phones/chat-a__char-a.json').contacts.map((contact) => contact.unread), [1, 1])
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').conversations.map((conversation) => conversation.unread), [1, 1])
 await frontendHandler({ type: 'lumiphone:mark_read', requestId: 'read-one', chatId: 'chat-a', characterId: 'char-a', app: 'messages', contactId: 'char-a' }, 'user-a')
-assert.deepEqual(storage.get('phones/chat-a__char-a.json').contacts.map((contact) => contact.unread), [0, 1])
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').conversations.map((conversation) => conversation.unread), [0, 1])
 
 await frontendHandler({
   type: 'lumiphone:action', requestId: 'private-tracker-create', chatId: 'chat-a', characterId: 'char-a', action: 'tracker',
@@ -188,6 +206,43 @@ await frontendHandler({
 }, 'user-a')
 const tagActivity = storage.get('phones/chat-a__char-a.json').activities.find((activity) => activity.title === 'Journal updated' && activity.source?.messageId === 'host-message-a')
 assert.ok(tagActivity, 'accepted tag did not create a source-scoped activity')
+
+await frontendHandler({ type: 'lumiphone:list_contact_sources', requestId: 'sources', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+const sourceResult = frontendMessages.find((message) => message.type === 'lumiphone:contact_sources' && message.requestId === 'sources')
+assert.ok(sourceResult.sources.some((source) => source.kind === 'character' && source.sourceId === 'char-b'))
+assert.ok(sourceResult.sources.some((source) => source.kind === 'council' && source.sourceId === 'member-luna'))
+await frontendHandler({ type: 'lumiphone:import_contact', requestId: 'import-luna', chatId: 'chat-a', characterId: 'char-a', kind: 'council', sourceId: 'member-luna', itemId: 'item-luna' }, 'user-a')
+let contactState = storage.get('phones/chat-a__char-a.json')
+const luna = contactState.contacts.find((contact) => contact.source.kind === 'council')
+assert.ok(luna, 'Council source was not imported')
+const lunaDirect = contactState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.participantContactIds[0] === luna.id)
+const quietBeforeCouncil = quietRequests.length
+await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'reply-luna', chatId: 'chat-a', characterId: 'char-a', conversationId: lunaDirect.id }, 'user-a')
+assert.equal(quietRequests.length, quietBeforeCouncil + 1)
+assert.match(quietRequests.at(-1).messages[0].content, /Source: council:member-luna/)
+contactState = storage.get('phones/chat-a__char-a.json')
+assert.equal(contactState.conversations.find((conversation) => conversation.id === lunaDirect.id).messages.at(-1).senderContactId, luna.id)
+
+await frontendHandler({ type: 'lumiphone:create_conversation', requestId: 'group-create', chatId: 'chat-a', characterId: 'char-a', title: 'Night Shift', participantContactIds: ['char-a', luna.id] }, 'user-a')
+const groupId = frontendMessages.find((message) => message.type === 'lumiphone:conversation_opened' && message.requestId === 'group-create').conversationId
+const groupBefore = storage.get('phones/chat-a__char-a.json').conversations.find((conversation) => conversation.id === groupId).messages.length
+await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'group-reply', chatId: 'chat-a', characterId: 'char-a', conversationId: groupId, speakerContactId: luna.id }, 'user-a')
+const groupAfter = storage.get('phones/chat-a__char-a.json').conversations.find((conversation) => conversation.id === groupId)
+assert.equal(groupAfter.messages.length, groupBefore + 1, 'group generation must append exactly one reply')
+assert.equal(groupAfter.messages.at(-1).senderContactId, luna.id)
+await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'group-invalid-speaker', chatId: 'chat-a', characterId: 'char-a', conversationId: groupId, speakerContactId: 'not-a-participant' }, 'user-a')
+assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:error' && message.requestId === 'group-invalid-speaker'))
+
+const sceneQuiet = spindle.generate.quiet
+spindle.generate.quiet = async () => ({ content: '{"contacts":[{"name":"Mira","role":"Flower seller","description":"A bright-eyed merchant at the market."}]}' })
+await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene-one', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+let mira = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => contact.name === 'Mira')
+assert.equal(mira.presence.inScene, true)
+spindle.generate.quiet = async () => ({ content: '{"contacts":[]}' })
+await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene-two', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+mira = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => contact.name === 'Mira')
+assert.equal(mira.presence.inScene, false, 'absent scene-derived contacts must be retained and marked away')
+spindle.generate.quiet = sceneQuiet
 
 const originalQuiet = spindle.generate.quiet
 spindle.generate.quiet = async () => { throw new Error('planner unavailable') }
@@ -263,8 +318,10 @@ const widgetHandle = {
 const dockHandle = {
   root: dockRoot, panelId: 'pocket-dock', collapsed: true, size: 0,
   collapse() { this.collapsed = true }, expand() { this.collapsed = false }, isCollapsed() { return this.collapsed },
-  setTitle: () => {}, setSize(size) { this.size = size }, destroy: () => {}, onVisibilityChange: () => () => {},
+  setTitle: () => {}, setSize(size) { this.size = size }, destroy: () => { dockDestroyCount += 1 }, onVisibilityChange: () => () => {},
 }
+let dockRequestCount = 0
+let dockDestroyCount = 0
 const injected = []
 const frontendContext = {
   dom: {
@@ -277,7 +334,7 @@ const frontendContext = {
     registerDrawerTab: () => drawerHandle,
     registerInputBarAction: () => inputHandle,
     createFloatWidget: () => widgetHandle,
-    requestDockPanel: () => dockHandle,
+    requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
     showModal: () => ({ root: document.createElement('div'), onDismiss: () => () => {}, dismiss: () => {} }),
   },
   messages: { registerTagInterceptor: (_options, handler) => { tagReceiver = handler; return () => {} } },
@@ -297,9 +354,16 @@ assert.ok(launcher, 'float launcher was not rendered')
 launcher.click()
 assert.equal(widgetRoot.querySelector('.lumiphone-shell'), null, 'interactive phone leaked into draggable launcher float')
 assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'), 'phone did not open in the interactive desktop dock')
+assert.equal(dockRequestCount, 1)
+const dismissPhone = dockRoot.querySelector('.lumiphone-dismiss')
+dismissPhone.click()
+assert.equal(dockDestroyCount, 1, 'closing Pocket must destroy the dock handle')
+launcher.click()
+assert.equal(dockRequestCount, 2, 'reopening Pocket must request a fresh dock handle')
+assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'))
 const handsetHost = dockRoot.querySelector('.lumiphone-handset-host')
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 16)) < 0.01, 'desktop phone bounds are not 9:16')
-assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 8)
+assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
 const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Settings'))
 settingsIcon.click()
 const scaleInput = [...dockRoot.querySelectorAll('input[type="range"]')].find((node) => node.min === '0.8' && node.max === '1.25')
@@ -309,6 +373,41 @@ scaleInput.value = '0.8'
 scaleInput.dispatchEvent(new Event('input', { bubbles: true }))
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 16)) < 0.01, 'scale update broke 9:16 bounds')
 assert.ok(dockHandle.size < initialDockSize, 'scale control did not derive a new semantic dock size')
+
+dockRoot.querySelector('.lumiphone-homebar button').click()
+const messagesIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Messages'))
+messagesIcon.click()
+const conversationCard = dockRoot.querySelector('.lp-content .lp-card[data-clickable="true"]')
+conversationCard.click()
+assert.equal(dockRoot.querySelector('.lp-nav-action:last-child').textContent, 'Info', 'thread header must expose info instead of a duplicate generation action')
+const messageTextarea = dockRoot.querySelector('.lp-compose textarea')
+const sendButton = dockRoot.querySelector('.lp-compose button[aria-label="Send message"]')
+const actionCountBeforeClick = frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'message').length
+messageTextarea.value = 'Sent with the paper plane'
+sendButton.click()
+assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'message').length, actionCountBeforeClick + 1, 'paper-plane click must submit exactly once')
+messageTextarea.value = 'Sent with Enter'
+messageTextarea.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'message').length, actionCountBeforeClick + 2, 'Enter must submit exactly once')
+messageTextarea.value = 'keep editing'
+messageTextarea.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }))
+assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'message').length, actionCountBeforeClick + 2, 'Shift+Enter must not submit')
+const activeConversationId = firstState.state.conversations[0].id
+backendReceiver({ type: 'lumiphone:message_progress', requestId: 'typing-ui', chatId: 'chat-a', characterId: 'char-a', conversationId: activeConversationId, speakerContactId: 'char-a', phase: 'pending' })
+assert.equal(dockRoot.querySelectorAll('.lp-typing-dots i').length, 3, 'pending reply must render three typing dots')
+assert.ok(!dockRoot.textContent.includes('Writing…'), 'pending reply must not render the literal Writing label')
+backendReceiver({ type: 'lumiphone:message_progress', requestId: 'typing-ui', chatId: 'chat-a', characterId: 'char-a', conversationId: activeConversationId, speakerContactId: 'char-a', phase: 'done' })
+
+dockRoot.querySelector('.lumiphone-homebar button').click()
+const trackerIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Trackers'))
+trackerIcon.click()
+const addTracker = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Add')
+addTracker.click()
+const saveTracker = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Save')
+assert.equal(saveTracker.disabled, false, 'Tracker Save must be enabled by the page action contract')
+const trackerActionsBefore = frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length
+saveTracker.click()
+assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length, trackerActionsBefore + 1, 'Tracker Save must dispatch its action')
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
 backendReceiver({ type: 'lumiphone:activity', activity })

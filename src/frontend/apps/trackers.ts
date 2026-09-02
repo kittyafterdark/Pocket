@@ -1,6 +1,7 @@
 import type { PhoneState, PhoneTracker, TrackerKind, TrackerPresentation, TrackerTarget, TrackerUpdateMode } from '../../types.js'
 import { materializeTracker, TRACKER_TEMPLATES, trackerBand, trackerKey } from '../../domain/trackers.js'
 import { button, el } from '../shared.js'
+import type { PageAction } from '../shared.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
@@ -10,7 +11,7 @@ export interface TrackerViewHost {
   selectedId: string
   selectedView: 'detail' | 'config'
   accent: string
-  page(title: string, subtitle?: string, rightLabel?: string, onRight?: () => void): Page
+  page(title: string, subtitle?: string, action?: PageAction): Page
   field(label: string, value?: string, type?: string): Field
   send(type: string, payload?: Record<string, unknown>): void
   select(id: string, view?: 'detail' | 'config'): void
@@ -92,7 +93,7 @@ function renderPresentation(tracker: PhoneTracker, roleplayNow: string): HTMLDiv
 }
 
 function dashboard(host: TrackerViewHost): HTMLDivElement {
-  const { page, content } = host.page('Trackers', 'Live roleplay state', 'Add', () => host.select('__template:9', 'config'))
+  const { page, content } = host.page('Trackers', 'Live roleplay state', { label: 'Add', callback: () => host.select('__template:9', 'config') })
   const filters = el('div', 'lp-tracker-filters')
   const all = button('All', 'lp-chip'); all.setAttribute('aria-pressed', 'true')
   filters.appendChild(all)
@@ -141,7 +142,7 @@ function dashboard(host: TrackerViewHost): HTMLDivElement {
 }
 
 function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
-  const { page, content } = host.page(tracker.label, targetLabel(tracker.target), '⚙', () => host.select(tracker.id, 'config'))
+  const { page, content } = host.page(tracker.label, targetLabel(tracker.target), { label: '⚙', callback: () => host.select(tracker.id, 'config'), ariaLabel: 'Tracker settings' })
   content.appendChild(renderPresentation(tracker, host.state.roleplayNow))
   const policy = el('div', 'lp-card lp-tracker-policy')
   policy.append(
@@ -198,7 +199,8 @@ function config(host: TrackerViewHost, current: PhoneTracker | null, templateInd
       : template.group === 'World' ? { type: 'world', id: '', label: 'Current world' }
         : { type: 'custom', id: '', label: 'Unassigned' }
   const selectedTarget = source.target || templateTarget
-  const { page, content } = host.page(current ? 'Tracker Settings' : 'New Tracker', 'Configuration', 'Save')
+  let saveTracker = () => {}
+  const { page, content } = host.page(current ? 'Tracker Settings' : 'New Tracker', 'Configuration', { label: 'Save', callback: () => saveTracker() })
   if (!current) {
     const templateField = selectField('Template', TRACKER_TEMPLATES.map((entry, index) => [String(index), `${entry.group} · ${entry.name}`]), String(templateIndex))
     templateField.select.addEventListener('change', () => host.select(`__template:${templateField.select.value}`, 'config'))
@@ -231,8 +233,7 @@ function config(host: TrackerViewHost, current: PhoneTracker | null, templateInd
   const configFields = el('div', 'lp-tracker-config-fields')
   configFields.append(label.label, key.label, kind.label, presentation.label, value.label, initial.label, min.label, max.label, unit.label, state.label, states, targetType.label, targetId.label, targetName.label, mode.label, clock.label, rate.label, colorRow, bands, visible.row, writable.row)
   content.appendChild(configFields)
-  const save = page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!
-  save.addEventListener('click', () => {
+  saveTracker = () => {
     const parsedBands = bands.value.split('\n').flatMap((line) => {
       const [rawMin, rawMax, bandLabel, bandColor] = line.split('|').map((part) => part.trim())
       if (!bandLabel || !Number.isFinite(Number(rawMin)) || !Number.isFinite(Number(rawMax))) return []
@@ -249,7 +250,7 @@ function config(host: TrackerViewHost, current: PhoneTracker | null, templateInd
       visibleToModel: visible.button.getAttribute('aria-pressed') === 'true', allowModelWrite: writable.button.getAttribute('aria-pressed') === 'true',
     } })
     host.back()
-  })
+  }
   if (current) {
     const remove = button('Delete tracker', 'lp-button lp-button-danger')
     remove.addEventListener('click', () => { host.send('lumiphone:delete', { kind: 'tracker', id: current.id }); host.back() })

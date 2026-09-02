@@ -4,6 +4,7 @@ import { MODEL_CONTEXT_BUDGET, projectPhoneContext } from '../src/domain/project
 import { calculatePhoneSurface } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
+import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
 describe('device preference schema', () => {
@@ -56,12 +57,17 @@ describe('model context projection', () => {
   test('enforces a hard serialized budget for huge phone databases', () => {
     const now = new Date().toISOString()
     const state: PhoneState = {
-      version: 2, chatId: 'chat', characterId: 'character', characterName: 'Character', roleplayNow: now,
+      version: 3, chatId: 'chat', characterId: 'character', characterName: 'Character', roleplayNow: now,
       contacts: Array.from({ length: 30 }, (_, contactIndex) => ({
-        id: `c${contactIndex}`, name: `Contact ${contactIndex}`, subtitle: '', avatarUrl: '', unread: 0,
+        id: `c${contactIndex}`, name: `Contact ${contactIndex}`, role: 'NPC', description: 'x'.repeat(600), avatarUrl: '', accent: '#8b7dff',
+        source: { kind: 'npc' as const, origin: 'manual' as const, description: 'x'.repeat(600) },
+        presence: { inScene: true, lastSceneAt: now }, contextPolicy: { pinned: false }, createdAt: now, updatedAt: now,
+      })),
+      conversations: Array.from({ length: 30 }, (_, contactIndex) => ({
+        id: `d${contactIndex}`, kind: 'direct' as const, title: `Contact ${contactIndex}`, participantContactIds: [`c${contactIndex}`], unread: 0, createdAt: now, updatedAt: now,
         messages: Array.from({ length: 240 }, (_, messageIndex) => ({
-          id: `m${contactIndex}-${messageIndex}`, sender: 'character', text: 'x'.repeat(12_000), createdAt: now,
-          read: true, status: 'read',
+          id: `m${contactIndex}-${messageIndex}`, sender: 'contact' as const, senderContactId: `c${contactIndex}`, senderName: `Contact ${contactIndex}`, senderAccent: '#8b7dff', text: 'private'.repeat(1_000), createdAt: now,
+          read: true, status: 'read' as const,
         })),
       })),
       notes: Array.from({ length: 120 }, (_, index) => ({ id: `n${index}`, title: `Note ${index}`, body: 'y'.repeat(40_000), mood: '', pinned: true, author: 'character', createdAt: now, updatedAt: now })),
@@ -71,18 +77,59 @@ describe('model context projection', () => {
     const projection = projectPhoneContext(state)
     expect(projection.length).toBeLessThanOrEqual(MODEL_CONTEXT_BUDGET)
     expect(() => JSON.parse(projection)).not.toThrow()
+    expect(projection).not.toContain('private')
   })
 
   test('uses a structural emergency fallback instead of slicing JSON', () => {
     const now = new Date().toISOString()
     const state: PhoneState = {
-      version: 2, chatId: 'c', characterId: 'x', characterName: 'X', roleplayNow: 'R'.repeat(2_000),
-      contacts: [], notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now,
+      version: 3, chatId: 'c', characterId: 'x', characterName: 'X', roleplayNow: 'R'.repeat(2_000),
+      contacts: [], conversations: [], notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now,
       weather: { location: 'L'.repeat(2_000), condition: 'C'.repeat(2_000), temperature: 1, unit: 'C', high: 2, low: 0, details: 'D'.repeat(20_000), updatedAt: now },
     }
     const projection = projectPhoneContext(state, 64)
     expect(projection.length).toBeLessThanOrEqual(64)
     expect(() => JSON.parse(projection)).not.toThrow()
+  })
+})
+
+describe('contacts and conversations', () => {
+  test('migrates one legacy contact thread exactly once', () => {
+    let sequence = 0
+    const makeId = (prefix: string) => `${prefix}-${++sequence}`
+    const legacy = {
+      version: 2,
+      contacts: [{ id: 'alice', name: 'Alice', subtitle: 'Friend', avatarUrl: '', unread: 1, messages: [{ id: 'hello', sender: 'character', text: 'Hi', createdAt: '2026-01-01T00:00:00.000Z', read: false, status: 'delivered' }] }],
+    }
+    const migrated = normalizeContactCollections(legacy, { characterId: 'alice', characterName: 'Alice', now: '2026-01-01T00:00:00.000Z', makeId })
+    expect(migrated.contacts).toHaveLength(1)
+    expect(migrated.conversations).toHaveLength(1)
+    expect(migrated.conversations[0].messages[0]).toMatchObject({ sender: 'contact', senderContactId: 'alice', senderName: 'Alice' })
+    const again = normalizeContactCollections({ version: 3, contacts: migrated.contacts, conversations: migrated.conversations }, { characterId: 'alice', characterName: 'Alice', now: '2026-01-01T00:00:00.000Z', makeId })
+    expect(again.conversations).toHaveLength(1)
+    expect(again.conversations[0].messages).toHaveLength(1)
+  })
+
+  test('reuses the existing direct conversation instead of duplicating it', () => {
+    const state = normalizeContactCollections({}, { characterId: 'alice', characterName: 'Alice', now: '2026-01-01T00:00:00.000Z', makeId: (prefix) => `${prefix}-one` })
+    const first = ensureDirectConversation(state, 'alice', '2026-01-01T00:00:00.000Z', () => 'unexpected')
+    const second = ensureDirectConversation(state, 'alice', '2026-01-01T00:00:00.000Z', () => 'unexpected')
+    expect(first.id).toBe(second.id)
+    expect(state.conversations).toHaveLength(1)
+  })
+
+  test('retains a deleted source thread through sender snapshots', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const normalized = normalizeContactCollections({
+      version: 3,
+      contacts: [],
+      conversations: [{
+        id: 'ghost-thread', kind: 'direct', title: 'Mira', participantContactIds: ['deleted-mira'], unread: 0, createdAt: now, updatedAt: now,
+        messages: [{ id: 'ghost-message', sender: 'contact', senderContactId: 'deleted-mira', senderName: 'Mira', senderAccent: '#ef6f9a', text: 'Remember me.', createdAt: now, read: true, status: 'read' }],
+      }],
+    }, { characterId: 'alice', characterName: 'Alice', now, makeId: (prefix) => `${prefix}-active` })
+    const thread = normalized.conversations.find((entry) => entry.id === 'ghost-thread')
+    expect(thread?.messages[0]).toMatchObject({ senderName: 'Mira', senderAccent: '#ef6f9a', text: 'Remember me.' })
   })
 })
 

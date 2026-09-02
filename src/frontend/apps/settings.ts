@@ -1,6 +1,7 @@
 import type { DevicePreferences, PhoneCapabilities, PhoneSettings, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
 import { button, el, inputValue } from '../shared.js'
+import type { PageAction } from '../shared.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
@@ -9,7 +10,7 @@ export interface SettingsViewHost {
   preferences: DevicePreferences
   capabilities: PhoneCapabilities | null
   swarmProfile: SwarmVisualProfile | null
-  page(title: string, subtitle: string, rightLabel: string): Page
+  page(title: string, subtitle: string, action: PageAction): Page
   field(label: string, value?: string, type?: string): Field
   preview(preferences: DevicePreferences, options?: { appearance?: boolean; resize?: boolean; rerender?: boolean }): void
   send(type: string, payload?: Record<string, unknown>): void
@@ -46,7 +47,8 @@ function toggleSetting(label: string, initial: boolean, update: (value: boolean)
 
 export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   const settings = structuredClone(host.preferences)
-  const { page, content } = host.page('Settings', 'Device-wide preferences', 'Save')
+  let saveSettings = () => {}
+  const { page, content } = host.page('Settings', 'Device-wide preferences', { label: 'Save', callback: () => saveSettings() })
   const appearance = el('section', 'lp-card lp-settings-section')
   appearance.dataset.settingsSection = 'appearance'
   appearance.appendChild(el('div', 'lp-eyebrow', 'Appearance'))
@@ -143,7 +145,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   for (const [label, granted] of [
     ['Generation', Boolean(caps?.generation)], ['Model tools', Boolean(caps?.tools)], ['Prompt memory', Boolean(caps?.interceptor)],
     ['Gallery', Boolean(caps?.images)], ['Camera', Boolean(caps?.imageGen)], ['Floating phone', Boolean(caps?.panels)],
-    ['Characters', Boolean(caps?.characters)], ['Personas', Boolean(caps?.personas)], ['Push', Boolean(caps?.push)],
+    ['Characters', Boolean(caps?.characters)], ['Personas', Boolean(caps?.personas)], ['Scene sync', Boolean(caps?.sceneSync)], ['Push', Boolean(caps?.push)],
   ] as Array<[string, boolean]>) {
     const cell = el('div', 'lp-permission', label)
     cell.dataset.granted = String(granted)
@@ -176,7 +178,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   data.append(exportButton, importButton, file, resetCurrent, resetAll, resetPrefs)
   content.append(appearance, behavior, visual, access, data)
 
-  page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!.addEventListener('click', () => {
+  saveSettings = () => {
     settings.animation = animation.value as PhoneSettings['animation']
     settings.animationDurationMs = Number(duration.value)
     settings.manualVisualProfile.positive = positive.value.trim()
@@ -194,6 +196,6 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
     host.send('lumiphone:save_preferences', { preferences: settings })
     host.preview(normalizePreferences(settings), { appearance: true })
     host.openHome()
-  })
+  }
   return page
 }

@@ -392,10 +392,15 @@ function serializeWithinBudget(value, budget = MODEL_CONTEXT_BUDGET) {
   return "{}";
 }
 function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
-  const contacts = state.contacts.map((contact) => ({
+  const contacts = state.contacts.filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned).slice(0, 12).map((contact) => ({
+    id: contact.id.slice(0, 180),
     name: contact.name.slice(0, 120),
-    recent: contact.messages.slice(-3).map((message) => `${message.sender}: ${message.text.slice(0, 180)}`)
-  })).filter((contact) => contact.recent.length).slice(0, 8);
+    role: contact.role.slice(0, 120),
+    source: contact.source.kind,
+    inScene: contact.presence.inScene,
+    pinned: contact.contextPolicy.pinned,
+    ...contact.source.kind === "npc" ? { brief: (contact.source.description || contact.description).slice(0, 360) } : {}
+  }));
   const trackers = state.trackers.filter((tracker) => tracker.visibleToModel).slice(0, 12).map((tracker) => {
     const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
     const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
@@ -420,7 +425,7 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
 }
 
 // src/domain/navigation.ts
-var APPS = new Set(["home", "messages", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
+var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
 function shortId(value) {
   if (typeof value !== "string")
     return;
@@ -433,7 +438,19 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
   const raw = value;
   const app = typeof raw.app === "string" && APPS.has(raw.app) ? raw.app : fallback.app;
   if (app === "messages")
-    return { app, contactId: shortId(raw.contactId), messageId: shortId(raw.messageId) };
+    return {
+      app,
+      conversationId: shortId(raw.conversationId),
+      contactId: shortId(raw.contactId),
+      messageId: shortId(raw.messageId),
+      view: raw.view === "new-group" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
+    };
+  if (app === "contacts")
+    return {
+      app,
+      contactId: shortId(raw.contactId),
+      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "list" ? raw.view : undefined
+    };
   if (app === "trackers")
     return {
       app,
@@ -456,6 +473,8 @@ function legacyActionRoute(app, action) {
   const id = shortId(action);
   if (app === "messages")
     return { app, contactId: id };
+  if (app === "contacts")
+    return { app, contactId: id, view: id ? "detail" : "list" };
   if (app === "trackers")
     return { app, trackerId: id, view: id ? "detail" : undefined };
   if (app === "calendar")
@@ -469,9 +488,230 @@ function legacyActionRoute(app, action) {
   return { app };
 }
 
-// src/backend.ts
-var STATE_VERSION = 2;
+// src/domain/contacts.ts
+var MAX_CONTACTS = 80;
+var MAX_CONVERSATIONS = 80;
 var MAX_MESSAGES = 240;
+var ACCENTS = ["#8b7dff", "#ef6f9a", "#55bfa3", "#e19a55", "#5e9ee6", "#b779dc", "#df6f64", "#86a94c"];
+function record3(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean2(value, max) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function flag(value, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function timestamp(value, fallback) {
+  const candidate = clean2(value, 40);
+  return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
+}
+function stableContactAccent(seed) {
+  let hash = 0;
+  for (const char of seed)
+    hash = (hash << 5) - hash + char.charCodeAt(0) | 0;
+  return ACCENTS[Math.abs(hash) % ACCENTS.length];
+}
+function contactSourceKey(source) {
+  if (source.kind === "character")
+    return `character:${source.characterId}`;
+  if (source.kind === "council")
+    return `council:${source.memberId || source.itemId}`;
+  return `npc:${source.sceneKey || ""}`;
+}
+function normalizeSource(value, contactId, characterId, description) {
+  if (record3(value) && value.kind === "character") {
+    return { kind: "character", characterId: clean2(value.characterId, 180) || contactId };
+  }
+  if (record3(value) && value.kind === "council") {
+    return {
+      kind: "council",
+      memberId: clean2(value.memberId, 180),
+      itemId: clean2(value.itemId, 180)
+    };
+  }
+  if (record3(value) && value.kind === "npc") {
+    return {
+      kind: "npc",
+      origin: value.origin === "generated" || value.origin === "scene" ? value.origin : "manual",
+      description: clean2(value.description, 600) || description,
+      sceneKey: clean2(value.sceneKey, 180) || undefined
+    };
+  }
+  if (contactId === characterId)
+    return { kind: "character", characterId };
+  return { kind: "npc", origin: "manual", description };
+}
+function normalizePocketContact(value, context) {
+  if (!record3(value))
+    return null;
+  const contactId = clean2(value.id, 180) || context.makeId("contact");
+  const name = clean2(value.name, 120);
+  if (!name)
+    return null;
+  const description = clean2(value.description, 600) || clean2(value.subtitle, 160);
+  const source = normalizeSource(value.source, contactId, context.characterId, description);
+  const presence = record3(value.presence) ? value.presence : {};
+  const contextPolicy = record3(value.contextPolicy) ? value.contextPolicy : {};
+  const createdAt = timestamp(value.createdAt, context.now);
+  return {
+    id: contactId,
+    name,
+    role: clean2(value.role, 120) || clean2(value.subtitle, 120) || (source.kind === "character" ? "Character" : source.kind === "council" ? "Council member" : "Pocket NPC"),
+    description,
+    avatarUrl: clean2(value.avatarUrl, 2000),
+    accent: /^#[0-9a-f]{6}$/i.test(clean2(value.accent, 20)) ? clean2(value.accent, 20) : stableContactAccent(contactId),
+    source,
+    presence: {
+      inScene: flag(presence.inScene, source.kind === "character" && source.characterId === context.characterId),
+      lastSceneAt: timestamp(presence.lastSceneAt, "")
+    },
+    contextPolicy: { pinned: flag(contextPolicy.pinned) },
+    createdAt,
+    updatedAt: timestamp(value.updatedAt, createdAt)
+  };
+}
+function normalizeMessage(value, fallbackContact, now, makeId) {
+  if (!record3(value))
+    return null;
+  const messageText = clean2(value.text, 12000);
+  if (!messageText)
+    return null;
+  const legacySender = clean2(value.sender, 20);
+  const sender = legacySender === "system" ? "system" : legacySender === "user" || legacySender === "persona" ? "persona" : "contact";
+  const senderContactId = sender === "contact" ? clean2(value.senderContactId, 180) || fallbackContact?.id : undefined;
+  const read = flag(value.read, sender !== "contact");
+  const status = value.status === "pending" || value.status === "failed" || value.status === "sent" || value.status === "delivered" || value.status === "read" ? value.status : read ? "read" : "delivered";
+  return {
+    id: clean2(value.id, 120) || makeId("msg"),
+    sender,
+    senderContactId,
+    senderName: clean2(value.senderName, 120) || (sender === "persona" ? "You" : sender === "system" ? "Pocket" : fallbackContact?.name || "Unknown contact"),
+    senderAccent: clean2(value.senderAccent, 40) || (sender === "contact" ? fallbackContact?.accent || stableContactAccent(senderContactId || "unknown") : ""),
+    text: messageText,
+    createdAt: timestamp(value.createdAt, now),
+    read,
+    status,
+    imageId: clean2(value.imageId, 160) || undefined,
+    imageUrl: clean2(value.imageUrl, 2000) || undefined
+  };
+}
+function normalizeConversation(value, contacts, now, makeId) {
+  if (!record3(value))
+    return null;
+  const participantContactIds = [...new Set((Array.isArray(value.participantContactIds) ? value.participantContactIds : []).map((entry) => clean2(entry, 180)).filter(Boolean))].slice(0, 16);
+  if (!participantContactIds.length)
+    return null;
+  const fallback = contacts.find((contact) => contact.id === participantContactIds[0]);
+  const messages = (Array.isArray(value.messages) ? value.messages : []).map((entry) => normalizeMessage(entry, fallback, now, makeId)).filter((entry) => Boolean(entry)).slice(-MAX_MESSAGES);
+  const kind = value.kind === "group" || participantContactIds.length > 1 ? "group" : "direct";
+  const createdAt = timestamp(value.createdAt, messages[0]?.createdAt || now);
+  return {
+    id: clean2(value.id, 180) || makeId("conversation"),
+    kind,
+    title: clean2(value.title, 120) || (kind === "direct" ? fallback?.name || "Conversation" : participantContactIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group"),
+    participantContactIds,
+    messages,
+    unread: Math.max(0, Math.min(999, Math.floor(Number(value.unread) || messages.filter((entry) => entry.sender === "contact" && !entry.read).length))),
+    createdAt,
+    updatedAt: timestamp(value.updatedAt, messages.at(-1)?.createdAt || createdAt)
+  };
+}
+function activeContact(context) {
+  const contactId = context.characterId || "character";
+  return {
+    id: contactId,
+    name: context.characterName || "Character",
+    role: "Character",
+    description: "",
+    avatarUrl: "",
+    accent: stableContactAccent(contactId),
+    source: { kind: "character", characterId: contactId },
+    presence: { inScene: true, lastSceneAt: context.now },
+    contextPolicy: { pinned: false },
+    createdAt: context.now,
+    updatedAt: context.now
+  };
+}
+function ensureDirectConversation(state, contactId, now, makeId) {
+  const existing = state.conversations.find((conversation2) => conversation2.kind === "direct" && conversation2.participantContactIds[0] === contactId);
+  if (existing)
+    return existing;
+  const contact = state.contacts.find((entry) => entry.id === contactId);
+  const conversation = {
+    id: makeId("conversation"),
+    kind: "direct",
+    title: contact?.name || "Conversation",
+    participantContactIds: [contactId],
+    messages: [],
+    unread: 0,
+    createdAt: now,
+    updatedAt: now
+  };
+  state.conversations.push(conversation);
+  return conversation;
+}
+function normalizeContactCollections(value, context) {
+  const contacts = (Array.isArray(value.contacts) ? value.contacts : []).map((entry) => normalizePocketContact(entry, context)).filter((entry) => Boolean(entry)).slice(0, MAX_CONTACTS);
+  let current = contacts.find((entry) => entry.source.kind === "character" && entry.source.characterId === context.characterId);
+  if (!current) {
+    current = activeContact(context);
+    contacts.unshift(current);
+  } else if (context.characterName && context.characterName !== "Character") {
+    current.name = context.characterName;
+    current.presence.inScene = true;
+    current.presence.lastSceneAt ||= context.now;
+  }
+  const legacy = Number(value.version || 0) < 3 || Array.isArray(value.contacts) && value.contacts.some((entry) => record3(entry) && Array.isArray(entry.messages));
+  const rawConversations = Array.isArray(value.conversations) ? [...value.conversations] : [];
+  if (legacy && Array.isArray(value.contacts)) {
+    for (const rawContact of value.contacts) {
+      if (!record3(rawContact))
+        continue;
+      const contactId = clean2(rawContact.id, 180) || context.characterId;
+      const contact = contacts.find((entry) => entry.id === contactId);
+      if (!contact)
+        continue;
+      rawConversations.push({
+        id: `dm_${contact.id}`,
+        kind: "direct",
+        title: contact.name,
+        participantContactIds: [contact.id],
+        messages: Array.isArray(rawContact.messages) ? rawContact.messages : [],
+        unread: rawContact.unread,
+        createdAt: context.now,
+        updatedAt: context.now
+      });
+    }
+  }
+  const normalized = rawConversations.map((entry) => normalizeConversation(entry, contacts, context.now, context.makeId)).filter((entry) => Boolean(entry));
+  const conversations = [];
+  const directByContact = new Map;
+  for (const conversation of normalized) {
+    if (conversation.kind !== "direct") {
+      conversations.push(conversation);
+      continue;
+    }
+    const contactId = conversation.participantContactIds[0];
+    const duplicate = directByContact.get(contactId);
+    if (!duplicate) {
+      directByContact.set(contactId, conversation);
+      conversations.push(conversation);
+      continue;
+    }
+    const seen = new Set(duplicate.messages.map((entry) => entry.id));
+    duplicate.messages.push(...conversation.messages.filter((entry) => !seen.has(entry.id)));
+    duplicate.messages = duplicate.messages.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).slice(-MAX_MESSAGES);
+    duplicate.unread = Math.max(duplicate.unread, conversation.unread);
+    duplicate.updatedAt = duplicate.messages.at(-1)?.createdAt || duplicate.updatedAt;
+  }
+  ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId);
+  return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy };
+}
+
+// src/backend.ts
+var STATE_VERSION = 3;
+var MAX_MESSAGES2 = 240;
 var MAX_NOTIFICATIONS = 80;
 var MAX_NOTES = 120;
 var MAX_EVENTS = 200;
@@ -481,7 +721,7 @@ var stateLocks = new Map;
 var cameraJobs = new Map;
 var notificationThrottle = new Map;
 var PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
-<lumi-phone action="message|note|event|weather|tracker|camera|notify|open" app="messages|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
+<lumi-phone action="message|contact|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
 Do not explain the tag. Do not use it for ordinary narration. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`;
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -526,20 +766,15 @@ function defaultWeather() {
 }
 function defaultState(chatId, characterId, characterName = "Character") {
   const createdAt = nowIso();
+  const collections = normalizeContactCollections({}, { characterId, characterName, now: createdAt, makeId: id });
   return {
     version: STATE_VERSION,
     chatId,
     characterId,
     characterName: characterName || "Character",
     roleplayNow: createdAt,
-    contacts: [{
-      id: characterId || "character",
-      name: characterName || "Character",
-      subtitle: "Available",
-      avatarUrl: "",
-      messages: [],
-      unread: 0
-    }],
+    contacts: collections.contacts,
+    conversations: collections.conversations,
     notes: [],
     events: [],
     weather: defaultWeather(),
@@ -550,48 +785,13 @@ function defaultState(chatId, characterId, characterName = "Character") {
     updatedAt: createdAt
   };
 }
-function normalizeMessage(value) {
-  if (!isRecord(value))
-    return null;
-  const messageText = text2(value.text, 12000);
-  if (!messageText)
-    return null;
-  const sender = value.sender === "user" || value.sender === "system" ? value.sender : "character";
-  return {
-    id: text2(value.id, 120) || id("msg"),
-    sender,
-    text: messageText,
-    createdAt: text2(value.createdAt, 40) || nowIso(),
-    read: bool2(value.read, sender !== "character"),
-    status: value.status === "pending" || value.status === "failed" || value.status === "sent" || value.status === "delivered" || value.status === "read" ? value.status : bool2(value.read, sender !== "character") ? "read" : "delivered",
-    imageId: text2(value.imageId, 160) || undefined,
-    imageUrl: text2(value.imageUrl, 2000) || undefined
-  };
-}
-function normalizeContact(value, fallbackId, fallbackName) {
-  if (!isRecord(value))
-    return null;
-  const messages = (Array.isArray(value.messages) ? value.messages : []).map(normalizeMessage).filter((entry) => Boolean(entry)).slice(-MAX_MESSAGES);
-  const contactId = text2(value.id, 160) || fallbackId;
-  const name = text2(value.name, 120) || fallbackName;
-  if (!contactId || !name)
-    return null;
-  return {
-    id: contactId,
-    name,
-    subtitle: text2(value.subtitle, 160) || "Available",
-    avatarUrl: text2(value.avatarUrl, 2000),
-    messages,
-    unread: Math.max(0, Math.min(999, Math.floor(numberValue(value.unread, messages.filter((item) => !item.read).length))))
-  };
-}
 function normalizeState(value, chatId, characterId, characterName) {
   const fallback = defaultState(chatId, characterId, characterName);
   if (!isRecord(value))
     return fallback;
   if (Number(value.version) > STATE_VERSION)
     return fallback;
-  const contacts = (Array.isArray(value.contacts) ? value.contacts : []).map((item) => normalizeContact(item, characterId || "character", characterName || "Character")).filter((item) => Boolean(item)).slice(0, 30);
+  const collections = normalizeContactCollections(value, { characterId, characterName, now: nowIso(), makeId: id });
   const notes = (Array.isArray(value.notes) ? value.notes : []).slice(0, MAX_NOTES).flatMap((item) => {
     if (!isRecord(item))
       return [];
@@ -657,7 +857,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     const source = isRecord(item.source) ? item.source : {};
     return [{
       id: text2(item.id, 160) || id("act"),
-      kind: item.kind === "message" || item.kind === "tracker-change" || item.kind === "timeline" || item.kind === "note" || item.kind === "image" || item.kind === "weather" ? item.kind : "system",
+      kind: item.kind === "message" || item.kind === "contact" || item.kind === "tracker-change" || item.kind === "timeline" || item.kind === "note" || item.kind === "image" || item.kind === "weather" ? item.kind : "system",
       title,
       summary: text2(item.summary, 500) || undefined,
       route: normalizePocketRoute(item.route),
@@ -668,6 +868,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         messageId: text2(source.messageId, 180) || undefined,
         trackerId: text2(source.trackerId, 180) || undefined,
         contactId: text2(source.contactId, 180) || undefined,
+        conversationId: text2(source.conversationId, 180) || undefined,
         eventId: text2(source.eventId, 180) || undefined,
         noteId: text2(source.noteId, 180) || undefined,
         imageId: text2(source.imageId, 180) || undefined
@@ -699,7 +900,8 @@ function normalizeState(value, chatId, characterId, characterName) {
     characterId,
     characterName: characterName || text2(value.characterName, 120) || fallback.characterName,
     roleplayNow: text2(value.roleplayNow, 80) || fallback.roleplayNow,
-    contacts: contacts.length ? contacts : fallback.contacts,
+    contacts: collections.contacts,
+    conversations: collections.conversations,
     notes,
     events,
     weather,
@@ -736,7 +938,7 @@ async function loadState(chatId, characterId, userId) {
     stateChanged ||= result.changed;
     return result.tracker;
   });
-  const contact = state.contacts.find((item) => item.id === characterId);
+  const contact = state.contacts.find((item) => item.source.kind === "character" && item.source.characterId === characterId);
   if (contact && characterName !== "Character")
     contact.name = characterName;
   state.characterName = characterName;
@@ -789,7 +991,8 @@ function capabilities() {
     images: spindle.permissions.has("images"),
     imageGen: spindle.permissions.has("image_gen"),
     panels: spindle.permissions.has("ui_panels"),
-    push: spindle.permissions.has("push_notification")
+    push: spindle.permissions.has("push_notification"),
+    sceneSync: spindle.permissions.has("chat_mutation")
   };
 }
 function send(payload, userId) {
@@ -855,6 +1058,158 @@ async function resolveContext(input, userId) {
     } catch {}
   }
   return { chatId: chatId || "_lobby", characterId: characterId || "_none" };
+}
+function sourceMatches(contact, kind, sourceId, itemId = "") {
+  if (kind === "character")
+    return contact.source.kind === "character" && contact.source.characterId === sourceId;
+  if (kind === "council")
+    return contact.source.kind === "council" && (contact.source.memberId === sourceId || Boolean(itemId && contact.source.itemId === itemId) || contact.source.itemId === sourceId);
+  return false;
+}
+async function listContactSources(state, userId) {
+  const options = [];
+  if (spindle.permissions.has("characters")) {
+    try {
+      const listed = await spindle.characters.list({ limit: 200, offset: 0 }, userId);
+      for (const character of Array.isArray(listed?.data) ? listed.data : []) {
+        const sourceId = text2(character?.id, 180);
+        const name = text2(character?.name, 120);
+        if (!sourceId || !name)
+          continue;
+        options.push({
+          kind: "character",
+          sourceId,
+          name,
+          role: "Character",
+          description: text2(character?.description, 600),
+          avatarUrl: text2(character?.avatar_url ?? character?.avatarUrl, 2000),
+          importedContactId: state.contacts.find((entry) => sourceMatches(entry, "character", sourceId))?.id
+        });
+      }
+    } catch {}
+  }
+  try {
+    const members = await spindle.council.getMembers({ userId });
+    for (const member of Array.isArray(members) ? members : []) {
+      const sourceId = text2(member?.memberId, 180);
+      const itemId = text2(member?.itemId, 180);
+      const name = text2(member?.name, 120);
+      if (!sourceId || !name)
+        continue;
+      options.push({
+        kind: "council",
+        sourceId,
+        itemId,
+        name,
+        role: text2(member?.role, 120) || "Council member",
+        description: text2(member?.definition, 600),
+        avatarUrl: text2(member?.avatarUrl, 2000),
+        importedContactId: state.contacts.find((entry) => sourceMatches(entry, "council", sourceId, itemId))?.id
+      });
+    }
+  } catch {}
+  return options;
+}
+async function resolveContactProfile(contact, userId) {
+  if (contact.source.kind === "character") {
+    if (!spindle.permissions.has("characters"))
+      throw new Error(`Character access is required to reply as ${contact.name}.`);
+    const character = await spindle.characters.get(contact.source.characterId, userId).catch(() => null);
+    if (!character)
+      throw new Error(`The linked character for ${contact.name} is unavailable. Re-link or remove this contact.`);
+    return {
+      name: text2(character.name, 120) || contact.name,
+      role: contact.role,
+      description: text2(character.description, 8000),
+      personality: text2(character.personality, 4000),
+      behavior: text2(character.scenario ?? character.mes_example, 3000),
+      source: `character:${contact.source.characterId}`
+    };
+  }
+  if (contact.source.kind === "council") {
+    const councilSource = contact.source;
+    const members = await spindle.council.getMembers({ userId }).catch(() => []);
+    const member = members.find((entry) => text2(entry?.memberId, 180) === councilSource.memberId || text2(entry?.itemId, 180) === councilSource.itemId);
+    if (member)
+      return {
+        name: text2(member.name, 120) || contact.name,
+        role: text2(member.role, 120) || contact.role,
+        description: text2(member.definition, 8000),
+        personality: text2(member.personality, 4000),
+        behavior: text2(member.behavior, 3000),
+        source: `council:${councilSource.memberId || councilSource.itemId}`
+      };
+    const items = await spindle.council.getAvailableLumiaItems({ userId }).catch(() => []);
+    const item = items.find((entry) => text2(entry?.id, 180) === councilSource.itemId);
+    if (!item)
+      throw new Error(`The linked Council profile for ${contact.name} is unavailable. Re-link or remove this contact.`);
+    return {
+      name: text2(item.name, 120) || contact.name,
+      role: contact.role,
+      description: text2(item.definition, 8000),
+      personality: text2(item.personality, 4000),
+      behavior: text2(item.behavior, 3000),
+      source: `council-item:${councilSource.itemId}`
+    };
+  }
+  return {
+    name: contact.name,
+    role: contact.role,
+    description: text2(contact.source.description || contact.description, 600),
+    personality: "",
+    behavior: "",
+    source: `npc:${contact.source.origin}`
+  };
+}
+function parseStrictJson(content) {
+  const raw = text2(content, 30000).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const parsed = JSON.parse(raw);
+  if (!isRecord(parsed))
+    throw new Error("Generation returned an invalid JSON object.");
+  return parsed;
+}
+function upsertContact(state, contact) {
+  const sourceKey = contactSourceKey(contact.source);
+  const existing = state.contacts.find((entry) => entry.id === contact.id || contact.source.kind !== "npc" && contactSourceKey(entry.source) === sourceKey || contact.source.kind === "npc" && entry.source.kind === "npc" && contact.source.sceneKey && entry.source.sceneKey === contact.source.sceneKey);
+  if (existing) {
+    const preserved = { createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy };
+    Object.assign(existing, contact, preserved, { updatedAt: nowIso() });
+    return existing;
+  }
+  state.contacts.push(contact);
+  state.contacts = state.contacts.slice(-80);
+  return contact;
+}
+function contactFromSource(option) {
+  const createdAt = nowIso();
+  const source = option.kind === "character" ? { kind: "character", characterId: option.sourceId } : { kind: "council", memberId: option.sourceId, itemId: option.itemId || "" };
+  return {
+    id: id("contact"),
+    name: option.name,
+    role: option.role,
+    description: option.description,
+    avatarUrl: option.avatarUrl,
+    accent: stableContactAccent(`${option.kind}:${option.sourceId}`),
+    source,
+    presence: { inScene: false, lastSceneAt: "" },
+    contextPolicy: { pinned: false },
+    createdAt,
+    updatedAt: createdAt
+  };
+}
+function resolveConversation(state, input) {
+  const conversationId = text2(input.conversationId ?? input.conversation_id, 180);
+  if (conversationId) {
+    const conversation = state.conversations.find((entry) => entry.id === conversationId);
+    if (!conversation)
+      throw new Error("That Pocket conversation no longer exists.");
+    return conversation;
+  }
+  const contactId = text2(input.contactId ?? input.contact_id, 180);
+  const contact = state.contacts.find((entry) => entry.id === contactId) || (!contactId ? state.contacts.find((entry) => entry.source.kind === "character" && entry.source.characterId === state.characterId) : undefined);
+  if (!contact)
+    throw new Error("Choose a valid contact before opening a conversation.");
+  return ensureDirectConversation(state, contact.id, nowIso(), id);
 }
 async function resolveSwarmProfile(chatId, characterId, settings) {
   const manual = settings?.manualVisualProfile || defaultPreferences().manualVisualProfile;
@@ -1053,20 +1408,50 @@ async function generateMessage(input, userId) {
   await withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId);
     const preferences = await loadPreferences(userId);
-    const contactId = text2(input.contactId, 180) || context.characterId;
-    const contact = state.contacts.find((item) => item.id === contactId) || state.contacts[0];
-    send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, contactId: contact.id, phase: "pending" }, userId);
-    const character = spindle.permissions.has("characters") && context.characterId !== "_none" ? await spindle.characters.get(context.characterId, userId).catch(() => null) : null;
-    const history = contact.messages.slice(-24).map((message) => `${message.sender === "user" ? "User" : contact.name}: ${message.text}`).join(`
-`);
+    const conversation = resolveConversation(state, input);
+    const participants = conversation.participantContactIds.map((contactId) => state.contacts.find((entry) => entry.id === contactId)).filter((entry) => Boolean(entry));
+    if (!participants.length)
+      throw new Error("This conversation has no available contact participants.");
+    let contact;
+    const requestedSpeaker = text2(input.speakerContactId ?? input.speaker_contact_id, 180);
+    if (requestedSpeaker && requestedSpeaker !== "auto") {
+      const explicit = participants.find((entry) => entry.id === requestedSpeaker);
+      if (!explicit)
+        throw new Error("The selected speaker is not a participant in this conversation.");
+      contact = explicit;
+    } else if (conversation.kind === "direct") {
+      contact = participants[0];
+    } else {
+      const lastSpeakerId = [...conversation.messages].reverse().find((entry) => entry.sender === "contact")?.senderContactId;
+      const currentIndex = participants.findIndex((entry) => entry.id === lastSpeakerId);
+      contact = participants[(currentIndex + 1 + participants.length) % participants.length];
+    }
+    send({
+      type: "lumiphone:message_progress",
+      requestId,
+      chatId: context.chatId,
+      characterId: context.characterId,
+      conversationId: conversation.id,
+      contactId: contact.id,
+      speakerContactId: contact.id,
+      phase: "pending"
+    }, userId);
+    const profile = await resolveContactProfile(contact, userId);
+    const roster = participants.map((entry) => `${entry.name} (${entry.role || entry.source.kind})`).join("; ").slice(0, 2000);
+    const history = conversation.messages.slice(-30).map((message) => `${message.sender === "persona" ? "User" : message.senderName || "Pocket"}: ${message.text.slice(0, 1200)}`).join(`
+`).slice(-12000);
     const instruction = text2(input.instruction, 2000) || "Reply naturally to the latest message.";
     const response = await spindle.generate.quiet({
       type: "quiet",
       messages: [
-        { role: "system", content: `Write one private phone text as ${contact.name}. Stay in character. Return only the message text, without a name label, quotes, narration, or XML.
-Character description: ${text2(character?.description, 8000)}
-Personality: ${text2(character?.personality, 4000)}` },
-        { role: "user", content: `Conversation:
+        { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML.
+Source: ${profile.source}
+Role: ${profile.role.slice(0, 120)}
+Description: ${profile.description.slice(0, 8000)}
+Personality: ${profile.personality.slice(0, 4000)}
+Behavior: ${profile.behavior.slice(0, 3000)}
+Conversation roster: ${roster}` },
+        { role: "user", content: `Recent thread:
 ${history || "(no messages yet)"}
 
 Direction: ${instruction}` }
@@ -1077,18 +1462,163 @@ Direction: ${instruction}` }
     const reply = text2(response.content, 8000);
     if (!reply)
       throw new Error("The character did not return a phone message.");
-    contact.messages.push({ id: id("msg"), sender: "character", text: reply, createdAt: nowIso(), read: false, status: "delivered" });
-    contact.messages = contact.messages.slice(-MAX_MESSAGES);
-    contact.unread += 1;
-    const phoneMessageId = contact.messages.at(-1)?.id;
-    const route = { app: "messages", contactId: contact.id, messageId: phoneMessageId };
+    conversation.messages.push({
+      id: id("msg"),
+      sender: "contact",
+      senderContactId: contact.id,
+      senderName: contact.name,
+      senderAccent: contact.accent,
+      text: reply,
+      createdAt: nowIso(),
+      read: false,
+      status: "delivered"
+    });
+    conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
+    conversation.unread += 1;
+    conversation.updatedAt = nowIso();
+    const phoneMessageId = conversation.messages.at(-1)?.id;
+    const route = { app: "messages", conversationId: conversation.id, messageId: phoneMessageId };
     const notification = addNotification(state, { app: "messages", title: contact.name, body: reply.slice(0, 220), route });
-    const activity = addActivity(state, { kind: "message", title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id } });
+    const activity = addActivity(state, { kind: "message", title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } });
     await saveState(state, userId);
     await maybePush(state, preferences, notification, userId);
     await sendState(state, userId, "message", preferences.autoOpenOnModelAction);
     sendActivity(activity, userId);
-    send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, contactId: contact.id, phase: "done" }, userId);
+    send({
+      type: "lumiphone:message_progress",
+      requestId,
+      chatId: context.chatId,
+      characterId: context.characterId,
+      conversationId: conversation.id,
+      contactId: contact.id,
+      speakerContactId: contact.id,
+      phase: "done"
+    }, userId);
+  });
+}
+async function generateNpcContact(input, userId) {
+  if (!spindle.permissions.has("generation"))
+    throw new Error("Enable Generation to create an NPC contact from a description.");
+  const context = await resolveContext(input, userId);
+  const prompt = text2(input.description, 2000);
+  if (!prompt)
+    throw new Error("Describe the NPC you want to add.");
+  const response = await spindle.generate.quiet({
+    type: "quiet",
+    messages: [
+      { role: "system", content: 'Create one compact roleplay phone contact from the user description. Return strict JSON only with exactly these string fields: {"name":"","role":"","description":""}. No markdown. Name and role must each be at most 120 characters; description at most 600 characters.' },
+      { role: "user", content: prompt }
+    ],
+    parameters: { temperature: 0.55, max_tokens: 350 },
+    userId
+  });
+  const parsed = parseStrictJson(response.content);
+  const name = text2(parsed.name, 120);
+  if (!name)
+    throw new Error("NPC generation did not return a valid name.");
+  await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    const state = await loadState(context.chatId, context.characterId, userId);
+    const createdAt = nowIso();
+    const contact = upsertContact(state, {
+      id: id("contact"),
+      name,
+      role: text2(parsed.role, 120) || "Pocket NPC",
+      description: text2(parsed.description, 600),
+      avatarUrl: "",
+      accent: stableContactAccent(name),
+      source: { kind: "npc", origin: "generated", description: text2(parsed.description, 600) },
+      presence: { inScene: false, lastSceneAt: "" },
+      contextPolicy: { pinned: false },
+      createdAt,
+      updatedAt: createdAt
+    });
+    const activity = addActivity(state, { kind: "contact", title: `${contact.name} added`, summary: contact.role, route: { app: "contacts", contactId: contact.id, view: "detail" }, source: { contactId: contact.id } });
+    await saveState(state, userId);
+    await sendState(state, userId, "contact");
+    sendActivity(activity, userId);
+    send({ type: "lumiphone:contact_created", requestId: text2(input.requestId, 180), contactId: contact.id }, userId);
+  });
+}
+function sceneKeyFor(name) {
+  return name.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 120) || name.toLocaleLowerCase().slice(0, 120);
+}
+async function syncSceneContacts(input, userId) {
+  if (!spindle.permissions.has("generation"))
+    throw new Error("Enable Generation to identify scene contacts.");
+  if (!spindle.permissions.has("chat_mutation"))
+    throw new Error("Enable Chat Mutation so Pocket can read the recent scene when you request a sync.");
+  const context = await resolveContext(input, userId);
+  const messages = await spindle.chat.getMessages(context.chatId);
+  const transcript = messages.slice(-24).map((message) => `${message.role}: ${text2(message.content, 1200)}`).join(`
+`).slice(-16000);
+  const response = await spindle.generate.quiet({
+    type: "quiet",
+    messages: [
+      { role: "system", content: 'Identify named non-user actors who are physically or actively present in the most recent roleplay scene. Return strict JSON only: {"contacts":[{"name":"","role":"","description":""}]}. Return at most 8 contacts. Do not include merely mentioned, messaged, absent, historical, or hypothetical people. Name and role max 120 characters; description max 600.' },
+      { role: "user", content: transcript || "(empty chat)" }
+    ],
+    parameters: { temperature: 0.2, max_tokens: 900 },
+    userId
+  });
+  const parsed = parseStrictJson(response.content);
+  const found = (Array.isArray(parsed.contacts) ? parsed.contacts : []).slice(0, 8).flatMap((entry) => {
+    if (!isRecord(entry))
+      return [];
+    const name = text2(entry.name, 120);
+    if (!name)
+      return [];
+    return [{ name, role: text2(entry.role, 120) || "Scene contact", description: text2(entry.description, 600) }];
+  });
+  await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    const state = await loadState(context.chatId, context.characterId, userId);
+    const sceneAt = nowIso();
+    for (const contact of state.contacts) {
+      if (contact.source.kind === "npc" && contact.source.origin === "scene")
+        contact.presence.inScene = false;
+    }
+    const contactIds = [];
+    for (const candidate of found) {
+      const sceneKey = sceneKeyFor(candidate.name);
+      const existing = state.contacts.find((entry) => entry.source.kind === "npc" && entry.source.origin === "scene" && entry.source.sceneKey === sceneKey) || state.contacts.find((entry) => entry.name.toLocaleLowerCase() === candidate.name.toLocaleLowerCase());
+      if (existing && !(existing.source.kind === "npc" && existing.source.origin === "scene")) {
+        existing.presence.inScene = true;
+        existing.presence.lastSceneAt = sceneAt;
+        existing.updatedAt = sceneAt;
+        contactIds.push(existing.id);
+        continue;
+      }
+      const createdAt = existing?.createdAt || sceneAt;
+      const contact = upsertContact(state, {
+        id: existing?.id || id("contact"),
+        name: candidate.name,
+        role: candidate.role,
+        description: candidate.description,
+        avatarUrl: existing?.avatarUrl || "",
+        accent: existing?.accent || stableContactAccent(sceneKey),
+        source: { kind: "npc", origin: "scene", description: candidate.description, sceneKey },
+        presence: { inScene: true, lastSceneAt: sceneAt },
+        contextPolicy: existing?.contextPolicy || { pinned: false },
+        createdAt,
+        updatedAt: sceneAt
+      });
+      contactIds.push(contact.id);
+    }
+    const active = state.contacts.find((entry) => entry.source.kind === "character" && entry.source.characterId === state.characterId);
+    if (active) {
+      active.presence.inScene = true;
+      active.presence.lastSceneAt = sceneAt;
+    }
+    const activity = addActivity(state, {
+      kind: "contact",
+      title: "Scene contacts synced",
+      summary: `${contactIds.length} actor${contactIds.length === 1 ? "" : "s"} present`,
+      route: { app: "contacts" },
+      source: {}
+    });
+    await saveState(state, userId);
+    await sendState(state, userId, "scene_contacts");
+    sendActivity(activity, userId);
+    send({ type: "lumiphone:scene_contacts_done", requestId: text2(input.requestId, 180), contactIds }, userId);
   });
 }
 function parseTagContent(content) {
@@ -1162,25 +1692,82 @@ async function applyAction(input, userId, source = "model") {
       return result;
     }
     if (action === "message") {
-      const contactId = text2(payload.contact_id ?? payload.contactId, 180) || context.characterId;
-      let contact = state.contacts.find((item) => item.id === contactId);
-      if (!contact) {
-        contact = { id: contactId || id("contact"), name: text2(payload.contact_name ?? payload.contactName, 120) || state.characterName, subtitle: "Available", avatarUrl: "", messages: [], unread: 0 };
+      const requestedContactId = text2(payload.contact_id ?? payload.contactId, 180);
+      let contact = state.contacts.find((item) => item.id === requestedContactId);
+      if (!contact && requestedContactId) {
+        const createdAt = nowIso();
+        contact = {
+          id: requestedContactId,
+          name: text2(payload.contact_name ?? payload.contactName, 120) || "Pocket NPC",
+          role: text2(payload.contact_role ?? payload.contactRole, 120) || "Pocket NPC",
+          description: text2(payload.contact_description ?? payload.contactDescription, 600),
+          avatarUrl: "",
+          accent: stableContactAccent(requestedContactId),
+          source: { kind: "npc", origin: "manual", description: text2(payload.contact_description ?? payload.contactDescription, 600) },
+          presence: { inScene: false, lastSceneAt: "" },
+          contextPolicy: { pinned: false },
+          createdAt,
+          updatedAt: createdAt
+        };
         state.contacts.push(contact);
       }
+      const conversation = text2(payload.conversationId ?? payload.conversation_id, 180) ? resolveConversation(state, payload) : ensureDirectConversation(state, contact?.id || state.contacts[0].id, nowIso(), id);
       const messageText = text2(payload.text ?? payload.content, 12000);
       if (!messageText)
         throw new Error("A phone message needs text.");
-      const sender = source === "user" || payload.sender === "user" ? "user" : "character";
-      contact.messages.push({ id: id("msg"), sender, text: messageText, createdAt: nowIso(), read: sender === "user", status: sender === "user" ? "sent" : "delivered" });
-      contact.messages = contact.messages.slice(-MAX_MESSAGES);
-      if (sender === "character")
-        contact.unread += 1;
-      const phoneMessageId = contact.messages.at(-1)?.id;
-      const route = { app: "messages", contactId: contact.id, messageId: phoneMessageId };
-      notification = sender === "character" ? addNotification(state, { app: "messages", title: contact.name, body: messageText.slice(0, 220), route }) : null;
-      result = { ...result, contactId: contact.id, messageId: contact.messages.at(-1)?.id };
-      activity = addActivity(state, { kind: "message", title: contact.name, summary: messageText.slice(0, 280), route, source: { messageId: text2(input.messageId, 180) || undefined, contactId: contact.id } }, command);
+      const sender = source === "user" || payload.sender === "user" || payload.sender === "persona" ? "persona" : payload.sender === "system" ? "system" : "contact";
+      const senderContactId = sender === "contact" ? text2(payload.senderContactId ?? payload.sender_contact_id, 180) || contact?.id || conversation.participantContactIds[0] : undefined;
+      const senderContact = senderContactId ? state.contacts.find((entry) => entry.id === senderContactId) : undefined;
+      if (sender === "contact" && (!senderContact || !conversation.participantContactIds.includes(senderContact.id)))
+        throw new Error("The message sender must be a participant in this conversation.");
+      const message = {
+        id: id("msg"),
+        sender,
+        senderContactId,
+        senderName: sender === "persona" ? "You" : sender === "system" ? "Pocket" : senderContact.name,
+        senderAccent: senderContact?.accent || "",
+        text: messageText,
+        createdAt: nowIso(),
+        read: sender !== "contact",
+        status: sender === "persona" ? "sent" : sender === "system" ? "read" : "delivered"
+      };
+      conversation.messages.push(message);
+      conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
+      conversation.updatedAt = message.createdAt;
+      if (sender === "contact")
+        conversation.unread += 1;
+      const route = { app: "messages", conversationId: conversation.id, messageId: message.id };
+      notification = sender === "contact" ? addNotification(state, { app: "messages", title: senderContact.name, body: messageText.slice(0, 220), route }) : null;
+      result = { ...result, contactId: senderContact?.id || contact?.id, conversationId: conversation.id, messageId: message.id };
+      activity = addActivity(state, { kind: "message", title: senderContact?.name || conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text2(input.messageId, 180) || message.id, contactId: senderContact?.id || contact?.id, conversationId: conversation.id } }, command);
+    } else if (action === "contact") {
+      const contactId = text2(payload.contactId ?? payload.contact_id ?? payload.id, 180);
+      const existing = state.contacts.find((entry) => entry.id === contactId);
+      const name = text2(payload.name ?? payload.title, 120) || existing?.name;
+      if (!name)
+        throw new Error("A contact action needs a name.");
+      const createdAt = existing?.createdAt || nowIso();
+      const requestedAccent = text2(payload.accent, 20);
+      const contact = upsertContact(state, {
+        id: existing?.id || id("contact"),
+        name,
+        role: text2(payload.role, 120) || existing?.role || "Pocket NPC",
+        description: text2(payload.description ?? payload.text ?? payload.content, 600) || existing?.description || "",
+        avatarUrl: existing?.avatarUrl || "",
+        accent: /^#[0-9a-f]{6}$/i.test(requestedAccent) ? requestedAccent : existing?.accent || stableContactAccent(name),
+        source: existing?.source || { kind: "npc", origin: "manual", description: text2(payload.description ?? payload.text ?? payload.content, 600) },
+        presence: {
+          inScene: bool2(payload.inScene ?? payload.in_scene, existing?.presence.inScene),
+          lastSceneAt: bool2(payload.inScene ?? payload.in_scene, existing?.presence.inScene) ? nowIso() : existing?.presence.lastSceneAt || ""
+        },
+        contextPolicy: { pinned: bool2(payload.pinned, existing?.contextPolicy.pinned) },
+        createdAt,
+        updatedAt: nowIso()
+      });
+      const route = { app: "contacts", contactId: contact.id, view: "detail" };
+      notification = source !== "user" ? addNotification(state, { app: "contacts", title: contact.name, body: contact.role, route }) : null;
+      result.contactId = contact.id;
+      activity = addActivity(state, { kind: "contact", title: contact.name, summary: contact.role, route, source: { messageId: text2(input.messageId, 180) || undefined, contactId: contact.id } }, command);
     } else if (action === "note") {
       const noteId = text2(payload.id, 120);
       const existing = state.notes.find((item) => item.id === noteId);
@@ -1294,7 +1881,7 @@ async function applyAction(input, userId, source = "model") {
       activity = addActivity(state, { kind: "tracker-change", title: next.label, summary: trackerSummary, route, source: { messageId: text2(input.messageId, 180) || undefined, trackerId: next.id } }, command);
     } else if (action === "notify") {
       const requestedApp = text2(payload.app ?? input.app, 40);
-      const allowedApps = new Set(["home", "messages", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
+      const allowedApps = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "settings"]);
       notification = addNotification(state, {
         app: allowedApps.has(requestedApp) ? requestedApp : "home",
         title: text2(payload.title ?? input.title, 160) || "Pocket",
@@ -1325,6 +1912,112 @@ async function handleFrontend(payload, userId) {
         const preferences = await loadPreferences(userId);
         const swarmProfile = await resolveSwarmProfile(context.chatId, context.characterId, preferences);
         send({ type: "lumiphone:state", requestId, state, preferences, capabilities: capabilities(), swarmProfile, reason: "load" }, userId);
+        break;
+      }
+      case "lumiphone:list_contact_sources": {
+        const state = await loadState(context.chatId, context.characterId, userId);
+        send({ type: "lumiphone:contact_sources", requestId, sources: await listContactSources(state, userId) }, userId);
+        break;
+      }
+      case "lumiphone:import_contact": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const kind = text2(payload.kind, 30);
+          const sourceId = text2(payload.sourceId, 180);
+          const itemId = text2(payload.itemId, 180);
+          const option = (await listContactSources(state, userId)).find((entry) => entry.kind === kind && entry.sourceId === sourceId && (!itemId || entry.itemId === itemId));
+          if (!option)
+            throw new Error("That Character or Council source is no longer available.");
+          const contact = upsertContact(state, contactFromSource(option));
+          const conversation = ensureDirectConversation(state, contact.id, nowIso(), id);
+          const activity = addActivity(state, { kind: "contact", title: `${contact.name} imported`, summary: contact.role, route: { app: "contacts", contactId: contact.id, view: "detail" }, source: { contactId: contact.id, conversationId: conversation.id } });
+          await saveState(state, userId);
+          await sendState(state, userId, "contact");
+          sendActivity(activity, userId);
+          send({ type: "lumiphone:contact_created", requestId, contactId: contact.id, conversationId: conversation.id }, userId);
+        });
+        break;
+      }
+      case "lumiphone:save_contact": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const raw = isRecord(payload.contact) ? payload.contact : payload;
+          const existing = state.contacts.find((entry) => entry.id === text2(raw.id, 180));
+          const candidate = normalizePocketContact({
+            ...existing || {},
+            ...raw,
+            id: existing?.id || text2(raw.id, 180) || id("contact"),
+            source: existing?.source || { kind: "npc", origin: "manual", description: text2(raw.description, 600) },
+            createdAt: existing?.createdAt || nowIso(),
+            updatedAt: nowIso()
+          }, { characterId: state.characterId, characterName: state.characterName, now: nowIso(), makeId: id });
+          if (!candidate)
+            throw new Error("A contact needs a name.");
+          const contact = upsertContact(state, candidate);
+          await saveState(state, userId);
+          await sendState(state, userId, "contact");
+          send({ type: "lumiphone:contact_saved", requestId, contactId: contact.id }, userId);
+        });
+        break;
+      }
+      case "lumiphone:generate_contact":
+        await generateNpcContact(payload, userId);
+        break;
+      case "lumiphone:sync_scene_contacts":
+        await syncSceneContacts(payload, userId);
+        break;
+      case "lumiphone:open_direct": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const contactId = text2(payload.contactId, 180);
+          if (!state.contacts.some((entry) => entry.id === contactId))
+            throw new Error("That contact no longer exists.");
+          const conversation = ensureDirectConversation(state, contactId, nowIso(), id);
+          await saveState(state, userId);
+          send({ type: "lumiphone:conversation_opened", requestId, conversationId: conversation.id }, userId);
+          await sendState(state, userId, "conversation");
+        });
+        break;
+      }
+      case "lumiphone:create_conversation": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const participantContactIds = [...new Set((Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text2(entry, 180)).filter((entry) => state.contacts.some((contact) => contact.id === entry)))].slice(0, 16);
+          if (participantContactIds.length < 2)
+            throw new Error("A group conversation needs at least two contacts.");
+          const createdAt = nowIso();
+          const conversation = {
+            id: id("conversation"),
+            kind: "group",
+            title: text2(payload.title, 120) || participantContactIds.map((entry) => state.contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group",
+            participantContactIds,
+            messages: [],
+            unread: 0,
+            createdAt,
+            updatedAt: createdAt
+          };
+          state.conversations.push(conversation);
+          await saveState(state, userId);
+          await sendState(state, userId, "conversation");
+          send({ type: "lumiphone:conversation_opened", requestId, conversationId: conversation.id }, userId);
+        });
+        break;
+      }
+      case "lumiphone:update_conversation": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
+          if (!conversation || conversation.kind !== "group")
+            throw new Error("That group conversation no longer exists.");
+          const participantContactIds = [...new Set((Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversation.participantContactIds).map((entry) => text2(entry, 180)).filter((entry) => state.contacts.some((contact) => contact.id === entry)))].slice(0, 16);
+          if (participantContactIds.length < 2)
+            throw new Error("A group conversation needs at least two contacts.");
+          conversation.participantContactIds = participantContactIds;
+          conversation.title = text2(payload.title, 120) || conversation.title;
+          conversation.updatedAt = nowIso();
+          await saveState(state, userId);
+          await sendState(state, userId, "conversation");
+        });
         break;
       }
       case "lumiphone:save_preferences":
@@ -1388,14 +2081,14 @@ async function handleFrontend(payload, userId) {
             if (!app || entry.app === app)
               entry.read = true;
           });
-          const contactId = text2(payload.contactId, 180);
-          if (contactId) {
-            state.contacts.filter((entry) => entry.id === contactId).forEach((contact) => {
-              contact.unread = 0;
-              contact.messages.forEach((message) => {
-                message.read = true;
-                message.status = "read";
-              });
+          const conversationId = text2(payload.conversationId, 180);
+          const legacyContactId = text2(payload.contactId, 180);
+          const conversation = state.conversations.find((entry) => entry.id === conversationId) || state.conversations.find((entry) => entry.kind === "direct" && entry.participantContactIds[0] === legacyContactId);
+          if (conversation) {
+            conversation.unread = 0;
+            conversation.messages.forEach((message) => {
+              message.read = true;
+              message.status = "read";
             });
           }
           await saveState(state, userId);
@@ -1414,6 +2107,11 @@ async function handleFrontend(payload, userId) {
             state.events = state.events.filter((entry) => entry.id !== targetId);
           if (kind === "tracker")
             state.trackers = state.trackers.filter((entry) => entry.id !== targetId);
+          if (kind === "contact") {
+            state.contacts = state.contacts.filter((entry) => entry.id !== targetId);
+          }
+          if (kind === "conversation")
+            state.conversations = state.conversations.filter((entry) => entry.id !== targetId);
           await saveState(state, userId);
           await sendState(state, userId, "delete");
         });
@@ -1425,7 +2123,7 @@ async function handleFrontend(payload, userId) {
       }
       case "lumiphone:export_data": {
         const state = await loadState(context.chatId, context.characterId, userId);
-        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 2, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId);
+        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 3, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId);
         break;
       }
       case "lumiphone:import_data": {
@@ -1476,11 +2174,11 @@ function registerTool() {
   spindle.registerTool({
     name: "phone_action",
     display_name: "Pocket Action",
-    description: "Use Pocket, the character-aware roleplay phone: send a text, write a journal note, schedule a timeline event, change fictional weather, create or update a typed tracker, take an AI camera photo, show a notification, or open the phone. State persists per chat and character.",
+    description: "Use Pocket, the character-aware roleplay phone: send a text, create or update a compact contact, write a journal note, schedule a timeline event, change fictional weather, update a typed tracker, take an AI camera photo, show a notification, or open the phone. State persists per chat and character.",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["message", "note", "event", "weather", "tracker", "camera", "notify", "open"] },
+        action: { type: "string", enum: ["message", "contact", "note", "event", "weather", "tracker", "camera", "notify", "open"] },
         chat_id: { type: "string", description: "Current chat id when known." },
         character_id: { type: "string", description: "Current character id when known." },
         payload: {

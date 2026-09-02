@@ -91,6 +91,7 @@ export const PHONE_STYLES = `
   .lp-home-activity-item > span:not(.lp-home-activity-arrow) { opacity:.68; font-size:9px; }
   .lp-home-activity-arrow { font-size:17px; }
   .lp-icon-messages { background:linear-gradient(145deg,#4ee580,#12aa4b); }
+  .lp-icon-contacts { background:linear-gradient(145deg,#63b8ff,#3468d9); }
   .lp-icon-camera { background:linear-gradient(145deg,#74757c,#18191d); }
   .lp-icon-gallery { background:linear-gradient(145deg,#fff,#e9e8ec); color:#6d49da; }
   .lp-icon-notes { background:linear-gradient(#ffd84a 0 24%,#fff7c4 24%); color:#725d00; }
@@ -142,14 +143,31 @@ export const PHONE_STYLES = `
   .lp-thread .lp-nav { position:relative; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
-  .lp-bubble[data-sender="user"] { align-self:flex-end; border-bottom-right-radius:5px; background:var(--lp-accent); color:#fff; }
-  .lp-bubble[data-sender="character"] { align-self:flex-start; border-bottom-left-radius:5px; background:var(--lp-surface-2); color:var(--lp-text); }
+  .lp-bubble[data-sender="persona"] { align-self:flex-end; border-bottom-right-radius:5px; background:var(--lp-accent); color:#fff; }
+  .lp-bubble[data-sender="contact"] { align-self:flex-start; border-bottom-left-radius:5px; background:var(--lp-surface-2); color:var(--lp-text); }
   .lp-bubble[data-sender="system"] { align-self:center; max-width:90%; background:transparent; color:var(--lp-muted); text-align:center; font-size:9px; box-shadow:none; }
   .lp-bubble-time { display:block; margin-top:4px; opacity:.58; font-size:7px; text-align:right; }
-  .lp-bubble-pending { opacity:.72; font-style:italic; animation:lp-pulse 1.2s ease-in-out infinite; }
-  .lp-compose { padding:8px 9px 10px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:end; border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
+  .lp-bubble-sender { display:block; margin-bottom:2px; color:var(--lp-accent); font-size:8px; }
+  .lp-bubble-pending { opacity:.82; min-width:42px; }
+  .lp-typing-dots { min-height:12px; display:flex; align-items:center; justify-content:center; gap:3px; }
+  .lp-typing-dots i { width:5px; height:5px; border-radius:50%; background:currentColor; opacity:.42; animation:lp-typing 1s ease-in-out infinite; }
+  .lp-typing-dots i:nth-child(2) { animation-delay:.14s; }
+  .lp-typing-dots i:nth-child(3) { animation-delay:.28s; }
+  .lp-compose { padding:8px 9px 10px; display:grid; grid-template-columns:auto minmax(0,78px) minmax(0,1fr) auto; gap:6px; align-items:end; border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
+  .lp-speaker-select { min-width:0; min-height:34px; padding:5px; border:1px solid var(--lp-border); border-radius:11px; background:var(--lp-surface); color:var(--lp-text); font:inherit; font-size:8px; }
+  .lp-speaker-select[hidden] { display:none; }
+  .lp-compose:has(.lp-speaker-select[hidden]) { grid-template-columns:auto minmax(0,1fr) auto; }
   .lp-compose .lp-textarea { min-height:34px; max-height:96px; padding:8px 10px; resize:none; border-radius:17px; }
   .lp-compose .lp-button-icon { border-radius:50%; }
+
+  .lp-contact-list,.lp-contact-checklist,.lp-contact-source-section,.lp-contact-import { display:grid; gap:7px; }
+  .lp-contact-row { width:100%; display:flex; align-items:center; gap:10px; text-align:left; }
+  .lp-contact-row .lp-avatar { background:linear-gradient(145deg,color-mix(in srgb,var(--contact-accent,var(--lp-accent)) 82%,white),var(--contact-accent,var(--lp-accent))); }
+  .lp-presence { width:9px; height:9px; flex:0 0 9px; border:2px solid var(--lp-surface); border-radius:50%; background:#43d67f; box-shadow:0 0 0 1px color-mix(in srgb,#43d67f 45%,transparent); }
+  .lp-presence-away { background:var(--lp-muted); box-shadow:none; opacity:.42; }
+  .lp-contact-detail { display:grid; justify-items:center; gap:9px; text-align:center; }
+  .lp-contact-detail .lp-avatar { width:72px; height:72px; font-size:24px; }
+  .lp-contact-checklist .lp-card span { display:grid; gap:2px; }
 
   .lp-gallery-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; }
   .lp-gallery-item { appearance:none; aspect-ratio:1; padding:0; border:0; background:var(--lp-surface); cursor:pointer; overflow:hidden; position:relative; }
@@ -175,6 +193,7 @@ export const PHONE_STYLES = `
   .lp-shutter:disabled { opacity:.45; cursor:not-allowed; }
   .lp-shutter:disabled::after { animation:lp-pulse 1s ease-in-out infinite; }
   @keyframes lp-pulse { 50%{transform:scale(.72);opacity:.65} }
+  @keyframes lp-typing { 0%,60%,100%{transform:translateY(0);opacity:.38} 30%{transform:translateY(-3px);opacity:1} }
   .lp-camera-progress { color:rgba(255,255,255,.65); font-size:9px; text-align:center; min-height:14px; }
 
   .lp-note-card[data-pinned="true"] { border-color:color-mix(in srgb,#ffd653 45%,var(--lp-border)); background:color-mix(in srgb,#ffd653 8%,var(--lp-surface)); }
@@ -239,7 +258,7 @@ export const PHONE_STYLES = `
     .lp-home { padding-inline:12px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .lumiphone-app-view, .lumiphone-launcher, .lp-app-icon-box, .lp-gallery-item img, .lp-progress span { animation:none !important; transition:none !important; }
+    .lumiphone-app-view, .lumiphone-launcher, .lp-app-icon-box, .lp-gallery-item img, .lp-progress span, .lp-typing-dots i { animation:none !important; transition:none !important; }
   }
   .lumiphone-shell[data-reduced-motion="true"] *, .lumiphone-shell[data-reduced-motion="true"] *::before, .lumiphone-shell[data-reduced-motion="true"] *::after { animation-duration:0ms !important; transition-duration:0ms !important; }
   .lp-gallery-item[data-selected="true"] { outline:3px solid var(--lp-accent); outline-offset:2px; }

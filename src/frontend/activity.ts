@@ -3,7 +3,7 @@ import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 
 const ICONS: Record<PocketActivity['kind'], string> = {
   message: 'Message', 'tracker-change': 'Tracker', timeline: 'Timeline', note: 'Journal',
-  image: 'Photo', weather: 'Weather', system: 'Pocket',
+  contact: 'Contact', image: 'Photo', weather: 'Weather', system: 'Pocket',
 }
 
 export function activityReceipt(

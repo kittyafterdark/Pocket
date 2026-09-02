@@ -28,12 +28,17 @@ function serializeWithinBudget(value: Record<string, unknown>, budget = MODEL_CO
 
 export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BUDGET): string {
   const contacts = state.contacts
+    .filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned)
+    .slice(0, 12)
     .map((contact) => ({
+      id: contact.id.slice(0, 180),
       name: contact.name.slice(0, 120),
-      recent: contact.messages.slice(-3).map((message) => `${message.sender}: ${message.text.slice(0, 180)}`),
+      role: contact.role.slice(0, 120),
+      source: contact.source.kind,
+      inScene: contact.presence.inScene,
+      pinned: contact.contextPolicy.pinned,
+      ...(contact.source.kind === 'npc' ? { brief: (contact.source.description || contact.description).slice(0, 360) } : {}),
     }))
-    .filter((contact) => contact.recent.length)
-    .slice(0, 8)
   const trackers = state.trackers
     .filter((tracker) => tracker.visibleToModel)
     .slice(0, 12)
