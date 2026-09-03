@@ -172,11 +172,8 @@ class PocketController {
   private customStyle: HTMLStyleElement
   private setupModalOpen = false
   private composerReferencePill: HTMLDivElement | null = null
-  private composerTextarea: HTMLTextAreaElement | null = null
-  private composerResizeObserver: ResizeObserver | null = null
   private composerSyncFrame = 0
   private lastComposerReferenceId = ''
-
   constructor(ctx: SpindleFrontendContext) {
     this.ctx = ctx
     this.drawer = ctx.ui.registerDrawerTab({
@@ -588,8 +585,8 @@ class PocketController {
 
   /**
    * Pocket references are already chat-scoped backend state. This bridge only
-   * reflects that state beside Lumiverse's host composer; it never creates a
-   * second attachment lifecycle.
+   * reflects that state in Lumiverse's native chat_composer_above mount; it
+   * never creates a second attachment lifecycle.
    */
   private activeComposerReference() {
     if (!this.state) return null
@@ -601,17 +598,26 @@ class PocketController {
     ) || null
   }
 
-  private findHostComposer(): HTMLTextAreaElement | null {
-    const candidates = [...document.querySelectorAll<HTMLTextAreaElement>(
-      'textarea[name="chat-message"], textarea[aria-label="Message"]',
+  private findHostComposerAboveMount(): HTMLElement | null {
+    const candidates = [...document.querySelectorAll<HTMLElement>(
+      '[data-spindle-mount="chat_composer_above"]',
     )].filter((node) => !node.closest('.lumiphone-widget-root,.lumiphone-drawer'))
-    return candidates.find((node) => node.getClientRects().length > 0) || candidates[0] || null
+
+    const active = this.ctx.getActiveChat()
+    if (active.chatId) {
+      const expectedScope = `chat:${active.chatId}:composer-above`
+      const exact = candidates.find((node) => node.dataset.spindleScope === expectedScope)
+      if (exact) return exact
+    }
+
+    return candidates.find((node) => node.isConnected) || candidates[0] || null
   }
 
   private installComposerReferenceBridge(): void {
     // Pocket's frontend contract harness runs in JSDOM without host-level browser observers/RAF.
     // The composer bridge is only meaningful in the real Lumiverse browser surface, so fail closed here.
     if (typeof MutationObserver === 'undefined' || typeof window.requestAnimationFrame !== 'function') return
+
     const pill = el('div', 'pocket-composer-reference')
     pill.hidden = true
     pill.setAttribute('role', 'group')
@@ -620,18 +626,22 @@ class PocketController {
     const open = button('', 'pocket-composer-reference-open')
     open.type = 'button'
     open.title = 'Open attached Pocket reference'
+
     const mark = el('span', 'pocket-composer-reference-mark')
     mark.innerHTML = PHONE_ICON
+
+    const copy = el('span', 'pocket-composer-reference-copy')
     const source = el('span', 'pocket-composer-reference-source', 'Pocket attached')
     const preview = el('span', 'pocket-composer-reference-preview')
-    open.append(mark, source, preview)
+    copy.append(source, preview)
+    open.append(mark, copy)
 
     const clear = button('×', 'pocket-composer-reference-clear')
     clear.type = 'button'
     clear.title = 'Clear Pocket reference'
     clear.setAttribute('aria-label', 'Clear Pocket reference')
+
     pill.append(open, clear)
-    document.body.appendChild(pill)
     this.composerReferencePill = pill
 
     open.addEventListener('click', () => {
@@ -640,6 +650,7 @@ class PocketController {
       const messageId = reference.messages.at(-1)?.messageId
       this.openPocket({ app: 'messages', conversationId: reference.conversationId, messageId })
     })
+
     clear.addEventListener('click', (event) => {
       event.stopPropagation()
       const reference = this.activeComposerReference()
@@ -649,27 +660,19 @@ class PocketController {
 
     const schedule = () => this.scheduleComposerReferenceSync()
     const mutationObserver = new MutationObserver(() => {
-      const composer = this.findHostComposer()
-      if (!this.composerTextarea?.isConnected || composer !== this.composerTextarea) schedule()
+      const mount = this.findHostComposerAboveMount()
+      if (!pill.isConnected || (mount && pill.parentElement !== mount)) schedule()
     })
     mutationObserver.observe(document.body, { childList: true, subtree: true })
-    window.addEventListener('resize', schedule)
-    window.visualViewport?.addEventListener('resize', schedule)
-    window.visualViewport?.addEventListener('scroll', schedule)
 
     this.cleanups.push(() => {
       mutationObserver.disconnect()
-      window.removeEventListener('resize', schedule)
-      window.visualViewport?.removeEventListener('resize', schedule)
-      window.visualViewport?.removeEventListener('scroll', schedule)
-      this.composerResizeObserver?.disconnect()
-      this.composerResizeObserver = null
-      this.composerTextarea = null
       if (this.composerSyncFrame) window.cancelAnimationFrame(this.composerSyncFrame)
       this.composerSyncFrame = 0
       pill.remove()
       if (this.composerReferencePill === pill) this.composerReferencePill = null
     })
+
     schedule()
   }
 
@@ -690,43 +693,47 @@ class PocketController {
   private syncComposerReferencePill(): void {
     const pill = this.composerReferencePill
     if (!pill) return
+
     const reference = this.activeComposerReference()
-    const textarea = this.findHostComposer()
+    const mount = this.findHostComposerAboveMount()
 
-    if (textarea !== this.composerTextarea) {
-      this.composerResizeObserver?.disconnect()
-      this.composerResizeObserver = null
-      this.composerTextarea = textarea
-      if (textarea && typeof ResizeObserver !== 'undefined') {
-        this.composerResizeObserver = new ResizeObserver(() => this.scheduleComposerReferenceSync())
-        this.composerResizeObserver.observe(textarea)
-      }
-    }
-
-    if (!reference || !textarea || !textarea.isConnected) {
+    if (!reference || !mount || !mount.isConnected) {
       this.hideComposerReferencePill()
       return
     }
 
-    const rect = textarea.getBoundingClientRect()
-    if (rect.width < 80 || rect.height < 1) {
-      pill.hidden = true
-      return
-    }
+    if (pill.parentElement !== mount) mount.appendChild(pill)
 
     const status = pill.querySelector<HTMLSpanElement>('.pocket-composer-reference-source')
     const preview = pill.querySelector<HTMLSpanElement>('.pocket-composer-reference-preview')
     const open = pill.querySelector<HTMLButtonElement>('.pocket-composer-reference-open')
     const clear = pill.querySelector<HTMLButtonElement>('.pocket-composer-reference-clear')
+
     const message = reference.messages.at(-1)
     const messageText = message?.text?.replace(/\s+/g, ' ').trim() || ''
-    const conversationTitle = reference.conversationTitle || (reference.conversationKind === 'group' ? 'Group chat' : 'Conversation')
+    const conversationTitle = reference.conversationTitle
+      || (reference.conversationKind === 'group' ? 'Group chat' : 'Conversation')
     const fallback = `${reference.messages.length} message${reference.messages.length === 1 ? '' : 's'}`
 
-    if (status) status.textContent = reference.status === 'injected'
+    const statusLabel = reference.status === 'injected'
       ? 'Pocket applying'
-      : reference.status === 'failed' ? 'Pocket attach failed' : 'Pocket attached'
-    if (preview) preview.textContent = `${conversationTitle} · ${messageText ? `${message?.senderName || 'Message'}: ${messageText}` : fallback}`
+      : reference.status === 'failed'
+        ? 'Pocket attach failed'
+        : 'Pocket attached'
+
+    if (status) status.textContent = `${statusLabel} · ${conversationTitle}`
+
+    if (preview) {
+      if (messageText) {
+        const speaker = reference.conversationKind === 'group' && message?.senderName
+          ? `${message.senderName} — `
+          : ''
+        preview.textContent = `${speaker}“${messageText}”`
+      } else {
+        preview.textContent = fallback
+      }
+    }
+
     if (open) open.setAttribute('aria-label', `Open attached Pocket reference from ${conversationTitle}`)
     if (clear) {
       clear.hidden = reference.status === 'injected'
@@ -735,22 +742,13 @@ class PocketController {
 
     pill.dataset.status = reference.status
     pill.style.setProperty('--pocket-reference-accent', this.preferences.colors.accent)
-    const viewportWidth = window.visualViewport?.width || window.innerWidth
-    const viewportLeft = window.visualViewport?.offsetLeft || 0
-    const width = Math.min(rect.width, Math.max(120, Math.min(460, viewportWidth - 16)))
-    const minLeft = viewportLeft + 8
-    const maxLeft = Math.max(minLeft, viewportLeft + viewportWidth - width - 8)
-    const left = Math.max(minLeft, Math.min(rect.left, maxLeft))
-    pill.style.left = `${left}px`
-    pill.style.top = `${rect.top}px`
-    pill.style.width = `${width}px`
     pill.hidden = false
 
     if (this.lastComposerReferenceId !== reference.id && !this.preferences.reducedMotion) {
       pill.animate([
-        { opacity: .25, transform: 'translateY(calc(-100% - 3px)) scale(.985)' },
-        { opacity: 1, transform: 'translateY(calc(-100% - 7px)) scale(1)' },
-      ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' })
+        { opacity: .25, transform: 'translateY(3px) scale(.995)' },
+        { opacity: 1, transform: 'translateY(0) scale(1)' },
+      ], { duration: 170, easing: 'cubic-bezier(.2,.8,.2,1)' })
     }
     this.lastComposerReferenceId = reference.id
   }
