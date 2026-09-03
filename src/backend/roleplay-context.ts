@@ -54,22 +54,25 @@ function currentChannelLines(state: PhoneState, contact: PocketContact, conversa
   if (conversation.kind === 'direct') {
     const other = actorNames[0] || contact.name || conversation.title || 'the contact'
     return [
-      'Type: direct message',
-      `Pocket owner / user participant: ${persona}`,
-      `Other participant: ${other}`,
-      `Current generated contact speaker: ${contact.name}`,
-      `Recipient of ${contact.name}'s generated phone text: ${persona}`,
-      `This DM belongs only to ${persona} and ${other}.`,
-      'Actors mentioned in scene, story, recent roleplay, another phone conversation, or message text are not participants unless listed in this channel.',
-      'Never infer a different recipient from another DM, group chat, scene, or recent roleplay.',
+      'TYPE: DIRECT MESSAGE',
+      `PERSONA / PHONE OWNER / RECIPIENT: ${persona}`,
+      `CONTACT / GENERATED SPEAKER: ${contact.name}`,
+      `DM PARTICIPANTS: ${persona}, ${other}`,
+      `TARGET LOCK: ${contact.name} is writing this phone message TO ${persona}. ${persona} is the current interlocutor and recipient.`,
+      `This private DM belongs only to ${persona} and ${other}.`,
+      'The active roleplay character, scene focal actor, recently mentioned actor, or actor from another phone thread is NOT the recipient merely because they are salient.',
+      'Other actors may be discussed as third parties. Do not address them as though they can read this DM.',
+      `Never replace ${persona} as the recipient unless the channel itself changes.`,
     ]
   }
   return [
-    'Type: group chat',
-    `Pocket owner / user participant: ${persona}`,
-    `Current group actors: ${actorNames.join(', ') || '(none)'}`,
-    'Only the Pocket owner and the current group actors listed above own this channel.',
-    'Messages from actors who have since left the group remain historical context only; they are not current participants or eligible recipients/speakers.',
+    'TYPE: GROUP CHAT',
+    `PERSONA / PHONE OWNER: ${persona}`,
+    `CURRENT GROUP ACTORS: ${actorNames.join(', ') || '(none)'}`,
+    `CURRENT CHANNEL MEMBERS: ${[persona, ...actorNames].join(', ')}`,
+    'TARGET LOCK: generated group messages are visible only to the CURRENT CHANNEL MEMBERS listed above.',
+    'Messages from actors who have since left the group remain historical context only; they are not current participants, recipients, or eligible speakers.',
+    'A former/absent actor may be discussed as a third party, but must not be directly addressed as though they can read this group chat.',
     'Actors mentioned only in scene, story, recent roleplay, another phone conversation, or message text do not become group members.',
   ]
 }
@@ -120,16 +123,18 @@ export async function assemblePocketContext(options: {
   const storySource = mode === 'story' || mode === 'smart' ? storyLines(state, contact) : []
   const story = trimBlock(storySource, BUDGETS.story)
   const parts = [
-    channel ? `CURRENT PHONE CHANNEL\n${channel}` : '',
     actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '',
     scene ? `SCENE SNAPSHOT${state.sceneSnapshot?.stale ? ' (STALE)' : ''}\n${scene}` : '',
     recent ? `RECENT ROLEPLAY\n${recent}` : '',
     story ? `STORY CONTEXT\n${story}` : '',
     thread ? `PHONE THREAD\n${thread}` : '',
   ].filter(Boolean)
-  const finalText = (mode === 'off'
-    ? [channel ? `CURRENT PHONE CHANNEL\n${channel}` : '', actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
-    : parts.join('\n\n')).slice(0, BUDGETS.total)
+  const bodyText = mode === 'off'
+    ? [actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
+    : parts.join('\n\n')
+  const finalLock = channel ? `FINAL CHANNEL LOCK\n${channel}` : ''
+  const bodyBudget = Math.max(0, BUDGETS.total - finalLock.length - (finalLock ? 2 : 0))
+  const finalText = [bodyText.slice(0, bodyBudget), finalLock].filter(Boolean).join('\n\n')
   const latestMismatch = Boolean(authoritativeLatest.id && (!includedLatest.id || authoritativeLatest.id !== includedLatest.id))
   const freshnessWarning = mode === 'story' || mode === 'off' || !wantsRecent ? '' : latestMismatch
     ? 'The latest committed roleplay message is not included in the selected recent-context window.' : ''

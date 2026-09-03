@@ -233,11 +233,11 @@ describe('phone channel ownership', () => {
       updatedAt: now, weather: { location: 'Agency', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now },
     } as PhoneState
     const context = await buildRoleplayContext({ state, contact: mina, conversation, preferences: normalizePreferences({ roleplayContextMode: 'off' }) })
-    expect(context).toContain('CURRENT PHONE CHANNEL')
-    expect(context).toContain('Pocket owner / user participant: Bakugo')
-    expect(context).toContain('Other participant: Mina Ashido')
-    expect(context).toContain("Recipient of Mina Ashido's generated phone text: Bakugo")
-    expect(context).toContain('Never infer a different recipient')
+    expect(context).toContain('FINAL CHANNEL LOCK')
+    expect(context).toContain('PERSONA / PHONE OWNER / RECIPIENT: Bakugo')
+    expect(context).toContain('CONTACT / GENERATED SPEAKER: Mina Ashido')
+    expect(context).toContain('TARGET LOCK: Mina Ashido is writing this phone message TO Bakugo')
+    expect(context).toContain('Other actors may be discussed as third parties.')
   })
 
   test('keeps removed group members as labeled history without treating them as current', async () => {
@@ -265,9 +265,11 @@ describe('phone channel ownership', () => {
       updatedAt: now, weather: { location: 'Agency', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now },
     } as PhoneState
     const context = await buildRoleplayContext({ state, contact: mina, conversation, preferences: normalizePreferences({ roleplayContextMode: 'off' }) })
-    expect(context).toContain('Current group actors: Mina Ashido, Eijiro Kirishima')
+    expect(context).toContain('CURRENT GROUP ACTORS: Mina Ashido, Eijiro Kirishima')
+    expect(context).toContain('CURRENT CHANNEL MEMBERS: Bakugo, Mina Ashido, Eijiro Kirishima')
     expect(context).toContain('Shoto Todoroki [former participant; historical only]: Old line.')
     expect(context).toContain('Mina Ashido: Current line.')
+    expect(context).toContain('A former/absent actor may be discussed as a third party')
   })
 })
 
