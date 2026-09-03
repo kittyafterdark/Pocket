@@ -52,21 +52,42 @@ export interface ManualVisualProfile {
 export type PocketGenerationMode = 'roleplay' | 'sidecar'
 export type AmbientMessageFrequency = 'off' | 'sparse' | 'normal'
 export type RoleplayContextMode = 'off' | 'recent' | 'story' | 'smart'
-export type ConversationPauseReason = 'ended' | 'busy' | 'away' | 'arriving' | 'sleeping' | 'unknown'
-export type ConversationLocalReason = 'in_scene' | 'arriving' | 'took_action'
+export type ConversationPauseReason = 'ended' | 'busy' | 'away' | 'sleeping' | 'unknown'
+export type ConversationLocalReason = 'in_scene' | 'arrived' | 'took_action' | 'continued_in_person'
 export type ConversationAvailability =
-  | { state: 'available' }
+  | { state: 'remote' }
+  | { state: 'arriving' }
   | { state: 'paused'; reason: ConversationPauseReason }
   | { state: 'local'; reason: ConversationLocalReason; resumePauseReason?: ConversationPauseReason }
 export type ReplyCadence = 'instant' | 'quick' | 'natural' | 'relaxed'
+
+export type PocketImageSource =
+  | { kind: 'gallery'; imageId: string }
+  | { kind: 'asset'; assetId: string }
+  | { kind: 'url'; url: string }
+
+export interface PocketWallpaper {
+  source: PocketImageSource | null
+  fit: 'cover' | 'contain' | 'stretch'
+  focalX: number
+  focalY: number
+  scrim: number
+}
+
+export interface PocketResolvedWallpapers {
+  deviceHome: string
+  deviceChat: string
+  personaHome: string
+  personaChat: string
+}
 
 export interface PersonaAppearanceOverride {
   enabled: boolean
   theme: PhoneTheme
   colors: PhonePalette
   customCss: string
-  wallpaperImageUrl: string
-  chatWallpaperImageUrl: string
+  homeWallpaper: PocketWallpaper
+  chatWallpaper: PocketWallpaper
 }
 
 export interface PocketGenerationRun {
@@ -158,11 +179,11 @@ export interface PocketOperationProgress {
 }
 
 export interface DevicePreferences {
-  version: 4
+  version: 5
   theme: PhoneTheme
   colors: PhonePalette
-  wallpaperImageUrl: string
-  chatWallpaperImageUrl: string
+  homeWallpaper: PocketWallpaper
+  chatWallpaper: PocketWallpaper
   /** Desktop-only physical size of the 9:16 handset. */
   handsetScale: number
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
@@ -228,8 +249,35 @@ export interface PhoneMessage {
       generationMode: PocketGenerationMode
       connectionName: string
       model: string
+      replyDecision?: {
+        rawAction: ReplyDecisionAction
+        normalizedAction: ReplyDecisionAction
+        reason: string
+        normalizationReason: string
+      }
     }
   }
+}
+
+export type ReplyDecisionAction = 'reply' | 'none' | 'pause' | 'handoff'
+
+export interface PocketReplyDecision {
+  rawAction: ReplyDecisionAction
+  normalizedAction: ReplyDecisionAction
+  reason: string
+  normalizationReason: string
+  contactInScene: boolean
+  remoteEligible: boolean
+  explicitRemoteOverride: boolean
+  createdAt: string
+  burstId?: string
+  relayId?: string
+}
+
+export interface PocketConversationSnapshot {
+  summary: string
+  recentMessageIds: string[]
+  updatedAt: string
 }
 
 export type PocketContactSource =
@@ -275,12 +323,15 @@ export interface PocketConversation {
   unread: number
   pause?: { reason: ConversationPauseReason; createdAt: string; source: 'model' | 'scene' }
   availability: ConversationAvailability
+  snapshot?: PocketConversationSnapshot
+  lastDecision?: PocketReplyDecision
   outgoingBurst?: {
     id: string
     messageIds: string[]
     open: boolean
     held: boolean
     finalized: boolean
+    explicitRemoteOverride: boolean
     updatedAt: string
   }
   createdAt: string
@@ -322,6 +373,34 @@ export interface CalendarEvent {
   lane: string
   completed: boolean
   createdBy: 'user' | 'character' | 'model'
+  kind?: 'event' | 'phone-handoff'
+  actorContactIds?: string[]
+  source?: { app: 'messages'; conversationId: string; relayId: string; messageId?: string }
+  channelTransition?: { from: 'remote' | 'arriving' | 'paused'; to: 'local'; reason: ConversationLocalReason }
+}
+
+export interface PocketRelay {
+  id: string
+  chatId: string
+  characterId: string
+  contactId: string
+  conversationId: string
+  reason: ConversationLocalReason
+  actorState: 'in_scene' | 'arrived' | 'took_action' | 'continued_in_person'
+  conversationSnapshot: PocketConversationSnapshot
+  latestExchange: string
+  sourceMessageId?: string
+  timelineEventId: string
+  createdAt: string
+  status: 'pending' | 'consumed' | 'dismissed'
+  consumedAt?: string
+  consumedMessageId?: string
+  continuation: {
+    state: 'idle' | 'launching' | 'requested' | 'completed' | 'failed' | 'stopped'
+    generationId?: string
+    attemptedAt?: string
+    error?: string
+  }
 }
 
 export interface RoleplayWeather {
@@ -443,7 +522,7 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 5
+  version: 6
   chatId: string
   characterId: string
   characterName: string
@@ -455,6 +534,7 @@ export interface PhoneState {
   conversations: PocketConversation[]
   notes: PhoneNote[]
   events: CalendarEvent[]
+  relays: PocketRelay[]
   weather: RoleplayWeather
   trackers: PhoneTracker[]
   notifications: PhoneNotification[]

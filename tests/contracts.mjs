@@ -80,8 +80,9 @@ globalThis.spindle = {
   },
   chat: {
     getMessages: async () => [{ id: 'BED-111', index_in_chat: 0, role: 'user', content: 'At the market.' }, { id: 'KITCHEN-222', index_in_chat: 1, role: 'assistant', content: 'Mira, the flower seller, waves from her stall.' }],
-    appendMessage: async (chatId, message) => { appendedChatMessages.push({ chatId, message }); return { id: 'host-image-message' } },
+    appendMessage: async (chatId, message, options) => { appendedChatMessages.push({ chatId, message, options }); return { id: `host-message-${appendedChatMessages.length}`, generationId: options?.triggerGeneration ? `generation-${appendedChatMessages.length}` : undefined } },
     updateMessage: async (chatId, messageId, patch) => { updatedChatMessages.push({ chatId, messageId, patch }) },
+    setMessageHidden: async () => {},
   },
   personas: { getActive: async () => ({ id: 'persona-test', name: 'Test Persona' }) },
   council: {
@@ -112,7 +113,11 @@ globalThis.spindle = {
     ],
     get: async (id) => id === 'rp-default' ? { id, name: 'Roleplay Default', provider: 'openai', model: 'test-model', is_default: true, has_api_key: true } : null,
   },
-  images: { list: async () => ({ data: [], total: 0 }), get: async (id) => ({ id, url: `/api/v1/images/${id}`, original_filename: 'Scene.png' }) },
+  images: {
+    list: async () => ({ data: [], total: 0 }),
+    get: async (id) => ({ id, url: `/api/v1/images/${id}`, original_filename: 'Scene.png' }),
+    uploadFromDataUrl: async () => ({ id: 'uploaded-wallpaper', url: '/api/v1/images/uploaded-wallpaper' }),
+  },
   imageGen: {
     listConnections: async () => [],
     getProviders: async () => [],
@@ -131,7 +136,7 @@ const firstState = frontendMessages.find((message) => message.type === 'lumiphon
 assert.equal(firstState.state.chatId, 'chat-a')
 assert.equal(firstState.state.characterId, 'char-a')
 assert.equal(firstState.state.characterName, 'Alice')
-assert.equal(firstState.state.version, 5)
+assert.equal(firstState.state.version, 6)
 assert.equal(firstState.state.contacts[0].source.kind, 'character')
 assert.equal(firstState.state.conversations.length, 1)
 assert.equal(firstState.state.trackers[0].kind, 'meter')
@@ -153,6 +158,12 @@ await frontendHandler({ type: 'lumiphone:gallery_add_to_chat', requestId: 'attac
 assert.equal(updatedChatMessages.at(-1).chatId, 'chat-a')
 assert.equal(updatedChatMessages.at(-1).messageId, 'KITCHEN-222')
 assert.match(updatedChatMessages.at(-1).patch.content, /!\[Scene\.png\]\(\/api\/v1\/images\/image-a\)/)
+
+await frontendHandler({ type: 'lumiphone:gallery_set_wallpaper', requestId: 'gallery-wallpaper', chatId: 'chat-a', characterId: 'char-a', imageId: 'image-a', target: 'home' }, 'user-a')
+assert.deepEqual(storage.get('device/preferences.json').homeWallpaper.source, { kind: 'gallery', imageId: 'image-a' })
+await frontendHandler({ type: 'lumiphone:upload_wallpaper_asset', requestId: 'upload-wallpaper', chatId: 'chat-a', characterId: 'char-a', target: 'device-chat', filename: 'wall.png', dataUrl: 'data:image/png;base64,AA==' }, 'user-a')
+assert.deepEqual(storage.get('device/preferences.json').chatWallpaper.source, { kind: 'asset', assetId: 'uploaded-wallpaper' })
+assert.doesNotMatch(JSON.stringify(storage.get('device/preferences.json')), /data:image/, 'device preferences must retain only the durable asset id')
 
 const userActivityCount = storage.get('phones/chat-a__char-a.json').activities.length
 await frontendHandler({
@@ -241,19 +252,43 @@ assert.equal(autoConversation.messages.length, beforeManualFlush + 2)
 assert.equal(autoConversation.messages.at(-1).text, 'Manual flush reply.')
 assert.equal(autoConversation.outgoingBurst.finalized, true)
 
-spindle.generate.quiet = async () => ({ content: '{"action":"pause","reason":"arriving"}' })
+spindle.generate.quiet = async () => ({ content: '{"action":"pause","reason":"busy"}' })
 const beforePauseDecision = autoConversation.messages.length
 await frontendHandler({ type: 'lumiphone:action', requestId: 'auto-pause-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'See you when you get here', sender: 'persona' } }, 'user-a')
 await new Promise((resolve) => setTimeout(resolve, 40))
 autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
 assert.equal(autoConversation.messages.length, beforePauseDecision + 1, 'pause decision must not generate a remote reply')
-assert.deepEqual(autoConversation.pause.reason, 'arriving')
+assert.deepEqual(autoConversation.pause.reason, 'busy')
 
 spindle.generate.quiet = async () => ({ content: '{"action":"handoff","reason":"arriving"}' })
 await frontendHandler({ type: 'lumiphone:action', requestId: 'auto-handoff-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'The door is open', sender: 'persona' } }, 'user-a')
 await new Promise((resolve) => setTimeout(resolve, 40))
 autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
-assert.deepEqual(autoConversation.availability, { state: 'local', reason: 'arriving' })
+assert.deepEqual(autoConversation.availability, { state: 'arriving' }, 'arriving must remain a usable remote transition until scene presence corroborates it')
+
+const handoffState = storage.get('phones/chat-a__char-a.json')
+handoffState.contacts.find((entry) => entry.id === 'char-a').presence.inScene = true
+storage.set('phones/chat-a__char-a.json', handoffState)
+autoDecisionCalls = 0
+spindle.generate.quiet = async () => { autoDecisionCalls += 1; return { content: '{"action":"none"}' } }
+await frontendHandler({ type: 'lumiphone:action', requestId: 'present-handoff-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'You are literally standing here', sender: 'persona' } }, 'user-a')
+await new Promise((resolve) => setTimeout(resolve, 60))
+autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
+assert.equal(autoDecisionCalls, 0, 'scene-present actors must hand off deterministically without asking the reply model for none')
+assert.deepEqual(autoConversation.availability, { state: 'local', reason: 'arrived' })
+assert.equal(storage.get('phones/chat-a__char-a.json').relays.filter((entry) => entry.status === 'pending').length, 1)
+assert.equal(storage.get('phones/chat-a__char-a.json').events.filter((entry) => entry.kind === 'phone-handoff').length, 1)
+assert.equal(appendedChatMessages.at(-1).options.triggerGeneration, true, 'handoff must trigger native main roleplay generation')
+const pendingRelay = storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.status === 'pending')
+const pendingIntercept = await interceptorHandler([{ role: 'user', content: 'Continue.' }], { chatId: 'chat-a', characterId: 'char-a', userId: 'user-a' })
+assert.match(pendingIntercept.messages.at(-1).content, /POCKET CONTINUITY RELAY/, 'pending relay must outrank stale scene context')
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: pendingRelay.continuation.generationId, messageId: 'continued-rp-message' }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.id === pendingRelay.id).status, 'consumed', 'relay must be consumed only after a successful matching generation')
+
+const resumedState = storage.get('phones/chat-a__char-a.json')
+resumedState.contacts.find((entry) => entry.id === 'char-a').presence.inScene = false
+resumedState.conversations.find((entry) => entry.id === firstConversationId).availability = { state: 'remote' }
+storage.set('phones/chat-a__char-a.json', resumedState)
 
 autoDecisionCalls = 0
 spindle.generate.quiet = async () => {
@@ -276,6 +311,7 @@ const intercepted = await interceptorHandler([{ role: 'user', content: 'Continue
 })
 assert.equal(intercepted.messages.length, 2)
 assert.match(intercepted.messages[1].content, /Current Pocket snapshot/)
+assert.doesNotMatch(intercepted.messages[1].content, /POCKET CONTINUITY RELAY/, 'consumed relay urgency must disappear')
 assert.doesNotMatch(intercepted.messages[1].content, /Hello from the phone/)
 
 const toolResult = await backendEvents.get('TOOL_INVOCATION')({
@@ -609,10 +645,10 @@ assert.equal(dockRoot.querySelectorAll('.lp-typing-dots i').length, 3, 'pending 
 assert.ok(!dockRoot.textContent.includes('Writing…'), 'pending reply must not render the literal Writing label')
 backendReceiver({ type: 'lumiphone:message_progress', requestId: 'typing-ui', chatId: 'chat-a', characterId: 'char-a', conversationId: activeConversationId, speakerContactId: 'char-a', phase: 'done' })
 const pausedUiState = structuredClone(firstState)
-pausedUiState.state.conversations[0].pause = { reason: 'arriving', createdAt: new Date().toISOString(), source: 'model' }
+pausedUiState.state.conversations[0].availability = { state: 'arriving' }
 backendReceiver(pausedUiState)
-assert.match(dockRoot.textContent, /Alice is here now\./, 'bounded arriving pause must render Pocket-owned copy')
-assert.ok(dockRoot.querySelector('.lp-manual-reply'), 'paused conversations must retain a subtle manual reply override')
+assert.match(dockRoot.textContent, /Alice is on the way\./, 'arriving must render Pocket-owned transition copy')
+assert.ok(dockRoot.querySelector('.lp-compose'), 'arriving must keep remote messaging usable until the actor becomes local')
 
 dockRoot.querySelector('.lumiphone-homebar button').click()
 const trackerIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Trackers'))

@@ -13,6 +13,7 @@ import type {
   PocketContactSourceOption,
   PocketActivity,
   PocketRoute,
+  PocketResolvedWallpapers,
   PhoneState,
   PhoneTracker,
   SwarmVisualProfile,
@@ -27,6 +28,7 @@ import { renderContactsView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
 import { activityReceipt } from './activity.js'
+import type { PocketImageTarget } from './components/image-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
 import type {
@@ -111,6 +113,7 @@ class PocketController {
   private caps: PhoneCapabilities | null = null
   private swarmProfile: SwarmVisualProfile | null = null
   private generation: PocketGenerationInfo | null = null
+  private resolvedWallpapers: PocketResolvedWallpapers = { deviceHome: '', deviceChat: '', personaHome: '', personaChat: '' }
   private contextPreview: PocketContextDiagnostics | null = null
   private personaPreview: ChatPocketPersona | null = null
   private operations = new Map<string, PocketOperationProgress>()
@@ -118,6 +121,7 @@ class PocketController {
   private gallery: GalleryResult = { data: [], total: 0 }
   private galleryScope = 'chat'
   private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string }>()
+  private pendingWallpaperTarget: PocketImageTarget | null = null
   private selectedContactId = ''
   private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'new' = 'list'
   private selectedConversationId = ''
@@ -576,10 +580,11 @@ class PocketController {
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
       }
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
-      if (payload.reason === 'import' || payload.reason === 'reset_preferences') this.settingsDraft = structuredClone(this.preferences)
+      if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences') this.settingsDraft = structuredClone(this.preferences)
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile
       this.generation = payload.generation || this.generation
+      if (payload.resolvedWallpapers) this.resolvedWallpapers = payload.resolvedWallpapers as PocketResolvedWallpapers
       if ('activePersona' in payload) this.activePersona = payload.activePersona || null
       for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
       this.applyAppearance()
@@ -861,10 +866,19 @@ class PocketController {
     this.shell.style.setProperty('--lp-text', appearance.colors.text)
     const homeWallpaper = wallpaperCss(appearance.colors.wallpaperPrimary, appearance.colors.wallpaperSecondary)
     const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
-    const homeImage = persona?.enabled ? persona.wallpaperImageUrl || settings.wallpaperImageUrl : settings.wallpaperImageUrl
-    const chatImage = persona?.enabled ? persona.chatWallpaperImageUrl || settings.chatWallpaperImageUrl : settings.chatWallpaperImageUrl
-    this.shell.style.setProperty('--lp-wallpaper', homeImage ? `linear-gradient(rgba(7,6,11,.14),rgba(7,6,11,.3)),url(${JSON.stringify(homeImage)}),${homeWallpaper}` : homeWallpaper)
-    this.shell.style.setProperty('--lp-chat-wallpaper', chatImage ? `linear-gradient(rgba(9,8,14,.12),rgba(9,8,14,.3)),url(${JSON.stringify(chatImage)}),${chatWallpaper}` : chatWallpaper)
+    const homeSetting = persona?.enabled && persona.homeWallpaper.source ? persona.homeWallpaper : settings.homeWallpaper
+    const chatSetting = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : settings.chatWallpaper
+    const homeImage = persona?.enabled && persona.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome
+    const chatImage = persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat
+    const imageLayer = (url: string, setting: typeof homeSetting, gradient: string) => url
+      ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}`
+      : gradient
+    this.shell.style.setProperty('--lp-wallpaper', imageLayer(homeImage, homeSetting, homeWallpaper))
+    this.shell.style.setProperty('--lp-chat-wallpaper', imageLayer(chatImage, chatSetting, chatWallpaper))
+    this.shell.style.setProperty('--lp-home-wallpaper-size', homeSetting.fit === 'stretch' ? '100% 100%' : homeSetting.fit)
+    this.shell.style.setProperty('--lp-home-wallpaper-position', `${homeSetting.focalX * 100}% ${homeSetting.focalY * 100}%`)
+    this.shell.style.setProperty('--lp-chat-wallpaper-size', chatSetting.fit === 'stretch' ? '100% 100%' : chatSetting.fit)
+    this.shell.style.setProperty('--lp-chat-wallpaper-position', `${chatSetting.focalX * 100}% ${chatSetting.focalY * 100}%`)
     this.shell.style.setProperty('--pocket-ui-scale', String(settings.uiScale))
     this.shell.style.setProperty('--lp-animation-ms', `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`)
     this.shell.dataset.reducedMotion = String(settings.reducedMotion)
@@ -1149,7 +1163,11 @@ class PocketController {
       composerState: (conversationId, held) => { this.send('lumiphone:composer_state', { conversationId, held }) },
       messageAnyway: (conversationId) => { this.manualMessageOverrides.add(conversationId); this.render(false) },
       manualOverride: this.manualMessageOverrides.has(this.selectedConversationId),
-      returnToRoleplay: () => this.close(),
+      returnToRoleplay: () => {
+        if (this.state?.relays.some((entry) => entry.conversationId === this.selectedConversationId && entry.status === 'pending')) this.send('lumiphone:continue_relay', { conversationId: this.selectedConversationId })
+        this.close()
+      },
+      openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back(),
     })
@@ -1170,6 +1188,12 @@ class PocketController {
         ['Phone thread', `${info.threadCount} messages · ${info.threadChars} chars`], ['Generation', `${info.generationMode} · ${info.connectionName} · ${info.model}`],
       ]) {
         const row = el('div', 'lp-row-between'); row.append(el('strong', '', label), el('span', 'lp-copy', value)); content.appendChild(row)
+      }
+      if (info.replyDecision) {
+        const decision = info.replyDecision
+        const row = el('div', 'lp-row-between')
+        row.append(el('strong', '', 'Channel decision'), el('span', 'lp-copy', `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ''}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ''}`))
+        content.appendChild(row)
       }
     }
     modal.root.appendChild(content)
@@ -1250,6 +1274,18 @@ class PocketController {
     image.alt = item.filename || 'Pocket photo'
     image.style.cssText = 'display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808'
     const actions = el('div', 'lp-gallery-actions')
+    if (this.pendingWallpaperTarget && this.pendingWallpaperTarget !== 'contact-avatar') {
+      const target = this.pendingWallpaperTarget
+      const use = button('Use this image', 'lp-button')
+      use.addEventListener('click', () => {
+        const personaTarget = target.startsWith('persona-')
+        this.runGalleryAction(use, 'Applying…', 'lumiphone:gallery_set_wallpaper', {
+          imageId: item.id, target: target.endsWith('chat') ? 'chat' : 'home', personaId: personaTarget ? this.activePersona?.id : undefined,
+        })
+        this.pendingWallpaperTarget = null
+      })
+      actions.appendChild(use)
+    }
     const open = button('Open image', 'lp-button')
     open.addEventListener('click', () => window.open(item.fullUrl || item.url, '_blank', 'noopener,noreferrer'))
     const attach = button('Add to current RP chat', 'lp-button')
@@ -1289,6 +1325,48 @@ class PocketController {
     buttonNode.textContent = progress
     this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle })
     this.send(type, { ...payload, requestId: actionRequestId })
+  }
+
+  private wallpaperTargetPayload(target: PocketImageTarget): Record<string, unknown> {
+    return { target, personaId: target.startsWith('persona-') ? this.activePersona?.id : undefined }
+  }
+
+  private async chooseImage(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): Promise<void> {
+    if (mode === 'gallery') {
+      this.pendingWallpaperTarget = target
+      this.requestGallery('all')
+      this.openPocket({ app: 'gallery' })
+      return
+    }
+    if (mode === 'upload') {
+      try {
+        const files = await this.ctx.uploads.pickFile({ accept: ['image/*', '.png', '.jpg', '.jpeg', '.webp', '.gif'], multiple: false, maxSizeBytes: 8 * 1024 * 1024 })
+        const file = files[0]
+        if (!file) return
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.addEventListener('load', () => resolve(String(reader.result || '')), { once: true })
+          reader.addEventListener('error', () => reject(reader.error || new Error('Could not read the image.')), { once: true })
+          reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }))
+        })
+        this.send('lumiphone:upload_wallpaper_asset', { ...this.wallpaperTargetPayload(target), dataUrl, filename: file.name })
+      } catch (error) {
+        this.showError(error instanceof Error ? error.message : String(error))
+      }
+      return
+    }
+    const modal = this.ctx.ui.showModal({ title: 'Use image URL', width: 460, maxHeight: 320 })
+    const content = el('div', 'lp-settings-section')
+    content.appendChild(el('p', 'lp-copy', 'Use a durable HTTPS image URL. Pocket stores the URL, never a downloaded base64 copy.'))
+    const input = el('input', 'lp-input'); input.type = 'url'; input.placeholder = 'https://example.com/wallpaper.jpg'
+    const apply = button('Use image', 'lp-button')
+    apply.addEventListener('click', () => {
+      const url = input.value.trim()
+      if (!/^https:\/\//i.test(url)) { this.showError('Enter an HTTPS image URL.'); return }
+      this.send('lumiphone:set_wallpaper', { ...this.wallpaperTargetPayload(target), source: { kind: 'url', url } })
+      modal.dismiss()
+    })
+    content.append(input, apply); modal.root.appendChild(content); input.focus()
   }
 
   private renderCamera(): HTMLDivElement {
@@ -1509,6 +1587,11 @@ class PocketController {
     const completeRow = el('label', 'lp-card lp-row-between')
     completeRow.append(el('span', 'lp-title', 'Completed'), completed)
     content.append(title.label, lane.label, whenKindLabel, whenText.label, start.label, end.label, description, completeRow)
+    if (event?.kind === 'phone-handoff' && event.source) {
+      const source = button('Open source conversation', 'lp-button lp-button-quiet')
+      source.addEventListener('click', () => this.openPocket({ app: 'messages', conversationId: event.source!.conversationId, messageId: event.source!.messageId }))
+      content.appendChild(source)
+    }
     const save = () => {
       const startDate = new Date(start.input.value)
       const endDate = new Date(end.input.value)
@@ -1560,6 +1643,7 @@ class PocketController {
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
       generation: this.generation,
+      resolvedWallpapers: this.resolvedWallpapers,
       contextPreview: this.contextPreview,
       personaPreview: this.personaPreview,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
@@ -1569,6 +1653,7 @@ class PocketController {
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
+      chooseImage: (target, mode) => { void this.chooseImage(target, mode) },
       mountModelCombobox: (target, options) => {
         const handle = this.ctx.components.mountModelCombobox(target, {
           value: options.value,

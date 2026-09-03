@@ -1,6 +1,6 @@
-import type { DevicePreferences, PhonePalette, PhoneTheme } from '../types.js'
+import type { DevicePreferences, PocketImageSource, PocketWallpaper, PhonePalette, PhoneTheme } from '../types.js'
 
-export const PREFERENCES_VERSION = 4 as const
+export const PREFERENCES_VERSION = 5 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -41,6 +41,40 @@ function numberIn(value: unknown, fallback: number, min: number, max: number): n
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback
 }
 
+export function defaultWallpaper(): PocketWallpaper {
+  return { source: null, fit: 'cover', focalX: .5, focalY: .5, scrim: .22 }
+}
+
+export function normalizeImageSource(value: unknown): PocketImageSource | null {
+  const raw = record(value)
+  if (raw.kind === 'gallery') {
+    const imageId = text(raw.imageId, '', 180)
+    return imageId ? { kind: 'gallery', imageId } : null
+  }
+  if (raw.kind === 'asset') {
+    const assetId = text(raw.assetId, '', 180)
+    return assetId ? { kind: 'asset', assetId } : null
+  }
+  if (raw.kind === 'url') {
+    const url = text(raw.url, '', 2_000)
+    return /^(https?:\/\/|\/)/i.test(url) ? { kind: 'url', url } : null
+  }
+  return null
+}
+
+export function normalizeWallpaper(value: unknown, legacyUrl = ''): PocketWallpaper {
+  const raw = record(value)
+  const fit = raw.fit === 'contain' || raw.fit === 'stretch' ? raw.fit : 'cover'
+  const migratedUrl = text(legacyUrl, '', 2_000)
+  return {
+    source: normalizeImageSource(raw.source) || (/^(https?:\/\/|\/)/i.test(migratedUrl) ? { kind: 'url', url: migratedUrl } : null),
+    fit,
+    focalX: numberIn(raw.focalX, .5, 0, 1),
+    focalY: numberIn(raw.focalY, .5, 0, 1),
+    scrim: numberIn(raw.scrim, .22, 0, .85),
+  }
+}
+
 export function safeColor(value: unknown, fallback: string): string {
   const candidate = text(value, fallback, 16)
   return HEX.test(candidate) ? candidate.toLowerCase() : fallback
@@ -55,8 +89,8 @@ export function defaultPreferences(): DevicePreferences {
     version: PREFERENCES_VERSION,
     theme: 'midnight',
     colors: themePalette('midnight'),
-    wallpaperImageUrl: '',
-    chatWallpaperImageUrl: '',
+    homeWallpaper: defaultWallpaper(),
+    chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
     uiScale: 1,
     animation: 'spring',
@@ -158,8 +192,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
         chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary),
       },
       customCss: text(item.customCss, '', 30_000),
-      wallpaperImageUrl: text(item.wallpaperImageUrl, '', 2_000),
-      chatWallpaperImageUrl: text(item.chatWallpaperImageUrl, '', 2_000),
+      homeWallpaper: normalizeWallpaper(item.homeWallpaper, text(item.wallpaperImageUrl, '', 2_000)),
+      chatWallpaper: normalizeWallpaper(item.chatWallpaper, text(item.chatWallpaperImageUrl, '', 2_000)),
     }
   }
   const contextMode = raw.roleplayContextMode === 'off' || raw.roleplayContextMode === 'recent' || raw.roleplayContextMode === 'story'
@@ -168,8 +202,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     version: PREFERENCES_VERSION,
     theme,
     colors: palette,
-    wallpaperImageUrl: text(raw.wallpaperImageUrl, '', 2_000),
-    chatWallpaperImageUrl: text(raw.chatWallpaperImageUrl, '', 2_000),
+    homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, '', 2_000)),
+    chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, '', 2_000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation as DevicePreferences['animation'] : fallback.animation,

@@ -25,6 +25,7 @@ export interface MessagesViewHost {
   messageAnyway(conversationId: string): void
   manualOverride: boolean
   returnToRoleplay(): void
+  openTimeline(eventId: string): void
   showGenerationInfo(message: PhoneMessage): void
   back(): void
 }
@@ -33,15 +34,15 @@ const PAUSE_COPY = {
   ended: 'stopped responding.',
   busy: 'is busy right now.',
   away: 'went unavailable.',
-  arriving: 'is here now.',
   sleeping: 'went offline for the night.',
   unknown: 'stopped responding.',
 } as const
 
 const LOCAL_COPY = {
   in_scene: 'is currently with you.',
-  arriving: 'is here now.',
+  arrived: 'is here now.',
   took_action: 'continued this in the main conversation.',
+  continued_in_person: 'continued this in person.',
 } as const
 
 function conversationTitle(state: PhoneState, conversation: PocketConversation): string {
@@ -174,19 +175,33 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const availability = scenePresent && conversation.availability.state !== 'local'
     ? { state: 'local' as const, reason: 'in_scene' as const }
     : conversation.availability
-  if (!replyBusy && (availability.state !== 'available' || conversation.pause)) {
-    const reason = availability.state === 'local' ? LOCAL_COPY[availability.reason] : PAUSE_COPY[availability.state === 'paused' ? availability.reason : conversation.pause!.reason]
+  if (!replyBusy && (availability.state !== 'remote' || conversation.pause)) {
+    const reason = availability.state === 'local' ? LOCAL_COPY[availability.reason] : availability.state === 'arriving' ? 'is on the way.' : PAUSE_COPY[availability.state === 'paused' ? availability.reason : conversation.pause!.reason]
     const banner = el('div', 'lp-conversation-status', `${directContact?.name || titleText} ${reason}`)
-    banner.dataset.pauseReason = availability.state === 'local' ? availability.reason : availability.state === 'paused' ? availability.reason : conversation.pause!.reason
+    banner.dataset.pauseReason = availability.state === 'local' ? availability.reason : availability.state === 'arriving' ? 'arriving' : availability.state === 'paused' ? availability.reason : conversation.pause!.reason
     bubbles.appendChild(banner)
   }
   if (!conversation.messages.length) bubbles.appendChild(host.empty('Say hello', 'This thread is private to this Pocket roleplay state.'))
 
   if (availability.state === 'local' && !host.manualOverride) {
     const localActions = el('div', 'lp-local-actions')
-    const roleplay = button('Return to roleplay', 'lp-button'); roleplay.addEventListener('click', () => host.returnToRoleplay())
+    const relay = [...host.state.relays].reverse().find((entry) => entry.conversationId === conversation.id)
+    const pendingRelay = relay?.status === 'pending' ? relay : undefined
+    const continuing = pendingRelay?.continuation.state === 'launching' || pendingRelay?.continuation.state === 'requested'
+    const retrying = pendingRelay?.continuation.state === 'failed' || pendingRelay?.continuation.state === 'stopped'
+    const status = continuing ? 'Continuing in roleplay…' : retrying ? 'Continuation paused — retry when ready.' : 'Continue in main conversation'
+    const roleplay = button(retrying ? 'Retry continuation' : 'Return to roleplay', 'lp-button'); roleplay.disabled = continuing; roleplay.addEventListener('click', () => host.returnToRoleplay())
     const anyway = button('Message anyway', 'lp-button lp-button-quiet'); anyway.addEventListener('click', () => host.messageAnyway(conversation.id))
-    localActions.append(el('strong', '', 'Continue in main conversation'), roleplay, anyway)
+    localActions.append(el('strong', '', status), roleplay, anyway)
+    if (relay?.timelineEventId) {
+      const timeline = button('View Timeline handoff', 'lp-button lp-button-quiet'); timeline.addEventListener('click', () => host.openTimeline(relay.timelineEventId)); localActions.appendChild(timeline)
+    }
+    if (conversation.lastDecision) {
+      const diagnostic = el('details', 'lp-channel-diagnostic')
+      const decision = conversation.lastDecision
+      diagnostic.append(el('summary', '', 'Channel decision'), el('span', 'lp-copy', `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ''}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ''}`))
+      localActions.appendChild(diagnostic)
+    }
     page.append(nav, bubbles, localActions)
     return page
   }
@@ -231,7 +246,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     event.preventDefault()
     const message = inputValue(textarea)
     if (!message) return
-    host.send('lumiphone:action', { action: 'message', payload: { conversationId: conversation.id, text: message, sender: 'persona' } })
+    host.send('lumiphone:action', { action: 'message', payload: { conversationId: conversation.id, text: message, sender: 'persona', explicitRemoteOverride: host.manualOverride } })
     textarea.value = ''
     host.updateDraft(conversation.id, '')
     resizeComposer()

@@ -8,7 +8,7 @@ The extension identifier and storage namespace intentionally remain `lumiphone` 
 
 - **Messages** — direct and group conversations with a chat-scoped Pocket Persona, outgoing-message bursts, explicit or automatic single-speaker generation, narrative pause/handoff states, generation diagnostics, and per-conversation unread state.
 - **Contacts** — reusable Character, active Council, and Pocket NPC identities with search, compact context policy, direct-message entry, manual/generated creation, and a replaceable current-scene snapshot with source-turn freshness.
-- **Gallery** — chat, character, Pocket-owned, or full Lumiverse image filters; full-resolution inspection, current-RP append, contact photos, and device/Persona wallpaper actions.
+- **Gallery** — chat, character, Pocket-owned, or full Lumiverse image filters; full-resolution inspection, current-RP append, contact photos, and device/Persona wallpaper actions backed by stable Lumiverse image IDs.
 - **Camera** — native Lumiverse image generation, streamed previews where supported, an optional LLM scene-planning sidecar, and automatic chat/character image ownership.
 - **Notes** — a private or model-visible character journal with pinned memory entries.
 - **Weather** — fictional scene weather rather than an external real-world feed.
@@ -61,7 +61,9 @@ Scene Sync replaces `sceneSnapshot` after validating the entire bounded result. 
 
 Each chat owns a compact Pocket Persona. It may follow the current Lumiverse Persona or use a manual/generated profile without modifying Lumiverse. Generated profiles are previews until explicitly accepted. A new chat receives one dismissible setup sheet; the offered/completed state persists with that chat.
 
-Automatic replies settle a device-configurable `Instant`, `Quick`, `Natural`, or `Relaxed` outgoing burst. Consecutive bubbles join the same persisted burst, active composition holds evaluation, and exactly one reply decision runs after settlement. Manual sparkle generation flushes the burst immediately. Reply evaluation may leave the DM available, pause it, or hand it off to the physical RP channel. A local conversation hides normal autonomous reply affordances and offers **Return to roleplay** plus an explicit **Message anyway** override; leaving the scene restores remote eligibility without erasing an unrelated pause.
+Automatic replies settle a device-configurable `Instant`, `Quick`, `Natural`, or `Relaxed` outgoing burst. Consecutive bubbles join the same persisted burst, active composition holds evaluation, and exactly one reply decision runs after settlement. Manual sparkle generation flushes the burst immediately. The channel state is explicit: `remote`, `arriving`, `paused`, or `local`. Scene presence is checked before the reply model, and an impossible `none`/`reply` result is normalized to `handoff` if scene truth changed during evaluation. `arriving` remains textable until scene presence corroborates arrival.
+
+A local handoff writes a linked Timeline event and a bounded pending continuity relay, then uses Lumiverse's native chat-mutation generation path to continue the main RP. The interceptor injects only pending relays at higher recency than older scene summaries; a relay is consumed only by its matching successful generation and remains retryable after failure or stop. A local conversation hides autonomous reply affordances and offers **Return to roleplay**, the Timeline handoff, and an explicit **Message anyway** override. Leaving the scene restores remote eligibility without erasing an unrelated pause.
 
 ## Text generation routing
 
@@ -102,7 +104,7 @@ Device preferences are deliberately separate:
 users/{userId}/extensions/lumiphone/device/preferences.json
 ```
 
-Roleplay state (currently schema v5) contains the chat-scoped Pocket Persona and setup flag, reusable identities, a replaceable scene snapshot, separate conversations/messages and outgoing bursts, notes/provenance, fictional weather, timeline events, trackers, notifications, and bounded internal idempotency receipts. Device preferences (currently schema v4) contain theme colors, image wallpapers, Persona appearance overrides, `handsetScale`, `uiScale`, motion, reply cadence, notification behavior, and Camera/Swarm/generation routing. Legacy embedded settings and contact-owned message threads migrate on read; malformed records normalize safely; unknown future schemas fail closed. Import is validated and forced to the active chat/character rather than trusting IDs in a file. Settings exposes distinct reset actions for this phone, all roleplay phones, and device preferences.
+Roleplay state (currently schema v6) contains the chat-scoped Pocket Persona and setup flag, reusable identities, a replaceable scene snapshot, separate conversations/messages and outgoing bursts, channel decisions, continuity relays, notes/provenance, fictional weather, timeline events, trackers, notifications, and bounded internal idempotency receipts. Device preferences (currently schema v5) contain theme colors, typed image-source wallpapers, Persona appearance overrides, `handsetScale`, `uiScale`, motion, reply cadence, notification behavior, and Camera/Swarm/generation routing. Uploaded backgrounds are persisted through Lumiverse's shared Images API; preferences retain only an asset ID (or a durable URL), plus fit, normalized focal coordinates, and scrim—not base64 data. Legacy URL wallpapers, embedded settings, and contact-owned message threads migrate on read; malformed records normalize safely; unknown future schemas fail closed. Import is validated and forced to the active chat/character rather than trusting IDs in a file. Settings exposes distinct reset actions for this phone, all roleplay phones, and device preferences.
 
 State arrays and text fields are normalized and bounded on every read. Tracker rates are deterministically materialized from their last persisted timestamp, so they continue advancing across phone closes and process restarts. The main-model Pocket snapshot has a hard 5,600-character serialized ceiling rather than dumping storage; selected-conversation DM context uses the separate bounded assembler described above.
 
@@ -115,10 +117,12 @@ State arrays and text fields are normalized and bounded on every read. Tracker r
 - `src/frontend/apps/messages.ts` — conversation list, threads, group editing, compose, and reply controls.
 - `src/frontend/apps/contacts.ts` — contact discovery, presence, import, detail, and configuration flows.
 - `src/frontend/apps/trackers.ts` — tracker dashboard, detail, history, and configuration.
+- `src/frontend/components/image-picker.ts` — reusable stable-reference wallpaper/image controls.
 - `src/domain/contacts.ts` — contact/conversation normalization, migration, and direct-thread invariants.
 - `src/domain/preferences.ts` — preference defaults, validation, and migration.
 - `src/domain/projection.ts` — bounded model-context projection.
 - `src/backend/roleplay-context.ts` — authoritative RP fetch, context-mode assembly, budgets, anchors, and diagnostics.
+- `src/backend/continuity.ts` — bounded channel-decision normalization, snapshots, and pending relay projection.
 - `src/backend/generation.ts` — roleplay/sidecar routing, connection inspection, model override, and run history.
 - `src/backend.ts` — Spindle adapters and canonical command pipeline.
 - `src/styles.ts` — centralized phone/design tokens and responsive states.
@@ -130,7 +134,7 @@ npm run verify
 node scripts/mount-local.mjs --enable
 ```
 
-`npm run verify` typechecks, bundles both entries, runs pure migration/projection/surface/context tests, and runs the backend + simulated-DOM host contract. The contract covers v5/v4 migration, impossible-marker context freshness, source-specific Character/Council replies, scene Character/Persona exclusion and snapshot staleness, outgoing burst batching/typing hold/manual flush, pause/handoff behavior, group speaker bounds, duplicate tool delivery, sidecar connection/model override, scene-planner fallback, Gallery current-RP update, cancellation of a late Camera result, future import rejection, app mounting, click/Enter sending, Tracker Save/history behavior, tag routing, dock recreation, wallpaper layering, and semantic handset/UI scaling. A real Lumiverse backend startup remains a separate host-sensitive smoke step; a simulated DOM is not labeled as visual QA.
+`npm run verify` typechecks, bundles both entries, runs pure migration/projection/surface/context tests, and runs the backend + simulated-DOM host contract. The contract covers v6/v5 migration, deterministic local handoff and relay consumption, impossible-marker context freshness, source-specific Character/Council replies, scene Character/Persona exclusion and snapshot staleness, outgoing burst batching/typing hold/manual flush, pause/handoff behavior, stable Gallery/uploaded wallpaper references, group speaker bounds, duplicate tool delivery, sidecar connection/model override, scene-planner fallback, Gallery current-RP update, cancellation of a late Camera result, future import rejection, app mounting, click/Enter sending, Tracker Save/history behavior, tag routing, dock recreation, wallpaper layering, and semantic handset/UI scaling. A real Lumiverse backend startup remains a separate host-sensitive smoke step; a simulated DOM is not labeled as visual QA.
 
 The live extension is mounted at `Lumiverse/data/extensions/lumiphone/repo`; its built entries are `dist/backend.js` and `dist/frontend.js`.
 The local mount script registers/enables the exact folder in `data/lumiverse.db` but intentionally does not bypass Lumiverse's permission-consent flow.

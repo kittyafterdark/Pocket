@@ -1,5 +1,5 @@
 // src/domain/preferences.ts
-var PREFERENCES_VERSION = 4;
+var PREFERENCES_VERSION = 5;
 var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
   midnight: {
@@ -60,6 +60,37 @@ function numberIn(value, fallback, min, max) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
 }
+function defaultWallpaper() {
+  return { source: null, fit: "cover", focalX: 0.5, focalY: 0.5, scrim: 0.22 };
+}
+function normalizeImageSource(value) {
+  const raw = record(value);
+  if (raw.kind === "gallery") {
+    const imageId = text(raw.imageId, "", 180);
+    return imageId ? { kind: "gallery", imageId } : null;
+  }
+  if (raw.kind === "asset") {
+    const assetId = text(raw.assetId, "", 180);
+    return assetId ? { kind: "asset", assetId } : null;
+  }
+  if (raw.kind === "url") {
+    const url = text(raw.url, "", 2000);
+    return /^(https?:\/\/|\/)/i.test(url) ? { kind: "url", url } : null;
+  }
+  return null;
+}
+function normalizeWallpaper(value, legacyUrl = "") {
+  const raw = record(value);
+  const fit = raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover";
+  const migratedUrl = text(legacyUrl, "", 2000);
+  return {
+    source: normalizeImageSource(raw.source) || (/^(https?:\/\/|\/)/i.test(migratedUrl) ? { kind: "url", url: migratedUrl } : null),
+    fit,
+    focalX: numberIn(raw.focalX, 0.5, 0, 1),
+    focalY: numberIn(raw.focalY, 0.5, 0, 1),
+    scrim: numberIn(raw.scrim, 0.22, 0, 0.85)
+  };
+}
 function safeColor(value, fallback) {
   const candidate = text(value, fallback, 16);
   return HEX.test(candidate) ? candidate.toLowerCase() : fallback;
@@ -72,8 +103,8 @@ function defaultPreferences() {
     version: PREFERENCES_VERSION,
     theme: "midnight",
     colors: themePalette("midnight"),
-    wallpaperImageUrl: "",
-    chatWallpaperImageUrl: "",
+    homeWallpaper: defaultWallpaper(),
+    chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
     uiScale: 1,
     animation: "spring",
@@ -174,8 +205,8 @@ function normalizePreferences(value) {
         chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary)
       },
       customCss: text(item.customCss, "", 30000),
-      wallpaperImageUrl: text(item.wallpaperImageUrl, "", 2000),
-      chatWallpaperImageUrl: text(item.chatWallpaperImageUrl, "", 2000)
+      homeWallpaper: normalizeWallpaper(item.homeWallpaper, text(item.wallpaperImageUrl, "", 2000)),
+      chatWallpaper: normalizeWallpaper(item.chatWallpaper, text(item.chatWallpaperImageUrl, "", 2000))
     };
   }
   const contextMode = raw.roleplayContextMode === "off" || raw.roleplayContextMode === "recent" || raw.roleplayContextMode === "story" ? raw.roleplayContextMode : "smart";
@@ -183,8 +214,8 @@ function normalizePreferences(value) {
     version: PREFERENCES_VERSION,
     theme,
     colors: palette,
-    wallpaperImageUrl: text(raw.wallpaperImageUrl, "", 2000),
-    chatWallpaperImageUrl: text(raw.chatWallpaperImageUrl, "", 2000),
+    homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
+    chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
@@ -381,6 +412,66 @@ function requestId(prefix = "req") {
   return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
 }
 
+// src/frontend/components/image-picker.ts
+function sourceLabel(wallpaper) {
+  if (!wallpaper.source)
+    return "Theme gradient";
+  if (wallpaper.source.kind === "gallery")
+    return "Lumiverse Gallery";
+  if (wallpaper.source.kind === "asset")
+    return "Uploaded asset";
+  return "Image URL";
+}
+function range(label, value, update) {
+  const node = el("label", "lp-wallpaper-range");
+  node.append(el("span", "lp-copy", label));
+  const input = el("input");
+  input.type = "range";
+  input.min = "0";
+  input.max = "1";
+  input.step = ".01";
+  input.value = String(value);
+  input.addEventListener("input", () => update(Number(input.value)));
+  node.appendChild(input);
+  return node;
+}
+function wallpaperImageControl(label, target, wallpaper, resolvedUrl, host) {
+  const card = el("section", "lp-wallpaper-control");
+  card.dataset.imageTarget = target;
+  const heading = el("div", "lp-row-between");
+  const copy = el("span");
+  copy.append(el("strong", "", label), el("span", "lp-copy", sourceLabel(wallpaper)));
+  const clear = button("Clear", "lp-button lp-button-quiet");
+  clear.disabled = !wallpaper.source;
+  clear.addEventListener("click", () => host.change({ ...wallpaper, source: null }));
+  heading.append(copy, clear);
+  const preview = el("div", "lp-wallpaper-preview");
+  preview.dataset.empty = String(!resolvedUrl);
+  preview.style.backgroundImage = resolvedUrl ? `linear-gradient(rgba(5,4,8,${wallpaper.scrim}),rgba(5,4,8,${wallpaper.scrim})),url(${JSON.stringify(resolvedUrl)})` : "";
+  preview.style.backgroundSize = wallpaper.fit === "stretch" ? "100% 100%" : wallpaper.fit;
+  preview.style.backgroundPosition = `${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%`;
+  preview.textContent = resolvedUrl ? "" : "Theme background";
+  const actions = el("div", "lp-wallpaper-actions");
+  for (const [mode, text2] of [["gallery", "Gallery"], ["upload", "Upload"], ["url", "Image URL"]]) {
+    const choose = button(text2, "lp-button lp-button-quiet");
+    choose.addEventListener("click", () => host.choose(target, mode));
+    actions.appendChild(choose);
+  }
+  const fit = el("select", "lp-select");
+  for (const value of ["cover", "contain", "stretch"]) {
+    const option = el("option", "", value[0].toUpperCase() + value.slice(1));
+    option.value = value;
+    option.selected = wallpaper.fit === value;
+    fit.appendChild(option);
+  }
+  fit.setAttribute("aria-label", `${label} fit`);
+  fit.addEventListener("change", () => host.change({ ...wallpaper, fit: fit.value }));
+  const focal = el("div", "lp-wallpaper-focal");
+  focal.append(range("Horizontal focus", wallpaper.focalX, (value) => host.change({ ...wallpaper, focalX: value })), range("Vertical focus", wallpaper.focalY, (value) => host.change({ ...wallpaper, focalY: value })), range("Scrim", wallpaper.scrim, (value) => host.change({ ...wallpaper, scrim: value })));
+  card.append(heading, preview, actions, fit, focal);
+  return card;
+}
+
 // src/frontend/apps/settings.ts
 function clone(value) {
   return structuredClone(value);
@@ -494,36 +585,17 @@ function appearance(host) {
   }));
   palette.append(colorControl("Accent", "accent"), colorControl("Bezel", "bezel"), colorControl("UI background", "background"), colorControl("UI surface", "surface"), colorControl("UI text", "text"), colorControl("Home top", "wallpaperPrimary"), colorControl("Home bottom", "wallpaperSecondary"), colorControl("Chat top", "chatPrimary"), colorControl("Chat bottom", "chatSecondary"));
   const wallpapers = el("section", "lp-card lp-settings-section");
-  wallpapers.append(el("div", "lp-eyebrow", "Wallpaper images"));
-  const homeImage = row("Home wallpaper", settings.wallpaperImageUrl ? "Gallery image selected" : "Theme gradient");
-  homeImage.dataset.setting = "home-wallpaper";
-  const clearHome = button("Clear", "lp-button lp-button-quiet");
-  clearHome.disabled = !settings.wallpaperImageUrl;
-  clearHome.addEventListener("click", () => {
-    commit((next) => {
-      next.wallpaperImageUrl = "";
-    });
-    const detail = homeImage.querySelector(".lp-copy");
-    if (detail)
-      detail.textContent = "Theme gradient";
-    clearHome.disabled = true;
-  });
-  homeImage.appendChild(clearHome);
-  const chatImage = row("Chat wallpaper", settings.chatWallpaperImageUrl ? "Gallery image selected" : "Theme gradient");
-  chatImage.dataset.setting = "chat-wallpaper";
-  const clearChat = button("Clear", "lp-button lp-button-quiet");
-  clearChat.disabled = !settings.chatWallpaperImageUrl;
-  clearChat.addEventListener("click", () => {
-    commit((next) => {
-      next.chatWallpaperImageUrl = "";
-    });
-    const detail = chatImage.querySelector(".lp-copy");
-    if (detail)
-      detail.textContent = "Theme gradient";
-    clearChat.disabled = true;
-  });
-  chatImage.appendChild(clearChat);
-  wallpapers.append(homeImage, chatImage);
+  wallpapers.append(el("div", "lp-eyebrow", "Wallpaper images"), wallpaperImageControl("Home wallpaper", "device-home", settings.homeWallpaper, host.resolvedWallpapers.deviceHome, {
+    choose: host.chooseImage,
+    change: (wallpaper) => commit((next) => {
+      next.homeWallpaper = wallpaper;
+    })
+  }), wallpaperImageControl("Chat wallpaper", "device-chat", settings.chatWallpaper, host.resolvedWallpapers.deviceChat, {
+    choose: host.chooseImage,
+    change: (wallpaper) => commit((next) => {
+      next.chatWallpaper = wallpaper;
+    })
+  }));
   const scaleCard = el("section", "lp-card lp-settings-section");
   scaleCard.append(el("div", "lp-eyebrow", "Sizing"));
   const presets = el("div", "lp-row");
@@ -632,7 +704,14 @@ function persona(host) {
   if (!host.activePersona)
     return page;
   const active = host.activePersona;
-  const current = host.draft.personaAppearance[active.id] || { enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: "", wallpaperImageUrl: "", chatWallpaperImageUrl: "" };
+  const current = host.draft.personaAppearance[active.id] || {
+    enabled: false,
+    theme: host.draft.theme,
+    colors: clone(host.draft).colors,
+    customCss: "",
+    homeWallpaper: { ...structuredClone(host.draft.homeWallpaper), source: null },
+    chatWallpaper: { ...structuredClone(host.draft.chatWallpaper), source: null }
+  };
   const commit = (mutate, persist = true) => {
     const next = clone(host.draft);
     const value = structuredClone(next.personaAppearance[active.id] || current);
@@ -662,15 +741,17 @@ function persona(host) {
       item.theme = "custom";
       item.colors[key] = value;
     })));
-  const clearHome = button("Clear persona home wallpaper", "lp-button lp-button-quiet");
-  clearHome.disabled = !current.wallpaperImageUrl;
-  clearHome.addEventListener("click", () => commit((item) => {
-    item.wallpaperImageUrl = "";
-  }));
-  const clearChat = button("Clear persona chat wallpaper", "lp-button lp-button-quiet");
-  clearChat.disabled = !current.chatWallpaperImageUrl;
-  clearChat.addEventListener("click", () => commit((item) => {
-    item.chatWallpaperImageUrl = "";
+  const personaWallpapers = el("section", "lp-settings-section");
+  personaWallpapers.append(wallpaperImageControl(`${active.name} home`, "persona-home", current.homeWallpaper, host.resolvedWallpapers.personaHome, {
+    choose: host.chooseImage,
+    change: (wallpaper) => commit((item) => {
+      item.homeWallpaper = wallpaper;
+    })
+  }), wallpaperImageControl(`${active.name} chat`, "persona-chat", current.chatWallpaper, host.resolvedWallpapers.personaChat, {
+    choose: host.chooseImage,
+    change: (wallpaper) => commit((item) => {
+      item.chatWallpaper = wallpaper;
+    })
   }));
   const css = el("textarea", "lp-textarea lp-code-input");
   css.placeholder = "Persona-scoped Pocket CSS";
@@ -682,7 +763,7 @@ function persona(host) {
   apply.addEventListener("click", () => commit((item) => {
     item.customCss = css.value;
   }));
-  card.append(theme, colors, clearHome, clearChat, css, apply);
+  card.append(theme, colors, personaWallpapers, css, apply);
   content.appendChild(card);
   return page;
 }
@@ -1404,14 +1485,14 @@ var PAUSE_COPY = {
   ended: "stopped responding.",
   busy: "is busy right now.",
   away: "went unavailable.",
-  arriving: "is here now.",
   sleeping: "went offline for the night.",
   unknown: "stopped responding."
 };
 var LOCAL_COPY = {
   in_scene: "is currently with you.",
-  arriving: "is here now.",
-  took_action: "continued this in the main conversation."
+  arrived: "is here now.",
+  took_action: "continued this in the main conversation.",
+  continued_in_person: "continued this in person."
 };
 function conversationTitle(state, conversation) {
   if (conversation.kind === "group")
@@ -1563,21 +1644,38 @@ function renderMessagesView(host) {
     bubbles.appendChild(pending);
   }
   const availability = scenePresent && conversation.availability.state !== "local" ? { state: "local", reason: "in_scene" } : conversation.availability;
-  if (!replyBusy && (availability.state !== "available" || conversation.pause)) {
-    const reason = availability.state === "local" ? LOCAL_COPY[availability.reason] : PAUSE_COPY[availability.state === "paused" ? availability.reason : conversation.pause.reason];
+  if (!replyBusy && (availability.state !== "remote" || conversation.pause)) {
+    const reason = availability.state === "local" ? LOCAL_COPY[availability.reason] : availability.state === "arriving" ? "is on the way." : PAUSE_COPY[availability.state === "paused" ? availability.reason : conversation.pause.reason];
     const banner = el("div", "lp-conversation-status", `${directContact?.name || titleText} ${reason}`);
-    banner.dataset.pauseReason = availability.state === "local" ? availability.reason : availability.state === "paused" ? availability.reason : conversation.pause.reason;
+    banner.dataset.pauseReason = availability.state === "local" ? availability.reason : availability.state === "arriving" ? "arriving" : availability.state === "paused" ? availability.reason : conversation.pause.reason;
     bubbles.appendChild(banner);
   }
   if (!conversation.messages.length)
     bubbles.appendChild(host.empty("Say hello", "This thread is private to this Pocket roleplay state."));
   if (availability.state === "local" && !host.manualOverride) {
     const localActions = el("div", "lp-local-actions");
-    const roleplay = button("Return to roleplay", "lp-button");
+    const relay = [...host.state.relays].reverse().find((entry) => entry.conversationId === conversation.id);
+    const pendingRelay = relay?.status === "pending" ? relay : undefined;
+    const continuing = pendingRelay?.continuation.state === "launching" || pendingRelay?.continuation.state === "requested";
+    const retrying = pendingRelay?.continuation.state === "failed" || pendingRelay?.continuation.state === "stopped";
+    const status = continuing ? "Continuing in roleplay…" : retrying ? "Continuation paused — retry when ready." : "Continue in main conversation";
+    const roleplay = button(retrying ? "Retry continuation" : "Return to roleplay", "lp-button");
+    roleplay.disabled = continuing;
     roleplay.addEventListener("click", () => host.returnToRoleplay());
     const anyway = button("Message anyway", "lp-button lp-button-quiet");
     anyway.addEventListener("click", () => host.messageAnyway(conversation.id));
-    localActions.append(el("strong", "", "Continue in main conversation"), roleplay, anyway);
+    localActions.append(el("strong", "", status), roleplay, anyway);
+    if (relay?.timelineEventId) {
+      const timeline = button("View Timeline handoff", "lp-button lp-button-quiet");
+      timeline.addEventListener("click", () => host.openTimeline(relay.timelineEventId));
+      localActions.appendChild(timeline);
+    }
+    if (conversation.lastDecision) {
+      const diagnostic = el("details", "lp-channel-diagnostic");
+      const decision = conversation.lastDecision;
+      diagnostic.append(el("summary", "", "Channel decision"), el("span", "lp-copy", `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
+      localActions.appendChild(diagnostic);
+    }
     page.append(nav, bubbles, localActions);
     return page;
   }
@@ -1634,7 +1732,7 @@ function renderMessagesView(host) {
     const message = inputValue(textarea);
     if (!message)
       return;
-    host.send("lumiphone:action", { action: "message", payload: { conversationId: conversation.id, text: message, sender: "persona" } });
+    host.send("lumiphone:action", { action: "message", payload: { conversationId: conversation.id, text: message, sender: "persona", explicitRemoteOverride: host.manualOverride } });
     textarea.value = "";
     host.updateDraft(conversation.id, "");
     resizeComposer();
@@ -2132,6 +2230,7 @@ class PocketController {
   caps = null;
   swarmProfile = null;
   generation = null;
+  resolvedWallpapers = { deviceHome: "", deviceChat: "", personaHome: "", personaChat: "" };
   contextPreview = null;
   personaPreview = null;
   operations = new Map;
@@ -2139,6 +2238,7 @@ class PocketController {
   gallery = { data: [], total: 0 };
   galleryScope = "chat";
   galleryActionButtons = new Map;
+  pendingWallpaperTarget = null;
   selectedContactId = "";
   selectedContactView = "list";
   selectedConversationId = "";
@@ -2666,11 +2766,13 @@ class PocketController {
           this.manualMessageOverrides.delete(conversationId);
       }
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
-      if (payload.reason === "import" || payload.reason === "reset_preferences")
+      if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences")
         this.settingsDraft = structuredClone(this.preferences);
       this.caps = payload.capabilities || this.caps;
       this.swarmProfile = payload.swarmProfile || this.swarmProfile;
       this.generation = payload.generation || this.generation;
+      if (payload.resolvedWallpapers)
+        this.resolvedWallpapers = payload.resolvedWallpapers;
       if ("activePersona" in payload)
         this.activePersona = payload.activePersona || null;
       for (const activity of this.state.activities || [])
@@ -3001,10 +3103,17 @@ class PocketController {
     this.shell.style.setProperty("--lp-text", appearance2.colors.text);
     const homeWallpaper = wallpaperCss(appearance2.colors.wallpaperPrimary, appearance2.colors.wallpaperSecondary);
     const chatWallpaper = wallpaperCss(appearance2.colors.chatPrimary, appearance2.colors.chatSecondary);
-    const homeImage = persona2?.enabled ? persona2.wallpaperImageUrl || settings.wallpaperImageUrl : settings.wallpaperImageUrl;
-    const chatImage = persona2?.enabled ? persona2.chatWallpaperImageUrl || settings.chatWallpaperImageUrl : settings.chatWallpaperImageUrl;
-    this.shell.style.setProperty("--lp-wallpaper", homeImage ? `linear-gradient(rgba(7,6,11,.14),rgba(7,6,11,.3)),url(${JSON.stringify(homeImage)}),${homeWallpaper}` : homeWallpaper);
-    this.shell.style.setProperty("--lp-chat-wallpaper", chatImage ? `linear-gradient(rgba(9,8,14,.12),rgba(9,8,14,.3)),url(${JSON.stringify(chatImage)}),${chatWallpaper}` : chatWallpaper);
+    const homeSetting = persona2?.enabled && persona2.homeWallpaper.source ? persona2.homeWallpaper : settings.homeWallpaper;
+    const chatSetting = persona2?.enabled && persona2.chatWallpaper.source ? persona2.chatWallpaper : settings.chatWallpaper;
+    const homeImage = persona2?.enabled && persona2.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome;
+    const chatImage = persona2?.enabled && persona2.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat;
+    const imageLayer = (url, setting, gradient) => url ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}` : gradient;
+    this.shell.style.setProperty("--lp-wallpaper", imageLayer(homeImage, homeSetting, homeWallpaper));
+    this.shell.style.setProperty("--lp-chat-wallpaper", imageLayer(chatImage, chatSetting, chatWallpaper));
+    this.shell.style.setProperty("--lp-home-wallpaper-size", homeSetting.fit === "stretch" ? "100% 100%" : homeSetting.fit);
+    this.shell.style.setProperty("--lp-home-wallpaper-position", `${homeSetting.focalX * 100}% ${homeSetting.focalY * 100}%`);
+    this.shell.style.setProperty("--lp-chat-wallpaper-size", chatSetting.fit === "stretch" ? "100% 100%" : chatSetting.fit);
+    this.shell.style.setProperty("--lp-chat-wallpaper-position", `${chatSetting.focalX * 100}% ${chatSetting.focalY * 100}%`);
     this.shell.style.setProperty("--pocket-ui-scale", String(settings.uiScale));
     this.shell.style.setProperty("--lp-animation-ms", `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`);
     this.shell.dataset.reducedMotion = String(settings.reducedMotion);
@@ -3295,7 +3404,12 @@ class PocketController {
         this.render(false);
       },
       manualOverride: this.manualMessageOverrides.has(this.selectedConversationId),
-      returnToRoleplay: () => this.close(),
+      returnToRoleplay: () => {
+        if (this.state?.relays.some((entry) => entry.conversationId === this.selectedConversationId && entry.status === "pending"))
+          this.send("lumiphone:continue_relay", { conversationId: this.selectedConversationId });
+        this.close();
+      },
+      openTimeline: (eventId) => this.openPocket({ app: "calendar", eventId }),
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back()
     });
@@ -3322,6 +3436,12 @@ class PocketController {
       ]) {
         const row2 = el("div", "lp-row-between");
         row2.append(el("strong", "", label), el("span", "lp-copy", value));
+        content.appendChild(row2);
+      }
+      if (info.replyDecision) {
+        const decision = info.replyDecision;
+        const row2 = el("div", "lp-row-between");
+        row2.append(el("strong", "", "Channel decision"), el("span", "lp-copy", `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
         content.appendChild(row2);
       }
     }
@@ -3408,6 +3528,20 @@ class PocketController {
     image.alt = item.filename || "Pocket photo";
     image.style.cssText = "display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808";
     const actions = el("div", "lp-gallery-actions");
+    if (this.pendingWallpaperTarget && this.pendingWallpaperTarget !== "contact-avatar") {
+      const target = this.pendingWallpaperTarget;
+      const use = button("Use this image", "lp-button");
+      use.addEventListener("click", () => {
+        const personaTarget = target.startsWith("persona-");
+        this.runGalleryAction(use, "Applying…", "lumiphone:gallery_set_wallpaper", {
+          imageId: item.id,
+          target: target.endsWith("chat") ? "chat" : "home",
+          personaId: personaTarget ? this.activePersona?.id : undefined
+        });
+        this.pendingWallpaperTarget = null;
+      });
+      actions.appendChild(use);
+    }
     const open = button("Open image", "lp-button");
     open.addEventListener("click", () => window.open(item.fullUrl || item.url, "_blank", "noopener,noreferrer"));
     const attach = button("Add to current RP chat", "lp-button");
@@ -3453,6 +3587,54 @@ class PocketController {
     buttonNode.textContent = progress;
     this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle });
     this.send(type, { ...payload, requestId: actionRequestId });
+  }
+  wallpaperTargetPayload(target) {
+    return { target, personaId: target.startsWith("persona-") ? this.activePersona?.id : undefined };
+  }
+  async chooseImage(target, mode) {
+    if (mode === "gallery") {
+      this.pendingWallpaperTarget = target;
+      this.requestGallery("all");
+      this.openPocket({ app: "gallery" });
+      return;
+    }
+    if (mode === "upload") {
+      try {
+        const files = await this.ctx.uploads.pickFile({ accept: ["image/*", ".png", ".jpg", ".jpeg", ".webp", ".gif"], multiple: false, maxSizeBytes: 8 * 1024 * 1024 });
+        const file = files[0];
+        if (!file)
+          return;
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader;
+          reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+          reader.addEventListener("error", () => reject(reader.error || new Error("Could not read the image.")), { once: true });
+          reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }));
+        });
+        this.send("lumiphone:upload_wallpaper_asset", { ...this.wallpaperTargetPayload(target), dataUrl, filename: file.name });
+      } catch (error) {
+        this.showError(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    const modal = this.ctx.ui.showModal({ title: "Use image URL", width: 460, maxHeight: 320 });
+    const content = el("div", "lp-settings-section");
+    content.appendChild(el("p", "lp-copy", "Use a durable HTTPS image URL. Pocket stores the URL, never a downloaded base64 copy."));
+    const input = el("input", "lp-input");
+    input.type = "url";
+    input.placeholder = "https://example.com/wallpaper.jpg";
+    const apply = button("Use image", "lp-button");
+    apply.addEventListener("click", () => {
+      const url = input.value.trim();
+      if (!/^https:\/\//i.test(url)) {
+        this.showError("Enter an HTTPS image URL.");
+        return;
+      }
+      this.send("lumiphone:set_wallpaper", { ...this.wallpaperTargetPayload(target), source: { kind: "url", url } });
+      modal.dismiss();
+    });
+    content.append(input, apply);
+    modal.root.appendChild(content);
+    input.focus();
   }
   renderCamera() {
     const page = el("div", "lp-camera");
@@ -3679,6 +3861,11 @@ class PocketController {
     const completeRow = el("label", "lp-card lp-row-between");
     completeRow.append(el("span", "lp-title", "Completed"), completed);
     content.append(title.label, lane.label, whenKindLabel, whenText.label, start.label, end.label, description, completeRow);
+    if (event?.kind === "phone-handoff" && event.source) {
+      const source = button("Open source conversation", "lp-button lp-button-quiet");
+      source.addEventListener("click", () => this.openPocket({ app: "messages", conversationId: event.source.conversationId, messageId: event.source.messageId }));
+      content.appendChild(source);
+    }
     const save = () => {
       const startDate = new Date(start.input.value);
       const endDate = new Date(end.input.value);
@@ -3741,6 +3928,7 @@ class PocketController {
       capabilities: this.caps,
       swarmProfile: this.swarmProfile,
       generation: this.generation,
+      resolvedWallpapers: this.resolvedWallpapers,
       contextPreview: this.contextPreview,
       personaPreview: this.personaPreview,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
@@ -3754,6 +3942,9 @@ class PocketController {
       },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
+      chooseImage: (target, mode) => {
+        this.chooseImage(target, mode);
+      },
       mountModelCombobox: (target, options) => {
         const handle = this.ctx.components.mountModelCombobox(target, {
           value: options.value,
@@ -3906,7 +4097,7 @@ var PHONE_STYLES = `
   .lumiphone-homebar button { appearance:none; width:112px; height:17px; padding:0; border:0; background:transparent; cursor:pointer; position:relative; }
   .lumiphone-homebar button::after { content:""; position:absolute; left:8px; right:8px; top:7px; height:4px; border-radius:99px; background:var(--lp-text); opacity:.88; }
 
-  .lp-home { min-height:100%; padding: 14px 16px 18px; background-image:linear-gradient(rgba(7,6,11,.12),rgba(7,6,11,.34)),var(--lp-wallpaper); background-size:cover; background-position:center; color:#fff; display:flex; flex-direction:column; }
+  .lp-home { min-height:100%; padding: 14px 16px 18px; background-image:var(--lp-wallpaper); background-size:var(--lp-home-wallpaper-size,cover); background-position:var(--lp-home-wallpaper-position,center); background-repeat:no-repeat; color:#fff; display:flex; flex-direction:column; }
   .lp-home-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:10px 3px 20px; text-shadow:0 2px 12px rgba(0,0,0,.35); }
   .lp-home-date { font-size:11px; font-weight:650; opacity:.82; }
   .lp-home-clock { margin-top:1px; font-size:34px; line-height:1; font-weight:310; letter-spacing:-.045em; }
@@ -3977,7 +4168,7 @@ var PHONE_STYLES = `
   .lp-list-separator { height:1px; margin-left:52px; background:var(--lp-border); }
   .lp-unread { min-width:20px; height:20px; padding:0 5px; display:grid; place-items:center; border-radius:99px; background:var(--lp-accent); color:#fff; font-size:9px; font-weight:800; }
 
-  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:cover; background-position:center; background-repeat:no-repeat; }
+  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
   .lp-thread .lp-nav { position:relative; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
@@ -4191,6 +4382,9 @@ var PHONE_STYLES = `
   .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
   .lp-local-actions { padding:10px 12px calc(12px + env(safe-area-inset-bottom)); display:grid; grid-template-columns:1fr 1fr; gap:7px; border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
   .lp-local-actions strong { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-channel-diagnostic { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
+  .lp-channel-diagnostic summary { cursor:pointer; text-align:center; }
+  .lp-channel-diagnostic > span { display:block; margin-top:4px; overflow-wrap:anywhere; text-align:center; }
   .lp-manual-reply { color:var(--lp-muted); background:transparent; }
   .lp-bubble-action { appearance:none; margin:5px 0 0 7px; padding:0; border:0; background:transparent; color:inherit; opacity:.58; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; }
   .lp-bubble-action:hover { opacity:1; text-decoration:underline; }
@@ -4203,6 +4397,13 @@ var PHONE_STYLES = `
   .lp-swarm-diagnostics summary { cursor:pointer; color:var(--lp-muted); font-size:var(--pocket-font-sm); }
   .lp-gallery-actions { margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .lp-gallery-actions .lp-select { grid-column:1 / -1; }
+  .lp-wallpaper-control { display:grid; gap:9px; padding:10px 0; border-top:1px solid var(--lp-border); }
+  .lp-wallpaper-control:first-of-type { border-top:0; }
+  .lp-wallpaper-preview { min-height:120px; display:grid; place-items:center; border:1px solid var(--lp-border); border-radius:14px; background-color:var(--lp-bg); background-repeat:no-repeat; color:var(--lp-muted); font-size:var(--pocket-font-sm); overflow:hidden; }
+  .lp-wallpaper-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .lp-wallpaper-focal { display:grid; gap:6px; }
+  .lp-wallpaper-range { display:grid; grid-template-columns:minmax(100px,auto) 1fr; align-items:center; gap:8px; }
+  .lp-wallpaper-range input { width:100%; accent-color:var(--lp-accent); }
 `;
 
 // src/frontend.ts

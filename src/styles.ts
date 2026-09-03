@@ -74,7 +74,7 @@ export const PHONE_STYLES = `
   .lumiphone-homebar button { appearance:none; width:112px; height:17px; padding:0; border:0; background:transparent; cursor:pointer; position:relative; }
   .lumiphone-homebar button::after { content:""; position:absolute; left:8px; right:8px; top:7px; height:4px; border-radius:99px; background:var(--lp-text); opacity:.88; }
 
-  .lp-home { min-height:100%; padding: 14px 16px 18px; background-image:linear-gradient(rgba(7,6,11,.12),rgba(7,6,11,.34)),var(--lp-wallpaper); background-size:cover; background-position:center; color:#fff; display:flex; flex-direction:column; }
+  .lp-home { min-height:100%; padding: 14px 16px 18px; background-image:var(--lp-wallpaper); background-size:var(--lp-home-wallpaper-size,cover); background-position:var(--lp-home-wallpaper-position,center); background-repeat:no-repeat; color:#fff; display:flex; flex-direction:column; }
   .lp-home-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:10px 3px 20px; text-shadow:0 2px 12px rgba(0,0,0,.35); }
   .lp-home-date { font-size:11px; font-weight:650; opacity:.82; }
   .lp-home-clock { margin-top:1px; font-size:34px; line-height:1; font-weight:310; letter-spacing:-.045em; }
@@ -145,7 +145,7 @@ export const PHONE_STYLES = `
   .lp-list-separator { height:1px; margin-left:52px; background:var(--lp-border); }
   .lp-unread { min-width:20px; height:20px; padding:0 5px; display:grid; place-items:center; border-radius:99px; background:var(--lp-accent); color:#fff; font-size:9px; font-weight:800; }
 
-  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:cover; background-position:center; background-repeat:no-repeat; }
+  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
   .lp-thread .lp-nav { position:relative; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
@@ -359,6 +359,9 @@ export const PHONE_STYLES = `
   .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
   .lp-local-actions { padding:10px 12px calc(12px + env(safe-area-inset-bottom)); display:grid; grid-template-columns:1fr 1fr; gap:7px; border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
   .lp-local-actions strong { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-channel-diagnostic { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
+  .lp-channel-diagnostic summary { cursor:pointer; text-align:center; }
+  .lp-channel-diagnostic > span { display:block; margin-top:4px; overflow-wrap:anywhere; text-align:center; }
   .lp-manual-reply { color:var(--lp-muted); background:transparent; }
   .lp-bubble-action { appearance:none; margin:5px 0 0 7px; padding:0; border:0; background:transparent; color:inherit; opacity:.58; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; }
   .lp-bubble-action:hover { opacity:1; text-decoration:underline; }
@@ -371,4 +374,11 @@ export const PHONE_STYLES = `
   .lp-swarm-diagnostics summary { cursor:pointer; color:var(--lp-muted); font-size:var(--pocket-font-sm); }
   .lp-gallery-actions { margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .lp-gallery-actions .lp-select { grid-column:1 / -1; }
+  .lp-wallpaper-control { display:grid; gap:9px; padding:10px 0; border-top:1px solid var(--lp-border); }
+  .lp-wallpaper-control:first-of-type { border-top:0; }
+  .lp-wallpaper-preview { min-height:120px; display:grid; place-items:center; border:1px solid var(--lp-border); border-radius:14px; background-color:var(--lp-bg); background-repeat:no-repeat; color:var(--lp-muted); font-size:var(--pocket-font-sm); overflow:hidden; }
+  .lp-wallpaper-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .lp-wallpaper-focal { display:grid; gap:6px; }
+  .lp-wallpaper-range { display:grid; grid-template-columns:minmax(100px,auto) 1fr; align-items:center; gap:8px; }
+  .lp-wallpaper-range input { width:100%; accent-color:var(--lp-accent); }
 `

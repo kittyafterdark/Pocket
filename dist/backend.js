@@ -1,6 +1,6 @@
 // @bun
 // src/domain/preferences.ts
-var PREFERENCES_VERSION = 4;
+var PREFERENCES_VERSION = 5;
 var PREFERENCES_PATH = "device/preferences.json";
 var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
@@ -62,6 +62,37 @@ function numberIn(value, fallback, min, max) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
 }
+function defaultWallpaper() {
+  return { source: null, fit: "cover", focalX: 0.5, focalY: 0.5, scrim: 0.22 };
+}
+function normalizeImageSource(value) {
+  const raw = record(value);
+  if (raw.kind === "gallery") {
+    const imageId = text(raw.imageId, "", 180);
+    return imageId ? { kind: "gallery", imageId } : null;
+  }
+  if (raw.kind === "asset") {
+    const assetId = text(raw.assetId, "", 180);
+    return assetId ? { kind: "asset", assetId } : null;
+  }
+  if (raw.kind === "url") {
+    const url = text(raw.url, "", 2000);
+    return /^(https?:\/\/|\/)/i.test(url) ? { kind: "url", url } : null;
+  }
+  return null;
+}
+function normalizeWallpaper(value, legacyUrl = "") {
+  const raw = record(value);
+  const fit = raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover";
+  const migratedUrl = text(legacyUrl, "", 2000);
+  return {
+    source: normalizeImageSource(raw.source) || (/^(https?:\/\/|\/)/i.test(migratedUrl) ? { kind: "url", url: migratedUrl } : null),
+    fit,
+    focalX: numberIn(raw.focalX, 0.5, 0, 1),
+    focalY: numberIn(raw.focalY, 0.5, 0, 1),
+    scrim: numberIn(raw.scrim, 0.22, 0, 0.85)
+  };
+}
 function safeColor(value, fallback) {
   const candidate = text(value, fallback, 16);
   return HEX.test(candidate) ? candidate.toLowerCase() : fallback;
@@ -74,8 +105,8 @@ function defaultPreferences() {
     version: PREFERENCES_VERSION,
     theme: "midnight",
     colors: themePalette("midnight"),
-    wallpaperImageUrl: "",
-    chatWallpaperImageUrl: "",
+    homeWallpaper: defaultWallpaper(),
+    chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
     uiScale: 1,
     animation: "spring",
@@ -176,8 +207,8 @@ function normalizePreferences(value) {
         chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary)
       },
       customCss: text(item.customCss, "", 30000),
-      wallpaperImageUrl: text(item.wallpaperImageUrl, "", 2000),
-      chatWallpaperImageUrl: text(item.chatWallpaperImageUrl, "", 2000)
+      homeWallpaper: normalizeWallpaper(item.homeWallpaper, text(item.wallpaperImageUrl, "", 2000)),
+      chatWallpaper: normalizeWallpaper(item.chatWallpaper, text(item.chatWallpaperImageUrl, "", 2000))
     };
   }
   const contextMode = raw.roleplayContextMode === "off" || raw.roleplayContextMode === "recent" || raw.roleplayContextMode === "story" ? raw.roleplayContextMode : "smart";
@@ -185,8 +216,8 @@ function normalizePreferences(value) {
     version: PREFERENCES_VERSION,
     theme,
     colors: palette,
-    wallpaperImageUrl: text(raw.wallpaperImageUrl, "", 2000),
-    chatWallpaperImageUrl: text(raw.chatWallpaperImageUrl, "", 2000),
+    homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
+    chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
@@ -692,6 +723,10 @@ function normalizeMessage(value, fallbackContact, now, makeId) {
   const senderContactId = sender === "contact" ? clean2(value.senderContactId, 180) || fallbackContact?.id : undefined;
   const read = flag(value.read, sender !== "contact");
   const status = value.status === "pending" || value.status === "failed" || value.status === "sent" || value.status === "delivered" || value.status === "read" ? value.status : read ? "read" : "delivered";
+  const generation = record3(value.generation) ? value.generation : null;
+  const info = generation && record3(generation.info) ? generation.info : null;
+  const decision = info && record3(info.replyDecision) ? info.replyDecision : null;
+  const count = (input) => Math.max(0, Math.round(Number(input) || 0));
   return {
     id: clean2(value.id, 120) || makeId("msg"),
     sender,
@@ -704,9 +739,35 @@ function normalizeMessage(value, fallbackContact, now, makeId) {
     status,
     imageId: clean2(value.imageId, 160) || undefined,
     imageUrl: clean2(value.imageUrl, 2000) || undefined,
-    generation: record3(value.generation) && clean2(value.generation.requestId, 180) ? {
-      requestId: clean2(value.generation.requestId, 180),
-      retryOf: clean2(value.generation.retryOf, 180) || undefined
+    generation: generation && clean2(generation.requestId, 180) ? {
+      requestId: clean2(generation.requestId, 180),
+      retryOf: clean2(generation.retryOf, 180) || undefined,
+      info: info ? {
+        speaker: clean2(info.speaker, 120),
+        source: clean2(info.source, 240),
+        sourceId: clean2(info.sourceId, 180),
+        sourceResolution: info.sourceResolution === "resolved" || info.sourceResolution === "manual" ? info.sourceResolution : "snapshot",
+        activeCharacterId: clean2(info.activeCharacterId, 180),
+        activeCharacterUsed: flag(info.activeCharacterUsed),
+        identityChars: count(info.identityChars),
+        sceneSnapshotStale: flag(info.sceneSnapshotStale, true),
+        contextMode: info.contextMode === "off" || info.contextMode === "recent" || info.contextMode === "story" ? info.contextMode : "smart",
+        recentCount: count(info.recentCount),
+        recentChars: count(info.recentChars),
+        storyCount: count(info.storyCount),
+        storyChars: count(info.storyChars),
+        threadCount: count(info.threadCount),
+        threadChars: count(info.threadChars),
+        generationMode: info.generationMode === "sidecar" ? "sidecar" : "roleplay",
+        connectionName: clean2(info.connectionName, 180),
+        model: clean2(info.model, 500),
+        replyDecision: decision ? {
+          rawAction: decision.rawAction === "reply" || decision.rawAction === "pause" || decision.rawAction === "handoff" ? decision.rawAction : "none",
+          normalizedAction: decision.normalizedAction === "reply" || decision.normalizedAction === "pause" || decision.normalizedAction === "handoff" ? decision.normalizedAction : "none",
+          reason: clean2(decision.reason, 80),
+          normalizationReason: clean2(decision.normalizationReason, 180)
+        } : undefined
+      } : undefined
     } : undefined
   };
 }
@@ -721,11 +782,14 @@ function normalizeConversation(value, contacts, now, makeId) {
   const kind = value.kind === "group" || participantContactIds.length > 1 ? "group" : "direct";
   const createdAt = timestamp(value.createdAt, messages[0]?.createdAt || now);
   const pauseValue = record3(value.pause) ? value.pause : null;
-  const pauseReasons = new Set(["ended", "busy", "away", "arriving", "sleeping", "unknown"]);
+  const pauseReasons = new Set(["ended", "busy", "away", "sleeping", "unknown"]);
+  const legacyArriving = pauseValue?.reason === "arriving";
   const pauseReason = pauseReasons.has(pauseValue?.reason) ? pauseValue?.reason : null;
   const availabilityValue = record3(value.availability) ? value.availability : null;
-  const localReasons = new Set(["in_scene", "arriving", "took_action"]);
-  const availability = availabilityValue?.state === "local" && localReasons.has(availabilityValue.reason) ? { state: "local", reason: availabilityValue.reason, resumePauseReason: pauseReasons.has(availabilityValue.resumePauseReason) ? availabilityValue.resumePauseReason : undefined } : availabilityValue?.state === "paused" && pauseReasons.has(availabilityValue.reason) ? { state: "paused", reason: availabilityValue.reason } : pauseReason ? { state: "paused", reason: pauseReason } : { state: "available" };
+  const localReasons = new Set(["in_scene", "arrived", "took_action", "continued_in_person"]);
+  const migratedLocalReason = availabilityValue?.reason === "arriving" ? "arrived" : localReasons.has(availabilityValue?.reason) ? availabilityValue?.reason : null;
+  const resumePauseReason = pauseReasons.has(availabilityValue?.resumePauseReason) ? availabilityValue?.resumePauseReason : undefined;
+  const availability = availabilityValue?.state === "local" && migratedLocalReason ? resumePauseReason ? { state: "local", reason: migratedLocalReason, resumePauseReason } : { state: "local", reason: migratedLocalReason } : availabilityValue?.state === "arriving" || legacyArriving ? { state: "arriving" } : availabilityValue?.state === "paused" && pauseReasons.has(availabilityValue.reason) ? { state: "paused", reason: availabilityValue.reason } : pauseReason ? { state: "paused", reason: pauseReason } : { state: "remote" };
   const burstValue = record3(value.outgoingBurst) ? value.outgoingBurst : null;
   const burstId = clean2(burstValue?.id, 180);
   return {
@@ -741,12 +805,30 @@ function normalizeConversation(value, contacts, now, makeId) {
       source: pauseValue?.source === "scene" ? "scene" : "model"
     } : undefined,
     availability,
+    snapshot: record3(value.snapshot) ? {
+      summary: clean2(value.snapshot.summary, 2400),
+      recentMessageIds: (Array.isArray(value.snapshot.recentMessageIds) ? value.snapshot.recentMessageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-8),
+      updatedAt: timestamp(value.snapshot.updatedAt, now)
+    } : undefined,
+    lastDecision: record3(value.lastDecision) ? {
+      rawAction: value.lastDecision.rawAction === "reply" || value.lastDecision.rawAction === "pause" || value.lastDecision.rawAction === "handoff" ? value.lastDecision.rawAction : "none",
+      normalizedAction: value.lastDecision.normalizedAction === "reply" || value.lastDecision.normalizedAction === "pause" || value.lastDecision.normalizedAction === "handoff" ? value.lastDecision.normalizedAction : "none",
+      reason: clean2(value.lastDecision.reason, 80),
+      normalizationReason: clean2(value.lastDecision.normalizationReason, 180),
+      contactInScene: flag(value.lastDecision.contactInScene),
+      remoteEligible: flag(value.lastDecision.remoteEligible, true),
+      explicitRemoteOverride: flag(value.lastDecision.explicitRemoteOverride),
+      createdAt: timestamp(value.lastDecision.createdAt, now),
+      burstId: clean2(value.lastDecision.burstId, 180) || undefined,
+      relayId: clean2(value.lastDecision.relayId, 180) || undefined
+    } : undefined,
     outgoingBurst: burstId ? {
       id: burstId,
       messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-12),
       open: flag(burstValue?.open, false),
       held: flag(burstValue?.held, false),
       finalized: flag(burstValue?.finalized, false),
+      explicitRemoteOverride: flag(burstValue?.explicitRemoteOverride, false),
       updatedAt: timestamp(burstValue?.updatedAt, now)
     } : undefined,
     createdAt,
@@ -789,7 +871,7 @@ function ensureDirectConversation(state, contactId, now, makeId) {
     participantContactIds: [contactId],
     messages: [],
     unread: 0,
-    availability: { state: "available" },
+    availability: { state: "remote" },
     createdAt: now,
     updatedAt: now
   };
@@ -1189,8 +1271,109 @@ ${thread}` : ""].filter(Boolean).join(`
   };
 }
 
+// src/backend/continuity.ts
+var PAUSE_REASONS = new Set(["ended", "busy", "away", "sleeping", "unknown"]);
+var LOCAL_REASONS = new Set(["in_scene", "arrived", "took_action", "continued_in_person"]);
+function compact(value, max) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+function conversationSnapshot(conversation, createdAt) {
+  const recent = conversation.messages.slice(-6);
+  return {
+    summary: recent.map((message) => `${message.senderName}: ${compact(message.text, 360)}`).join(`
+`).slice(0, 2400),
+    recentMessageIds: recent.map((message) => message.id),
+    updatedAt: createdAt
+  };
+}
+function normalizeReplyDecision(input) {
+  const candidate = String(input.rawAction || "").toLowerCase();
+  const rawAction = candidate === "reply" || candidate === "pause" || candidate === "handoff" ? candidate : "none";
+  const rawReason = String(input.rawReason || "").toLowerCase();
+  const impossibleRemote = !input.explicitRemoteOverride && (input.contact.presence.inScene || input.conversation.availability.state === "local");
+  if (impossibleRemote) {
+    return {
+      rawAction,
+      normalizedAction: "handoff",
+      reason: LOCAL_REASONS.has(rawReason) ? rawReason : input.contact.presence.inScene ? "in_scene" : "continued_in_person",
+      normalizationReason: rawAction === "handoff" ? "deterministic_local_channel" : `normalized_${rawAction}_because_actor_is_local`,
+      contactInScene: input.contact.presence.inScene,
+      remoteEligible: input.contact.messagingPolicy.remoteEligible,
+      explicitRemoteOverride: false,
+      createdAt: input.createdAt,
+      burstId: input.burstId
+    };
+  }
+  if (rawAction === "pause") {
+    return {
+      rawAction,
+      normalizedAction: "pause",
+      reason: PAUSE_REASONS.has(rawReason) ? rawReason : "unknown",
+      normalizationReason: "",
+      contactInScene: input.contact.presence.inScene,
+      remoteEligible: input.contact.messagingPolicy.remoteEligible,
+      explicitRemoteOverride: input.explicitRemoteOverride,
+      createdAt: input.createdAt,
+      burstId: input.burstId
+    };
+  }
+  if (rawAction === "handoff") {
+    return {
+      rawAction,
+      normalizedAction: "handoff",
+      reason: rawReason === "arriving" ? "arriving" : LOCAL_REASONS.has(rawReason) ? rawReason : "continued_in_person",
+      normalizationReason: "",
+      contactInScene: input.contact.presence.inScene,
+      remoteEligible: input.contact.messagingPolicy.remoteEligible,
+      explicitRemoteOverride: input.explicitRemoteOverride,
+      createdAt: input.createdAt,
+      burstId: input.burstId
+    };
+  }
+  return {
+    rawAction,
+    normalizedAction: rawAction,
+    reason: "",
+    normalizationReason: "",
+    contactInScene: input.contact.presence.inScene,
+    remoteEligible: input.contact.messagingPolicy.remoteEligible,
+    explicitRemoteOverride: input.explicitRemoteOverride,
+    createdAt: input.createdAt,
+    burstId: input.burstId
+  };
+}
+function pendingRelayContext(state) {
+  const pending = state.relays.filter((relay) => relay.status === "pending").slice(-3);
+  if (!pending.length)
+    return "";
+  return pending.map((relay) => {
+    const contact = state.contacts.find((entry) => entry.id === relay.contactId);
+    return [
+      "POCKET CONTINUITY RELAY (newer than older scene summaries)",
+      `Actor: ${contact?.name || relay.contactId}`,
+      `Channel transition: phone -> in-person (${relay.reason})`,
+      `Latest exchange:
+${relay.latestExchange}`,
+      `Conversation snapshot:
+${relay.conversationSnapshot.summary}`,
+      "Continue the physical roleplay from this handoff. Do not generate another remote phone reply unless the user explicitly texts from the scene.",
+      `Relay provenance: ${relay.id}`
+    ].join(`
+`);
+  }).join(`
+
+`);
+}
+function relayLatestExchange(conversation) {
+  return conversation.messages.slice(-3).map((message) => `${message.senderName}: ${compact(message.text, 520)}`).join(`
+`).slice(0, 1800);
+}
+function relayForGeneration(state, generationId) {
+  return state.relays.find((relay) => relay.status === "pending" && relay.continuation.generationId === generationId);
+}
+
 // src/backend.ts
-var STATE_VERSION = 5;
+var STATE_VERSION = 6;
 var MAX_MESSAGES2 = 240;
 var MAX_NOTIFICATIONS = 80;
 var MAX_NOTES = 120;
@@ -1203,6 +1386,7 @@ var notificationThrottle = new Map;
 var ambientFlights = new Set;
 var replyDecisionFlights = new Set;
 var replyBurstTimers = new Map;
+var relayFlights = new Set;
 var frontendViews = new Map;
 var PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
 <lumi-phone action="message|contact|scene|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
@@ -1283,6 +1467,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
     conversations: collections.conversations,
     notes: [],
     events: [],
+    relays: [],
     weather: defaultWeather(),
     trackers: [],
     notifications: [],
@@ -1332,7 +1517,20 @@ function normalizeState(value, chatId, characterId, characterName) {
       whenText: text2(item.whenText, 240) || text2(item.start, 80) || "Unscheduled",
       lane: text2(item.lane, 80) || "Main timeline",
       completed: bool2(item.completed),
-      createdBy
+      createdBy,
+      kind: item.kind === "phone-handoff" ? "phone-handoff" : "event",
+      actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 8),
+      source: isRecord(item.source) && item.source.app === "messages" ? {
+        app: "messages",
+        conversationId: text2(item.source.conversationId, 180),
+        relayId: text2(item.source.relayId, 180),
+        messageId: text2(item.source.messageId, 180) || undefined
+      } : undefined,
+      channelTransition: isRecord(item.channelTransition) && item.channelTransition.to === "local" ? {
+        from: item.channelTransition.from === "arriving" || item.channelTransition.from === "paused" ? item.channelTransition.from : "remote",
+        to: "local",
+        reason: item.channelTransition.reason === "arrived" || item.channelTransition.reason === "took_action" || item.channelTransition.reason === "continued_in_person" ? item.channelTransition.reason : "in_scene"
+      } : undefined
     }];
   });
   const trackers = (Array.isArray(value.trackers) ? value.trackers : []).slice(0, MAX_TRACKERS).map((item) => normalizeTracker(item, { roleplayNow: text2(value.roleplayNow, 80), characterId, characterName })).filter((item) => Boolean(item));
@@ -1420,6 +1618,41 @@ function normalizeState(value, chatId, characterId, characterName) {
     stale: bool2(snapshotValue.stale, true)
   } : null;
   const setupValue = isRecord(value.setup) ? value.setup : {};
+  const relays = (Array.isArray(value.relays) ? value.relays : []).slice(-24).flatMap((item) => {
+    if (!isRecord(item))
+      return [];
+    const relayId = text2(item.id, 180);
+    const contactId = text2(item.contactId, 180);
+    const conversationId = text2(item.conversationId, 180);
+    const snapshot = isRecord(item.conversationSnapshot) ? item.conversationSnapshot : {};
+    const continuation = isRecord(item.continuation) ? item.continuation : {};
+    if (!relayId || !contactId || !conversationId)
+      return [];
+    const reason = item.reason === "arrived" || item.reason === "took_action" || item.reason === "continued_in_person" ? item.reason : "in_scene";
+    const continuationState = continuation.state === "launching" || continuation.state === "requested" || continuation.state === "completed" || continuation.state === "failed" || continuation.state === "stopped" ? continuation.state : "idle";
+    return [{
+      id: relayId,
+      chatId,
+      characterId,
+      contactId,
+      conversationId,
+      reason,
+      actorState: reason,
+      conversationSnapshot: {
+        summary: text2(snapshot.summary, 2400),
+        recentMessageIds: (Array.isArray(snapshot.recentMessageIds) ? snapshot.recentMessageIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(-8),
+        updatedAt: text2(snapshot.updatedAt, 40) || nowIso()
+      },
+      latestExchange: text2(item.latestExchange, 1800),
+      sourceMessageId: text2(item.sourceMessageId, 180) || undefined,
+      timelineEventId: text2(item.timelineEventId, 180),
+      createdAt: text2(item.createdAt, 40) || nowIso(),
+      status: item.status === "consumed" || item.status === "dismissed" ? item.status : "pending",
+      consumedAt: text2(item.consumedAt, 40) || undefined,
+      consumedMessageId: text2(item.consumedMessageId, 180) || undefined,
+      continuation: { state: continuationState, generationId: text2(continuation.generationId, 180) || undefined, attemptedAt: text2(continuation.attemptedAt, 40) || undefined, error: text2(continuation.error, 500) || undefined }
+    }];
+  });
   const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0);
   return {
     version: STATE_VERSION,
@@ -1434,6 +1667,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     conversations: collections.conversations,
     notes,
     events,
+    relays,
     weather,
     trackers,
     notifications,
@@ -1565,6 +1799,45 @@ function capabilities() {
 function send(payload, userId) {
   spindle.sendToFrontend(payload, userId);
 }
+async function resolveWallpaperUrl(wallpaper, userId) {
+  const source = wallpaper.source;
+  if (!source)
+    return "";
+  if (source.kind === "url")
+    return /^(https?:\/\/|\/)/i.test(source.url) ? source.url : "";
+  if (!spindle.permissions.has("images"))
+    return "";
+  const imageId = source.kind === "gallery" ? source.imageId : source.assetId;
+  try {
+    const image = await spindle.images.get(imageId, { specificity: "full", userId });
+    return text2(image?.url, 2000);
+  } catch {
+    return "";
+  }
+}
+async function resolveWallpaperUrls(preferences, personaId, userId) {
+  const persona = personaId ? preferences.personaAppearance[personaId] : null;
+  const [deviceHome, deviceChat, personaHome, personaChat] = await Promise.all([
+    resolveWallpaperUrl(preferences.homeWallpaper, userId),
+    resolveWallpaperUrl(preferences.chatWallpaper, userId),
+    persona?.enabled ? resolveWallpaperUrl(persona.homeWallpaper, userId) : Promise.resolve(""),
+    persona?.enabled ? resolveWallpaperUrl(persona.chatWallpaper, userId) : Promise.resolve("")
+  ]);
+  return { deviceHome, deviceChat, personaHome, personaChat };
+}
+function assignWallpaper(preferences, payload, forcedSource) {
+  const target = text2(payload.target, 40);
+  const personaId = text2(payload.personaId, 180);
+  const current = target === "persona-home" || target === "persona-chat" ? preferences.personaAppearance[personaId]?.[target === "persona-chat" ? "chatWallpaper" : "homeWallpaper"] : preferences[target === "device-chat" || target === "chat" ? "chatWallpaper" : "homeWallpaper"];
+  if ((target === "persona-home" || target === "persona-chat") && (!personaId || !preferences.personaAppearance[personaId]))
+    throw new Error("Enable a Persona appearance before assigning its wallpaper.");
+  const raw = isRecord(payload.wallpaper) ? payload.wallpaper : {};
+  const wallpaper = normalizeWallpaper({ ...current, ...raw, source: forcedSource === undefined ? raw.source ?? payload.source : forcedSource });
+  if (target === "persona-home" || target === "persona-chat") {
+    preferences.personaAppearance[personaId][target === "persona-chat" ? "chatWallpaper" : "homeWallpaper"] = wallpaper;
+  } else
+    preferences[target === "device-chat" || target === "chat" ? "chatWallpaper" : "homeWallpaper"] = wallpaper;
+}
 async function sendState(state, userId, reason = "refresh", open = false) {
   const preferences = await loadPreferences(userId);
   let generation = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride };
@@ -1582,7 +1855,8 @@ async function sendState(state, userId, reason = "refresh", open = false) {
         activePersona = { id: text2(persona.id, 180), name: text2(persona.name, 120) || "Persona" };
     } catch {}
   }
-  send({ type: "lumiphone:state", state, preferences, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
+  const resolvedWallpapers = await resolveWallpaperUrls(preferences, activePersona?.id || "", userId);
+  send({ type: "lumiphone:state", state, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
 }
 function viewKey(userId) {
   return userId || "_default";
@@ -1802,13 +2076,127 @@ function reconcileContactAvailability(state, contact) {
   if (!conversation)
     return;
   if (contact.presence.inScene) {
-    const prior = conversation.availability.state === "paused" && conversation.availability.reason !== "arriving" ? conversation.availability.reason : undefined;
-    const arriving = conversation.availability.state === "paused" && conversation.availability.reason === "arriving";
-    conversation.availability = { state: "local", reason: arriving ? "arriving" : "in_scene", resumePauseReason: prior };
+    const prior = conversation.availability.state === "paused" ? conversation.availability.reason : undefined;
+    const reason = conversation.availability.state === "arriving" ? "arrived" : "in_scene";
+    conversation.availability = prior ? { state: "local", reason, resumePauseReason: prior } : { state: "local", reason };
   } else if (conversation.availability.state === "local") {
-    conversation.availability = conversation.availability.resumePauseReason ? { state: "paused", reason: conversation.availability.resumePauseReason } : { state: "available" };
-    if (conversation.availability.state === "available")
+    conversation.availability = conversation.availability.resumePauseReason ? { state: "paused", reason: conversation.availability.resumePauseReason } : { state: "remote" };
+    if (conversation.availability.state === "remote")
       conversation.pause = undefined;
+  }
+}
+function commitConversationHandoff(state, conversation, contact, decision) {
+  const createdAt = decision.createdAt;
+  const reason = decision.reason === "arrived" || decision.reason === "took_action" || decision.reason === "continued_in_person" ? decision.reason : "in_scene";
+  const previous = conversation.availability.state === "arriving" || conversation.availability.state === "paused" ? conversation.availability.state : "remote";
+  const resumePauseReason = conversation.availability.state === "paused" ? conversation.availability.reason : undefined;
+  conversation.availability = resumePauseReason ? { state: "local", reason, resumePauseReason } : { state: "local", reason };
+  conversation.pause = undefined;
+  conversation.snapshot = conversationSnapshot(conversation, createdAt);
+  const existing = state.relays.find((entry) => entry.status === "pending" && entry.conversationId === conversation.id && decision.burstId && conversation.lastDecision?.burstId === decision.burstId);
+  if (existing) {
+    decision.relayId = existing.id;
+    conversation.lastDecision = decision;
+    return existing;
+  }
+  const relayId = id("relay");
+  const eventId = id("evt");
+  const latestMessageId = conversation.messages.at(-1)?.id;
+  const relay = {
+    id: relayId,
+    chatId: state.chatId,
+    characterId: state.characterId,
+    contactId: contact.id,
+    conversationId: conversation.id,
+    reason,
+    actorState: reason,
+    conversationSnapshot: conversation.snapshot,
+    latestExchange: relayLatestExchange(conversation),
+    sourceMessageId: latestMessageId,
+    timelineEventId: eventId,
+    createdAt,
+    status: "pending",
+    continuation: { state: "idle" }
+  };
+  decision.relayId = relayId;
+  conversation.lastDecision = decision;
+  state.relays.push(relay);
+  state.relays = state.relays.slice(-24);
+  state.events.push({
+    id: eventId,
+    title: `${contact.name} continued in person`,
+    description: relay.latestExchange,
+    start: state.roleplayNow || createdAt,
+    end: state.roleplayNow || createdAt,
+    whenKind: "relative",
+    whenText: "Now",
+    color: contactAccent(contact),
+    lane: "Phone handoffs",
+    completed: false,
+    createdBy: "model",
+    kind: "phone-handoff",
+    actorContactIds: [contact.id],
+    source: { app: "messages", conversationId: conversation.id, relayId, messageId: latestMessageId },
+    channelTransition: { from: previous, to: "local", reason }
+  });
+  state.events = state.events.slice(-MAX_EVENTS);
+  addActivity(state, {
+    kind: "timeline",
+    title: `${contact.name} is here now`,
+    summary: "Pocket handed the conversation back to the physical scene.",
+    route: { app: "calendar", eventId },
+    source: { contactId: contact.id, conversationId: conversation.id, eventId }
+  });
+  return relay;
+}
+async function requestRelayContinuation(chatId, characterId, relayId, userId) {
+  if (!spindle.permissions.has("chat_mutation"))
+    return;
+  const flightKey = `${viewKey(userId)}:${relayId}`;
+  if (relayFlights.has(flightKey))
+    return;
+  relayFlights.add(flightKey);
+  try {
+    const shouldLaunch = await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId);
+      const relay = state.relays.find((entry) => entry.id === relayId && entry.status === "pending");
+      if (!relay || relay.continuation.state === "launching" || relay.continuation.state === "requested")
+        return false;
+      relay.continuation = { state: "launching", attemptedAt: nowIso() };
+      await saveState(state, userId);
+      return true;
+    });
+    if (!shouldLaunch)
+      return;
+    const appended = await spindle.chat.appendMessage(chatId, {
+      role: "user",
+      content: "Continue the current scene from the Pocket conversation handoff.",
+      metadata: { source: "pocket", pocketRelayId: relayId, pocketContinuation: true }
+    }, { triggerGeneration: true });
+    await spindle.chat.setMessageHidden(chatId, appended.id, true).catch(() => {
+      return;
+    });
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId);
+      const relay = state.relays.find((entry) => entry.id === relayId && entry.status === "pending");
+      if (!relay)
+        return;
+      relay.continuation = { state: "requested", generationId: appended.generationId || relay.continuation.generationId, attemptedAt: relay.continuation.attemptedAt };
+      await saveState(state, userId);
+      await sendState(state, userId, "relay_requested");
+    });
+  } catch (error) {
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId);
+      const relay = state.relays.find((entry) => entry.id === relayId && entry.status === "pending");
+      if (!relay)
+        return;
+      relay.continuation = { state: "failed", attemptedAt: relay.continuation.attemptedAt || nowIso(), error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500) };
+      await saveState(state, userId);
+      await sendState(state, userId, "relay_failed");
+    });
+  } finally {
+    relayFlights.delete(flightKey);
   }
 }
 function contactFromSource(option) {
@@ -2091,7 +2479,7 @@ async function generateMessage(input, userId) {
       const currentIndex = participants.findIndex((entry) => entry.id === lastSpeakerId);
       contact = participants[(currentIndex + 1 + participants.length) % participants.length];
     }
-    if (bool2(input.autonomous) && (contact.presence.inScene || !contact.messagingPolicy.remoteEligible || conversation.availability.state !== "available"))
+    if (bool2(input.autonomous) && (contact.presence.inScene || !contact.messagingPolicy.remoteEligible || conversation.availability.state !== "remote" && conversation.availability.state !== "arriving"))
       return;
     send({
       type: "lumiphone:message_progress",
@@ -2122,7 +2510,7 @@ async function generateMessage(input, userId) {
     const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
       type: "quiet",
       messages: [
-        { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return only the message text, without a name label, quotes, narration, JSON, or XML. The compact identity and bounded context below are authoritative for this call.` },
+        { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message. Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy. The compact identity and bounded context below are authoritative.` },
         { role: "user", content: `${assembled.text || "(no context)"}
 
 DIRECTION
@@ -2131,7 +2519,13 @@ ${instruction}` }
       parameters: { temperature: 0.85, max_tokens: 500 },
       userId
     }, userId);
-    const reply = text2(response.content, 8000);
+    let generated = {};
+    try {
+      generated = parseGeneratedObject(response.content);
+    } catch {
+      generated = { message: response.content, after: { state: "remote" } };
+    }
+    const reply = text2(generated.message, 8000);
     if (!reply)
       throw new Error("The character did not return a phone message.");
     const route = { app: "messages", conversationId: conversation.id };
@@ -2184,9 +2578,31 @@ ${instruction}` }
       contact.messagingPolicy.lastInitiatedMessageAt = nowIso();
       contact.messagingPolicy.lastInitiatedRoleplayAt = state.roleplayNow;
     }
+    let relayToContinue = null;
     if (replaceIndex < 0 && !bool2(input.manualOverride)) {
-      conversation.pause = undefined;
-      conversation.availability = { state: "available" };
+      const after = isRecord(generated.after) ? generated.after : {};
+      if (after.state === "arriving") {
+        conversation.pause = undefined;
+        conversation.availability = { state: "arriving" };
+      } else if (after.state === "paused") {
+        const allowed = new Set(["ended", "busy", "away", "sleeping", "unknown"]);
+        const reason = allowed.has(String(after.reason)) ? String(after.reason) : "unknown";
+        conversation.pause = { reason, createdAt: nowIso(), source: "model" };
+        conversation.availability = { state: "paused", reason };
+      } else if (after.state === "local") {
+        const decision = normalizeReplyDecision({ rawAction: "handoff", rawReason: after.reason, contact, conversation, explicitRemoteOverride: false, createdAt: nowIso() });
+        relayToContinue = commitConversationHandoff(state, conversation, contact, decision);
+        if (nextMessage.generation?.info)
+          nextMessage.generation.info.replyDecision = {
+            rawAction: decision.rawAction,
+            normalizedAction: decision.normalizedAction,
+            reason: decision.reason,
+            normalizationReason: decision.normalizationReason
+          };
+      } else {
+        conversation.pause = undefined;
+        conversation.availability = { state: "remote" };
+      }
     }
     const activity = replaceIndex < 0 ? addActivity(state, { kind: "message", title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } }) : undefined;
     await saveState(state, userId);
@@ -2195,6 +2611,8 @@ ${instruction}` }
     await sendState(state, userId, "message", preferences.autoOpenOnModelAction);
     sendActivity(activity, userId);
     sendNotification(notification, userId);
+    if (relayToContinue)
+      setTimeout(() => void requestRelayContinuation(context.chatId, context.characterId, relayToContinue.id, userId), 0);
     send({
       type: "lumiphone:message_progress",
       requestId,
@@ -2369,6 +2787,7 @@ async function syncSceneContacts(input, userId) {
       sceneNote: text2(entry.sceneNote ?? entry.currentState, 220)
     }];
   });
+  const relayIds = [];
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "saving", message: "Saving scene contacts\u2026" }, userId);
     const state = await loadState(context.chatId, context.characterId, userId);
@@ -2427,16 +2846,19 @@ async function syncSceneContacts(input, userId) {
       if (conversation.kind !== "direct")
         continue;
       const participant = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
-      if (participant?.presence.inScene) {
-        const prior = conversation.availability.state === "paused" && conversation.availability.reason !== "arriving" ? conversation.availability.reason : undefined;
-        const arriving = conversation.availability.state === "paused" && conversation.availability.reason === "arriving";
-        conversation.availability = { state: "local", reason: arriving ? "arriving" : "in_scene", resumePauseReason: prior };
-        if (arriving)
-          conversation.pause = { reason: "arriving", createdAt: conversation.pause?.createdAt || sceneAt, source: "scene" };
-      } else if (conversation.availability.state === "local") {
-        conversation.availability = conversation.availability.resumePauseReason ? { state: "paused", reason: conversation.availability.resumePauseReason } : { state: "available" };
-        if (!conversation.availability || conversation.availability.state === "available")
-          conversation.pause = undefined;
+      if (participant?.presence.inScene && conversation.availability.state !== "local") {
+        const decision = normalizeReplyDecision({
+          rawAction: "handoff",
+          rawReason: conversation.availability.state === "arriving" ? "arrived" : "in_scene",
+          contact: participant,
+          conversation,
+          explicitRemoteOverride: false,
+          createdAt: sceneAt
+        });
+        const relay = commitConversationHandoff(state, conversation, participant, decision);
+        relayIds.push(relay.id);
+      } else if (participant) {
+        reconcileContactAvailability(state, participant);
       }
     }
     const activity = addActivity(state, {
@@ -2452,6 +2874,8 @@ async function syncSceneContacts(input, userId) {
     send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "complete", message: "Scene contacts synced" }, userId);
     send({ type: "lumiphone:scene_contacts_done", requestId, contactIds }, userId);
   });
+  for (const relayId of [...new Set(relayIds)])
+    requestRelayContinuation(context.chatId, context.characterId, relayId, userId);
 }
 function replyCadenceMs(preferences) {
   return preferences.replyCadence === "instant" ? 0 : preferences.replyCadence === "quick" ? 1200 : preferences.replyCadence === "relaxed" ? 6500 : 3200;
@@ -2495,7 +2919,7 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId, 
     if (expectedBurstId && (!burst || burst.id !== expectedBurstId || !burst.open || burst.finalized || burst.held))
       return;
     const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
-    if (!contact || !contact.generationPolicy.relevant || !contact.messagingPolicy.remoteEligible || contact.presence.inScene)
+    if (!contact || !contact.generationPolicy.relevant)
       return;
     const burstMessages = burst?.messageIds.length ? conversation.messages.filter((message) => burst.messageIds.includes(message.id) && message.sender === "persona") : [conversation.messages.at(-1)];
     const requestId = id("reply_decision");
@@ -2510,72 +2934,76 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId, 
       speakerContactId: contact.id,
       phase: "checking"
     }, userId);
-    const decision = await runStructuredGeneration("reply-decision", requestId, {
+    const explicitRemoteOverride = Boolean(burst?.explicitRemoteOverride);
+    const deterministicLocal = !explicitRemoteOverride && (contact.presence.inScene || conversation.availability.state === "local");
+    const rawDecision = deterministicLocal ? { action: "handoff", reason: contact.presence.inScene ? conversation.availability.state === "arriving" ? "arrived" : "in_scene" : conversation.availability.state === "local" ? conversation.availability.reason : "continued_in_person" } : !contact.messagingPolicy.remoteEligible ? { action: "pause", reason: "away" } : await runStructuredGeneration("reply-decision", requestId, {
       type: "quiet",
       messages: [
-        { role: "system", content: 'Decide the next state of this fictional phone conversation. Be conservative: silence is normal. Return strict JSON only. Allowed shapes: {"action":"reply"}, {"action":"none"}, {"action":"pause","reason":"ended|busy|away|arriving|sleeping|unknown"}, or {"action":"handoff","reason":"arriving|took_action"}. Use handoff when remote texting has become physical scene action. No markdown and no custom UI copy.' },
-        { role: "user", content: `Contact: ${contact.name} (${contact.role}). Presence: ${contact.presence.inScene ? "in the active scene" : "off-scene"}. Settled outgoing burst:
+        { role: "system", content: 'Classify the next channel state of this fictional direct-message thread. The physical-scene facts are authoritative. Return strict JSON only: {"action":"reply"}, {"action":"none"}, {"action":"pause","reason":"ended|busy|away|sleeping|unknown"}, or {"action":"handoff","reason":"arriving|arrived|took_action|continued_in_person"}. none means the remote channel is still valid but no reply is warranted. Never use none when the actor is in the physical scene. arriving means they are traveling toward the scene but are not there yet. No prose or custom UI copy.' },
+        { role: "user", content: `Contact: ${contact.name} (${contact.role})
+Channel: ${conversation.availability.state}
+Presence: ${contact.presence.inScene ? "physically in the active scene" : "off-scene"}
+Remote eligible: ${contact.messagingPolicy.remoteEligible}
+Scene snapshot: ${(state.sceneSnapshot?.actors || []).map((actor) => `${state.contacts.find((entry) => entry.id === actor.contactId)?.name || actor.contactId}: ${actor.sceneBrief}`).join(" | ") || "none"}
+Recent DM:
+${conversation.messages.slice(-8).map((message) => `${message.senderName}: ${message.text.slice(0, 700)}`).join(`
+`)}
+Settled outgoing burst:
 ${burstMessages.map((message) => message.text.slice(0, 1200)).join(`
 `)}` }
       ],
-      parameters: { temperature: 0.15, max_tokens: 80 },
+      parameters: { temperature: 0.1, max_tokens: 100 },
       userId
     }, userId);
-    const action = decision.action === "reply" || decision.reply === true ? "reply" : decision.action === "pause" ? "pause" : decision.action === "handoff" ? "handoff" : "none";
-    await withStateLock(stateKey(chatId, characterId), async () => {
+    const rawAction = rawDecision.action === "reply" || rawDecision.reply === true ? "reply" : rawDecision.action === "pause" ? "pause" : rawDecision.action === "handoff" ? "handoff" : "none";
+    const outcome = await withStateLock(stateKey(chatId, characterId), async () => {
       const latestState = await loadState(chatId, characterId, userId);
       const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId);
       if (!latestConversation?.outgoingBurst || expectedBurstId && latestConversation.outgoingBurst.id !== expectedBurstId)
-        return;
+        return null;
+      const latestContact = latestState.contacts.find((entry) => entry.id === contact.id);
+      if (!latestContact)
+        return null;
       latestConversation.outgoingBurst.open = false;
       latestConversation.outgoingBurst.finalized = true;
       latestConversation.outgoingBurst.updatedAt = nowIso();
-      if (action === "reply") {
-        latestConversation.availability = { state: "available" };
+      const decision = normalizeReplyDecision({
+        rawAction,
+        rawReason: rawDecision.reason,
+        contact: latestContact,
+        conversation: latestConversation,
+        explicitRemoteOverride: latestConversation.outgoingBurst.explicitRemoteOverride,
+        createdAt: nowIso(),
+        burstId: latestConversation.outgoingBurst.id
+      });
+      latestConversation.lastDecision = decision;
+      let relayId;
+      if (decision.normalizedAction === "reply") {
+        if (latestConversation.availability.state !== "arriving")
+          latestConversation.availability = { state: "remote" };
         latestConversation.pause = undefined;
+      } else if (decision.normalizedAction === "pause") {
+        const reason = decision.reason;
+        latestConversation.pause = { reason, createdAt: decision.createdAt, source: "model" };
+        latestConversation.availability = { state: "paused", reason };
+      } else if (decision.normalizedAction === "handoff" && decision.reason === "arriving" && !latestContact.presence.inScene) {
+        latestConversation.availability = { state: "arriving" };
+        latestConversation.pause = undefined;
+      } else if (decision.normalizedAction === "handoff") {
+        relayId = commitConversationHandoff(latestState, latestConversation, latestContact, decision).id;
       }
       await saveState(latestState, userId);
+      await sendState(latestState, userId, decision.normalizedAction === "handoff" ? "conversation_handoff" : decision.normalizedAction === "pause" ? "conversation_pause" : "reply_decision");
+      return { action: decision.normalizedAction, relayId };
     });
-    if (action === "pause") {
-      const allowed = new Set(["ended", "busy", "away", "arriving", "sleeping", "unknown"]);
-      const reason = allowed.has(String(decision.reason)) ? String(decision.reason) : "unknown";
-      await withStateLock(stateKey(chatId, characterId), async () => {
-        const latestState = await loadState(chatId, characterId, userId);
-        const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId);
-        if (!latestConversation)
-          return;
-        latestConversation.pause = { reason, createdAt: nowIso(), source: "model" };
-        latestConversation.availability = { state: "paused", reason };
-        await saveState(latestState, userId);
-        await sendState(latestState, userId, "conversation_pause");
-      });
-      send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, contactId: contact.id, phase: "done" }, userId);
-      progressRequestId = "";
-      return;
-    }
-    if (action === "handoff") {
-      const reason = decision.reason === "took_action" ? "took_action" : "arriving";
-      await withStateLock(stateKey(chatId, characterId), async () => {
-        const latestState = await loadState(chatId, characterId, userId);
-        const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId);
-        if (!latestConversation)
-          return;
-        latestConversation.availability = { state: "local", reason };
-        latestConversation.pause = reason === "arriving" ? { reason: "arriving", createdAt: nowIso(), source: "model" } : undefined;
-        await saveState(latestState, userId);
-        await sendState(latestState, userId, "conversation_handoff");
-      });
-      send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, contactId: contact.id, phase: "done" }, userId);
-      progressRequestId = "";
-      return;
-    }
-    if (action !== "reply") {
-      send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, contactId: contact.id, phase: "done" }, userId);
-      progressRequestId = "";
-      return;
-    }
     send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, contactId: contact.id, phase: "done" }, userId);
     progressRequestId = "";
+    if (outcome?.relayId) {
+      requestRelayContinuation(chatId, characterId, outcome.relayId, userId);
+      return;
+    }
+    if (outcome?.action !== "reply")
+      return;
     await generateMessage({ requestId: id("auto_reply"), chatId, characterId, conversationId, speakerContactId: contact.id, autonomous: true, instruction: "Reply naturally only because the latest user text warrants a response." }, userId);
   } catch (error) {
     spindle.log.warn(`Pocket reply decision skipped: ${error instanceof Error ? error.message : String(error)}`);
@@ -2698,6 +3126,7 @@ async function applyAction(input, userId, source = "model") {
       return { ok: true, action, deduplicated: true, activityId: duplicateActivity?.id };
     }
     const command = reservation.command;
+    const relayIds = [];
     let notification = null;
     let activity;
     let result = { ok: true, action };
@@ -2745,11 +3174,23 @@ async function applyAction(input, userId, source = "model") {
         }
         actor.presence = { inScene: true, lastSceneAt: sceneAt };
         actor.sceneNote = text2(raw.sceneBrief ?? raw.sceneNote, 600);
-        reconcileContactAvailability(state, actor);
         snapshotActors.push({ contactId: actor.id, roleHint: text2(raw.roleHint ?? raw.role, 120) || actor.role, sceneBrief: actor.sceneNote });
       }
-      for (const contact of state.contacts)
-        reconcileContactAvailability(state, contact);
+      for (const contact of state.contacts) {
+        const conversation = state.conversations.find((entry) => entry.kind === "direct" && entry.participantContactIds[0] === contact.id);
+        if (contact.presence.inScene && conversation && conversation.availability.state !== "local") {
+          const decision = normalizeReplyDecision({
+            rawAction: "handoff",
+            rawReason: conversation.availability.state === "arriving" ? "arrived" : "in_scene",
+            contact,
+            conversation,
+            explicitRemoteOverride: false,
+            createdAt: sceneAt
+          });
+          relayIds.push(commitConversationHandoff(state, conversation, contact, decision).id);
+        } else
+          reconcileContactAvailability(state, contact);
+      }
       state.sceneSnapshot = { actors: snapshotActors, capturedAt: sceneAt, sourceMessageId: text2(input.messageId, 180), sourceMessageIndex: Math.round(numberValue(payload.sourceMessageIndex, -1)), sourceRevision: Math.max(0, Math.round(numberValue(payload.sourceRevision, 0))), stale: false };
       result.contactIds = snapshotActors.map((entry) => entry.contactId);
       activity = addActivity(state, { kind: "contact", title: "Scene snapshot updated", summary: `${snapshotActors.length} actor${snapshotActors.length === 1 ? "" : "s"} present`, route: { app: "contacts" }, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
@@ -2807,11 +3248,15 @@ async function applyAction(input, userId, source = "model") {
       conversation.updatedAt = message.createdAt;
       if (sender === "persona" && source === "user") {
         const previousBurst = conversation.outgoingBurst;
-        conversation.outgoingBurst = previousBurst?.open && !previousBurst.finalized ? { ...previousBurst, messageIds: [...previousBurst.messageIds, message.id].slice(-12), updatedAt: message.createdAt } : { id: id("burst"), messageIds: [message.id], open: true, held: false, finalized: false, updatedAt: message.createdAt };
+        const explicitRemoteOverride = bool2(payload.explicitRemoteOverride ?? payload.explicit_remote_override);
+        conversation.outgoingBurst = previousBurst?.open && !previousBurst.finalized ? { ...previousBurst, messageIds: [...previousBurst.messageIds, message.id].slice(-12), explicitRemoteOverride: previousBurst.explicitRemoteOverride || explicitRemoteOverride, updatedAt: message.createdAt } : { id: id("burst"), messageIds: [message.id], open: true, held: false, finalized: false, explicitRemoteOverride, updatedAt: message.createdAt };
       }
       if (sender === "contact") {
         conversation.pause = undefined;
-        conversation.availability = { state: "available" };
+        if (senderContact?.presence.inScene)
+          reconcileContactAvailability(state, senderContact);
+        else
+          conversation.availability = { state: "remote" };
       }
       const visible = sender === "contact" && notificationDestinationVisible(state, { app: "messages", conversationId: conversation.id }, userId);
       if (sender === "contact" && !visible)
@@ -3007,6 +3452,8 @@ async function applyAction(input, userId, source = "model") {
     if (action === "message" && source === "user" && preferences.autoReplyAfterSend && typeof result.conversationId === "string") {
       scheduleReplyBurst(context.chatId, context.characterId, result.conversationId, userId);
     }
+    for (const relayId of [...new Set(relayIds)])
+      setTimeout(() => void requestRelayContinuation(context.chatId, context.characterId, relayId, userId), 0);
     return { ...result, activityId: activity?.id };
   });
 }
@@ -3115,7 +3562,7 @@ async function handleFrontend(payload, userId) {
             participantContactIds,
             messages: [],
             unread: 0,
-            availability: { state: "available" },
+            availability: { state: "remote" },
             createdAt,
             updatedAt: createdAt
           };
@@ -3289,6 +3736,15 @@ async function handleFrontend(payload, userId) {
         }, userId);
         break;
       }
+      case "lumiphone:continue_relay": {
+        const state = await loadState(context.chatId, context.characterId, userId);
+        const conversationId = text2(payload.conversationId, 180);
+        const relay = [...state.relays].reverse().find((entry) => entry.status === "pending" && (!conversationId || entry.conversationId === conversationId));
+        if (!relay)
+          throw new Error("There is no pending Pocket handoff for this conversation.");
+        requestRelayContinuation(context.chatId, context.characterId, relay.id, userId);
+        break;
+      }
       case "lumiphone:test_generation": {
         const testRequestId = requestId || id("connection_test");
         const existing = await loadPreferences(userId);
@@ -3335,27 +3791,43 @@ ${marker}`;
       }
       case "lumiphone:gallery_set_wallpaper": {
         const imageId = text2(payload.imageId, 180);
-        const asset = imageId && spindle.permissions.has("images") ? await spindle.images.get(imageId, { specificity: "full", userId }) : null;
-        const imageUrl = text2(asset?.url ?? payload.imageUrl, 2000);
-        if (!imageUrl)
+        if (!imageId || !spindle.permissions.has("images"))
           throw new Error("That Gallery image is unavailable.");
+        await spindle.images.get(imageId, { specificity: "sm", userId });
         const preferences = await loadPreferences(userId);
-        if (payload.personaId) {
-          const personaId = text2(payload.personaId, 180);
-          const appearance = preferences.personaAppearance[personaId];
-          if (!appearance)
-            throw new Error("Enable a Persona appearance before assigning its wallpaper.");
-          if (payload.target === "chat")
-            appearance.chatWallpaperImageUrl = imageUrl;
-          else
-            appearance.wallpaperImageUrl = imageUrl;
-        } else if (payload.target === "chat")
-          preferences.chatWallpaperImageUrl = imageUrl;
-        else
-          preferences.wallpaperImageUrl = imageUrl;
+        assignWallpaper(preferences, { ...payload, target: payload.personaId ? payload.target === "chat" ? "persona-chat" : "persona-home" : payload.target === "chat" ? "device-chat" : "device-home" }, { kind: "gallery", imageId });
         await savePreferences(preferences, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
         send({ type: "lumiphone:gallery_action_done", requestId, action: "set-wallpaper", message: payload.target === "chat" ? "Chat wallpaper updated." : "Home wallpaper updated." }, userId);
+        break;
+      }
+      case "lumiphone:set_wallpaper": {
+        const preferences = await loadPreferences(userId);
+        const source = payload.source === null ? null : normalizeImageSource(payload.source);
+        if (payload.source !== null && !source)
+          throw new Error("Choose a valid Gallery image, uploaded asset, or HTTPS image URL.");
+        assignWallpaper(preferences, payload, source);
+        await savePreferences(preferences, userId);
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
+        break;
+      }
+      case "lumiphone:upload_wallpaper_asset": {
+        if (!spindle.permissions.has("images"))
+          throw new Error("Enable Images to upload a Pocket background.");
+        const dataUrl = text2(payload.dataUrl, 12000000);
+        if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl))
+          throw new Error("Choose a valid image file.");
+        const image = await spindle.images.uploadFromDataUrl(dataUrl, {
+          originalFilename: text2(payload.filename, 240) || "pocket-background",
+          owner_character_id: context.characterId === "_none" ? undefined : context.characterId,
+          owner_chat_id: context.chatId === "_lobby" ? undefined : context.chatId,
+          userId
+        });
+        const preferences = await loadPreferences(userId);
+        assignWallpaper(preferences, payload, { kind: "asset", assetId: image.id });
+        await savePreferences(preferences, userId);
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
+        send({ type: "lumiphone:wallpaper_uploaded", requestId, imageId: image.id }, userId);
         break;
       }
       case "lumiphone:set_contact_photo": {
@@ -3458,7 +3930,7 @@ ${marker}`;
       }
       case "lumiphone:export_data": {
         const state = await loadState(context.chatId, context.characterId, userId);
-        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 4, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId);
+        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 5, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId);
         break;
       }
       case "lumiphone:import_data": {
@@ -3536,9 +4008,12 @@ function ensureInterceptor() {
       const chatId = context.chatId || "_lobby";
       const characterId = context.characterId || "_none";
       const state = await loadState(chatId, characterId, context.userId);
+      const relay = pendingRelayContext(state);
       const injected = { role: "system", content: `${PHONE_GUIDANCE}
 Current Pocket snapshot:
-${projectPhoneContext(state)}` };
+${projectPhoneContext(state)}${relay ? `
+
+${relay}` : ""}` };
       return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: "Pocket memory" }] };
     } catch {
       return messages;
@@ -3607,25 +4082,80 @@ spindle.on("PERSONA_CHANGED", async (_payload, userId) => {
     await sendState(await loadState(chatId, characterId, userId), userId, "persona_changed");
   } catch {}
 });
-spindle.on("GENERATION_ENDED", async (payload, userId) => {
+spindle.on("GENERATION_STARTED", async (payload, userId) => {
   const chatId = text2(payload?.chatId, 180);
-  const messageId = text2(payload?.messageId, 180);
-  if (!chatId || !messageId || !spindle.permissions.has("chats"))
+  const generationId = text2(payload?.generationId, 180);
+  if (!chatId || !generationId || !spindle.permissions.has("chats"))
     return;
   try {
     const chat = await spindle.chats.get(chatId, userId);
     const characterId = text2(chat?.character_id, 180) || "_none";
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
-      if (!state.sceneSnapshot || state.sceneSnapshot.sourceMessageId === messageId)
+      const relay = [...state.relays].reverse().find((entry) => entry.status === "pending" && entry.continuation.state === "launching" && !entry.continuation.generationId);
+      if (!relay)
         return;
-      state.sceneSnapshot.stale = true;
+      relay.continuation.state = "requested";
+      relay.continuation.generationId = generationId;
       await saveState(state, userId);
-      await sendState(state, userId, "scene_stale");
+    });
+  } catch {}
+});
+spindle.on("GENERATION_ENDED", async (payload, userId) => {
+  const chatId = text2(payload?.chatId, 180);
+  const messageId = text2(payload?.messageId, 180);
+  const generationId = text2(payload?.generationId, 180);
+  if (!chatId || !spindle.permissions.has("chats"))
+    return;
+  try {
+    const chat = await spindle.chats.get(chatId, userId);
+    const characterId = text2(chat?.character_id, 180) || "_none";
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId);
+      let changed = false;
+      const relay = generationId ? relayForGeneration(state, generationId) : undefined;
+      if (relay) {
+        if (payload?.error || !messageId)
+          relay.continuation = { ...relay.continuation, state: "failed", error: text2(payload?.error, 500) || "The roleplay continuation did not produce a message." };
+        else {
+          relay.status = "consumed";
+          relay.consumedAt = nowIso();
+          relay.consumedMessageId = messageId;
+          relay.continuation = { ...relay.continuation, state: "completed", error: undefined };
+        }
+        changed = true;
+      }
+      if (messageId && state.sceneSnapshot && state.sceneSnapshot.sourceMessageId !== messageId) {
+        state.sceneSnapshot.stale = true;
+        changed = true;
+      }
+      if (!changed)
+        return;
+      await saveState(state, userId);
+      await sendState(state, userId, relay ? relay.status === "consumed" ? "relay_consumed" : "relay_failed" : "scene_stale");
     });
   } catch (error) {
     spindle.log.warn(`Pocket could not mark the scene snapshot stale: ${error instanceof Error ? error.message : String(error)}`);
   }
+});
+spindle.on("GENERATION_STOPPED", async (payload, userId) => {
+  const chatId = text2(payload?.chatId, 180);
+  const generationId = text2(payload?.generationId, 180);
+  if (!chatId || !generationId || !spindle.permissions.has("chats"))
+    return;
+  try {
+    const chat = await spindle.chats.get(chatId, userId);
+    const characterId = text2(chat?.character_id, 180) || "_none";
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId);
+      const relay = relayForGeneration(state, generationId);
+      if (!relay)
+        return;
+      relay.continuation = { ...relay.continuation, state: "stopped", error: "Generation was stopped. The relay remains pending." };
+      await saveState(state, userId);
+      await sendState(state, userId, "relay_stopped");
+    });
+  } catch {}
 });
 spindle.on("CHARACTER_MESSAGE_RENDERED", async (payload, userId) => {
   const chatId = text2(payload?.chatId, 180);

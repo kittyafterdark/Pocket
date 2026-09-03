@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { defaultPreferences, normalizePreferences } from '../src/domain/preferences.js'
+import { defaultPreferences, normalizePreferences, normalizeWallpaper } from '../src/domain/preferences.js'
 import { MODEL_CONTEXT_BUDGET, projectPhoneContext } from '../src/domain/projection.js'
 import { calculatePhoneSurface } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
@@ -10,6 +10,7 @@ import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/mes
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
+import { conversationSnapshot, normalizeReplyDecision, pendingRelayContext } from '../src/backend/continuity.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
 describe('device preference schema', () => {
@@ -19,7 +20,7 @@ describe('device preference schema', () => {
       wallpaper: 'url(javascript:alert(1))', chatWallpaper: 'var(--host-secret)',
       animation: 'slide', autoOpenOnModelAction: true,
     })
-    expect(migrated.version).toBe(4)
+    expect(migrated.version).toBe(5)
     expect(migrated.colors.accent).toBe('#abcdef')
     expect(migrated.colors.bezel).toBe('#010203')
     expect(JSON.stringify(migrated)).not.toContain('javascript')
@@ -34,6 +35,42 @@ describe('device preference schema', () => {
     const preferences = normalizePreferences({ version: 3, handsetScale: 1.2, uiScale: 0.7 })
     expect(preferences.handsetScale).toBe(1.2)
     expect(preferences.uiScale).toBe(0.7)
+  })
+
+  test('migrates wallpaper URLs into stable typed references without storing blobs', () => {
+    const migrated = normalizePreferences({ version: 4, wallpaperImageUrl: 'https://example.test/home.png' })
+    expect(migrated.homeWallpaper.source).toEqual({ kind: 'url', url: 'https://example.test/home.png' })
+    expect(normalizeWallpaper({ source: { kind: 'asset', assetId: 'asset-1' }, focalX: 2, focalY: -.2, scrim: .4 })).toEqual({
+      source: { kind: 'asset', assetId: 'asset-1' }, fit: 'cover', focalX: 1, focalY: 0, scrim: .4,
+    })
+    expect(JSON.stringify(migrated)).not.toContain('data:image')
+  })
+})
+
+describe('conversation channel continuity', () => {
+  test('normalizes impossible none to handoff before generation', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'z', name: 'Zephyr', presence: { inScene: true } }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const contact = collections.contacts.find((entry) => entry.id === 'z')!
+    const conversation = ensureDirectConversation(collections, contact.id, now, (prefix) => `${prefix}-z`)
+    const decision = normalizeReplyDecision({ rawAction: 'none', contact, conversation, explicitRemoteOverride: false, createdAt: now })
+    expect(decision.normalizedAction).toBe('handoff')
+    expect(decision.reason).toBe('in_scene')
+    expect(decision.normalizationReason).toContain('actor_is_local')
+  })
+
+  test('keeps explicit local texting available and emits bounded pending relay context', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'z', name: 'Zephyr', presence: { inScene: true } }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const contact = collections.contacts.find((entry) => entry.id === 'z')!
+    const conversation = ensureDirectConversation(collections, contact.id, now, (prefix) => `${prefix}-z`)
+    expect(normalizeReplyDecision({ rawAction: 'none', contact, conversation, explicitRemoteOverride: true, createdAt: now }).normalizedAction).toBe('none')
+    conversation.messages.push({ id: 'm1', sender: 'persona', senderName: 'You', senderAccent: '', text: 'Come in.', createdAt: now, read: true, status: 'sent' })
+    const snapshot = conversationSnapshot(conversation, now)
+    const state = { contacts: collections.contacts, relays: [{ id: 'r1', chatId: 'c', characterId: 'active', contactId: 'z', conversationId: conversation.id, reason: 'in_scene', actorState: 'in_scene', conversationSnapshot: snapshot, latestExchange: snapshot.summary, timelineEventId: 'e1', createdAt: now, status: 'pending', continuation: { state: 'idle' } }] } as unknown as PhoneState
+    expect(pendingRelayContext(state)).toContain('phone -> in-person')
+    state.relays[0].status = 'consumed'
+    expect(pendingRelayContext(state)).toBe('')
   })
 })
 

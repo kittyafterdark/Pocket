@@ -1,7 +1,9 @@
-import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, SwarmVisualProfile } from '../../types.js'
+import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
 import { button, el } from '../shared.js'
 import type { PageAction } from '../shared.js'
+import { wallpaperImageControl } from '../components/image-picker.js'
+import type { PocketImageTarget } from '../components/image-picker.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
 type ActivePersona = { id: string; name: string } | null
@@ -14,6 +16,7 @@ export interface SettingsViewHost {
   capabilities: PhoneCapabilities | null
   swarmProfile: SwarmVisualProfile | null
   generation: PocketGenerationInfo | null
+  resolvedWallpapers: PocketResolvedWallpapers
   contextPreview: PocketContextDiagnostics | null
   personaPreview: ChatPocketPersona | null
   page(title: string, subtitle?: string, action?: PageAction): Page
@@ -23,6 +26,7 @@ export interface SettingsViewHost {
   requestPermissions(): void
   showError(message: string): void
   rerender(): void
+  chooseImage(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void
   mountModelCombobox(target: HTMLElement, options: { value: string; connection: { kind: 'llm'; id?: string }; disabled?: boolean; onChange(value: string): void }): void
 }
 
@@ -100,22 +104,15 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const colorControl = (label: string, key: keyof PhonePalette) => color(label, settings.colors[key], (value) => commit((next) => { next.theme = 'custom'; next.colors[key] = value }))
   palette.append(colorControl('Accent', 'accent'), colorControl('Bezel', 'bezel'), colorControl('UI background', 'background'), colorControl('UI surface', 'surface'), colorControl('UI text', 'text'), colorControl('Home top', 'wallpaperPrimary'), colorControl('Home bottom', 'wallpaperSecondary'), colorControl('Chat top', 'chatPrimary'), colorControl('Chat bottom', 'chatSecondary'))
   const wallpapers = el('section', 'lp-card lp-settings-section')
-  wallpapers.append(el('div', 'lp-eyebrow', 'Wallpaper images'))
-  const homeImage = row('Home wallpaper', settings.wallpaperImageUrl ? 'Gallery image selected' : 'Theme gradient')
-  homeImage.dataset.setting = 'home-wallpaper'
-  const clearHome = button('Clear', 'lp-button lp-button-quiet'); clearHome.disabled = !settings.wallpaperImageUrl; clearHome.addEventListener('click', () => {
-    commit((next) => { next.wallpaperImageUrl = '' })
-    const detail = homeImage.querySelector<HTMLElement>('.lp-copy'); if (detail) detail.textContent = 'Theme gradient'
-    clearHome.disabled = true
-  }); homeImage.appendChild(clearHome)
-  const chatImage = row('Chat wallpaper', settings.chatWallpaperImageUrl ? 'Gallery image selected' : 'Theme gradient')
-  chatImage.dataset.setting = 'chat-wallpaper'
-  const clearChat = button('Clear', 'lp-button lp-button-quiet'); clearChat.disabled = !settings.chatWallpaperImageUrl; clearChat.addEventListener('click', () => {
-    commit((next) => { next.chatWallpaperImageUrl = '' })
-    const detail = chatImage.querySelector<HTMLElement>('.lp-copy'); if (detail) detail.textContent = 'Theme gradient'
-    clearChat.disabled = true
-  }); chatImage.appendChild(clearChat)
-  wallpapers.append(homeImage, chatImage)
+  wallpapers.append(
+    el('div', 'lp-eyebrow', 'Wallpaper images'),
+    wallpaperImageControl('Home wallpaper', 'device-home', settings.homeWallpaper, host.resolvedWallpapers.deviceHome, {
+      choose: host.chooseImage, change: (wallpaper) => commit((next) => { next.homeWallpaper = wallpaper }),
+    }),
+    wallpaperImageControl('Chat wallpaper', 'device-chat', settings.chatWallpaper, host.resolvedWallpapers.deviceChat, {
+      choose: host.chooseImage, change: (wallpaper) => commit((next) => { next.chatWallpaper = wallpaper }),
+    }),
+  )
   const scaleCard = el('section', 'lp-card lp-settings-section'); scaleCard.append(el('div', 'lp-eyebrow', 'Sizing'))
   const presets = el('div', 'lp-row')
   for (const [label, value] of [['Compact', .8], ['Default', 1], ['Large', 1.2]] as const) { const preset = button(label, 'lp-chip'); preset.setAttribute('aria-pressed', String(settings.uiScale === value)); preset.addEventListener('click', () => commit((next) => { next.uiScale = value })); presets.appendChild(preset) }
@@ -168,7 +165,11 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   content.appendChild(identity)
   if (!host.activePersona) return page
   const active = host.activePersona
-  const current = host.draft.personaAppearance[active.id] || { enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: '', wallpaperImageUrl: '', chatWallpaperImageUrl: '' }
+  const current = host.draft.personaAppearance[active.id] || {
+    enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: '',
+    homeWallpaper: { ...structuredClone(host.draft.homeWallpaper), source: null },
+    chatWallpaper: { ...structuredClone(host.draft.chatWallpaper), source: null },
+  }
   const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }) }
   const card = el('section', 'lp-card lp-settings-section')
   card.append(el('div', 'lp-eyebrow', 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
@@ -177,11 +178,18 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   theme.addEventListener('change', () => commit((item) => { item.theme = theme.value as PhoneSettings['theme']; if (item.theme !== 'custom') item.colors = themePalette(item.theme) }))
   const colors = el('div', 'lp-color-grid')
   for (const [label, key] of [['Accent', 'accent'], ['Bezel', 'bezel'], ['Home top', 'wallpaperPrimary'], ['Home bottom', 'wallpaperSecondary'], ['Chat top', 'chatPrimary'], ['Chat bottom', 'chatSecondary']] as Array<[string, keyof PhonePalette]>) colors.appendChild(color(label, current.colors[key], (value) => commit((item) => { item.theme = 'custom'; item.colors[key] = value })))
-  const clearHome = button('Clear persona home wallpaper', 'lp-button lp-button-quiet'); clearHome.disabled = !current.wallpaperImageUrl; clearHome.addEventListener('click', () => commit((item) => { item.wallpaperImageUrl = '' }))
-  const clearChat = button('Clear persona chat wallpaper', 'lp-button lp-button-quiet'); clearChat.disabled = !current.chatWallpaperImageUrl; clearChat.addEventListener('click', () => commit((item) => { item.chatWallpaperImageUrl = '' }))
+  const personaWallpapers = el('section', 'lp-settings-section')
+  personaWallpapers.append(
+    wallpaperImageControl(`${active.name} home`, 'persona-home', current.homeWallpaper, host.resolvedWallpapers.personaHome, {
+      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.homeWallpaper = wallpaper }),
+    }),
+    wallpaperImageControl(`${active.name} chat`, 'persona-chat', current.chatWallpaper, host.resolvedWallpapers.personaChat, {
+      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.chatWallpaper = wallpaper }),
+    }),
+  )
   const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
   const apply = button('Apply persona CSS', 'lp-button'); apply.addEventListener('click', () => commit((item) => { item.customCss = css.value }))
-  card.append(theme, colors, clearHome, clearChat, css, apply); content.appendChild(card); return page
+  card.append(theme, colors, personaWallpapers, css, apply); content.appendChild(card); return page
 }
 
 function messages(host: SettingsViewHost): HTMLDivElement {

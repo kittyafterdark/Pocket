@@ -126,6 +126,10 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
   const read = flag(value.read, sender !== 'contact')
   const status = value.status === 'pending' || value.status === 'failed' || value.status === 'sent' || value.status === 'delivered' || value.status === 'read'
     ? value.status : read ? 'read' : 'delivered'
+  const generation = record(value.generation) ? value.generation : null
+  const info = generation && record(generation.info) ? generation.info : null
+  const decision = info && record(info.replyDecision) ? info.replyDecision : null
+  const count = (input: unknown) => Math.max(0, Math.round(Number(input) || 0))
   return {
     id: clean(value.id, 120) || makeId('msg'),
     sender,
@@ -138,9 +142,24 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     status,
     imageId: clean(value.imageId, 160) || undefined,
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
-    generation: record(value.generation) && clean(value.generation.requestId, 180) ? {
-      requestId: clean(value.generation.requestId, 180),
-      retryOf: clean(value.generation.retryOf, 180) || undefined,
+    generation: generation && clean(generation.requestId, 180) ? {
+      requestId: clean(generation.requestId, 180),
+      retryOf: clean(generation.retryOf, 180) || undefined,
+      info: info ? {
+        speaker: clean(info.speaker, 120), source: clean(info.source, 240), sourceId: clean(info.sourceId, 180),
+        sourceResolution: info.sourceResolution === 'resolved' || info.sourceResolution === 'manual' ? info.sourceResolution : 'snapshot',
+        activeCharacterId: clean(info.activeCharacterId, 180), activeCharacterUsed: flag(info.activeCharacterUsed),
+        identityChars: count(info.identityChars), sceneSnapshotStale: flag(info.sceneSnapshotStale, true),
+        contextMode: info.contextMode === 'off' || info.contextMode === 'recent' || info.contextMode === 'story' ? info.contextMode : 'smart',
+        recentCount: count(info.recentCount), recentChars: count(info.recentChars), storyCount: count(info.storyCount), storyChars: count(info.storyChars),
+        threadCount: count(info.threadCount), threadChars: count(info.threadChars), generationMode: info.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
+        connectionName: clean(info.connectionName, 180), model: clean(info.model, 500),
+        replyDecision: decision ? {
+          rawAction: decision.rawAction === 'reply' || decision.rawAction === 'pause' || decision.rawAction === 'handoff' ? decision.rawAction : 'none',
+          normalizedAction: decision.normalizedAction === 'reply' || decision.normalizedAction === 'pause' || decision.normalizedAction === 'handoff' ? decision.normalizedAction : 'none',
+          reason: clean(decision.reason, 80), normalizationReason: clean(decision.normalizationReason, 180),
+        } : undefined,
+      } : undefined,
     } : undefined,
   }
 }
@@ -158,15 +177,20 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
   const kind = value.kind === 'group' || participantContactIds.length > 1 ? 'group' : 'direct'
   const createdAt = timestamp(value.createdAt, messages[0]?.createdAt || now)
   const pauseValue = record(value.pause) ? value.pause : null
-  const pauseReasons = new Set<ConversationPauseReason>(['ended', 'busy', 'away', 'arriving', 'sleeping', 'unknown'])
+  const pauseReasons = new Set<ConversationPauseReason>(['ended', 'busy', 'away', 'sleeping', 'unknown'])
+  const legacyArriving = pauseValue?.reason === 'arriving'
   const pauseReason = pauseReasons.has(pauseValue?.reason as ConversationPauseReason) ? pauseValue?.reason as ConversationPauseReason : null
   const availabilityValue = record(value.availability) ? value.availability : null
-  const localReasons = new Set<ConversationLocalReason>(['in_scene', 'arriving', 'took_action'])
-  const availability = availabilityValue?.state === 'local' && localReasons.has(availabilityValue.reason as ConversationLocalReason)
-    ? { state: 'local' as const, reason: availabilityValue.reason as ConversationLocalReason, resumePauseReason: pauseReasons.has(availabilityValue.resumePauseReason as ConversationPauseReason) ? availabilityValue.resumePauseReason as ConversationPauseReason : undefined }
+  const localReasons = new Set<ConversationLocalReason>(['in_scene', 'arrived', 'took_action', 'continued_in_person'])
+  const migratedLocalReason: ConversationLocalReason | null = availabilityValue?.reason === 'arriving' ? 'arrived' : localReasons.has(availabilityValue?.reason as ConversationLocalReason) ? availabilityValue?.reason as ConversationLocalReason : null
+  const resumePauseReason = pauseReasons.has(availabilityValue?.resumePauseReason as ConversationPauseReason) ? availabilityValue?.resumePauseReason as ConversationPauseReason : undefined
+  const availability = availabilityValue?.state === 'local' && migratedLocalReason
+    ? resumePauseReason ? { state: 'local' as const, reason: migratedLocalReason, resumePauseReason } : { state: 'local' as const, reason: migratedLocalReason }
+    : availabilityValue?.state === 'arriving' || legacyArriving
+      ? { state: 'arriving' as const }
     : availabilityValue?.state === 'paused' && pauseReasons.has(availabilityValue.reason as ConversationPauseReason)
       ? { state: 'paused' as const, reason: availabilityValue.reason as ConversationPauseReason }
-      : pauseReason ? { state: 'paused' as const, reason: pauseReason } : { state: 'available' as const }
+      : pauseReason ? { state: 'paused' as const, reason: pauseReason } : { state: 'remote' as const }
   const burstValue = record(value.outgoingBurst) ? value.outgoingBurst : null
   const burstId = clean(burstValue?.id, 180)
   return {
@@ -182,12 +206,26 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
       source: pauseValue?.source === 'scene' ? 'scene' : 'model',
     } : undefined,
     availability,
+    snapshot: record(value.snapshot) ? {
+      summary: clean(value.snapshot.summary, 2_400),
+      recentMessageIds: (Array.isArray(value.snapshot.recentMessageIds) ? value.snapshot.recentMessageIds : []).map((entry) => clean(entry, 180)).filter(Boolean).slice(-8),
+      updatedAt: timestamp(value.snapshot.updatedAt, now),
+    } : undefined,
+    lastDecision: record(value.lastDecision) ? {
+      rawAction: value.lastDecision.rawAction === 'reply' || value.lastDecision.rawAction === 'pause' || value.lastDecision.rawAction === 'handoff' ? value.lastDecision.rawAction : 'none',
+      normalizedAction: value.lastDecision.normalizedAction === 'reply' || value.lastDecision.normalizedAction === 'pause' || value.lastDecision.normalizedAction === 'handoff' ? value.lastDecision.normalizedAction : 'none',
+      reason: clean(value.lastDecision.reason, 80), normalizationReason: clean(value.lastDecision.normalizationReason, 180),
+      contactInScene: flag(value.lastDecision.contactInScene), remoteEligible: flag(value.lastDecision.remoteEligible, true),
+      explicitRemoteOverride: flag(value.lastDecision.explicitRemoteOverride), createdAt: timestamp(value.lastDecision.createdAt, now),
+      burstId: clean(value.lastDecision.burstId, 180) || undefined, relayId: clean(value.lastDecision.relayId, 180) || undefined,
+    } : undefined,
     outgoingBurst: burstId ? {
       id: burstId,
       messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean(entry, 180)).filter(Boolean).slice(-12),
       open: flag(burstValue?.open, false),
       held: flag(burstValue?.held, false),
       finalized: flag(burstValue?.finalized, false),
+      explicitRemoteOverride: flag(burstValue?.explicitRemoteOverride, false),
       updatedAt: timestamp(burstValue?.updatedAt, now),
     } : undefined,
     createdAt,
@@ -226,7 +264,7 @@ export function ensureDirectConversation(state: { contacts: PocketContact[]; con
   const contact = state.contacts.find((entry) => entry.id === contactId)
   const conversation: PocketConversation = {
     id: makeId('conversation'), kind: 'direct', title: contact?.name || 'Conversation', participantContactIds: [contactId],
-    messages: [], unread: 0, availability: { state: 'available' }, createdAt: now, updatedAt: now,
+    messages: [], unread: 0, availability: { state: 'remote' }, createdAt: now, updatedAt: now,
   }
   state.conversations.push(conversation)
   return conversation
