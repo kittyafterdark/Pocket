@@ -17,6 +17,22 @@ export class PocketRouteHistory {
     return route
   }
 
+  /**
+   * Commit a successful child flow onto its destination without leaving a
+   * duplicate copy of that destination immediately underneath in history.
+   *
+   * Example:
+   * Contacts -> Detail -> Edit -> settle(Detail) -> Back returns to Contacts.
+   */
+  settle(routeInput: PocketRoute): PocketRoute {
+    const route = normalizePocketRoute(routeInput)
+    if (sameRoute(route, this.current)) return this.current
+    const parent = this.entries.at(-1)
+    if (parent && sameRoute(parent, route)) this.entries.pop()
+    this.current = route
+    return route
+  }
+
   back(): PocketRoute {
     this.current = this.entries.pop() || { app: 'home' }
     return this.current

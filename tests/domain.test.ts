@@ -212,6 +212,65 @@ describe('roleplay context bridge', () => {
   })
 })
 
+describe('phone channel ownership', () => {
+  test('keeps DM recipient ownership authoritative across unrelated actor mentions', async () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [
+      { id: 'mina', name: 'Mina Ashido' },
+      { id: 'shoto', name: 'Shoto Todoroki' },
+    ] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const mina = collections.contacts.find((entry) => entry.id === 'mina')!
+    const conversation = ensureDirectConversation(collections, mina.id, now, () => 'dm-mina')
+    conversation.messages.push({
+      id: 'm1', sender: 'contact', senderActorId: 'mina', senderContactId: 'mina', senderName: 'Mina Ashido', senderAccent: '',
+      text: 'You got this, Shoto!', createdAt: now, read: true, status: 'read',
+    })
+    const state = {
+      version: 10, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, sceneSnapshot: null,
+      pocketPersona: { source: 'manual', linkedPersonaId: '', displayName: 'Bakugo', pronouns: '', role: 'Persona', identityBrief: '', avatarUrl: '', accent: '#8b7dff', canAppear: false, updatedAt: now },
+      setup: { initialized: true, dismissed: false }, contacts: collections.contacts, discoveredActors: [], conversations: collections.conversations,
+      notes: [], events: [], relays: [], references: [], groupBatches: [], trackers: [], notifications: [], activities: [], processedCommands: [],
+      updatedAt: now, weather: { location: 'Agency', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now },
+    } as PhoneState
+    const context = await buildRoleplayContext({ state, contact: mina, conversation, preferences: normalizePreferences({ roleplayContextMode: 'off' }) })
+    expect(context).toContain('CURRENT PHONE CHANNEL')
+    expect(context).toContain('Pocket owner / user participant: Bakugo')
+    expect(context).toContain('Other participant: Mina Ashido')
+    expect(context).toContain("Recipient of Mina Ashido's generated phone text: Bakugo")
+    expect(context).toContain('Never infer a different recipient')
+  })
+
+  test('keeps removed group members as labeled history without treating them as current', async () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [
+      { id: 'mina', name: 'Mina Ashido' },
+      { id: 'shoto', name: 'Shoto Todoroki' },
+      { id: 'kirishima', name: 'Eijiro Kirishima' },
+    ] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const mina = collections.contacts.find((entry) => entry.id === 'mina')!
+    const conversation = {
+      id: 'gc', kind: 'group' as const, title: 'GC',
+      participantActorIds: ['mina', 'kirishima'], participantContactIds: ['mina', 'kirishima'],
+      messages: [
+        { id: 'old', sender: 'contact' as const, senderActorId: 'shoto', senderContactId: 'shoto', senderName: 'Shoto Todoroki', senderAccent: '', text: 'Old line.', createdAt: now, read: true, status: 'read' as const },
+        { id: 'new', sender: 'contact' as const, senderActorId: 'mina', senderContactId: 'mina', senderName: 'Mina Ashido', senderAccent: '', text: 'Current line.', createdAt: now, read: true, status: 'read' as const },
+      ],
+      unread: 0, availability: { state: 'remote' as const }, createdAt: now, updatedAt: now,
+    }
+    const state = {
+      version: 10, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, sceneSnapshot: null,
+      pocketPersona: { source: 'manual', linkedPersonaId: '', displayName: 'Bakugo', pronouns: '', role: 'Persona', identityBrief: '', avatarUrl: '', accent: '#8b7dff', canAppear: false, updatedAt: now },
+      setup: { initialized: true, dismissed: false }, contacts: collections.contacts, discoveredActors: [], conversations: [conversation],
+      notes: [], events: [], relays: [], references: [], groupBatches: [], trackers: [], notifications: [], activities: [], processedCommands: [],
+      updatedAt: now, weather: { location: 'Agency', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now },
+    } as PhoneState
+    const context = await buildRoleplayContext({ state, contact: mina, conversation, preferences: normalizePreferences({ roleplayContextMode: 'off' }) })
+    expect(context).toContain('Current group actors: Mina Ashido, Eijiro Kirishima')
+    expect(context).toContain('Shoto Todoroki [former participant; historical only]: Old line.')
+    expect(context).toContain('Mina Ashido: Current line.')
+  })
+})
+
 describe('Pocket routes', () => {
   test('normalizes typed deep links and rejects unknown apps', () => {
     expect(normalizePocketRoute({ app: 'trackers', trackerId: 'trust', view: 'config' })).toEqual({ app: 'trackers', trackerId: 'trust', view: 'config' })
@@ -364,6 +423,17 @@ describe('notification provenance and history routing', () => {
     expect(router.back()).toEqual({ app: 'trackers', trackerId: 'trust', view: 'detail' })
     expect(router.back()).toEqual({ app: 'trackers' })
     expect(router.back()).toEqual({ app: 'home' })
+  })
+})
+
+describe('route settlement', () => {
+  test('collapses a successful contact edit onto the existing detail route', () => {
+    const router = new PocketRouteHistory()
+    router.navigate({ app: 'contacts' })
+    router.navigate({ app: 'contacts', contactId: 'mina', view: 'detail' })
+    router.navigate({ app: 'contacts', contactId: 'mina', view: 'config' })
+    expect(router.settle({ app: 'contacts', contactId: 'mina', view: 'detail' })).toEqual({ app: 'contacts', contactId: 'mina', view: 'detail' })
+    expect(router.back()).toEqual({ app: 'contacts', contactId: undefined, view: undefined })
   })
 })
 

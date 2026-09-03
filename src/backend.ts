@@ -1361,7 +1361,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
       type: 'quiet',
       messages: [
-        { role: 'system', content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message. Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy. The compact identity and bounded context below are authoritative.` },
+        { role: 'system', content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. The CURRENT PHONE CHANNEL block below is authoritative: it defines who ${profile.name} is texting. Never infer a different recipient from scene/story/recent-roleplay context, another phone thread, or an actor merely mentioned in message text. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message. Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy. The compact identity and bounded context below are authoritative.` },
         { role: 'user', content: `${assembled.text || '(no context)'}\n\nDIRECTION\n${instruction}` },
       ],
       parameters: { temperature: 0.85, max_tokens: 500 },
@@ -1513,7 +1513,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
     const parsed = await runStructuredGeneration('group-reply', requestId, {
       type: 'quiet',
       messages: [
-        { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
+        { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
         { role: 'user', content: `${assembled.text || '(no context)'}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.` },
       ],
       parameters: { temperature: .82, max_tokens: 900 }, userId,
@@ -1532,17 +1532,20 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       const latestConversation = latest.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
       if (!latestConversation) return null
       if (sourceBurstId && latestConversation.outgoingBurst?.id !== sourceBurstId) return null
+      const currentActorIds = new Set(conversationActorIds(latestConversation))
+      const currentEligible = eligible.filter((entry) => currentActorIds.has(entry.actorId))
+      const queuedRows = generatedRows.filter((entry) => currentActorIds.has(entry.speakerId))
       const createdAt = nowIso()
       const next: PendingGroupBatch = {
         id: batchId, requestId, conversationId, sourceBurstId,
-        eligibleActorIds: eligible.map((entry) => entry.actorId),
-        eligibleContactIds: eligible.flatMap((entry) => entry.contact?.id || []), messages: generatedRows,
-        status: generatedRows.length ? 'queued' : 'completed', createdAt, updatedAt: createdAt,
+        eligibleActorIds: currentEligible.map((entry) => entry.actorId),
+        eligibleContactIds: currentEligible.flatMap((entry) => entry.contact?.id || []), messages: queuedRows,
+        status: queuedRows.length ? 'queued' : 'completed', createdAt, updatedAt: createdAt,
       }
       latest.groupBatches.push(next)
       latest.groupBatches = latest.groupBatches.slice(-24)
       await saveState(latest, userId)
-      await sendState(latest, userId, generatedRows.length ? 'group_batch_queued' : 'group_batch_empty')
+      await sendState(latest, userId, queuedRows.length ? 'group_batch_queued' : 'group_batch_empty')
       return next
     })
     if (!batch || !batch.messages.length) return
@@ -1557,8 +1560,16 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         const latest = await loadState(context.chatId, context.characterId, userId)
         const latestBatch = latest.groupBatches.find((entry) => entry.id === batch.id)
         const latestSlot = latestBatch?.messages.find((entry) => entry.id === slot.id)
-        const latestConversation = latest.conversations.find((entry) => entry.id === conversationId)
+        const latestConversation = latest.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
         if (!latestBatch || !latestSlot || !latestConversation || latestBatch.status === 'cancelled' || latestSlot.state !== 'queued') return null
+        if (!conversationActorIds(latestConversation).includes(speaker.actorId)) {
+          latestSlot.state = 'cancelled'
+          latestBatch.updatedAt = nowIso()
+          if (!latestBatch.messages.some((entry) => entry.state === 'queued')) latestBatch.status = 'completed'
+          await saveState(latest, userId)
+          await sendState(latest, userId, 'group_batch_membership_changed')
+          return { skipped: true as const }
+        }
         latestBatch.status = 'delivering'
         const visible = notificationDestinationVisible(latest, { app: 'messages', conversationId }, userId)
         const profileRow = profiles.find((entry) => entry.actor.actorId === speaker.actorId)!
@@ -1601,6 +1612,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         return { notification, activity }
       })
       if (!delivered) break
+      if ('skipped' in delivered && delivered.skipped) continue
       if (delivered.notification) await maybePush(await loadState(context.chatId, context.characterId, userId), preferences, delivered.notification, userId)
       sendActivity(delivered.activity, userId)
       sendNotification(delivered.notification, userId)

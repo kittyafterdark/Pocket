@@ -910,7 +910,8 @@ class PocketController {
       this.contactSourcesRequested = false
       this.npcDraft = null
       this.previousNpcDraft = null
-      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, false)
+      const settled = this.router.settle({ app: 'contacts', contactId: payload.contactId, view: 'detail' })
+      this.openPocket(settled, false)
       return
     }
     if (payload.type === 'lumiphone:discovered_actor_promoted' && payload.contactId) {

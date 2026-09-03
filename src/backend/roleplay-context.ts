@@ -36,6 +36,52 @@ function sceneLines(state: PhoneState): string[] {
   })
 }
 
+function participantActorIds(conversation: PocketConversation): string[] {
+  return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds
+}
+function actorDisplayName(state: PhoneState, actorId: string): string {
+  const direct = state.contacts.find((entry) => entry.id === actorId)
+  if (direct) return direct.name
+  const discovered = state.discoveredActors?.find((entry) => entry.id === actorId)
+  if (!discovered) return actorId
+  const promoted = discovered.promotedContactId ? state.contacts.find((entry) => entry.id === discovered.promotedContactId) : undefined
+  return promoted?.name || discovered.displayName
+}
+function currentChannelLines(state: PhoneState, contact: PocketContact, conversation: PocketConversation): string[] {
+  const persona = state.pocketPersona.displayName?.trim() || 'You'
+  const actorIds = participantActorIds(conversation)
+  const actorNames = actorIds.map((actorId) => actorDisplayName(state, actorId)).filter(Boolean)
+  if (conversation.kind === 'direct') {
+    const other = actorNames[0] || contact.name || conversation.title || 'the contact'
+    return [
+      'Type: direct message',
+      `Pocket owner / user participant: ${persona}`,
+      `Other participant: ${other}`,
+      `Current generated contact speaker: ${contact.name}`,
+      `Recipient of ${contact.name}'s generated phone text: ${persona}`,
+      `This DM belongs only to ${persona} and ${other}.`,
+      'Actors mentioned in scene, story, recent roleplay, another phone conversation, or message text are not participants unless listed in this channel.',
+      'Never infer a different recipient from another DM, group chat, scene, or recent roleplay.',
+    ]
+  }
+  return [
+    'Type: group chat',
+    `Pocket owner / user participant: ${persona}`,
+    `Current group actors: ${actorNames.join(', ') || '(none)'}`,
+    'Only the Pocket owner and the current group actors listed above own this channel.',
+    'Messages from actors who have since left the group remain historical context only; they are not current participants or eligible recipients/speakers.',
+    'Actors mentioned only in scene, story, recent roleplay, another phone conversation, or message text do not become group members.',
+  ]
+}
+function threadLine(state: PhoneState, conversation: PocketConversation, message: PocketConversation['messages'][number]): string {
+  const persona = state.pocketPersona.displayName || 'You'
+  const sender = message.sender === 'persona' ? persona : message.senderName || 'Pocket'
+  if (conversation.kind !== 'group' || message.sender !== 'contact') return `${sender}: ${clean(message.text, 520)}`
+  const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds])
+  const senderId = message.senderActorId || message.senderContactId || ''
+  const former = Boolean(senderId && !currentIds.has(senderId))
+  return `${sender}${former ? ' [former participant; historical only]' : ''}: ${clean(message.text, 520)}`
+}
 function trimBlock(lines: string[], budget: number): string { return lines.filter(Boolean).join('\n').slice(0, budget) }
 
 export async function assemblePocketContext(options: {
@@ -54,8 +100,9 @@ export async function assemblePocketContext(options: {
     id: clean(authoritative.id, 180), index: messageIndex(authoritative, hostMessages.length - 1), excerpt: clean(authoritative.content, 180),
   } : { id: '', index: -1, excerpt: '' }
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
+  const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
   const scene = trimBlock(sceneLines(state), BUDGETS.scene)
-  const threadLines = conversation.messages.slice(-20).map((message) => `${message.sender === 'persona' ? state.pocketPersona.displayName || 'You' : message.senderName || 'Pocket'}: ${clean(message.text, 520)}`)
+  const threadLines = conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message))
   const thread = trimBlock(threadLines, BUDGETS.thread)
   const wantsRecent = mode === 'recent' || (mode === 'smart' && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote)))
   const selectedRecent = mode !== 'off' && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : []
@@ -73,6 +120,7 @@ export async function assemblePocketContext(options: {
   const storySource = mode === 'story' || mode === 'smart' ? storyLines(state, contact) : []
   const story = trimBlock(storySource, BUDGETS.story)
   const parts = [
+    channel ? `CURRENT PHONE CHANNEL\n${channel}` : '',
     actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '',
     scene ? `SCENE SNAPSHOT${state.sceneSnapshot?.stale ? ' (STALE)' : ''}\n${scene}` : '',
     recent ? `RECENT ROLEPLAY\n${recent}` : '',
@@ -80,7 +128,7 @@ export async function assemblePocketContext(options: {
     thread ? `PHONE THREAD\n${thread}` : '',
   ].filter(Boolean)
   const finalText = (mode === 'off'
-    ? [actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
+    ? [channel ? `CURRENT PHONE CHANNEL\n${channel}` : '', actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
     : parts.join('\n\n')).slice(0, BUDGETS.total)
   const latestMismatch = Boolean(authoritativeLatest.id && (!includedLatest.id || authoritativeLatest.id !== includedLatest.id))
   const freshnessWarning = mode === 'story' || mode === 'off' || !wantsRecent ? '' : latestMismatch
