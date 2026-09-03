@@ -443,4 +443,36 @@ export const PHONE_STYLES = `
   .lp-wallpaper-focal { display:grid; gap:6px; }
   .lp-wallpaper-range { display:grid; grid-template-columns:minmax(100px,auto) 1fr; align-items:center; gap:8px; }
   .lp-wallpaper-range input { width:100%; accent-color:var(--lp-accent); }
+  .pocket-composer-reference {
+    --pocket-reference-accent:var(--lumiverse-primary,#8b7dff); position:fixed; z-index:400; display:flex; align-items:center; gap:3px;
+    max-width:calc(100vw - 16px); padding:3px; transform:translateY(calc(-100% - 7px)); border:1px solid color-mix(in srgb,var(--pocket-reference-accent) 38%,var(--lumiverse-border,transparent));
+    border-radius:999px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,var(--pocket-reference-accent) 8%); color:var(--lumiverse-text,#f7f5ff);
+    box-shadow:0 8px 24px rgba(0,0,0,.16); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); font:inherit;
+  }
+  .pocket-composer-reference[hidden] { display:none; }
+  .pocket-composer-reference[data-status="injected"] { border-color:color-mix(in srgb,var(--pocket-reference-accent) 68%,transparent); }
+  .pocket-composer-reference[data-status="failed"] { --pocket-reference-accent:#ff6f87; }
+  .pocket-composer-reference-open {
+    appearance:none; min-width:0; min-height:27px; flex:1; display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:center; gap:6px;
+    padding:2px 5px 2px 3px; border:0; border-radius:999px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer;
+  }
+  .pocket-composer-reference-open:focus-visible,.pocket-composer-reference-clear:focus-visible { outline:2px solid color-mix(in srgb,var(--pocket-reference-accent) 62%,white); outline-offset:1px; }
+  .pocket-composer-reference-mark { width:22px; height:22px; display:grid; place-items:center; border-radius:50%; flex:0 0 22px; background:color-mix(in srgb,var(--pocket-reference-accent) 17%,transparent); color:var(--pocket-reference-accent); }
+  .pocket-composer-reference-mark svg { width:13px; height:13px; }
+  .pocket-composer-reference-source { white-space:nowrap; font-size:10px; font-weight:800; letter-spacing:-.01em; }
+  .pocket-composer-reference-preview { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.7; font-size:10px; }
+  .pocket-composer-reference-clear {
+    appearance:none; width:25px; height:25px; flex:0 0 25px; display:grid; place-items:center; padding:0; border:0; border-radius:50%;
+    background:transparent; color:inherit; opacity:.58; font:inherit; font-size:17px; line-height:1; cursor:pointer;
+  }
+  .pocket-composer-reference-clear:hover { opacity:1; background:color-mix(in srgb,var(--pocket-reference-accent) 12%,transparent); }
+  @media (max-width: 520px) {
+    .pocket-composer-reference { gap:1px; }
+    .pocket-composer-reference-open { gap:5px; }
+    .pocket-composer-reference-source { font-size:9px; }
+    .pocket-composer-reference-preview { font-size:9px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pocket-composer-reference,.pocket-composer-reference * { animation:none !important; transition:none !important; }
+  }
 `

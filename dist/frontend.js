@@ -2626,6 +2626,11 @@ class PocketController {
   notificationIsland;
   customStyle;
   setupModalOpen = false;
+  composerReferencePill = null;
+  composerTextarea = null;
+  composerResizeObserver = null;
+  composerSyncFrame = 0;
+  lastComposerReferenceId = "";
   constructor(ctx) {
     this.ctx = ctx;
     this.drawer = ctx.ui.registerDrawerTab({
@@ -2775,6 +2780,7 @@ class PocketController {
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
       this.pendingActivities.clear();
+      this.hideComposerReferencePill();
       this.refresh();
       window.setTimeout(() => this.sweepActivityReceipts(), 0);
     }));
@@ -2834,6 +2840,7 @@ class PocketController {
     };
     window.addEventListener("keydown", keydown);
     this.cleanups.push(() => window.removeEventListener("keydown", keydown));
+    this.installComposerReferenceBridge();
     this.ensureWidget();
   }
   async ensureWidget() {
@@ -3099,6 +3106,159 @@ class PocketController {
   announceView() {
     this.send("lumiphone:view_state", { open: this.expanded, route: this.router.current });
   }
+  activeComposerReference() {
+    if (!this.state)
+      return null;
+    const active = this.ctx.getActiveChat();
+    if (active.chatId && this.state.chatId !== active.chatId)
+      return null;
+    if (active.characterId && this.state.characterId !== active.characterId)
+      return null;
+    return [...this.state.references || []].reverse().find((reference) => reference.status === "armed" || reference.status === "injected" || reference.status === "failed") || null;
+  }
+  findHostComposer() {
+    const candidates = [...document.querySelectorAll('textarea[name="chat-message"], textarea[aria-label="Message"]')].filter((node) => !node.closest(".lumiphone-widget-root,.lumiphone-drawer"));
+    return candidates.find((node) => node.getClientRects().length > 0) || candidates[0] || null;
+  }
+  installComposerReferenceBridge() {
+    if (typeof MutationObserver === "undefined" || typeof window.requestAnimationFrame !== "function")
+      return;
+    const pill = el("div", "pocket-composer-reference");
+    pill.hidden = true;
+    pill.setAttribute("role", "group");
+    pill.setAttribute("aria-label", "Attached Pocket reference");
+    const open = button("", "pocket-composer-reference-open");
+    open.type = "button";
+    open.title = "Open attached Pocket reference";
+    const mark = el("span", "pocket-composer-reference-mark");
+    mark.innerHTML = PHONE_ICON;
+    const source = el("span", "pocket-composer-reference-source", "Pocket attached");
+    const preview = el("span", "pocket-composer-reference-preview");
+    open.append(mark, source, preview);
+    const clear = button("×", "pocket-composer-reference-clear");
+    clear.type = "button";
+    clear.title = "Clear Pocket reference";
+    clear.setAttribute("aria-label", "Clear Pocket reference");
+    pill.append(open, clear);
+    document.body.appendChild(pill);
+    this.composerReferencePill = pill;
+    open.addEventListener("click", () => {
+      const reference = this.activeComposerReference();
+      if (!reference)
+        return;
+      const messageId = reference.messages.at(-1)?.messageId;
+      this.openPocket({ app: "messages", conversationId: reference.conversationId, messageId });
+    });
+    clear.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const reference = this.activeComposerReference();
+      if (!reference || reference.status === "injected")
+        return;
+      this.send("lumiphone:cancel_reference", { referenceId: reference.id });
+    });
+    const schedule = () => this.scheduleComposerReferenceSync();
+    const mutationObserver = new MutationObserver(() => {
+      const composer = this.findHostComposer();
+      if (!this.composerTextarea?.isConnected || composer !== this.composerTextarea)
+        schedule();
+    });
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener("resize", schedule);
+    window.visualViewport?.addEventListener("resize", schedule);
+    window.visualViewport?.addEventListener("scroll", schedule);
+    this.cleanups.push(() => {
+      mutationObserver.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.visualViewport?.removeEventListener("resize", schedule);
+      window.visualViewport?.removeEventListener("scroll", schedule);
+      this.composerResizeObserver?.disconnect();
+      this.composerResizeObserver = null;
+      this.composerTextarea = null;
+      if (this.composerSyncFrame)
+        window.cancelAnimationFrame(this.composerSyncFrame);
+      this.composerSyncFrame = 0;
+      pill.remove();
+      if (this.composerReferencePill === pill)
+        this.composerReferencePill = null;
+    });
+    schedule();
+  }
+  scheduleComposerReferenceSync() {
+    if (this.destroyed || this.composerSyncFrame)
+      return;
+    this.composerSyncFrame = window.requestAnimationFrame(() => {
+      this.composerSyncFrame = 0;
+      this.syncComposerReferencePill();
+    });
+  }
+  hideComposerReferencePill() {
+    if (!this.composerReferencePill)
+      return;
+    this.composerReferencePill.hidden = true;
+    this.lastComposerReferenceId = "";
+  }
+  syncComposerReferencePill() {
+    const pill = this.composerReferencePill;
+    if (!pill)
+      return;
+    const reference = this.activeComposerReference();
+    const textarea = this.findHostComposer();
+    if (textarea !== this.composerTextarea) {
+      this.composerResizeObserver?.disconnect();
+      this.composerResizeObserver = null;
+      this.composerTextarea = textarea;
+      if (textarea && typeof ResizeObserver !== "undefined") {
+        this.composerResizeObserver = new ResizeObserver(() => this.scheduleComposerReferenceSync());
+        this.composerResizeObserver.observe(textarea);
+      }
+    }
+    if (!reference || !textarea || !textarea.isConnected) {
+      this.hideComposerReferencePill();
+      return;
+    }
+    const rect = textarea.getBoundingClientRect();
+    if (rect.width < 80 || rect.height < 1) {
+      pill.hidden = true;
+      return;
+    }
+    const status = pill.querySelector(".pocket-composer-reference-source");
+    const preview = pill.querySelector(".pocket-composer-reference-preview");
+    const open = pill.querySelector(".pocket-composer-reference-open");
+    const clear = pill.querySelector(".pocket-composer-reference-clear");
+    const message = reference.messages.at(-1);
+    const messageText = message?.text?.replace(/\s+/g, " ").trim() || "";
+    const conversationTitle2 = reference.conversationTitle || (reference.conversationKind === "group" ? "Group chat" : "Conversation");
+    const fallback = `${reference.messages.length} message${reference.messages.length === 1 ? "" : "s"}`;
+    if (status)
+      status.textContent = reference.status === "injected" ? "Pocket applying" : reference.status === "failed" ? "Pocket attach failed" : "Pocket attached";
+    if (preview)
+      preview.textContent = `${conversationTitle2} · ${messageText ? `${message?.senderName || "Message"}: ${messageText}` : fallback}`;
+    if (open)
+      open.setAttribute("aria-label", `Open attached Pocket reference from ${conversationTitle2}`);
+    if (clear) {
+      clear.hidden = reference.status === "injected";
+      clear.disabled = reference.status === "injected";
+    }
+    pill.dataset.status = reference.status;
+    pill.style.setProperty("--pocket-reference-accent", this.preferences.colors.accent);
+    const viewportWidth = window.visualViewport?.width || window.innerWidth;
+    const viewportLeft = window.visualViewport?.offsetLeft || 0;
+    const width = Math.min(rect.width, Math.max(120, Math.min(460, viewportWidth - 16)));
+    const minLeft = viewportLeft + 8;
+    const maxLeft = Math.max(minLeft, viewportLeft + viewportWidth - width - 8);
+    const left = Math.max(minLeft, Math.min(rect.left, maxLeft));
+    pill.style.left = `${left}px`;
+    pill.style.top = `${rect.top}px`;
+    pill.style.width = `${width}px`;
+    pill.hidden = false;
+    if (this.lastComposerReferenceId !== reference.id && !this.preferences.reducedMotion) {
+      pill.animate([
+        { opacity: 0.25, transform: "translateY(calc(-100% - 3px)) scale(.985)" },
+        { opacity: 1, transform: "translateY(calc(-100% - 7px)) scale(1)" }
+      ], { duration: 180, easing: "cubic-bezier(.2,.8,.2,1)" });
+    }
+    this.lastComposerReferenceId = reference.id;
+  }
   onBackend(payload) {
     if (!payload || typeof payload !== "object" || typeof payload.type !== "string")
       return;
@@ -3128,6 +3288,7 @@ class PocketController {
       for (const activity of this.state.activities || [])
         this.queueActivityReceipt(activity);
       this.applyAppearance();
+      this.syncComposerReferencePill();
       this.updateBadge();
       this.announceView();
       if (payload.open)
@@ -4997,6 +5158,38 @@ var PHONE_STYLES = `
   .lp-wallpaper-focal { display:grid; gap:6px; }
   .lp-wallpaper-range { display:grid; grid-template-columns:minmax(100px,auto) 1fr; align-items:center; gap:8px; }
   .lp-wallpaper-range input { width:100%; accent-color:var(--lp-accent); }
+  .pocket-composer-reference {
+    --pocket-reference-accent:var(--lumiverse-primary,#8b7dff); position:fixed; z-index:400; display:flex; align-items:center; gap:3px;
+    max-width:calc(100vw - 16px); padding:3px; transform:translateY(calc(-100% - 7px)); border:1px solid color-mix(in srgb,var(--pocket-reference-accent) 38%,var(--lumiverse-border,transparent));
+    border-radius:999px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,var(--pocket-reference-accent) 8%); color:var(--lumiverse-text,#f7f5ff);
+    box-shadow:0 8px 24px rgba(0,0,0,.16); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); font:inherit;
+  }
+  .pocket-composer-reference[hidden] { display:none; }
+  .pocket-composer-reference[data-status="injected"] { border-color:color-mix(in srgb,var(--pocket-reference-accent) 68%,transparent); }
+  .pocket-composer-reference[data-status="failed"] { --pocket-reference-accent:#ff6f87; }
+  .pocket-composer-reference-open {
+    appearance:none; min-width:0; min-height:27px; flex:1; display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:center; gap:6px;
+    padding:2px 5px 2px 3px; border:0; border-radius:999px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer;
+  }
+  .pocket-composer-reference-open:focus-visible,.pocket-composer-reference-clear:focus-visible { outline:2px solid color-mix(in srgb,var(--pocket-reference-accent) 62%,white); outline-offset:1px; }
+  .pocket-composer-reference-mark { width:22px; height:22px; display:grid; place-items:center; border-radius:50%; flex:0 0 22px; background:color-mix(in srgb,var(--pocket-reference-accent) 17%,transparent); color:var(--pocket-reference-accent); }
+  .pocket-composer-reference-mark svg { width:13px; height:13px; }
+  .pocket-composer-reference-source { white-space:nowrap; font-size:10px; font-weight:800; letter-spacing:-.01em; }
+  .pocket-composer-reference-preview { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.7; font-size:10px; }
+  .pocket-composer-reference-clear {
+    appearance:none; width:25px; height:25px; flex:0 0 25px; display:grid; place-items:center; padding:0; border:0; border-radius:50%;
+    background:transparent; color:inherit; opacity:.58; font:inherit; font-size:17px; line-height:1; cursor:pointer;
+  }
+  .pocket-composer-reference-clear:hover { opacity:1; background:color-mix(in srgb,var(--pocket-reference-accent) 12%,transparent); }
+  @media (max-width: 520px) {
+    .pocket-composer-reference { gap:1px; }
+    .pocket-composer-reference-open { gap:5px; }
+    .pocket-composer-reference-source { font-size:9px; }
+    .pocket-composer-reference-preview { font-size:9px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pocket-composer-reference,.pocket-composer-reference * { animation:none !important; transition:none !important; }
+  }
 `;
 
 // src/frontend.ts
