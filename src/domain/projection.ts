@@ -27,19 +27,35 @@ function serializeWithinBudget(value: Record<string, unknown>, budget = MODEL_CO
 }
 
 export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BUDGET): string {
-  const contacts = state.contacts
-    .filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned)
+  const contacts: Array<Record<string, unknown>> = state.contacts
+    .filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned || contact.relationship === 'close')
     .slice(0, 12)
     .map((contact) => ({
       id: contact.id.slice(0, 180),
       name: contact.name.slice(0, 120),
       role: contact.role.slice(0, 120),
       source: contact.source.kind,
+      relationship: contact.relationship,
       inScene: contact.presence.inScene,
       pinned: contact.contextPolicy.pinned,
       identityBrief: (contact.identityBrief || contact.description || '').slice(0, 360),
       sceneNote: (contact.sceneNote || '').slice(0, 240),
     }))
+  const discoveredActors = state.discoveredActors || []
+  const knownContactIds = new Set(discoveredActors.map((actor) => actor.promotedContactId).filter(Boolean))
+  for (const actor of discoveredActors.filter((entry) => entry.relationship === 'close' && !knownContactIds.has(entry.promotedContactId)).slice(0, Math.max(0, 12 - contacts.length))) {
+    contacts.push({
+      id: actor.id.slice(0, 180),
+      name: actor.displayName.slice(0, 120),
+      role: 'Discovered actor',
+      source: 'discovered',
+      relationship: 'close',
+      inScene: false,
+      pinned: false,
+      identityBrief: '',
+      sceneNote: '',
+    })
+  }
   const trackers = state.trackers
     .filter((tracker) => tracker.visibleToModel)
     .slice(0, 12)

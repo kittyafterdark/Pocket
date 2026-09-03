@@ -3,6 +3,7 @@ import type {
   GalleryResult,
   PhoneCapabilities,
   DevicePreferences,
+  DiscoveredActor,
   PhoneMessage,
   PhoneNote,
   PhoneNotification,
@@ -32,6 +33,7 @@ import { projectPhoneContext } from './domain/projection.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
+import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
@@ -45,7 +47,7 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 type AnyRecord = Record<string, unknown>
 
-const STATE_VERSION = 9 as const
+const STATE_VERSION = 10 as const
 const MAX_MESSAGES = 240
 const MAX_NOTIFICATIONS = 80
 const MAX_NOTES = 120
@@ -65,8 +67,8 @@ interface PocketViewState { chatId: string; characterId: string; open: boolean; 
 const frontendViews = new Map<string, PocketViewState>()
 
 const PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
-<lumi-phone action="message|contact|scene|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
-Do not explain the tag. Do not use it for ordinary narration. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`
+<lumi-phone action="message|conversation|contact|scene|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
+Do not explain the tag. Do not use it for ordinary narration. A named message sender may be new; Pocket will persist a lightweight discovered actor without requiring a profile. Creating or changing group membership requires the explicit conversation action. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`
 
 function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -153,6 +155,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     pocketPersona: defaultPocketPersona(createdAt),
     setup: { initialized: false, dismissed: false },
     contacts: collections.contacts,
+    discoveredActors: [],
     conversations: collections.conversations,
     notes: [],
     events: [],
@@ -173,6 +176,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
   if (!isRecord(value)) return fallback
   if (Number(value.version) > STATE_VERSION) return fallback
   const collections = normalizeContactCollections(value, { characterId, characterName, now: nowIso(), makeId: id })
+  const discoveredActors: DiscoveredActor[] = normalizeDiscoveredActors(value.discoveredActors, chatId, nowIso())
   const notes: PhoneNote[] = (Array.isArray(value.notes) ? value.notes : []).slice(0, MAX_NOTES).flatMap((item) => {
     if (!isRecord(item)) return []
     const body = text(item.body, 40_000)
@@ -336,10 +340,11 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     const status = item.status === 'injected' || item.status === 'consumed' || item.status === 'cancelled' || item.status === 'failed' ? item.status : 'armed'
     const participants = (Array.isArray(item.participants) ? item.participants : []).slice(0, 16).flatMap((participant) => {
       if (!isRecord(participant)) return []
-      const contactId = text(participant.contactId, 180)
+      const contactId = text(participant.contactId, 180) || undefined
+      const actorId = text(participant.actorId, 180) || contactId
       const name = text(participant.name, 120)
-      if (!contactId || !name) return []
-      return [{ contactId, name, role: text(participant.role, 100), identityBrief: text(participant.identityBrief, 180) }]
+      if (!actorId || !name) return []
+      return [{ actorId, contactId, name, role: text(participant.role, 100), identityBrief: text(participant.identityBrief, 180) }]
     })
     const messages = (Array.isArray(item.messages) ? item.messages : []).slice(-8).flatMap((message) => {
       if (!isRecord(message)) return []
@@ -349,6 +354,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       return [{
         messageId,
         sender: message.sender === 'contact' ? 'contact' as const : 'persona' as const,
+        senderActorId: text(message.senderActorId, 180) || text(message.senderContactId, 180) || undefined,
         senderContactId: text(message.senderContactId, 180) || undefined,
         senderName: text(message.senderName, 120) || (message.sender === 'contact' ? 'Participant' : 'Persona'),
         text: body,
@@ -405,6 +411,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     return [{
       id: batchId, requestId, conversationId,
       sourceBurstId: text(item.sourceBurstId, 180) || undefined,
+      eligibleActorIds: (Array.isArray(item.eligibleActorIds) ? item.eligibleActorIds : Array.isArray(item.eligibleContactIds) ? item.eligibleContactIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 16),
       eligibleContactIds: (Array.isArray(item.eligibleContactIds) ? item.eligibleContactIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 16),
       messages, status, createdAt: text(item.createdAt, 40) || nowIso(), updatedAt: text(item.updatedAt, 40) || nowIso(),
       error: text(item.error, 500) || undefined,
@@ -421,6 +428,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
     setup: { initialized: bool(setupValue.initialized, hadPocketData), dismissed: bool(setupValue.dismissed) },
     contacts: collections.contacts,
+    discoveredActors,
     conversations: collections.conversations,
     notes, events, relays, references, groupBatches, weather, trackers, notifications, activities, processedCommands,
     updatedAt: text(value.updatedAt, 40) || fallback.updatedAt,
@@ -808,6 +816,7 @@ function upsertContact(state: PhoneState, contact: PocketContact, preserveCustom
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
+      relationship: contact.relationship || existing.relationship,
     } : { createdAt: existing.createdAt }
     Object.assign(existing, contact, preserved, { updatedAt: nowIso() })
     return existing
@@ -817,8 +826,12 @@ function upsertContact(state: PhoneState, contact: PocketContact, preserveCustom
   return contact
 }
 
+function directConversationForContact(state: PhoneState, contactId: string): PocketConversation | undefined {
+  return state.conversations.find((entry) => entry.kind === 'direct' && resolvePocketActor(state, conversationActorIds(entry)[0])?.contact?.id === contactId)
+}
+
 function reconcileContactAvailability(state: PhoneState, contact: PocketContact): void {
-  const conversation = state.conversations.find((entry) => entry.kind === 'direct' && entry.participantContactIds[0] === contact.id)
+  const conversation = directConversationForContact(state, contact.id)
   if (!conversation) return
   if (contact.presence.inScene) {
     const prior = conversation.availability.state === 'paused' ? conversation.availability.reason : undefined
@@ -989,6 +1002,7 @@ function contactFromSource(option: PocketContactSourceOption): PocketContact {
     identityBrief: option.description, sceneNote: '',
     avatarUrl: option.avatarUrl, sourceAvatarUrl: option.avatarUrl, avatarOverrideUrl: '',
     accent: stableContactAccent(`${option.kind}:${option.sourceId}`), sourceAccent: /^#[0-9a-f]{6}$/i.test(option.accent || '') ? option.accent! : '', colorMode: 'pocket', source,
+    relationship: 'background',
     presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
     messagingStyle: { talkativeness: 50, fragmentation: 35 }, createdAt, updatedAt: createdAt,
@@ -1002,10 +1016,53 @@ function resolveConversation(state: PhoneState, input: AnyRecord): PocketConvers
     if (!conversation) throw new Error('That Pocket conversation no longer exists.')
     return conversation
   }
-  const contactId = text(input.contactId ?? input.contact_id, 180)
-  const contact = state.contacts.find((entry) => entry.id === contactId) || (!contactId ? state.contacts.find((entry) => entry.source.kind === 'character' && entry.source.characterId === state.characterId) : undefined)
-  if (!contact) throw new Error('Choose a valid contact before opening a conversation.')
-  return ensureDirectConversation(state, contact.id, nowIso(), id)
+  const actorId = text(input.actorId ?? input.actor_id ?? input.contactId ?? input.contact_id, 180)
+  const actor = resolvePocketActor(state, actorId) || (!actorId ? resolvePocketActor(state, state.contacts.find((entry) => entry.source.kind === 'character' && entry.source.characterId === state.characterId)?.id || '') : null)
+  if (!actor) throw new Error('Choose a valid actor before opening a conversation.')
+  return ensureDirectActorConversation(state, actor.actorId, nowIso(), id)
+}
+
+function relationshipValue(value: unknown): 'close' | 'background' {
+  return value === 'close' || value === true ? 'close' : 'background'
+}
+
+function actorRefParts(value: unknown): { id: string; name: string; relationship: 'close' | 'background' } {
+  if (typeof value === 'string') return { id: '', name: text(value, 120), relationship: 'background' }
+  if (!isRecord(value)) return { id: '', name: '', relationship: 'background' }
+  return {
+    id: text(value.actorId ?? value.actor_id ?? value.contactId ?? value.contact_id ?? value.id, 180),
+    name: text(value.name ?? value.displayName ?? value.display_name, 120),
+    relationship: relationshipValue(value.relationship ?? value.close),
+  }
+}
+
+function resolveActorReference(state: PhoneState, value: unknown, allowedIds?: string[]): ReturnType<typeof resolvePocketActor> {
+  const ref = actorRefParts(value)
+  const allowed = allowedIds ? new Set(allowedIds) : null
+  if (ref.id) {
+    if (allowed && !allowed.has(ref.id)) return null
+    return resolvePocketActor(state, ref.id)
+  }
+  if (!ref.name) return null
+  const matches = matchingActorIds(state, ref.name, allowedIds)
+  if (matches.length > 1) throw new Error(`Actor name “${ref.name}” is ambiguous; use a stable actor or contact id.`)
+  return matches.length ? resolvePocketActor(state, matches[0]) : null
+}
+
+function exactGroupConversation(state: PhoneState, payload: AnyRecord): PocketConversation {
+  const conversationId = text(payload.conversationId ?? payload.conversation_id, 180)
+  if (conversationId) {
+    const found = state.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
+    if (!found) throw new Error('That group conversation no longer exists.')
+    return found
+  }
+  const title = text(payload.conversation ?? payload.conversationTitle ?? payload.conversation_title ?? payload.target, 120)
+  if (!title) throw new Error('A group message needs an existing conversation id or exact title.')
+  const normalized = title.toLocaleLowerCase()
+  const matches = state.conversations.filter((entry) => entry.kind === 'group' && entry.title.trim().toLocaleLowerCase() === normalized)
+  if (matches.length > 1) throw new Error(`Group title “${title}” is ambiguous; use its stable conversation id.`)
+  if (!matches.length) throw new Error(`Group “${title}” does not exist. Create it explicitly before sending messages.`)
+  return matches[0]
 }
 
 async function resolveSwarmProfile(chatId: string, characterId: string, settings?: DevicePreferences, userId?: string): Promise<SwarmVisualProfile> {
@@ -1200,33 +1257,40 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
     const conversation = resolveConversation(state, input)
-    const participants = conversation.participantContactIds
-      .map((contactId) => state.contacts.find((entry) => entry.id === contactId))
-      .filter((entry): entry is PocketContact => Boolean(entry))
+    const participantActors = conversationActorIds(conversation)
+      .map((actorId) => resolvePocketActor(state, actorId))
+      .filter((entry): entry is NonNullable<ReturnType<typeof resolvePocketActor>> => Boolean(entry))
+    const participants = participantActors.map((actor) => ({ actor, contact: actorAsGenerationContact(actor, nowIso()) }))
     if (!participants.length) throw new Error('This conversation has no available contact participants.')
     let contact: PocketContact
-    const requestedSpeaker = text(input.speakerContactId ?? input.speaker_contact_id, 180)
+    let actor = participantActors[0]
+    const requestedSpeaker = text(input.speakerActorId ?? input.speaker_actor_id ?? input.speakerContactId ?? input.speaker_contact_id, 180)
     if (requestedSpeaker && requestedSpeaker !== 'auto') {
-      const explicit = participants.find((entry) => entry.id === requestedSpeaker)
+      const explicit = participants.find((entry) => entry.actor.actorId === requestedSpeaker || entry.contact.id === requestedSpeaker)
       if (!explicit) throw new Error('The selected speaker is not a participant in this conversation.')
-      contact = explicit
+      actor = explicit.actor
+      contact = explicit.contact
     } else if (conversation.kind === 'direct') {
-      contact = participants[0]
+      actor = participants[0].actor
+      contact = participants[0].contact
     } else {
-      const lastSpeakerId = [...conversation.messages].reverse().find((entry) => entry.sender === 'contact')?.senderContactId
-      const currentIndex = participants.findIndex((entry) => entry.id === lastSpeakerId)
-      contact = participants[(currentIndex + 1 + participants.length) % participants.length]
+      const lastSpeakerId = [...conversation.messages].reverse().find((entry) => entry.sender === 'contact')?.senderActorId
+      const currentIndex = participants.findIndex((entry) => entry.actor.actorId === lastSpeakerId)
+      const selected = participants[(currentIndex + 1 + participants.length) % participants.length]
+      actor = selected.actor
+      contact = selected.contact
     }
     if (bool(input.autonomous) && (contact.presence.inScene || !contact.messagingPolicy.remoteEligible || (conversation.availability.state !== 'remote' && conversation.availability.state !== 'arriving'))) return
     send({
       type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId,
-      conversationId: conversation.id, contactId: contact.id, speakerContactId: contact.id, phase: 'pending',
+      conversationId: conversation.id, actorId: actor.actorId, contactId: actor.contact?.id, speakerContactId: actor.actorId, phase: 'pending',
     }, userId)
     const profile = await resolveContactProfile(contact, userId)
     const replaceMessageId = text(input.replaceMessageId, 180)
     const replaceIndex = replaceMessageId ? conversation.messages.findIndex((message) => message.id === replaceMessageId && message.sender === 'contact') : -1
     const contextConversation = replaceIndex >= 0 ? { ...conversation, messages: conversation.messages.slice(0, replaceIndex) } : conversation
-    const compactIdentity = (contact.identityBrief || profile.description || [profile.role, profile.personality, profile.behavior].filter(Boolean).join('. ')).slice(0, 1_200)
+    const knownIdentity = contact.identityBrief || profile.description || [profile.role, profile.personality, profile.behavior].filter(Boolean).join('. ')
+    const compactIdentity = `Relationship importance: ${actor.relationship}. ${knownIdentity || 'No full profile is registered; use only the name and current phone exchange.'}`.slice(0, 1_200)
     const assembled = await assemblePocketContext({
       state, contact, conversation: contextConversation, preferences,
       actorIdentity: compactIdentity,
@@ -1252,7 +1316,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const route: PocketRoute = { app: 'messages', conversationId: conversation.id }
     const visible = notificationDestinationVisible(state, route, userId)
     const nextMessage: PhoneMessage = {
-      id: id('msg'), sender: 'contact', senderContactId: contact.id, senderName: contact.name, senderAccent: contact.accent,
+      id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
       text: reply, createdAt: nowIso(), read: visible, status: visible ? 'read' : 'delivered',
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined },
     }
@@ -1287,7 +1351,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const notification = preferences.notifyMessages && replaceIndex < 0
       ? addNotification(state, { app: 'messages', title: contact.name, body: preferences.notificationPreviews ? reply.slice(0, 220) : 'New message', route, source: bool(input.ambient) ? 'automatic' : 'model', severity: 'important' }, userId)
       : null
-    if (bool(input.initiated)) {
+    if (bool(input.initiated) && actor.contact) {
       contact.messagingPolicy.lastInitiatedMessageAt = nowIso()
       contact.messagingPolicy.lastInitiatedRoleplayAt = state.roleplayNow
     }
@@ -1302,7 +1366,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
         const reason = allowed.has(String(after.reason)) ? String(after.reason) as NonNullable<PocketConversation['pause']>['reason'] : 'unknown'
         conversation.pause = { reason, createdAt: nowIso(), source: 'model' }
         conversation.availability = { state: 'paused', reason }
-      } else if (after.state === 'local') {
+      } else if (after.state === 'local' && actor.contact) {
         const decision = normalizeReplyDecision({ rawAction: 'handoff', rawReason: after.reason, contact, conversation, explicitRemoteOverride: false, createdAt: nowIso() })
         relayToContinue = commitConversationHandoff(state, conversation, contact, decision)
         if (nextMessage.generation?.info) nextMessage.generation.info.replyDecision = {
@@ -1313,7 +1377,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
         conversation.availability = { state: 'remote' }
       }
     }
-    const activity = replaceIndex < 0 ? addActivity(state, { kind: 'message', title: contact.name, summary: reply.slice(0, 280), route, source: { contactId: contact.id, conversationId: conversation.id } }) : undefined
+    const activity = replaceIndex < 0 ? addActivity(state, { kind: 'message', title: actor.name, summary: reply.slice(0, 280), route, source: { contactId: actor.contact?.id, conversationId: conversation.id } }) : undefined
     await saveState(state, userId)
     if (notification) await maybePush(state, preferences, notification, userId)
     await sendState(state, userId, 'message', preferences.autoOpenOnModelAction)
@@ -1322,7 +1386,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     if (relayToContinue) setTimeout(() => void requestRelayContinuation(context.chatId, context.characterId, relayToContinue!.id, userId), 0)
     send({
       type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId,
-      conversationId: conversation.id, contactId: contact.id, speakerContactId: contact.id, phase: 'done',
+      conversationId: conversation.id, actorId: actor.actorId, contactId: actor.contact?.id, speakerContactId: actor.actorId, phase: 'done',
     }, userId)
   })
 }
@@ -1356,26 +1420,33 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
     const activeBatch = state.groupBatches.find((entry) => entry.conversationId === conversation.id && (entry.status === 'queued' || entry.status === 'delivering'))
     if (activeBatch) throw new Error('This group already has a reply burst in progress.')
     const sourceBurstId = text(input.sourceBurstId, 180) || conversation.outgoingBurst?.id
-    const eligible = conversation.participantContactIds
-      .map((contactId) => state.contacts.find((entry) => entry.id === contactId))
-      .filter((entry): entry is PocketContact => Boolean(entry && entry.generationPolicy.relevant && entry.messagingPolicy.remoteEligible && !entry.presence.inScene))
+    const eligible = conversationActorIds(conversation)
+      .map((actorId) => resolvePocketActor(state, actorId))
+      .filter((entry): entry is NonNullable<ReturnType<typeof resolvePocketActor>> => Boolean(entry && (!entry.contact || (
+        entry.contact.generationPolicy.relevant && entry.contact.messagingPolicy.remoteEligible && !entry.contact.presence.inScene
+      ))))
     if (!eligible.length) {
       send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, conversationId, phase: 'done' }, userId)
       return
     }
     progressOpen = true
     send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, conversationId, phase: 'checking' }, userId)
-    const profiles = await Promise.all(eligible.map(async (contact) => ({ contact, profile: await resolveContactProfile(contact, userId) })))
+    const profiles = await Promise.all(eligible.map(async (actor) => {
+      const contact = actorAsGenerationContact(actor, nowIso())
+      return { actor, contact, profile: await resolveContactProfile(contact, userId) }
+    }))
     const primary = profiles[0]
     const assembled = await assemblePocketContext({
       state, contact: primary.contact, conversation, preferences,
-      actorIdentity: profiles.map(({ contact, profile }) => `${contact.name} (${contact.id}) — ${contact.identityBrief || profile.description}`.slice(0, 700)).join('\n').slice(0, 1_200),
+      actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship}) — ${contact.identityBrief || profile.description || 'No profile; infer only from the live exchange.'}`.slice(0, 700)).join('\n').slice(0, 1_200),
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
     })
-    const roster = profiles.map(({ contact }) => [
-      `id=${contact.id}`,
-      `name=${contact.name}`,
+    const roster = profiles.map(({ actor, contact }) => [
+      `id=${actor.actorId}`,
+      `name=${actor.name}`,
       `role=${contact.role}`,
+      `relationship=${actor.relationship}`,
+      `profile=${actor.kind === 'discovered' ? 'minimal-discovered-actor' : 'contact'}`,
       `talkativeness=${contact.messagingStyle.talkativeness}/100`,
       `fragmentation=${contact.messagingStyle.fragmentation}/100`,
       `identity=${(contact.identityBrief || contact.description).slice(0, 600)}`,
@@ -1383,7 +1454,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
     const parsed = await runStructuredGeneration('group-reply', requestId, {
       type: 'quiet',
       messages: [
-        { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
+        { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
         { role: 'user', content: `${assembled.text || '(no context)'}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.` },
       ],
       parameters: { temperature: .82, max_tokens: 900 }, userId,
@@ -1392,7 +1463,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       if (!isRecord(row)) return []
       const speakerId = text(row.speakerId, 180)
       const body = text(row.text, 8_000)
-      if (!body || !eligible.some((contact) => contact.id === speakerId)) return []
+      if (!body || !eligible.some((actor) => actor.actorId === speakerId)) return []
       return [{ id: id('group_slot'), speakerId, text: body, state: 'queued' as const }]
     })
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
@@ -1405,7 +1476,8 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       const createdAt = nowIso()
       const next: PendingGroupBatch = {
         id: batchId, requestId, conversationId, sourceBurstId,
-        eligibleContactIds: eligible.map((entry) => entry.id), messages: generatedRows,
+        eligibleActorIds: eligible.map((entry) => entry.actorId),
+        eligibleContactIds: eligible.flatMap((entry) => entry.contact?.id || []), messages: generatedRows,
         status: generatedRows.length ? 'queued' : 'completed', createdAt, updatedAt: createdAt,
       }
       latest.groupBatches.push(next)
@@ -1417,9 +1489,9 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
     if (!batch || !batch.messages.length) return
     for (let position = 0; position < batch.messages.length; position += 1) {
       const slot = batch.messages[position]
-      const speaker = eligible.find((entry) => entry.id === slot.speakerId)
+      const speaker = eligible.find((entry) => entry.actorId === slot.speakerId)
       if (!speaker) continue
-      send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, conversationId, contactId: speaker.id, speakerContactId: speaker.id, phase: 'pending' }, userId)
+      send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, conversationId, actorId: speaker.actorId, contactId: speaker.contact?.id, speakerContactId: speaker.actorId, phase: 'pending' }, userId)
       const delay = groupRevealDelayMs(preferences, slot.text, position, slot.id)
       if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay))
       const delivered = await withStateLock(stateKey(context.chatId, context.characterId), async () => {
@@ -1430,16 +1502,18 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         if (!latestBatch || !latestSlot || !latestConversation || latestBatch.status === 'cancelled' || latestSlot.state !== 'queued') return null
         latestBatch.status = 'delivering'
         const visible = notificationDestinationVisible(latest, { app: 'messages', conversationId }, userId)
-        const profile = profiles.find((entry) => entry.contact.id === speaker.id)!.profile
+        const profileRow = profiles.find((entry) => entry.actor.actorId === speaker.actorId)!
+        const profile = profileRow.profile
+        const speakerContact = profileRow.contact
         const message: PhoneMessage = {
-          id: id('msg'), sender: 'contact', senderContactId: speaker.id, senderName: speaker.name, senderAccent: contactAccent(speaker),
+          id: id('msg'), sender: 'contact', senderActorId: speaker.actorId, senderActorKind: speaker.kind, senderContactId: speaker.contact?.id, senderName: speaker.name, senderAccent: speaker.accent,
           text: latestSlot.text, createdAt: nowIso(), read: visible, status: visible ? 'read' : 'delivered',
           generation: { requestId, info: {
             speaker: profile.name, source: profile.source,
-            sourceId: speaker.source.kind === 'character' ? speaker.source.characterId : speaker.source.kind === 'council' ? speaker.source.memberId || speaker.source.itemId : speaker.id,
-            sourceResolution: speaker.source.kind === 'character' || speaker.source.kind === 'council' ? 'resolved' : speaker.source.origin === 'manual' ? 'manual' : 'snapshot',
-            activeCharacterId: latest.characterId, activeCharacterUsed: speaker.source.kind === 'character' && speaker.source.characterId === latest.characterId,
-            identityChars: (speaker.identityBrief || speaker.description).length, sceneSnapshotStale: latest.sceneSnapshot?.stale ?? true,
+            sourceId: speakerContact.source.kind === 'character' ? speakerContact.source.characterId : speakerContact.source.kind === 'council' ? speakerContact.source.memberId || speakerContact.source.itemId : speaker.actorId,
+            sourceResolution: speakerContact.source.kind === 'character' || speakerContact.source.kind === 'council' ? 'resolved' : speakerContact.source.origin === 'manual' ? 'manual' : 'snapshot',
+            activeCharacterId: latest.characterId, activeCharacterUsed: speakerContact.source.kind === 'character' && speakerContact.source.characterId === latest.characterId,
+            identityChars: (speakerContact.identityBrief || speakerContact.description).length, sceneSnapshotStale: latest.sceneSnapshot?.stale ?? true,
             contextMode: preferences.roleplayContextMode,
             recentCount: assembled.diagnostics.recentRoleplay.count, recentChars: assembled.diagnostics.recentRoleplay.chars,
             storyCount: assembled.diagnostics.story.count, storyChars: assembled.diagnostics.story.chars,
@@ -1462,7 +1536,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         const notification = preferences.notifyMessages
           ? addNotification(latest, { app: 'messages', title: speaker.name, body: preferences.notificationPreviews ? message.text.slice(0, 220) : 'New message', route, source: 'model', severity: 'important' }, userId)
           : null
-        const activity = addActivity(latest, { kind: 'message', title: speaker.name, summary: message.text.slice(0, 280), route, source: { contactId: speaker.id, conversationId } })
+        const activity = addActivity(latest, { kind: 'message', title: speaker.name, summary: message.text.slice(0, 280), route, source: { contactId: speaker.contact?.id, conversationId } })
         await saveState(latest, userId)
         await sendState(latest, userId, 'group_message', preferences.autoOpenOnModelAction)
         return { notification, activity }
@@ -1532,12 +1606,22 @@ async function refreshCompactContactProfile(input: AnyRecord, userId?: string): 
   const contact = state.contacts.find((entry) => entry.id === text(input.contactId, 180))
   if (!contact) throw new Error('That contact no longer exists.')
   const profile = await resolveContactProfile(contact, userId)
+  const discoveredSource = contact.source.kind === 'npc' && contact.source.origin === 'discovered'
+  const discoveredActorId = contact.source.kind === 'npc' ? contact.source.discoveredActorId : undefined
+  const phoneEvidence = discoveredSource
+    ? state.conversations.flatMap((conversation) => conversation.messages.filter((message) => message.senderActorId === discoveredActorId || message.senderContactId === contact.id)).slice(-12).map((message) => `${message.senderName}: ${message.text.slice(0, 600)}`).join('\n')
+    : ''
+  const roleplayEvidence = discoveredSource && spindle.permissions.has('chat_mutation')
+    ? (await spindle.chat.getMessages(context.chatId)).slice(-18).map((message: any) => `${message.role}: ${text(message.content, 700)}`).join('\n').slice(-9_000)
+    : ''
   send({ type: 'lumiphone:operation_progress', task: 'profile-refresh', requestId, phase: 'generating', message: 'Refreshing compact profile…' }, userId)
   const parsed = await runStructuredGeneration('profile-refresh', requestId, {
     type: 'quiet',
     messages: [
       { role: 'system', content: 'Condense the authoritative actor profile into stable phone-contact facts. Return strict JSON only: {"identityBrief":""}. Include stable role, personality, relationship, and distinctive behavior when supported. Exclude temporary scene state and do not invent facts. Maximum 900 characters.' },
-      { role: 'user', content: `Name: ${profile.name}\nRole: ${profile.role}\nDescription: ${profile.description}\nPersonality: ${profile.personality}\nBehavior: ${profile.behavior}` },
+      { role: 'user', content: discoveredSource
+        ? `Name: ${profile.name}\nKnown phone messages:\n${phoneEvidence || '(none)'}\nRecent roleplay evidence:\n${roleplayEvidence || '(unavailable)'}\nOnly describe facts genuinely supported by this evidence.`
+        : `Name: ${profile.name}\nRole: ${profile.role}\nDescription: ${profile.description}\nPersonality: ${profile.personality}\nBehavior: ${profile.behavior}` },
     ],
     parameters: { temperature: 0.15, max_tokens: 320 }, userId,
   }, userId)
@@ -1622,8 +1706,12 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
     for (const candidate of found) {
       const sceneKey = sceneKeyFor(candidate.name)
       const matchedName = uniqueAliasMatch(candidate.name, aliasUniverse)
-      const existing = state.contacts.find((entry) => entry.source.kind === 'npc' && entry.source.origin === 'scene' && entry.source.sceneKey === sceneKey)
+      let existing = state.contacts.find((entry) => entry.source.kind === 'npc' && entry.source.origin === 'scene' && entry.source.sceneKey === sceneKey)
         || state.contacts.find((entry) => actorName(entry.name) === actorName(matchedName || candidate.name))
+      if (!existing) {
+        const discovered = state.discoveredActors.find((entry) => entry.normalizedName === normalizeActorName(candidate.name))
+        if (discovered) existing = promoteDiscoveredActor(state, discovered.id, sceneAt, id)
+      }
       if (existing && !(existing.source.kind === 'npc' && existing.source.origin === 'scene')) {
         existing.presence.inScene = true
         existing.presence.lastSceneAt = sceneAt
@@ -1640,6 +1728,7 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
         avatarUrl: existing?.avatarUrl || '', sourceAvatarUrl: existing?.sourceAvatarUrl || '', avatarOverrideUrl: existing?.avatarOverrideUrl || '',
         accent: existing?.accent || stableContactAccent(sceneKey), sourceAccent: existing?.sourceAccent || '', colorMode: existing?.colorMode || 'pocket',
         source: { kind: 'npc', origin: 'scene', description: existing?.identityBrief || candidate.identityBrief, sceneKey },
+        relationship: existing?.relationship || 'background',
         presence: { inScene: true, lastSceneAt: sceneAt }, contextPolicy: existing?.contextPolicy || { pinned: false },
         generationPolicy: existing?.generationPolicy || { relevant: true },
         messagingPolicy: existing?.messagingPolicy || { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
@@ -1660,7 +1749,7 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
     }
     for (const conversation of state.conversations) {
       if (conversation.kind !== 'direct') continue
-      const participant = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])
+      const participant = resolvePocketActor(state, conversationActorIds(conversation)[0])?.contact
       if (participant?.presence.inScene && conversation.availability.state !== 'local') {
         const decision = normalizeReplyDecision({
           rawAction: 'handoff', rawReason: conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene',
@@ -1739,8 +1828,10 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
       await generateGroupBatch({ requestId: id('group_auto'), chatId, characterId, conversationId, sourceBurstId: burst.id, autonomous: true }, userId)
       return
     }
-    const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])
-    if (!contact || !contact.generationPolicy.relevant) return
+    const actor = resolvePocketActor(state, conversationActorIds(conversation)[0])
+    if (!actor) return
+    const contact = actorAsGenerationContact(actor, nowIso())
+    if (!contact.generationPolicy.relevant) return
     const burstMessages = burst?.messageIds.length
       ? conversation.messages.filter((message) => burst.messageIds.includes(message.id) && message.sender === 'persona')
       : [conversation.messages.at(-1)!]
@@ -1748,7 +1839,7 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
     progressRequestId = requestId
     send({
       type: 'lumiphone:message_progress', requestId, chatId, characterId,
-      conversationId, contactId: contact.id, speakerContactId: contact.id, phase: 'checking',
+      conversationId, actorId: actor.actorId, contactId: actor.contact?.id, speakerContactId: actor.actorId, phase: 'checking',
     }, userId)
     const explicitRemoteOverride = Boolean(burst?.explicitRemoteOverride)
     const deterministicLocal = !explicitRemoteOverride && (contact.presence.inScene || conversation.availability.state === 'local')
@@ -1767,8 +1858,9 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
       const latestState = await loadState(chatId, characterId, userId)
       const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId)
       if (!latestConversation?.outgoingBurst || (expectedBurstId && latestConversation.outgoingBurst.id !== expectedBurstId)) return null
-      const latestContact = latestState.contacts.find((entry) => entry.id === contact.id)
-      if (!latestContact) return null
+      const latestActor = resolvePocketActor(latestState, actor.actorId)
+      if (!latestActor) return null
+      const latestContact = actorAsGenerationContact(latestActor, nowIso())
       latestConversation.outgoingBurst.open = false
       latestConversation.outgoingBurst.finalized = true
       latestConversation.outgoingBurst.updatedAt = nowIso()
@@ -1788,21 +1880,23 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
       } else if (decision.normalizedAction === 'handoff' && decision.reason === 'arriving' && !latestContact.presence.inScene) {
         latestConversation.availability = { state: 'arriving' }
         latestConversation.pause = undefined
-      } else if (decision.normalizedAction === 'handoff') {
+      } else if (decision.normalizedAction === 'handoff' && latestActor.contact) {
         relayId = commitConversationHandoff(latestState, latestConversation, latestContact, decision).id
+      } else if (decision.normalizedAction === 'handoff') {
+        latestConversation.availability = { state: 'local', reason: decision.reason === 'arrived' || decision.reason === 'in_scene' || decision.reason === 'took_action' || decision.reason === 'continued_in_person' ? decision.reason : 'continued_in_person' }
       }
       await saveState(latestState, userId)
       await sendState(latestState, userId, decision.normalizedAction === 'handoff' ? 'conversation_handoff' : decision.normalizedAction === 'pause' ? 'conversation_pause' : 'reply_decision')
       return { action: decision.normalizedAction, relayId }
     })
-    send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, contactId: contact.id, phase: 'done' }, userId)
+    send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, actorId: actor.actorId, contactId: actor.contact?.id, phase: 'done' }, userId)
     progressRequestId = ''
     if (outcome?.relayId) {
       void requestRelayContinuation(chatId, characterId, outcome.relayId, userId)
       return
     }
     if (outcome?.action !== 'reply') return
-    await generateMessage({ requestId: id('auto_reply'), chatId, characterId, conversationId, speakerContactId: contact.id, autonomous: true, instruction: 'Reply naturally only because the latest user text warrants a response.' }, userId)
+    await generateMessage({ requestId: id('auto_reply'), chatId, characterId, conversationId, speakerActorId: actor.actorId, autonomous: true, instruction: 'Reply naturally only because the latest user text warrants a response.' }, userId)
   } catch (error) {
     spindle.log.warn(`Pocket reply decision skipped: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
@@ -1933,11 +2027,16 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         if (!name || uniqueAliasMatch(name, [state.characterName, state.pocketPersona.displayName].filter(Boolean))) continue
         let actor = state.contacts.find((entry) => entry.id === text(raw.contactId, 180) || actorName(entry.name) === actorName(name))
         if (!actor) {
+          const discovered = state.discoveredActors.find((entry) => entry.normalizedName === normalizeActorName(name))
+          if (discovered) actor = promoteDiscoveredActor(state, discovered.id, sceneAt, id)
+        }
+        if (!actor) {
           const identityBrief = text(raw.identityBrief ?? raw.description, 350)
           actor = upsertContact(state, {
             id: id('contact'), name, role: text(raw.role, 120) || 'Scene contact', description: identityBrief, identityBrief,
             sceneNote: '', avatarUrl: '', sourceAvatarUrl: '', avatarOverrideUrl: '', accent: stableContactAccent(name), sourceAccent: '', colorMode: 'pocket',
             source: { kind: 'npc', origin: 'scene', description: identityBrief, sceneKey: sceneKeyFor(name) },
+            relationship: 'background',
             presence: { inScene: true, lastSceneAt: sceneAt }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
             messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
             messagingStyle: { talkativeness: 50, fragmentation: 35 }, createdAt: sceneAt, updatedAt: sceneAt,
@@ -1948,7 +2047,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         snapshotActors.push({ contactId: actor.id, roleHint: text(raw.roleHint ?? raw.role, 120) || actor.role, sceneBrief: actor.sceneNote })
       }
       for (const contact of state.contacts) {
-        const conversation = state.conversations.find((entry) => entry.kind === 'direct' && entry.participantContactIds[0] === contact.id)
+        const conversation = directConversationForContact(state, contact.id)
         if (contact.presence.inScene && conversation && conversation.availability.state !== 'local') {
           const decision = normalizeReplyDecision({
             rawAction: 'handoff', rawReason: conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene',
@@ -1960,37 +2059,110 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       state.sceneSnapshot = { actors: snapshotActors, capturedAt: sceneAt, sourceMessageId: text(input.messageId, 180), sourceMessageIndex: Math.round(numberValue(payload.sourceMessageIndex, -1)), sourceRevision: Math.max(0, Math.round(numberValue(payload.sourceRevision, 0))), stale: false }
       result.contactIds = snapshotActors.map((entry) => entry.contactId)
       activity = addActivity(state, { kind: 'contact', title: 'Scene snapshot updated', summary: `${snapshotActors.length} actor${snapshotActors.length === 1 ? '' : 's'} present`, route: { app: 'contacts' }, source: { messageId: text(input.messageId, 180) || undefined } }, command)
-    } else if (action === 'message') {
-      const requestedContactId = text(payload.contact_id ?? payload.contactId, 180)
-      let contact = state.contacts.find((item) => item.id === requestedContactId)
-      if (!contact && requestedContactId) {
-        const createdAt = nowIso()
-        const identityBrief = text(payload.contact_description ?? payload.contactDescription, 1_200)
-        contact = {
-          id: requestedContactId, name: text(payload.contact_name ?? payload.contactName, 120) || 'Pocket NPC',
-          role: text(payload.contact_role ?? payload.contactRole, 120) || 'Pocket NPC',
-          description: identityBrief, identityBrief, sceneNote: '', avatarUrl: '', sourceAvatarUrl: '', avatarOverrideUrl: '',
-          accent: stableContactAccent(requestedContactId), sourceAccent: '', colorMode: 'pocket', source: { kind: 'npc', origin: 'manual', description: identityBrief },
-          presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
-          messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
-          messagingStyle: { talkativeness: 50, fragmentation: 35 }, createdAt, updatedAt: createdAt,
-        }
-        state.contacts.push(contact)
+    } else if (action === 'conversation') {
+      if (payload.kind !== undefined && payload.kind !== 'group' && payload.channel !== 'gc' && payload.channel !== 'group') throw new Error('Only explicit group-conversation changes are supported.')
+      const title = text(payload.title ?? payload.conversation ?? payload.conversationTitle ?? payload.conversation_title, 120)
+      const requestedId = text(payload.conversationId ?? payload.conversation_id, 180)
+      let conversation = requestedId ? state.conversations.find((entry) => entry.id === requestedId && entry.kind === 'group') : undefined
+      if (requestedId && !conversation) throw new Error('That group conversation no longer exists.')
+      if (!conversation && title) {
+        const matches = state.conversations.filter((entry) => entry.kind === 'group' && entry.title.trim().toLocaleLowerCase() === title.toLocaleLowerCase())
+        if (matches.length > 1) throw new Error(`Group title “${title}” is ambiguous; use its stable conversation id.`)
+        conversation = matches[0]
       }
-      const conversation = text(payload.conversationId ?? payload.conversation_id, 180)
-        ? resolveConversation(state, payload)
-        : ensureDirectConversation(state, contact?.id || state.contacts[0].id, nowIso(), id)
-      const messageText = text(payload.text ?? payload.content, 12_000)
+      const refs = Array.isArray(payload.participants) ? payload.participants.slice(0, 16) : []
+      const participantActorIds: string[] = []
+      for (const value of refs) {
+        const ref = actorRefParts(value)
+        let actor = resolveActorReference(state, value)
+        if (!actor && ref.name) {
+          const discovered = ensureDiscoveredActor(state, {
+            name: ref.name, source: 'group-chat', relationship: ref.relationship, now: nowIso(), makeId: id,
+          })
+          actor = resolvePocketActor(state, discovered.id)
+        }
+        if (!actor) throw new Error('Every group participant needs a valid id or name.')
+        if (ref.relationship === 'close') {
+          if (actor.contact) actor.contact.relationship = 'close'
+          if (actor.discovered) actor.discovered.relationship = 'close'
+        }
+        if (!participantActorIds.includes(actor.actorId)) participantActorIds.push(actor.actorId)
+      }
+      if (!refs.length && conversation) participantActorIds.push(...conversationActorIds(conversation))
+      if (participantActorIds.length < 2) throw new Error('A group conversation needs at least two explicit participants.')
+      const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index)
+      const changedAt = nowIso()
+      if (conversation) {
+        conversation.participantActorIds = participantActorIds
+        conversation.participantContactIds = participantContactIds
+        if (title) conversation.title = title
+        conversation.updatedAt = changedAt
+      } else {
+        const names = participantActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean)
+        conversation = {
+          id: id('conversation'), kind: 'group', title: title || names.join(', ').slice(0, 120) || 'Group',
+          participantActorIds, participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt: changedAt, updatedAt: changedAt,
+        }
+        state.conversations.push(conversation)
+      }
+      result = { ...result, conversationId: conversation.id, participantActorIds: [...conversation.participantActorIds] }
+      activity = addActivity(state, { kind: 'message', title: conversation.title, summary: `${conversation.participantActorIds.length} participants`, route: { app: 'messages', conversationId: conversation.id }, source: { conversationId: conversation.id } }, command)
+    } else if (action === 'message') {
+      const messageText = text(payload.text ?? payload.message ?? payload.content, 12_000)
       if (!messageText) throw new Error('A phone message needs text.')
       const sender = source === 'user' || payload.sender === 'user' || payload.sender === 'persona' ? 'persona' : payload.sender === 'system' ? 'system' : 'contact'
-      const senderContactId = sender === 'contact'
-        ? text(payload.senderContactId ?? payload.sender_contact_id, 180) || contact?.id || conversation.participantContactIds[0]
-        : undefined
-      const senderContact = senderContactId ? state.contacts.find((entry) => entry.id === senderContactId) : undefined
-      if (sender === 'contact' && (!senderContact || !conversation.participantContactIds.includes(senderContact.id))) throw new Error('The message sender must be a participant in this conversation.')
+      const explicitConversationId = text(payload.conversationId ?? payload.conversation_id, 180)
+      const foundConversation = explicitConversationId ? state.conversations.find((entry) => entry.id === explicitConversationId) : undefined
+      const channel = text(payload.channel, 20).toLowerCase()
+      const groupMessage = channel === 'gc' || channel === 'group' || foundConversation?.kind === 'group' || Boolean(!explicitConversationId && text(payload.conversation ?? payload.conversationTitle ?? payload.conversation_title, 120))
+      const rawSpeaker = payload.speaker ?? payload.speakerRef ?? payload.speaker_ref
+        ?? (payload.sender !== 'user' && payload.sender !== 'persona' && payload.sender !== 'contact' && payload.sender !== 'system' ? payload.sender : undefined)
+        ?? (text(payload.senderContactId ?? payload.sender_contact_id, 180) ? { contactId: payload.senderContactId ?? payload.sender_contact_id } : undefined)
+        ?? (text(payload.contact_name ?? payload.contactName, 120) ? { contactId: payload.contact_id ?? payload.contactId, name: payload.contact_name ?? payload.contactName, relationship: payload.relationship } : undefined)
+      let conversation: PocketConversation
+      let senderActor: ReturnType<typeof resolvePocketActor> = null
+      if (groupMessage) {
+        conversation = exactGroupConversation(state, payload)
+        if (sender === 'contact') {
+          senderActor = resolveActorReference(state, rawSpeaker, conversationActorIds(conversation))
+          if (!senderActor) throw new Error('The named sender is not a participant in this group. Change membership explicitly before they can speak.')
+        }
+      } else if (foundConversation) {
+        conversation = foundConversation
+        if (conversation.kind !== 'direct') throw new Error('Use channel "gc" for group messages.')
+        if (sender === 'contact') {
+          senderActor = rawSpeaker ? resolveActorReference(state, rawSpeaker, conversationActorIds(conversation)) : resolvePocketActor(state, conversationActorIds(conversation)[0])
+          if (!senderActor) throw new Error('The message sender must be the participant in this direct conversation.')
+        }
+      } else {
+        if (sender === 'contact') {
+          senderActor = resolveActorReference(state, rawSpeaker)
+          const ref = actorRefParts(rawSpeaker)
+          if (!senderActor && ref.name) {
+            const discovered = ensureDiscoveredActor(state, {
+              name: ref.name,
+              source: source === 'model' ? 'model-tool' : 'messages',
+              relationship: ref.relationship === 'close' ? 'close' : relationshipValue(payload.relationship ?? payload.close),
+              now: nowIso(),
+              makeId: id,
+            })
+            senderActor = resolvePocketActor(state, discovered.id)
+          }
+          if (!senderActor) throw new Error('A new direct-message sender needs a name; no full profile is required.')
+          conversation = ensureDirectActorConversation(state, senderActor.actorId, nowIso(), id)
+        } else {
+          const target = resolveActorReference(state, payload.target ?? payload.contactId ?? payload.contact_id)
+            || resolvePocketActor(state, state.contacts.find((entry) => entry.source.kind === 'character' && entry.source.characterId === state.characterId)?.id || '')
+          if (!target) throw new Error('Choose a valid direct-message target.')
+          conversation = ensureDirectActorConversation(state, target.actorId, nowIso(), id)
+        }
+      }
+      const senderActorId = sender === 'contact' ? senderActor!.actorId : undefined
+      const senderContact = sender === 'contact' ? senderActor!.contact : undefined
       const message: PhoneMessage = {
-        id: id('msg'), sender, senderContactId, senderName: sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : senderContact!.name,
-        senderAccent: senderContact ? contactAccent(senderContact) : '', text: messageText, createdAt: nowIso(), read: sender !== 'contact',
+        id: id('msg'), sender, senderActorId, senderActorKind: sender === 'contact' ? senderActor!.kind : undefined,
+        senderContactId: senderContact?.id, senderName: sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : senderActor!.name,
+        senderAccent: sender === 'contact' ? senderActor!.accent : '', text: messageText, createdAt: nowIso(), read: sender !== 'contact',
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : 'delivered',
       }
       conversation.messages.push(message)
@@ -2020,13 +2192,18 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       if (sender === 'contact' && !visible) conversation.unread += 1
       if (visible) { message.read = true; message.status = 'read' }
       const route: PocketRoute = { app: 'messages', conversationId: conversation.id, messageId: message.id }
-      notification = sender === 'contact' && preferences.notifyMessages ? addNotification(state, { app: 'messages', title: senderContact!.name, body: preferences.notificationPreviews ? messageText.slice(0, 220) : 'New message', route, source: source === 'user' ? 'system' : 'model', severity: 'important' }, userId) : null
-      result = { ...result, contactId: senderContact?.id || contact?.id, conversationId: conversation.id, messageId: message.id }
-      if (source !== 'user') activity = addActivity(state, { kind: 'message', title: senderContact?.name || conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text(input.messageId, 180) || undefined, contactId: senderContact?.id || contact?.id, conversationId: conversation.id } }, command)
+      notification = sender === 'contact' && preferences.notifyMessages ? addNotification(state, { app: 'messages', title: senderActor!.name, body: preferences.notificationPreviews ? messageText.slice(0, 220) : 'New message', route, source: source === 'user' ? 'system' : 'model', severity: 'important' }, userId) : null
+      result = { ...result, actorId: senderActorId, contactId: senderContact?.id, conversationId: conversation.id, messageId: message.id }
+      if (source !== 'user') activity = addActivity(state, { kind: 'message', title: sender === 'contact' ? senderActor!.name : conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text(input.messageId, 180) || undefined, contactId: senderContact?.id, conversationId: conversation.id } }, command)
     } else if (action === 'contact') {
       const contactId = text(payload.contactId ?? payload.contact_id ?? payload.id, 180)
-      const existing = state.contacts.find((entry) => entry.id === contactId)
-      const name = text(payload.name ?? payload.title, 120) || existing?.name
+      let existing = state.contacts.find((entry) => entry.id === contactId)
+      const requestedName = text(payload.name ?? payload.title, 120)
+      if (!existing && requestedName) {
+        const discoveredMatch = state.discoveredActors.find((entry) => entry.normalizedName === requestedName.trim().replace(/\s+/g, ' ').toLocaleLowerCase())
+        if (discoveredMatch) existing = promoteDiscoveredActor(state, discoveredMatch.id, nowIso(), id)
+      }
+      const name = requestedName || existing?.name
       if (!name) throw new Error('A contact action needs a name.')
       const createdAt = existing?.createdAt || nowIso()
       const requestedAccent = text(payload.accent, 20)
@@ -2039,6 +2216,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         accent: /^#[0-9a-f]{6}$/i.test(requestedAccent) ? requestedAccent : existing?.accent || stableContactAccent(name),
         sourceAccent: existing?.sourceAccent || '', colorMode: payload.colorMode === 'source' ? 'source' : existing?.colorMode || 'pocket',
         source: existing?.source || { kind: 'npc', origin: 'manual', description: identityBrief },
+        relationship: payload.relationship === 'close' ? 'close' : payload.relationship === 'background' ? 'background' : existing?.relationship || 'background',
         presence: {
           inScene: bool(payload.inScene ?? payload.in_scene, existing?.presence.inScene),
           lastSceneAt: bool(payload.inScene ?? payload.in_scene, existing?.presence.inScene) ? nowIso() : existing?.presence.lastSceneAt || '',
@@ -2253,24 +2431,40 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:open_direct': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
-          const contactId = text(payload.contactId, 180)
-          if (!state.contacts.some((entry) => entry.id === contactId)) throw new Error('That contact no longer exists.')
-          const conversation = ensureDirectConversation(state, contactId, nowIso(), id)
+          const actorId = text(payload.actorId ?? payload.contactId, 180)
+          if (!resolvePocketActor(state, actorId)) throw new Error('That actor no longer exists.')
+          const conversation = ensureDirectActorConversation(state, actorId, nowIso(), id)
           await saveState(state, userId)
           send({ type: 'lumiphone:conversation_opened', requestId, conversationId: conversation.id }, userId)
           await sendState(state, userId, 'conversation')
         })
         break
       }
+      case 'lumiphone:promote_discovered_actor': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const actorId = text(payload.actorId, 180)
+          const contact = promoteDiscoveredActor(state, actorId, nowIso(), id)
+          for (const conversation of state.conversations) {
+            if (!conversationActorIds(conversation).includes(actorId) || conversation.participantContactIds.includes(contact.id)) continue
+            conversation.participantContactIds.push(contact.id)
+          }
+          await saveState(state, userId)
+          await sendState(state, userId, 'actor_promoted')
+          send({ type: 'lumiphone:discovered_actor_promoted', requestId, actorId, contactId: contact.id }, userId)
+        })
+        break
+      }
       case 'lumiphone:create_conversation': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
-          const participantContactIds = [...new Set((Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text(entry, 180)).filter((entry) => state.contacts.some((contact) => contact.id === entry)))].slice(0, 16)
-          if (participantContactIds.length < 2) throw new Error('A group conversation needs at least two contacts.')
+          const participantActorIds = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16)
+          if (participantActorIds.length < 2) throw new Error('A group conversation needs at least two participants.')
+          const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index)
           const createdAt = nowIso()
           const conversation: PocketConversation = {
-            id: id('conversation'), kind: 'group', title: text(payload.title, 120) || participantContactIds.map((entry) => state.contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group',
-            participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt, updatedAt: createdAt,
+            id: id('conversation'), kind: 'group', title: text(payload.title, 120) || participantActorIds.map((entry) => resolvePocketActor(state, entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group',
+            participantActorIds, participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt, updatedAt: createdAt,
           }
           state.conversations.push(conversation)
           await saveState(state, userId)
@@ -2284,8 +2478,10 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const state = await loadState(context.chatId, context.characterId, userId)
           const conversation = state.conversations.find((entry) => entry.id === text(payload.conversationId, 180))
           if (!conversation || conversation.kind !== 'group') throw new Error('That group conversation no longer exists.')
-          const participantContactIds = [...new Set((Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversation.participantContactIds).map((entry) => text(entry, 180)).filter((entry) => state.contacts.some((contact) => contact.id === entry)))].slice(0, 16)
-          if (participantContactIds.length < 2) throw new Error('A group conversation needs at least two contacts.')
+          const participantActorIds = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversationActorIds(conversation)).map((entry) => text(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16)
+          if (participantActorIds.length < 2) throw new Error('A group conversation needs at least two participants.')
+          const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index)
+          conversation.participantActorIds = participantActorIds
           conversation.participantContactIds = participantContactIds
           conversation.title = text(payload.title, 120) || conversation.title
           conversation.updatedAt = nowIso()
@@ -2350,8 +2546,9 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const state = await loadState(context.chatId, context.characterId, userId)
         const conversation = state.conversations.find((entry) => entry.id === text(payload.conversationId, 180))
         if (!conversation) throw new Error('Choose a conversation to preview.')
-        const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])
-        if (!contact) throw new Error('That conversation has no available contact.')
+        const actor = resolvePocketActor(state, conversationActorIds(conversation)[0])
+        if (!actor) throw new Error('That conversation has no available actor.')
+        const contact = actorAsGenerationContact(actor, nowIso())
         const profile = await resolveContactProfile(contact, userId)
         const assembled = await assemblePocketContext({
           state, contact, conversation, preferences: await loadPreferences(userId),
@@ -2427,7 +2624,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         await generateMessage({
           ...payload,
           replaceMessageId: message.id,
-          speakerContactId: message.senderContactId,
+          speakerActorId: message.senderActorId || message.senderContactId,
           instruction: 'Generate a different natural reply for this same point in the phone conversation.',
         }, userId)
         break
@@ -2608,7 +2805,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           if (notificationId) markNotificationRead(state.notifications, notificationId)
           const conversationId = text(payload.conversationId, 180)
           const legacyContactId = text(payload.contactId, 180)
-          const conversation = state.conversations.find((entry) => entry.id === conversationId) || state.conversations.find((entry) => entry.kind === 'direct' && entry.participantContactIds[0] === legacyContactId)
+          const conversation = state.conversations.find((entry) => entry.id === conversationId) || directConversationForContact(state, legacyContactId)
           if (conversation) {
             conversation.unread = 0
             conversation.messages.forEach((message) => { message.read = true; message.status = 'read' })
@@ -2646,6 +2843,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           if (kind === 'tracker') state.trackers = state.trackers.filter((entry) => entry.id !== targetId)
           if (kind === 'contact') {
             state.contacts = state.contacts.filter((entry) => entry.id !== targetId)
+            for (const actor of state.discoveredActors) if (actor.promotedContactId === targetId) actor.promotedContactId = undefined
+            for (const conversation of state.conversations) conversation.participantContactIds = conversation.participantContactIds.filter((entry) => entry !== targetId)
           }
           if (kind === 'conversation') state.conversations = state.conversations.filter((entry) => entry.id !== targetId)
           await saveState(state, userId)
@@ -2713,16 +2912,16 @@ function registerTool(): void {
   spindle.registerTool({
     name: 'phone_action',
     display_name: 'Pocket Action',
-    description: 'Use Pocket, the character-aware roleplay phone: send a text, create or update a compact contact, write a journal note, schedule a timeline event, change fictional weather, update a typed tracker, take an AI camera photo, show a notification, or open the phone. State persists per chat and character.',
+    description: 'Use Pocket, the character-aware roleplay phone. Named DM senders may be new: Pocket lazily persists a minimal discovered actor and does not require a profile. Group messages must target an existing group and the sender must already be a member; create or change membership with the explicit conversation action. Contact profiles are optional enrichment. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['message', 'contact', 'scene', 'note', 'event', 'weather', 'tracker', 'camera', 'notify', 'open'] },
+        action: { type: 'string', enum: ['message', 'conversation', 'contact', 'scene', 'note', 'event', 'weather', 'tracker', 'camera', 'notify', 'open'] },
         chat_id: { type: 'string', description: 'Current chat id when known.' },
         character_id: { type: 'string', description: 'Current character id when known.' },
         payload: {
           type: 'object',
-          description: 'Action data. tracker operations target trackerId or stable key (label is legacy fallback) and use operation set/add/subtract/reset/set_state plus amount/state/reason. Tracker configuration supports kind, target, updateMode, clock real|roleplay, visibility and allowModelWrite. Other actions use message text/contact_name; note title/body; event title/start/end; weather fields; camera prompt; notify route/title/body.',
+          description: 'Action data. Messages accept channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or an existing conversation id/exact group title. Unknown named DM senders become lightweight discovered actors. Unknown GC senders are rejected unless an explicit conversation action first establishes membership. conversation uses kind=group, title, and participants as names or actor/contact refs; participant relationship may be close or background. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.',
           additionalProperties: true,
         },
       },

@@ -5,6 +5,7 @@ import { calculatePhoneSurface } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
+import { ensureDirectActorConversation, ensureDiscoveredActor, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
@@ -84,7 +85,7 @@ describe('conversation channel continuity', () => {
     const now = '2026-01-01T00:00:00.000Z'
     const collections = normalizeContactCollections({ contacts: [{ id: 'mizi', name: 'Mizi', role: 'Friend', identityBrief: 'Loud and opinionated.' }] }, { characterId: 'active', characterName: 'Ivan', now, makeId: (prefix) => `${prefix}-id` })
     const conversation = {
-      id: 'gc-disaster', kind: 'group' as const, title: 'Disaster GC', participantContactIds: ['mizi'], unread: 0,
+      id: 'gc-disaster', kind: 'group' as const, title: 'Disaster GC', participantActorIds: ['mizi'], participantContactIds: ['mizi'], unread: 0,
       availability: { state: 'remote' as const }, createdAt: now, updatedAt: now,
       messages: Array.from({ length: 10 }, (_, index) => ({
         id: `message-${index}`, sender: 'contact' as const, senderContactId: 'mizi', senderName: 'Mizi', senderAccent: '#ff00aa',
@@ -92,8 +93,8 @@ describe('conversation channel continuity', () => {
       })),
     }
     const state = {
-      version: 9, chatId: 'chat', characterId: 'active', characterName: 'Ivan', roleplayNow: now,
-      pocketPersona: { displayName: 'You' }, contacts: collections.contacts, conversations: [conversation], references: [],
+      version: 10, chatId: 'chat', characterId: 'active', characterName: 'Ivan', roleplayNow: now,
+      pocketPersona: { displayName: 'You' }, contacts: collections.contacts, discoveredActors: [], conversations: [conversation], references: [],
     } as unknown as PhoneState
     const reference = createPocketReference({ state, conversation, scope: 'conversation', createdAt: now, makeId: () => 'reference-1' })
     expect(reference.messages).toHaveLength(8)
@@ -261,6 +262,32 @@ describe('model context projection', () => {
 })
 
 describe('contacts and conversations', () => {
+  test('keeps discovered actors lightweight until promotion and preserves actor identity', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    let sequence = 0
+    const makeId = (prefix: string) => `${prefix}-${++sequence}`
+    const collections = normalizeContactCollections({}, { characterId: 'active', characterName: 'Active', now, makeId })
+    const state = {
+      chatId: 'chat-a', contacts: collections.contacts, conversations: collections.conversations, discoveredActors: [],
+    } as unknown as PhoneState
+    const maya = ensureDiscoveredActor(state, { name: 'Maya', source: 'model-tool', now, makeId })
+    const sameMaya = ensureDiscoveredActor(state, { name: '  MAYA  ', source: 'group-chat', relationship: 'close', now, makeId })
+    expect(sameMaya.id).toBe(maya.id)
+    expect(sameMaya.relationship).toBe('close')
+    expect(state.contacts.some((contact) => contact.name === 'Maya')).toBe(false)
+    const conversation = ensureDirectActorConversation(state, maya.id, now, makeId)
+    expect(conversation.participantActorIds).toEqual([maya.id])
+    expect(conversation.participantContactIds).toEqual([])
+    conversation.messages.push({
+      id: 'maya-message', sender: 'contact', senderActorId: maya.id, senderActorKind: 'discovered', senderName: 'Maya', senderAccent: '#000000', text: 'Hi.', createdAt: now, read: true, status: 'read',
+    })
+    const contact = promoteDiscoveredActor(state, maya.id, now, makeId)
+    expect(resolvePocketActor(state, maya.id)?.contact?.id).toBe(contact.id)
+    expect(conversation.messages[0].senderActorId).toBe(maya.id)
+    expect(conversation.messages[0].senderContactId).toBeUndefined()
+    expect(conversation.participantContactIds).toEqual([contact.id])
+  })
+
   test('migrates one legacy contact thread exactly once', () => {
     let sequence = 0
     const makeId = (prefix: string) => `${prefix}-${++sequence}`

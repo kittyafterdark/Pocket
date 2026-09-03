@@ -22,6 +22,7 @@ import type {
 } from '../types.js'
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
+import { conversationActorIds, resolvePocketActor } from '../domain/actors.js'
 import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
@@ -717,6 +718,10 @@ class PocketController {
       this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, false)
       return
     }
+    if (payload.type === 'lumiphone:discovered_actor_promoted' && payload.contactId) {
+      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, false)
+      return
+    }
     if (payload.type === 'lumiphone:swarm_profile') {
       this.swarmProfile = payload.profile
       if (this.currentApp === 'settings') this.updateSettingsDiagnostics()
@@ -985,7 +990,7 @@ class PocketController {
     this.currentApp = route.app
     if (route.app === 'messages') {
       const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId) : null)
-        || (route.contactId ? this.state.conversations.find((entry) => entry.kind === 'direct' && entry.participantContactIds[0] === route.contactId) : null)
+        || (route.contactId ? this.state.conversations.find((entry) => entry.kind === 'direct' && conversationActorIds(entry)[0] === route.contactId) : null)
       this.selectedConversationId = conversation?.id || ''
       this.selectedConversationView = route.view || 'thread'
       this.selectedMessageId = conversation && route.messageId && conversation.messages.some((entry) => entry.id === route.messageId) ? route.messageId : ''
@@ -1053,6 +1058,7 @@ class PocketController {
     const oldViewScroll = oldView?.scrollTop || 0
     const oldThread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
     const oldThreadScroll = oldThread?.scrollTop
+    const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : ''
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
     for (const cleanup of this.viewCleanups.splice(0)) cleanup()
@@ -1083,7 +1089,7 @@ class PocketController {
     if (!transition) requestAnimationFrame(() => {
       view.scrollTop = oldViewScroll
       const thread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
-      if (thread && oldThreadScroll !== undefined) thread.scrollTop = oldThreadScroll
+      if (thread && oldThreadScroll !== undefined) thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll
       if (focusedComposer) {
         const composer = this.screen.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`)
         composer?.focus({ preventScroll: true })
@@ -1181,7 +1187,11 @@ class PocketController {
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('messages', title, copy), iconButton,
       selectConversation: (conversationId, view = 'thread') => this.openPocket({ app: 'messages', conversationId: conversationId || undefined, view }),
-      openContact: (contactId) => this.openPocket({ app: 'contacts', contactId, view: 'detail' }),
+      openActor: (actorId) => {
+        const actor = resolvePocketActor(this.state!, actorId)
+        if (actor?.contact) this.openPocket({ app: 'contacts', contactId: actor.contact.id, view: 'detail' })
+        else if (actor?.discovered) this.send('lumiphone:promote_discovered_actor', { actorId })
+      },
       send: (type, payload) => { this.send(type, payload) },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
       selectGroupSpeaker: (conversationId, speakerContactId) => {

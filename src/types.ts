@@ -225,6 +225,10 @@ export interface DevicePreferences {
 export interface PhoneMessage {
   id: string
   sender: 'persona' | 'contact' | 'system'
+  /** Generic Pocket actor identity. Contact ids remain valid actor ids. */
+  senderActorId?: string
+  senderActorKind?: 'contact' | 'discovered'
+  /** Legacy/contact-specific identity retained for compatibility. */
   senderContactId?: string
   /** Stable display fallback when the underlying profile is renamed or removed. */
   senderName: string
@@ -297,7 +301,25 @@ export interface PocketConversationTailSnapshot {
 export type PocketContactSource =
   | { kind: 'character'; characterId: string }
   | { kind: 'council'; memberId: string; itemId: string }
-  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene'; description: string; sceneKey?: string }
+  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene' | 'discovered'; description: string; sceneKey?: string; discoveredActorId?: string }
+
+export type PocketRelationship = 'background' | 'close'
+
+/**
+ * A named actor Pocket has needed to persist, but the user has not chosen to
+ * materialize as a full Contact. Profile completeness never gates speech.
+ */
+export interface DiscoveredActor {
+  id: string
+  chatId: string
+  displayName: string
+  normalizedName: string
+  firstSeenAt: string
+  lastSeenAt: string
+  source: 'roleplay' | 'messages' | 'group-chat' | 'model-tool'
+  relationship: PocketRelationship
+  promotedContactId?: string
+}
 
 export interface PocketMessagingStyle {
   /** Participation likelihood, not a guarantee that this contact speaks. */
@@ -331,6 +353,8 @@ export interface PocketContact {
   sourceAccent: string
   colorMode: 'pocket' | 'source'
   source: PocketContactSource
+  /** Close actors are disclosed prominently; background actors stay cheap. */
+  relationship: PocketRelationship
   presence: { inScene: boolean; lastSceneAt: string }
   contextPolicy: { pinned: boolean }
   generationPolicy: { relevant: boolean }
@@ -359,6 +383,8 @@ export interface PendingGroupBatch {
   requestId: string
   conversationId: string
   sourceBurstId?: string
+  eligibleActorIds: string[]
+  /** Legacy alias retained while old state is migrated. */
   eligibleContactIds: string[]
   messages: PendingGroupBatchMessage[]
   status: 'queued' | 'delivering' | 'completed' | 'cancelled' | 'failed'
@@ -371,6 +397,9 @@ export interface PocketConversation {
   id: string
   kind: 'direct' | 'group'
   title: string
+  /** Authoritative membership. Contact ids and discovered actor ids share this namespace. */
+  participantActorIds: string[]
+  /** Contact-only compatibility projection; never use it to infer all members. */
   participantContactIds: string[]
   messages: PhoneMessage[]
   unread: number
@@ -475,7 +504,8 @@ export interface PocketRelay {
 export type PocketReferenceScope = 'conversation' | 'recent_messages' | 'selected_messages'
 
 export interface PocketReferenceParticipant {
-  contactId: string
+  actorId: string
+  contactId?: string
   name: string
   role: string
   identityBrief: string
@@ -485,6 +515,7 @@ export interface PocketReferenceMessage {
   messageId: string
   sender: 'persona' | 'contact'
   senderContactId?: string
+  senderActorId?: string
   senderName: string
   text: string
   createdAt: string
@@ -638,7 +669,7 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 9
+  version: 10
   chatId: string
   characterId: string
   characterName: string
@@ -647,6 +678,7 @@ export interface PhoneState {
   pocketPersona: ChatPocketPersona
   setup: { initialized: boolean; dismissed: boolean }
   contacts: PocketContact[]
+  discoveredActors: DiscoveredActor[]
   conversations: PocketConversation[]
   notes: PhoneNote[]
   events: CalendarEvent[]

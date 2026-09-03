@@ -307,6 +307,68 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
   return fallback;
 }
 
+// src/domain/contacts.ts
+var ACCENTS = ["#8b7dff", "#ef6f9a", "#55bfa3", "#e19a55", "#5e9ee6", "#b779dc", "#df6f64", "#86a94c"];
+function stableContactAccent(seed) {
+  let hash = 0;
+  for (const char of seed)
+    hash = (hash << 5) - hash + char.charCodeAt(0) | 0;
+  return ACCENTS[Math.abs(hash) % ACCENTS.length];
+}
+function contactAvatar(contact) {
+  return contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl;
+}
+function contactAccent(contact) {
+  return contact.colorMode === "source" && contact.sourceAccent ? contact.sourceAccent : contact.accent;
+}
+
+// src/domain/actors.ts
+function conversationActorIds(conversation) {
+  return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds;
+}
+function resolvePocketActor(state, actorId) {
+  const contact = state.contacts.find((entry) => entry.id === actorId);
+  if (contact)
+    return contactPresentation(contact, actorId);
+  const discovered = state.discoveredActors.find((entry) => entry.id === actorId);
+  if (!discovered)
+    return null;
+  const promoted = discovered.promotedContactId ? state.contacts.find((entry) => entry.id === discovered.promotedContactId) : undefined;
+  if (promoted)
+    return { ...contactPresentation(promoted, actorId), discovered };
+  return {
+    actorId,
+    kind: "discovered",
+    name: discovered.displayName,
+    role: discovered.relationship === "close" ? "Close connection" : "Discovered actor",
+    identityBrief: "",
+    accent: stableContactAccent(discovered.normalizedName || discovered.id),
+    avatarUrl: "",
+    relationship: discovered.relationship,
+    discovered
+  };
+}
+function listPocketActors(state) {
+  const promotedContactIds = new Set(state.discoveredActors.map((entry) => entry.promotedContactId).filter((entry) => Boolean(entry)));
+  return [
+    ...state.discoveredActors.map((entry) => resolvePocketActor(state, entry.id)).filter((entry) => Boolean(entry)),
+    ...state.contacts.filter((entry) => !promotedContactIds.has(entry.id)).map((entry) => contactPresentation(entry, entry.id))
+  ];
+}
+function contactPresentation(contact, actorId) {
+  return {
+    actorId,
+    kind: "contact",
+    name: contact.name,
+    role: contact.role,
+    identityBrief: contact.identityBrief || contact.description,
+    accent: contactAccent(contact),
+    avatarUrl: contactAvatar(contact),
+    relationship: contact.relationship,
+    contact
+  };
+}
+
 // src/frontend/surface.ts
 var PHONE_ASPECT = 9 / 16;
 var PHONE_BASE_WIDTH = 360;
@@ -1464,14 +1526,6 @@ function renderTrackersView(host) {
   return dashboard(host);
 }
 
-// src/domain/contacts.ts
-function contactAvatar(contact) {
-  return contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl;
-}
-function contactAccent(contact) {
-  return contact.colorMode === "source" && contact.sourceAccent ? contact.sourceAccent : contact.accent;
-}
-
 // src/frontend/apps/messages.ts
 var PAUSE_COPY = {
   ended: "stopped responding.",
@@ -1489,7 +1543,7 @@ var LOCAL_COPY = {
 function conversationTitle(state, conversation) {
   if (conversation.kind === "group")
     return conversation.title || "Group";
-  return state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || "Conversation";
+  return resolvePocketActor(state, conversationActorIds(conversation)[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || "Conversation";
 }
 function groupEditor(host, conversation) {
   let saveGroup = () => {};
@@ -1498,24 +1552,24 @@ function groupEditor(host, conversation) {
   title.placeholder = "Group name";
   title.value = conversation?.title || "";
   const choices = el("div", "lp-contact-checklist");
-  const selected = new Set(conversation?.participantContactIds || []);
-  for (const contact of host.state.contacts) {
+  const selected = new Set(conversation ? conversationActorIds(conversation) : []);
+  for (const actor of listPocketActors(host.state)) {
     const row2 = el("label", "lp-card lp-row-between");
     const copy = el("span");
-    copy.append(el("strong", "", contact.name), el("span", "lp-copy", contact.role));
+    copy.append(el("strong", "", actor.name), el("span", "lp-copy", `${actor.role}${actor.kind === "discovered" ? " · discovered" : ""}`));
     const checkbox = el("input");
     checkbox.type = "checkbox";
-    checkbox.value = contact.id;
-    checkbox.checked = selected.has(contact.id);
+    checkbox.value = actor.actorId;
+    checkbox.checked = selected.has(actor.actorId);
     row2.append(copy, checkbox);
     choices.appendChild(row2);
   }
   saveGroup = () => {
-    const participantContactIds = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
+    const participantActorIds = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
     host.send(conversation ? "lumiphone:update_conversation" : "lumiphone:create_conversation", {
       conversationId: conversation?.id,
       title: title.value.trim(),
-      participantContactIds
+      participantActorIds
     });
   };
   content.append(title, choices);
@@ -1526,12 +1580,12 @@ function groupEditor(host, conversation) {
   }
   return page;
 }
-function participantAvatar(contact, continuation = false) {
-  const node = el("div", continuation ? "lp-group-avatar lp-group-avatar-spacer" : "lp-group-avatar", contact.name.slice(0, 1).toUpperCase());
-  node.style.setProperty("--message-accent", contactAccent(contact));
-  if (!continuation && contactAvatar(contact)) {
+function participantAvatar(actor, continuation = false) {
+  const node = el("div", continuation ? "lp-group-avatar lp-group-avatar-spacer" : "lp-group-avatar", actor.name.slice(0, 1).toUpperCase());
+  node.style.setProperty("--message-accent", actor.accent);
+  if (!continuation && actor.avatarUrl) {
     const image = el("img");
-    image.src = contactAvatar(contact);
+    image.src = actor.avatarUrl;
     image.alt = "";
     node.replaceChildren(image);
   }
@@ -1686,11 +1740,12 @@ function renderMessagesView(host) {
       card.setAttribute("role", "button");
       const row2 = el("div", "lp-row");
       const titleText2 = conversationTitle(host.state, conversation2);
-      const avatar = el("div", "lp-avatar", conversation2.kind === "group" ? String(conversation2.participantContactIds.length) : titleText2.slice(0, 1).toUpperCase());
-      const directContact2 = conversation2.kind === "direct" ? host.state.contacts.find((entry) => entry.id === conversation2.participantContactIds[0]) : null;
-      if (directContact2 && contactAvatar(directContact2)) {
+      const members = conversationActorIds(conversation2);
+      const avatar = el("div", "lp-avatar", conversation2.kind === "group" ? String(members.length) : titleText2.slice(0, 1).toUpperCase());
+      const directActor2 = conversation2.kind === "direct" ? resolvePocketActor(host.state, members[0]) : null;
+      if (directActor2?.avatarUrl) {
         const image = el("img");
-        image.src = contactAvatar(directContact2);
+        image.src = directActor2.avatarUrl;
         image.alt = "";
         avatar.replaceChildren(image);
       }
@@ -1724,7 +1779,8 @@ function renderMessagesView(host) {
   const back = button("‹ Back", "lp-nav-action");
   back.addEventListener("click", () => host.back());
   const title = el("div", "lp-nav-title", titleText);
-  title.appendChild(el("span", "lp-nav-subtitle", conversation.kind === "group" ? `${conversation.participantContactIds.length} contacts` : "Direct message"));
+  const memberActorIds = conversationActorIds(conversation);
+  title.appendChild(el("span", "lp-nav-subtitle", conversation.kind === "group" ? `${memberActorIds.length} participants` : "Direct message"));
   const menu = el("details", "lp-conversation-menu");
   const menuToggle = el("summary", "lp-nav-action", "⋯");
   menuToggle.setAttribute("aria-label", "Conversation menu");
@@ -1741,7 +1797,7 @@ function renderMessagesView(host) {
     if (conversation.kind === "group")
       host.selectConversation(conversation.id, "group-detail");
     else
-      host.openContact(conversation.participantContactIds[0]);
+      host.openActor(memberActorIds[0]);
   }));
   const referenceAction = menuAction("Reference in roleplay", () => host.showReferenceSheet(conversation.id));
   referenceAction.disabled = !conversation.messages.some((message) => message.sender !== "system");
@@ -1758,7 +1814,8 @@ function renderMessagesView(host) {
   page.appendChild(referenceSlot);
   const busy = host.busyConversations.get(conversation.id);
   const replyBusy = Boolean(busy);
-  const directContact = conversation.kind === "direct" ? host.state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]) : null;
+  const directActor = conversation.kind === "direct" ? resolvePocketActor(host.state, memberActorIds[0]) : null;
+  const directContact = directActor?.contact || null;
   const scenePresent = Boolean(directContact?.presence.inScene);
   const bubbles = el("div", "lp-bubbles");
   bubbles.dataset.pocketThread = conversation.id;
@@ -1770,13 +1827,20 @@ function renderMessagesView(host) {
     bubble.dataset.messageId = message.id;
     bubble.dataset.selected = String(message.id === host.selectedMessageId);
     bubble.dataset.sender = message.sender;
-    const senderContact = message.sender === "contact" ? host.state.contacts.find((entry) => entry.id === message.senderContactId) : undefined;
-    const resolvedAccent = senderContact ? contactAccent(senderContact) : message.senderAccent || (directContact ? contactAccent(directContact) : "");
+    const senderActor = message.sender === "contact" ? resolvePocketActor(host.state, message.senderActorId || message.senderContactId || memberActorIds[0]) : null;
+    const resolvedAccent = senderActor?.accent || message.senderAccent || directActor?.accent || "";
     if (message.sender === "contact")
       bubble.style.setProperty("--message-accent", resolvedAccent);
-    const continuesRun = conversation.kind === "group" && message.sender === "contact" && priorGroupSpeakerId === message.senderContactId;
-    if (conversation.kind === "group" && message.sender === "contact" && !continuesRun)
-      bubble.appendChild(el("strong", "lp-bubble-sender", senderContact?.name || message.senderName));
+    const messageActorId = message.senderActorId || message.senderContactId || "";
+    const continuesRun = conversation.kind === "group" && message.sender === "contact" && priorGroupSpeakerId === messageActorId;
+    if (conversation.kind === "group" && message.sender === "contact" && !continuesRun) {
+      const sender = button(senderActor?.name || message.senderName, "lp-bubble-sender lp-actor-link");
+      sender.addEventListener("click", () => {
+        if (messageActorId)
+          host.openActor(messageActorId);
+      });
+      bubble.appendChild(sender);
+    }
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
     if (message.generation) {
       const retry = button("Retry", "lp-bubble-action");
@@ -1788,13 +1852,24 @@ function renderMessagesView(host) {
       generationInfo.addEventListener("click", () => host.showGenerationInfo(message));
       bubble.append(retry, generationInfo);
     }
-    if (conversation.kind === "group" && message.sender === "contact" && senderContact) {
+    if (conversation.kind === "group" && message.sender === "contact" && senderActor) {
       const row2 = el("div", "lp-group-message");
       row2.style.setProperty("--message-accent", resolvedAccent);
       row2.dataset.continuation = String(continuesRun);
-      row2.append(participantAvatar(senderContact, continuesRun), bubble);
+      const avatar = participantAvatar(senderActor, continuesRun);
+      if (!continuesRun) {
+        avatar.dataset.clickable = "true";
+        avatar.tabIndex = 0;
+        avatar.setAttribute("role", "button");
+        avatar.addEventListener("click", () => host.openActor(messageActorId));
+        avatar.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ")
+            host.openActor(messageActorId);
+        });
+      }
+      row2.append(avatar, bubble);
       bubbles.appendChild(row2);
-      priorGroupSpeakerId = senderContact.id;
+      priorGroupSpeakerId = messageActorId;
     } else {
       bubbles.appendChild(bubble);
       priorGroupSpeakerId = "";
@@ -1818,13 +1893,13 @@ function renderMessagesView(host) {
     bubbles.appendChild(checking);
   } else if (busy) {
     const pending = el("div", conversation.kind === "group" ? "lp-group-typing" : "lp-bubble lp-bubble-pending");
-    const busyContact = host.state.contacts.find((entry) => entry.id === busy.speakerContactId);
+    const busyActor = resolvePocketActor(host.state, busy.speakerContactId);
     if (conversation.kind === "group")
-      pending.appendChild(el("span", "", `${busyContact?.name || "Someone"} is typing…`));
+      pending.appendChild(el("span", "", `${busyActor?.name || "Someone"} is typing…`));
     else
       pending.dataset.sender = "contact";
     pending.setAttribute("role", "status");
-    pending.setAttribute("aria-label", conversation.kind === "group" ? `${busyContact?.name || "Someone"} is typing` : "Contact is typing");
+    pending.setAttribute("aria-label", conversation.kind === "group" ? `${busyActor?.name || "Someone"} is typing` : "Contact is typing");
     const dots = el("span", "lp-typing-dots");
     dots.append(el("i"), el("i"), el("i"));
     pending.appendChild(dots);
@@ -1847,15 +1922,15 @@ function renderMessagesView(host) {
   }
   const compose = el("form", "lp-compose");
   const sparkle = scenePresent || conversation.pause ? button("⋯", "lp-button lp-button-icon lp-manual-reply") : host.iconButton("sparkle", "Generate one contact reply");
-  const selectedGroupSpeaker = conversation.kind === "group" && conversation.participantContactIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : "auto";
-  const selectedGroupContact = selectedGroupSpeaker === "auto" ? null : host.state.contacts.find((entry) => entry.id === selectedGroupSpeaker);
-  const generationLabel = conversation.kind === "group" ? selectedGroupContact ? `Generate one reply from ${selectedGroupContact.name}` : "Generate the next natural group burst" : "Generate one contact reply";
+  const selectedGroupSpeaker = conversation.kind === "group" && memberActorIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : "auto";
+  const selectedGroupActor = selectedGroupSpeaker === "auto" ? null : resolvePocketActor(host.state, selectedGroupSpeaker);
+  const generationLabel = conversation.kind === "group" ? selectedGroupActor ? `Generate one reply from ${selectedGroupActor.name}` : "Generate the next natural group burst" : "Generate one contact reply";
   sparkle.setAttribute("aria-label", scenePresent ? "Manually generate a reply while contact is here" : conversation.pause ? "Manually generate a reply in paused conversation" : generationLabel);
   sparkle.title = scenePresent ? "Manual reply — this contact is currently with you" : conversation.pause ? "Manual reply — conversation is paused" : generationLabel;
   sparkle.disabled = !host.generationAvailable || replyBusy;
   const speakerMenu = el("details", "lp-speaker-menu");
   if (conversation.kind === "group") {
-    const summary = el("summary", "", selectedGroupContact ? `Next reply: ${selectedGroupContact.name} ×` : `${conversation.participantContactIds.length} contacts · Auto speaker`);
+    const summary = el("summary", "", selectedGroupActor ? `Next reply: ${selectedGroupActor.name} ×` : `${memberActorIds.length} participants · Auto speaker`);
     const sheet = el("div", "lp-speaker-sheet");
     sheet.appendChild(el("strong", "", "Who replies?"));
     const auto = button(`${selectedGroupSpeaker === "auto" ? "✓ " : ""}Auto`, "lp-speaker-option");
@@ -1864,21 +1939,21 @@ function renderMessagesView(host) {
       host.selectGroupSpeaker(conversation.id, "auto");
     });
     sheet.appendChild(auto);
-    for (const contactId of conversation.participantContactIds) {
-      const contact = host.state.contacts.find((entry) => entry.id === contactId);
-      if (!contact)
+    for (const actorId of memberActorIds) {
+      const actor = resolvePocketActor(host.state, actorId);
+      if (!actor)
         continue;
-      const option = button(`${selectedGroupSpeaker === contact.id ? "✓ " : ""}${contact.name}`, "lp-speaker-option");
+      const option = button(`${selectedGroupSpeaker === actor.actorId ? "✓ " : ""}${actor.name}`, "lp-speaker-option");
       option.addEventListener("click", () => {
         speakerMenu.open = false;
-        host.selectGroupSpeaker(conversation.id, contact.id);
+        host.selectGroupSpeaker(conversation.id, actor.actorId);
       });
       sheet.appendChild(option);
     }
     speakerMenu.append(summary, sheet);
   } else
     speakerMenu.hidden = true;
-  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : conversation.participantContactIds[0]));
+  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : memberActorIds[0]));
   const textarea = el("textarea", "lp-textarea");
   textarea.rows = 1;
   textarea.placeholder = "Message…";
@@ -1991,6 +2066,15 @@ function contactEditor(host, contact, draft = null) {
   }
   const colorModeLabel = el("label", "lp-label", "Color source");
   colorModeLabel.appendChild(colorMode);
+  const relationship = el("select", "lp-select");
+  for (const [value, label] of [["background", "Background / plot actor"], ["close", "Close to this character"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = (contact?.relationship || "background") === value;
+    relationship.appendChild(option);
+  }
+  const relationshipLabel = el("label", "lp-label", "Relationship importance");
+  relationshipLabel.appendChild(relationship);
   const inScene = el("input");
   inScene.type = "checkbox";
   inScene.checked = contact?.presence.inScene || false;
@@ -2061,6 +2145,7 @@ function contactEditor(host, contact, draft = null) {
       sceneNote: sceneNote.value.trim(),
       accent: accent.value,
       colorMode: colorMode.value,
+      relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || "" },
       contextPolicy: { pinned: pinned.checked },
       generationPolicy: { relevant: relevant.checked },
@@ -2074,7 +2159,7 @@ function contactEditor(host, contact, draft = null) {
       source: contact?.source || (draft ? { kind: "npc", origin: "generated", description: description.value.trim() } : { kind: "npc", origin: "manual", description: description.value.trim() })
     } });
   };
-  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
@@ -2185,15 +2270,15 @@ function renderContactsView(host) {
     if (contact.sceneNote)
       hero.append(el("p", "lp-scene-note", contact.sceneNote));
     const source = contact.source.kind === "character" ? "Linked Character" : contact.source.kind === "council" ? "Linked Council member" : `Pocket NPC · ${contact.source.origin}`;
-    hero.append(el("span", "lp-eyebrow", source));
+    hero.append(el("span", "lp-eyebrow", `${source} · ${contact.relationship === "close" ? "Close connection" : "Background actor"}`));
     const presence = el("div", "lp-card");
     presence.append(el("div", "lp-title", contact.presence.inScene ? "Here now" : "Not in current scene"), el("p", "lp-copy", `${contact.contextPolicy.pinned ? "Pinned to model context" : "Included only while in scene"}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ""}`), el("p", "lp-copy", `${contact.generationPolicy.relevant ? "Generation-relevant" : "Excluded from Pocket generation"} · ${contact.messagingPolicy.remoteEligible ? "Remote-message eligible" : "No remote messages"}${contact.messagingPolicy.allowAmbientInScene ? " · ambient override while here" : ""}`));
     const message = button("Message");
     message.addEventListener("click", () => host.openDirect(contact.id));
     content2.append(hero, presence);
-    if (contact.source.kind !== "npc") {
+    if (contact.source.kind !== "npc" || contact.source.origin === "discovered") {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === "profile-refresh" && entry.phase !== "complete" && entry.phase !== "error");
-      const refresh = button("Refresh compact profile ✦", "lp-button lp-button-quiet");
+      const refresh = button(contact.source.kind === "npc" ? "Describe from RP ✦" : "Refresh compact profile ✦", "lp-button lp-button-quiet");
       refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation);
       refresh.addEventListener("click", () => host.send("lumiphone:refresh_contact_profile", { contactId: contact.id }));
       content2.appendChild(refresh);
@@ -3187,6 +3272,10 @@ class PocketController {
       this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" }, false);
       return;
     }
+    if (payload.type === "lumiphone:discovered_actor_promoted" && payload.contactId) {
+      this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" }, false);
+      return;
+    }
     if (payload.type === "lumiphone:swarm_profile") {
       this.swarmProfile = payload.profile;
       if (this.currentApp === "settings")
@@ -3473,7 +3562,7 @@ class PocketController {
       this.settingsDraft = null;
     this.currentApp = route.app;
     if (route.app === "messages") {
-      const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId) : null) || (route.contactId ? this.state.conversations.find((entry) => entry.kind === "direct" && entry.participantContactIds[0] === route.contactId) : null);
+      const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId) : null) || (route.contactId ? this.state.conversations.find((entry) => entry.kind === "direct" && conversationActorIds(entry)[0] === route.contactId) : null);
       this.selectedConversationId = conversation?.id || "";
       this.selectedConversationView = route.view || "thread";
       this.selectedMessageId = conversation && route.messageId && conversation.messages.some((entry) => entry.id === route.messageId) ? route.messageId : "";
@@ -3541,6 +3630,7 @@ class PocketController {
     const oldViewScroll = oldView?.scrollTop || 0;
     const oldThread = this.screen.querySelector("[data-pocket-thread]");
     const oldThreadScroll = oldThread?.scrollTop;
+    const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false;
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : "";
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     for (const cleanup of this.viewCleanups.splice(0))
@@ -3564,7 +3654,7 @@ class PocketController {
         view.scrollTop = oldViewScroll;
         const thread = this.screen.querySelector("[data-pocket-thread]");
         if (thread && oldThreadScroll !== undefined)
-          thread.scrollTop = oldThreadScroll;
+          thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll;
         if (focusedComposer) {
           const composer = this.screen.querySelector(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`);
           composer?.focus({ preventScroll: true });
@@ -3671,7 +3761,13 @@ class PocketController {
       empty: (title, copy) => this.empty("messages", title, copy),
       iconButton,
       selectConversation: (conversationId, view = "thread") => this.openPocket({ app: "messages", conversationId: conversationId || undefined, view }),
-      openContact: (contactId) => this.openPocket({ app: "contacts", contactId, view: "detail" }),
+      openActor: (actorId) => {
+        const actor = resolvePocketActor(this.state, actorId);
+        if (actor?.contact)
+          this.openPocket({ app: "contacts", contactId: actor.contact.id, view: "detail" });
+        else if (actor?.discovered)
+          this.send("lumiphone:promote_discovered_actor", { actorId });
+      },
       send: (type, payload) => {
         this.send(type, payload);
       },
@@ -4639,9 +4735,11 @@ var PHONE_STYLES = `
   .lp-bubble[data-sender="system"] { align-self:center; max-width:90%; background:transparent; color:var(--lp-muted); text-align:center; font-size:9px; box-shadow:none; }
   .lp-bubble-time { display:block; margin-top:4px; opacity:.58; font-size:7px; text-align:right; }
   .lp-bubble-sender { display:block; margin-bottom:2px; color:var(--lp-accent); font-size:8px; }
+  .lp-actor-link { appearance:none; border:0; padding:0; background:transparent; font:inherit; font-weight:800; text-align:left; cursor:pointer; }
   .lp-group-message { max-width:88%; align-self:flex-start; display:grid; grid-template-columns:25px minmax(0,1fr); align-items:end; gap:6px; }
   .lp-group-message .lp-bubble { max-width:100%; border-left:2px solid color-mix(in srgb,var(--message-accent) 72%,transparent); }
   .lp-group-avatar { width:24px; height:24px; overflow:hidden; display:grid; place-items:center; border:2px solid var(--message-accent); border-radius:50%; background:var(--lp-surface-2); color:var(--message-accent); font-size:8px; font-weight:800; }
+  .lp-group-avatar[data-clickable="true"] { cursor:pointer; }
   .lp-group-avatar img { width:100%; height:100%; object-fit:cover; }
   .lp-group-avatar-spacer { visibility:hidden; }
   .lp-group-typing { align-self:flex-start; min-height:30px; padding:6px 10px; display:flex; align-items:center; gap:7px; border-radius:13px; background:var(--lp-surface-2); color:var(--lp-muted); font-size:var(--pocket-font-sm); }

@@ -1,5 +1,5 @@
-import type { PhoneMessage, PhoneState, PocketContact, PocketContextReference, PocketConversation, PocketRelay } from '../../types.js'
-import { contactAvatar, contactAccent } from '../../domain/contacts.js'
+import type { PhoneMessage, PhoneState, PocketContextReference, PocketConversation, PocketRelay } from '../../types.js'
+import { conversationActorIds, listPocketActors, resolvePocketActor } from '../../domain/actors.js'
 import { button, el, formatTime, inputValue } from '../shared.js'
 import type { PageAction } from '../shared.js'
 
@@ -19,7 +19,7 @@ export interface MessagesViewHost {
   empty(title: string, copy: string): HTMLDivElement
   iconButton(name: string, label: string): HTMLButtonElement
   selectConversation(conversationId: string, view?: 'thread' | 'new-group' | 'group-detail'): void
-  openContact(contactId: string): void
+  openActor(actorId: string): void
   send(type: string, payload?: Record<string, unknown>): void
   generateReply(conversationId: string, speakerContactId?: string): void
   selectGroupSpeaker(conversationId: string, speakerContactId: string): void
@@ -55,7 +55,7 @@ const LOCAL_COPY = {
 
 function conversationTitle(state: PhoneState, conversation: PocketConversation): string {
   if (conversation.kind === 'group') return conversation.title || 'Group'
-  return state.contacts.find((entry) => entry.id === conversation.participantContactIds[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || 'Conversation'
+  return resolvePocketActor(state, conversationActorIds(conversation)[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || 'Conversation'
 }
 
 function groupEditor(host: MessagesViewHost, conversation: PocketConversation | null): HTMLDivElement {
@@ -65,20 +65,20 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
   title.placeholder = 'Group name'
   title.value = conversation?.title || ''
   const choices = el('div', 'lp-contact-checklist')
-  const selected = new Set(conversation?.participantContactIds || [])
-  for (const contact of host.state.contacts) {
+  const selected = new Set(conversation ? conversationActorIds(conversation) : [])
+  for (const actor of listPocketActors(host.state)) {
     const row = el('label', 'lp-card lp-row-between')
     const copy = el('span')
-    copy.append(el('strong', '', contact.name), el('span', 'lp-copy', contact.role))
+    copy.append(el('strong', '', actor.name), el('span', 'lp-copy', `${actor.role}${actor.kind === 'discovered' ? ' · discovered' : ''}`))
     const checkbox = el('input')
-    checkbox.type = 'checkbox'; checkbox.value = contact.id; checkbox.checked = selected.has(contact.id)
+    checkbox.type = 'checkbox'; checkbox.value = actor.actorId; checkbox.checked = selected.has(actor.actorId)
     row.append(copy, checkbox)
     choices.appendChild(row)
   }
   saveGroup = () => {
-    const participantContactIds = [...choices.querySelectorAll<HTMLInputElement>('input:checked')].map((entry) => entry.value)
+    const participantActorIds = [...choices.querySelectorAll<HTMLInputElement>('input:checked')].map((entry) => entry.value)
     host.send(conversation ? 'lumiphone:update_conversation' : 'lumiphone:create_conversation', {
-      conversationId: conversation?.id, title: title.value.trim(), participantContactIds,
+      conversationId: conversation?.id, title: title.value.trim(), participantActorIds,
     })
   }
   content.append(title, choices)
@@ -90,11 +90,11 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
   return page
 }
 
-function participantAvatar(contact: PocketContact, continuation = false): HTMLDivElement {
-  const node = el('div', continuation ? 'lp-group-avatar lp-group-avatar-spacer' : 'lp-group-avatar', contact.name.slice(0, 1).toUpperCase())
-  node.style.setProperty('--message-accent', contactAccent(contact))
-  if (!continuation && contactAvatar(contact)) {
-    const image = el('img'); image.src = contactAvatar(contact); image.alt = ''; node.replaceChildren(image)
+function participantAvatar(actor: NonNullable<ReturnType<typeof resolvePocketActor>>, continuation = false): HTMLDivElement {
+  const node = el('div', continuation ? 'lp-group-avatar lp-group-avatar-spacer' : 'lp-group-avatar', actor.name.slice(0, 1).toUpperCase())
+  node.style.setProperty('--message-accent', actor.accent)
+  if (!continuation && actor.avatarUrl) {
+    const image = el('img'); image.src = actor.avatarUrl; image.alt = ''; node.replaceChildren(image)
   }
   return node
 }
@@ -245,10 +245,11 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       card.dataset.clickable = 'true'; card.tabIndex = 0; card.setAttribute('role', 'button')
       const row = el('div', 'lp-row')
       const titleText = conversationTitle(host.state, conversation)
-      const avatar = el('div', 'lp-avatar', conversation.kind === 'group' ? String(conversation.participantContactIds.length) : titleText.slice(0, 1).toUpperCase())
-      const directContact = conversation.kind === 'direct' ? host.state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]) : null
-      if (directContact && contactAvatar(directContact)) {
-        const image = el('img'); image.src = contactAvatar(directContact); image.alt = ''; avatar.replaceChildren(image)
+      const members = conversationActorIds(conversation)
+      const avatar = el('div', 'lp-avatar', conversation.kind === 'group' ? String(members.length) : titleText.slice(0, 1).toUpperCase())
+      const directActor = conversation.kind === 'direct' ? resolvePocketActor(host.state, members[0]) : null
+      if (directActor?.avatarUrl) {
+        const image = el('img'); image.src = directActor.avatarUrl; image.alt = ''; avatar.replaceChildren(image)
       }
       const latest = conversation.messages.at(-1)
       const copy = el('div', 'lp-grow')
@@ -274,7 +275,8 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const back = button('‹ Back', 'lp-nav-action')
   back.addEventListener('click', () => host.back())
   const title = el('div', 'lp-nav-title', titleText)
-  title.appendChild(el('span', 'lp-nav-subtitle', conversation.kind === 'group' ? `${conversation.participantContactIds.length} contacts` : 'Direct message'))
+  const memberActorIds = conversationActorIds(conversation)
+  title.appendChild(el('span', 'lp-nav-subtitle', conversation.kind === 'group' ? `${memberActorIds.length} participants` : 'Direct message'))
   const menu = el('details', 'lp-conversation-menu')
   const menuToggle = el('summary', 'lp-nav-action', '⋯')
   menuToggle.setAttribute('aria-label', 'Conversation menu')
@@ -286,7 +288,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   }
   menuSheet.appendChild(menuAction(conversation.kind === 'group' ? 'Participants' : 'Contact info', () => {
     if (conversation.kind === 'group') host.selectConversation(conversation.id, 'group-detail')
-    else host.openContact(conversation.participantContactIds[0])
+    else host.openActor(memberActorIds[0])
   }))
   const referenceAction = menuAction('Reference in roleplay', () => host.showReferenceSheet(conversation.id))
   referenceAction.disabled = !conversation.messages.some((message) => message.sender !== 'system')
@@ -306,7 +308,8 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
 
   const busy = host.busyConversations.get(conversation.id)
   const replyBusy = Boolean(busy)
-  const directContact = conversation.kind === 'direct' ? host.state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]) : null
+  const directActor = conversation.kind === 'direct' ? resolvePocketActor(host.state, memberActorIds[0]) : null
+  const directContact = directActor?.contact || null
   const scenePresent = Boolean(directContact?.presence.inScene)
   const bubbles = el('div', 'lp-bubbles')
   bubbles.dataset.pocketThread = conversation.id
@@ -318,11 +321,16 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
     bubble.dataset.sender = message.sender
-    const senderContact = message.sender === 'contact' ? host.state.contacts.find((entry) => entry.id === message.senderContactId) : undefined
-    const resolvedAccent = senderContact ? contactAccent(senderContact) : message.senderAccent || (directContact ? contactAccent(directContact) : '')
+    const senderActor = message.sender === 'contact' ? resolvePocketActor(host.state, message.senderActorId || message.senderContactId || memberActorIds[0]) : null
+    const resolvedAccent = senderActor?.accent || message.senderAccent || directActor?.accent || ''
     if (message.sender === 'contact') bubble.style.setProperty('--message-accent', resolvedAccent)
-    const continuesRun = conversation.kind === 'group' && message.sender === 'contact' && priorGroupSpeakerId === message.senderContactId
-    if (conversation.kind === 'group' && message.sender === 'contact' && !continuesRun) bubble.appendChild(el('strong', 'lp-bubble-sender', senderContact?.name || message.senderName))
+    const messageActorId = message.senderActorId || message.senderContactId || ''
+    const continuesRun = conversation.kind === 'group' && message.sender === 'contact' && priorGroupSpeakerId === messageActorId
+    if (conversation.kind === 'group' && message.sender === 'contact' && !continuesRun) {
+      const sender = button(senderActor?.name || message.senderName, 'lp-bubble-sender lp-actor-link')
+      sender.addEventListener('click', () => { if (messageActorId) host.openActor(messageActorId) })
+      bubble.appendChild(sender)
+    }
     bubble.append(document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
     if (message.generation) {
       const retry = button('Retry', 'lp-bubble-action')
@@ -334,13 +342,19 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
       bubble.append(retry, generationInfo)
     }
-    if (conversation.kind === 'group' && message.sender === 'contact' && senderContact) {
+    if (conversation.kind === 'group' && message.sender === 'contact' && senderActor) {
       const row = el('div', 'lp-group-message')
       row.style.setProperty('--message-accent', resolvedAccent)
       row.dataset.continuation = String(continuesRun)
-      row.append(participantAvatar(senderContact, continuesRun), bubble)
+      const avatar = participantAvatar(senderActor, continuesRun)
+      if (!continuesRun) {
+        avatar.dataset.clickable = 'true'; avatar.tabIndex = 0; avatar.setAttribute('role', 'button')
+        avatar.addEventListener('click', () => host.openActor(messageActorId))
+        avatar.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') host.openActor(messageActorId) })
+      }
+      row.append(avatar, bubble)
       bubbles.appendChild(row)
-      priorGroupSpeakerId = senderContact.id
+      priorGroupSpeakerId = messageActorId
     } else {
       bubbles.appendChild(bubble)
       priorGroupSpeakerId = ''
@@ -361,10 +375,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     bubbles.appendChild(checking)
   } else if (busy) {
     const pending = el('div', conversation.kind === 'group' ? 'lp-group-typing' : 'lp-bubble lp-bubble-pending')
-    const busyContact = host.state.contacts.find((entry) => entry.id === busy.speakerContactId)
-    if (conversation.kind === 'group') pending.appendChild(el('span', '', `${busyContact?.name || 'Someone'} is typing…`))
+    const busyActor = resolvePocketActor(host.state, busy.speakerContactId)
+    if (conversation.kind === 'group') pending.appendChild(el('span', '', `${busyActor?.name || 'Someone'} is typing…`))
     else pending.dataset.sender = 'contact'
-    pending.setAttribute('role', 'status'); pending.setAttribute('aria-label', conversation.kind === 'group' ? `${busyContact?.name || 'Someone'} is typing` : 'Contact is typing')
+    pending.setAttribute('role', 'status'); pending.setAttribute('aria-label', conversation.kind === 'group' ? `${busyActor?.name || 'Someone'} is typing` : 'Contact is typing')
     const dots = el('span', 'lp-typing-dots')
     dots.append(el('i'), el('i'), el('i'))
     pending.appendChild(dots)
@@ -391,30 +405,30 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const sparkle = scenePresent || conversation.pause
     ? button('⋯', 'lp-button lp-button-icon lp-manual-reply')
     : host.iconButton('sparkle', 'Generate one contact reply')
-  const selectedGroupSpeaker = conversation.kind === 'group' && conversation.participantContactIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : 'auto'
-  const selectedGroupContact = selectedGroupSpeaker === 'auto' ? null : host.state.contacts.find((entry) => entry.id === selectedGroupSpeaker)
-  const generationLabel = conversation.kind === 'group' ? selectedGroupContact ? `Generate one reply from ${selectedGroupContact.name}` : 'Generate the next natural group burst' : 'Generate one contact reply'
+  const selectedGroupSpeaker = conversation.kind === 'group' && memberActorIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : 'auto'
+  const selectedGroupActor = selectedGroupSpeaker === 'auto' ? null : resolvePocketActor(host.state, selectedGroupSpeaker)
+  const generationLabel = conversation.kind === 'group' ? selectedGroupActor ? `Generate one reply from ${selectedGroupActor.name}` : 'Generate the next natural group burst' : 'Generate one contact reply'
   sparkle.setAttribute('aria-label', scenePresent ? 'Manually generate a reply while contact is here' : conversation.pause ? 'Manually generate a reply in paused conversation' : generationLabel)
   sparkle.title = scenePresent ? 'Manual reply — this contact is currently with you' : conversation.pause ? 'Manual reply — conversation is paused' : generationLabel
   sparkle.disabled = !host.generationAvailable || replyBusy
   const speakerMenu = el('details', 'lp-speaker-menu')
   if (conversation.kind === 'group') {
-    const summary = el('summary', '', selectedGroupContact ? `Next reply: ${selectedGroupContact.name} ×` : `${conversation.participantContactIds.length} contacts · Auto speaker`)
+    const summary = el('summary', '', selectedGroupActor ? `Next reply: ${selectedGroupActor.name} ×` : `${memberActorIds.length} participants · Auto speaker`)
     const sheet = el('div', 'lp-speaker-sheet')
     sheet.appendChild(el('strong', '', 'Who replies?'))
     const auto = button(`${selectedGroupSpeaker === 'auto' ? '✓ ' : ''}Auto`, 'lp-speaker-option')
     auto.addEventListener('click', () => { speakerMenu.open = false; host.selectGroupSpeaker(conversation.id, 'auto') })
     sheet.appendChild(auto)
-    for (const contactId of conversation.participantContactIds) {
-      const contact = host.state.contacts.find((entry) => entry.id === contactId)
-      if (!contact) continue
-      const option = button(`${selectedGroupSpeaker === contact.id ? '✓ ' : ''}${contact.name}`, 'lp-speaker-option')
-      option.addEventListener('click', () => { speakerMenu.open = false; host.selectGroupSpeaker(conversation.id, contact.id) })
+    for (const actorId of memberActorIds) {
+      const actor = resolvePocketActor(host.state, actorId)
+      if (!actor) continue
+      const option = button(`${selectedGroupSpeaker === actor.actorId ? '✓ ' : ''}${actor.name}`, 'lp-speaker-option')
+      option.addEventListener('click', () => { speakerMenu.open = false; host.selectGroupSpeaker(conversation.id, actor.actorId) })
       sheet.appendChild(option)
     }
     speakerMenu.append(summary, sheet)
   } else speakerMenu.hidden = true
-  sparkle.addEventListener('click', () => host.generateReply(conversation.id, conversation.kind === 'group' ? selectedGroupSpeaker : conversation.participantContactIds[0]))
+  sparkle.addEventListener('click', () => host.generateReply(conversation.id, conversation.kind === 'group' ? selectedGroupSpeaker : memberActorIds[0]))
   const textarea = el('textarea', 'lp-textarea'); textarea.rows = 1; textarea.placeholder = 'Message…'; textarea.value = host.draft
   textarea.dataset.pocketComposer = conversation.id
   const resizeComposer = () => {

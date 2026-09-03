@@ -57,6 +57,11 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     const option = el('option', '', label); option.value = value; option.selected = (contact?.colorMode || 'pocket') === value; option.disabled = value === 'source' && !contact?.sourceAccent; colorMode.appendChild(option)
   }
   const colorModeLabel = el('label', 'lp-label', 'Color source'); colorModeLabel.appendChild(colorMode)
+  const relationship = el('select', 'lp-select')
+  for (const [value, label] of [['background', 'Background / plot actor'], ['close', 'Close to this character']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = (contact?.relationship || 'background') === value; relationship.appendChild(option)
+  }
+  const relationshipLabel = el('label', 'lp-label', 'Relationship importance'); relationshipLabel.appendChild(relationship)
   const inScene = el('input'); inScene.type = 'checkbox'; inScene.checked = contact?.presence.inScene || false
   const sceneRow = el('label', 'lp-card lp-row-between'); sceneRow.append(el('span', 'lp-title', 'Here in current scene'), inScene)
   const pinned = el('input'); pinned.type = 'checkbox'; pinned.checked = contact?.contextPolicy.pinned || false
@@ -82,6 +87,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     if (!name.value.trim()) { host.showError('A contact needs a name.'); return }
     host.send('lumiphone:save_contact', { contact: {
       id: contact?.id, name: name.value.trim(), role: role.value.trim(), identityBrief: description.value.trim(), description: description.value.trim(), sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
+      relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
       contextPolicy: { pinned: pinned.checked },
       generationPolicy: { relevant: relevant.checked },
@@ -94,7 +100,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
       source: contact?.source || (draft ? { kind: 'npc', origin: 'generated', description: description.value.trim() } : { kind: 'npc', origin: 'manual', description: description.value.trim() }),
     } })
   }
-  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
+  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button('Use source photo', 'lp-button lp-button-quiet')
@@ -186,7 +192,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     hero.append(avatar(contact), el('h2', 'lp-title', contact.name), el('p', 'lp-copy', contact.identityBrief || contact.description || 'No compact identity brief.'))
     if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
-    hero.append(el('span', 'lp-eyebrow', source))
+    hero.append(el('span', 'lp-eyebrow', `${source} · ${contact.relationship === 'close' ? 'Close connection' : 'Background actor'}`))
     const presence = el('div', 'lp-card')
     presence.append(
       el('div', 'lp-title', contact.presence.inScene ? 'Here now' : 'Not in current scene'),
@@ -196,9 +202,9 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
     content.append(hero, presence)
-    if (contact.source.kind !== 'npc') {
+    if (contact.source.kind !== 'npc' || contact.source.origin === 'discovered') {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === 'profile-refresh' && entry.phase !== 'complete' && entry.phase !== 'error')
-      const refresh = button('Refresh compact profile ✦', 'lp-button lp-button-quiet')
+      const refresh = button(contact.source.kind === 'npc' ? 'Describe from RP ✦' : 'Refresh compact profile ✦', 'lp-button lp-button-quiet')
       refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation)
       refresh.addEventListener('click', () => host.send('lumiphone:refresh_contact_profile', { contactId: contact.id }))
       content.appendChild(refresh)

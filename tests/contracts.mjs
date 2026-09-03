@@ -7,6 +7,7 @@ const manifest = JSON.parse(await readFile(new URL('spindle.json', root), 'utf8'
 const backendSource = await readFile(new URL('src/backend.ts', root), 'utf8')
 const frontendSource = await readFile(new URL('src/frontend.ts', root), 'utf8')
 const controllerSource = await readFile(new URL('src/frontend/controller.ts', root), 'utf8')
+const messagesSource = await readFile(new URL('src/frontend/apps/messages.ts', root), 'utf8')
 const surfaceSource = await readFile(new URL('src/frontend/surface.ts', root), 'utf8')
 const stylesSource = await readFile(new URL('src/styles.ts', root), 'utf8')
 
@@ -18,12 +19,14 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile']) {
+for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', "action === 'conversation'"]) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView']) {
   assert.ok(`${frontendSource}\n${controllerSource}\n${surfaceSource}`.includes(token), `frontend contract missing ${token}`)
 }
+assert.ok(controllerSource.includes('oldThreadNearBottom') && controllerSource.includes('thread.scrollHeight'), 'thread rerenders must preserve/follow the GC scroll anchor intentionally')
+for (const token of ['participantActorIds', 'resolvePocketActor', 'lp-actor-link']) assert.ok(messagesSource.includes(token), `message actor UI missing ${token}`)
 for (const token of ['.lp-thread', '.lp-camera', '.lp-timeline', '.lp-progress', '@media (max-width: 720px)']) {
   assert.ok(stylesSource.includes(token), `style contract missing ${token}`)
 }
@@ -148,7 +151,8 @@ const firstState = frontendMessages.find((message) => message.type === 'lumiphon
 assert.equal(firstState.state.chatId, 'chat-a')
 assert.equal(firstState.state.characterId, 'char-a')
 assert.equal(firstState.state.characterName, 'Alice')
-assert.equal(firstState.state.version, 9)
+assert.equal(firstState.state.version, 10)
+assert.deepEqual(firstState.state.discoveredActors, [])
 assert.deepEqual(firstState.state.references, [])
 assert.deepEqual(firstState.state.groupBatches, [])
 assert.equal(firstState.state.contacts[0].source.kind, 'character')
@@ -437,6 +441,65 @@ await backendEvents.get('TOOL_INVOCATION')({
 })
 assert.equal(storage.get('phones/chat-a__char-a.json').notes.filter((note) => note.title === 'Private thought').length, 1)
 assert.equal(storage.get('phones/chat-a__char-a.json').activities.filter((activity) => activity.title === 'Journal updated').length, 1)
+
+const lazyDm = await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'lazy-maya-1', args: {
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a',
+    payload: { channel: 'dm', speaker: 'Maya', target: 'Alice', message: 'Tell Shoto he still owes me twenty bucks.' },
+  },
+})
+assert.equal(JSON.parse(lazyDm).ok, true)
+let lazyState = storage.get('phones/chat-a__char-a.json')
+const mayaActor = lazyState.discoveredActors.find((actor) => actor.displayName === 'Maya')
+assert.ok(mayaActor, 'an unknown named DM sender must materialize as a discovered actor')
+assert.equal(lazyState.contacts.some((contact) => contact.name === 'Maya'), false, 'lazy discovery must not clutter Contacts')
+const mayaDm = lazyState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.participantActorIds?.[0] === mayaActor.id)
+assert.equal(mayaDm.messages[0].senderActorId, mayaActor.id)
+assert.equal(mayaDm.messages[0].senderContactId, undefined)
+await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'lazy-maya-2', args: {
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: { name: 'Maya' }, text: 'Still twenty bucks.' },
+  },
+})
+lazyState = storage.get('phones/chat-a__char-a.json')
+assert.equal(lazyState.discoveredActors.filter((actor) => actor.displayName === 'Maya').length, 1, 'repeat names must reuse the same discovered actor')
+assert.equal(lazyState.conversations.find((conversation) => conversation.id === mayaDm.id).messages.length, 2)
+
+const groupCreateTool = await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'lazy-group-create', args: {
+    action: 'conversation', chat_id: 'chat-a', character_id: 'char-a',
+    payload: { kind: 'group', title: 'Agency Staff', participants: [{ name: 'Maya', relationship: 'close' }, 'Jun'] },
+  },
+})
+assert.equal(JSON.parse(groupCreateTool).ok, true)
+lazyState = storage.get('phones/chat-a__char-a.json')
+const agencyGroup = lazyState.conversations.find((conversation) => conversation.title === 'Agency Staff')
+const junActor = lazyState.discoveredActors.find((actor) => actor.displayName === 'Jun')
+assert.deepEqual(new Set(agencyGroup.participantActorIds), new Set([mayaActor.id, junActor.id]))
+assert.equal(lazyState.discoveredActors.find((actor) => actor.id === mayaActor.id).relationship, 'close')
+const groupMessageTool = await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'lazy-group-message', args: {
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a',
+    payload: { channel: 'gc', conversation: 'Agency Staff', speaker: 'Jun', text: 'conference room changed to three, btw' },
+  },
+})
+assert.equal(JSON.parse(groupMessageTool).ok, true)
+const rejectedOutsider = await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'lazy-group-outsider', args: {
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a',
+    payload: { channel: 'gc', conversation: 'Agency Staff', speaker: 'Random Receptionist', text: 'I have opinions.' },
+  },
+})
+assert.match(rejectedOutsider, /not a participant/i)
+assert.equal(storage.get('phones/chat-a__char-a.json').discoveredActors.some((actor) => actor.displayName === 'Random Receptionist'), false, 'rejected GC speech must not mutate membership or actor state')
+const mayaContactCount = storage.get('phones/chat-a__char-a.json').contacts.length
+await frontendHandler({ type: 'lumiphone:promote_discovered_actor', requestId: 'promote-maya', chatId: 'chat-a', characterId: 'char-a', actorId: mayaActor.id }, 'user-a')
+lazyState = storage.get('phones/chat-a__char-a.json')
+const promotedMaya = lazyState.contacts.find((contact) => contact.source?.kind === 'npc' && contact.source.discoveredActorId === mayaActor.id)
+assert.ok(promotedMaya, 'tapping a discovered actor must materialize one minimal Contact')
+assert.equal(lazyState.contacts.length, mayaContactCount + 1)
+assert.equal(lazyState.conversations.find((conversation) => conversation.id === mayaDm.id).messages[0].senderActorId, mayaActor.id, 'promotion must not rewrite historical message identity')
+assert.equal(lazyState.discoveredActors.find((actor) => actor.id === mayaActor.id).promotedContactId, promotedMaya.id)
 
 const readState = storage.get('phones/chat-a__char-a.json')
 const now = new Date().toISOString()
@@ -1007,7 +1070,7 @@ groupUiState.state = structuredClone(storage.get('phones/chat-a__char-a.json'))
 backendReceiver(groupUiState)
 backendReceiver({ type: 'lumiphone:conversation_opened', conversationId: groupId })
 assert.equal(dockRoot.querySelector('.lp-speaker-select'), null, 'the permanent speaker dropdown must not occupy the composer row')
-assert.match(dockRoot.querySelector('.lp-speaker-menu summary').textContent, /contacts · Auto speaker/)
+assert.match(dockRoot.querySelector('.lp-speaker-menu summary').textContent, /participants · Auto speaker/)
 const conversationMenu = dockRoot.querySelector('.lp-conversation-menu')
 conversationMenu.open = true
 assert.ok([...conversationMenu.querySelectorAll('button')].some((node) => node.textContent === 'Participants'))

@@ -5,6 +5,7 @@ import type {
   PocketReferenceMessage,
   PocketReferenceScope,
 } from '../types.js'
+import { conversationActorIds, resolvePocketActor } from '../domain/actors.js'
 
 function compact(value: string, max: number): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, max)
@@ -33,19 +34,21 @@ export function createPocketReference(input: {
   const messages: PocketReferenceMessage[] = sourceMessages.flatMap((message) => message.sender === 'system' ? [] : [{
     messageId: message.id,
     sender: message.sender,
+    senderActorId: message.senderActorId,
     senderContactId: message.senderContactId,
     senderName: compact(message.senderName || (message.sender === 'persona' ? state.pocketPersona.displayName : 'Participant'), 120),
     text: compact(message.text, 420),
     createdAt: message.createdAt,
   }])
-  const participants = conversation.participantContactIds.slice(0, 16).flatMap((contactId) => {
-    const contact = state.contacts.find((entry) => entry.id === contactId)
-    if (!contact) return []
+  const participants = conversationActorIds(conversation).slice(0, 16).flatMap((actorId) => {
+    const actor = resolvePocketActor(state, actorId)
+    if (!actor) return []
     return [{
-      contactId: contact.id,
-      name: compact(contact.name, 120),
-      role: compact(contact.role, 100),
-      identityBrief: compact(contact.identityBrief, 180),
+      actorId,
+      contactId: actor.contact?.id,
+      name: compact(actor.name, 120),
+      role: compact(actor.role, 100),
+      identityBrief: compact(actor.identityBrief, 180),
     }]
   })
   const kind = conversation.kind === 'group' ? 'Group chat' : 'Direct message'
