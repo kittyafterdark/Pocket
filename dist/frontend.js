@@ -2006,6 +2006,57 @@ function renderMessagesView(host) {
   return page;
 }
 
+// src/frontend/components/ui.ts
+function classes(...values) {
+  return values.filter(Boolean).join(" ");
+}
+function identityBlock(options) {
+  const root = el("div", classes("lp-identity", options.prominent && "lp-identity-prominent", options.centered && "lp-identity-centered", options.className));
+  const line = el("div", "lp-identity-line");
+  line.appendChild(el("strong", "lp-identity-name", options.name));
+  if (options.meta)
+    line.appendChild(el("span", "lp-identity-meta", options.meta));
+  root.appendChild(line);
+  if (options.description)
+    root.appendChild(el("p", "lp-identity-description", options.description));
+  return root;
+}
+function statusBadge(label, tone = "neutral") {
+  const node = el("span", "lp-status-badge", label);
+  node.dataset.tone = tone;
+  return node;
+}
+function actionGroup(className = "") {
+  return el("div", classes("lp-actions", className));
+}
+function sectionBlock(label, help = "", className = "") {
+  const section = el("section", classes("lp-section", className));
+  const head = el("header", "lp-section-head");
+  head.appendChild(el("div", "lp-section-label", label));
+  if (help)
+    head.appendChild(el("p", "lp-section-help", help));
+  const body = el("div", "lp-section-body");
+  section.append(head, body);
+  return { section, body };
+}
+function fieldBlock(label, control, help = "") {
+  const field = el("label", "lp-field");
+  field.appendChild(el("span", "lp-field-label", label));
+  field.appendChild(control);
+  if (help)
+    field.appendChild(el("span", "lp-field-help", help));
+  return field;
+}
+function controlRow(label, control, help = "") {
+  const row2 = el("label", "lp-card lp-control-row");
+  const copy = el("span", "lp-control-copy");
+  copy.appendChild(el("span", "lp-control-label", label));
+  if (help)
+    copy.appendChild(el("span", "lp-control-help", help));
+  row2.append(copy, control);
+  return row2;
+}
+
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
@@ -2054,8 +2105,7 @@ function contactEditor(host, contact, draft = null) {
   const accent = el("input", "lp-color-input");
   accent.type = "color";
   accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || "") ? contact?.accent || draft.accent : "#8b7dff";
-  const colorRow = el("label", "lp-card lp-row-between");
-  colorRow.append(el("span", "lp-title", "Contact color"), accent);
+  const colorRow = controlRow("Contact color", accent);
   const colorMode = el("select", "lp-select");
   for (const [value, label] of [["pocket", "Pocket color"], ["source", contact?.sourceAccent ? "Inherit source color" : "Inherit source color (unavailable)"]]) {
     const option = el("option", "", label);
@@ -2064,8 +2114,7 @@ function contactEditor(host, contact, draft = null) {
     option.disabled = value === "source" && !contact?.sourceAccent;
     colorMode.appendChild(option);
   }
-  const colorModeLabel = el("label", "lp-label", "Color source");
-  colorModeLabel.appendChild(colorMode);
+  const colorModeLabel = fieldBlock("Color source", colorMode);
   const relationship = el("select", "lp-select");
   for (const [value, label] of [["background", "Background / plot actor"], ["close", "Close to this character"]]) {
     const option = el("option", "", label);
@@ -2073,33 +2122,27 @@ function contactEditor(host, contact, draft = null) {
     option.selected = (contact?.relationship || "background") === value;
     relationship.appendChild(option);
   }
-  const relationshipLabel = el("label", "lp-label", "Relationship importance");
-  relationshipLabel.appendChild(relationship);
+  const relationshipLabel = fieldBlock("Relationship importance", relationship);
   const inScene = el("input");
   inScene.type = "checkbox";
   inScene.checked = contact?.presence.inScene || false;
-  const sceneRow = el("label", "lp-card lp-row-between");
-  sceneRow.append(el("span", "lp-title", "Here in current scene"), inScene);
+  const sceneRow = controlRow("Here in current scene", inScene);
   const pinned = el("input");
   pinned.type = "checkbox";
   pinned.checked = contact?.contextPolicy.pinned || false;
-  const pinRow = el("label", "lp-card lp-row-between");
-  pinRow.append(el("span", "lp-title", "Pin compact brief to model context"), pinned);
+  const pinRow = controlRow("Pin compact brief to model context", pinned);
   const relevant = el("input");
   relevant.type = "checkbox";
   relevant.checked = contact?.generationPolicy.relevant ?? true;
-  const relevantRow = el("label", "lp-card lp-row-between");
-  relevantRow.append(el("span", "lp-title", "Relevant to Pocket generation"), relevant);
+  const relevantRow = controlRow("Relevant to Pocket generation", relevant);
   const remote = el("input");
   remote.type = "checkbox";
   remote.checked = contact?.messagingPolicy.remoteEligible ?? true;
-  const remoteRow = el("label", "lp-card lp-row-between");
-  remoteRow.append(el("span", "lp-title", "Eligible for remote messages"), remote);
+  const remoteRow = controlRow("Eligible for remote messages", remote);
   const ambientHere = el("input");
   ambientHere.type = "checkbox";
   ambientHere.checked = contact?.messagingPolicy.allowAmbientInScene || false;
-  const ambientHereRow = el("label", "lp-card lp-row-between");
-  ambientHereRow.append(el("span", "lp-title", "Allow ambient texts while in scene"), ambientHere);
+  const ambientHereRow = controlRow("Allow ambient texts while in scene", ambientHere);
   const style = contact?.messagingStyle || draft?.messagingStyle || { talkativeness: 50, fragmentation: 35 };
   const talkativeness = el("input");
   talkativeness.type = "range";
@@ -2159,7 +2202,7 @@ function contactEditor(host, contact, draft = null) {
       source: contact?.source || (draft ? { kind: "npc", origin: "generated", description: description.value.trim() } : { kind: "npc", origin: "manual", description: description.value.trim() })
     } });
   };
-  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Stable identity brief", description, "Role, personality, relationship, and enduring traits."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
@@ -2177,8 +2220,7 @@ function contactEditor(host, contact, draft = null) {
 }
 function importView(host) {
   const { page, content } = host.page("Add Contact", "Character, Council, or Pocket NPC");
-  const manual = el("section", "lp-card lp-contact-import");
-  manual.appendChild(el("div", "lp-eyebrow", "Pocket NPC"));
+  const { section: manual, body: manualBody } = sectionBlock("Pocket NPC", "Generate a compact NPC seed or create one manually.", "lp-card lp-contact-import");
   const description = el("textarea", "lp-textarea");
   description.placeholder = "Describe someone; Pocket will generate one compact contact profile.";
   description.maxLength = 2000;
@@ -2194,14 +2236,14 @@ function importView(host) {
   });
   const primitive = button("Create manually", "lp-button lp-button-quiet");
   primitive.addEventListener("click", () => host.select("", "new"));
-  manual.append(description, generate, primitive);
+  manualBody.append(description, generate, primitive);
   if (host.npcDraft) {
     const draft = host.npcDraft;
     const preview = el("section", "lp-card lp-npc-draft");
     const previewHead = el("div", "lp-row-between");
-    previewHead.append(el("span", "lp-eyebrow", "Unsaved preview"), el("span", "lp-copy", `${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`));
-    preview.append(previewHead, el("h3", "lp-title", draft.name), el("p", "lp-copy", draft.role), el("p", "lp-copy", draft.identityBrief));
-    const actions = el("div", "lp-draft-actions");
+    previewHead.append(el("span", "lp-eyebrow", "Unsaved preview"), statusBadge(`${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`));
+    preview.append(previewHead, identityBlock({ name: draft.name, meta: draft.role, description: draft.identityBrief }));
+    const actions = actionGroup("lp-draft-actions");
     const retry = button("Retry", "lp-button lp-button-quiet");
     retry.disabled = Boolean(npcOperation);
     retry.addEventListener("click", () => host.send("lumiphone:generate_contact", { description: draft.sourceDescription }));
@@ -2216,7 +2258,7 @@ function importView(host) {
       actions.prepend(previous);
     }
     preview.appendChild(actions);
-    manual.appendChild(preview);
+    manualBody.appendChild(preview);
   }
   if (npcOperation) {
     const progress = el("div", "lp-operation-progress");
@@ -2226,35 +2268,38 @@ function importView(host) {
     const message = el("strong", "", npcOperation.message || "Generating contact…");
     message.dataset.operationMessage = "true";
     progress.append(el("span", "lp-indeterminate"), message);
-    manual.appendChild(progress);
+    manualBody.appendChild(progress);
   }
   content.appendChild(manual);
-  const bank = el("section", "lp-contact-source-section");
-  bank.appendChild(el("div", "lp-eyebrow", "NPC Bank"));
-  bank.appendChild(el("p", "lp-copy", "Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP."));
+  const { section: bank, body: bankBody } = sectionBlock("NPC Bank", "Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.", "lp-contact-source-section");
   if (!host.npcBank.length) {
-    bank.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
+    bankBody.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row2 = el("div", "lp-card lp-row-between");
-      const copy = el("div");
-      copy.append(el("strong", "", entry.name), el("span", "lp-copy", entry.role || "Pocket NPC"));
-      if (entry.identityBrief)
-        copy.appendChild(el("p", "lp-copy", entry.identityBrief));
+      const row2 = el("div", "lp-card lp-list-row");
+      const identity = identityBlock({
+        name: entry.name,
+        meta: entry.role || "Pocket NPC",
+        description: entry.identityBrief
+      });
       const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
-      const actions = el("div", "lp-draft-actions");
-      const add = button(linked ? "Added" : "Add to this RP", "lp-button lp-button-quiet");
-      add.disabled = Boolean(linked);
-      add.addEventListener("click", () => host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
+      const actions = actionGroup();
+      if (linked)
+        actions.appendChild(statusBadge("Added", "accent"));
+      else {
+        const add = button("Add to this RP", "lp-button lp-button-quiet");
+        add.addEventListener("click", () => host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
+        actions.appendChild(add);
+      }
       const forget = button("Forget", "lp-button lp-button-quiet");
       forget.addEventListener("click", () => {
         if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
           host.send("lumiphone:npc_bank_delete", { bankId: entry.id });
         }
       });
-      actions.append(add, forget);
-      row2.append(copy, actions);
-      bank.appendChild(row2);
+      actions.appendChild(forget);
+      row2.append(identity, actions);
+      bankBody.appendChild(row2);
     }
   }
   content.appendChild(bank);
@@ -2262,17 +2307,20 @@ function importView(host) {
   for (const option of host.sources)
     grouped.set(option.kind, [...grouped.get(option.kind) || [], option]);
   for (const [kind, sources] of grouped) {
-    const section = el("section", "lp-contact-source-section");
-    section.appendChild(el("div", "lp-eyebrow", kind === "character" ? "Lumiverse Characters" : "Active Council"));
+    const { section, body } = sectionBlock(kind === "character" ? "Lumiverse Characters" : "Active Council", "", "lp-contact-source-section");
     for (const source of sources) {
-      const row2 = el("div", "lp-card lp-row-between");
-      const copy = el("div");
-      copy.append(el("strong", "", source.name), el("span", "lp-copy", source.role));
-      const add = button(source.importedContactId ? "Imported" : "Add", "lp-button lp-button-quiet");
-      add.disabled = Boolean(source.importedContactId);
-      add.addEventListener("click", () => host.send("lumiphone:import_contact", { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }));
-      row2.append(copy, add);
-      section.appendChild(row2);
+      const row2 = el("div", "lp-card lp-list-row");
+      const identity = identityBlock({ name: source.name, meta: source.role });
+      let trailing;
+      if (source.importedContactId)
+        trailing = statusBadge("Imported");
+      else {
+        const add = button("Add", "lp-button lp-button-quiet");
+        add.addEventListener("click", () => host.send("lumiphone:import_contact", { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }));
+        trailing = add;
+      }
+      row2.append(identity, trailing);
+      body.appendChild(row2);
     }
     content.appendChild(section);
   }
@@ -2295,7 +2343,7 @@ function renderContactsView(host) {
   if (contact && host.selectedView === "detail") {
     const { page: page2, content: content2 } = host.page(contact.name, contact.role, { label: "Edit", callback: () => host.select(contact.id, "config") });
     const hero = el("div", "lp-card lp-contact-detail");
-    hero.append(avatar(contact), el("h2", "lp-title", contact.name), el("p", "lp-copy", contact.identityBrief || contact.description || "No compact identity brief."));
+    hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || "No compact identity brief.", prominent: true, centered: true }));
     if (contact.sceneNote)
       hero.append(el("p", "lp-scene-note", contact.sceneNote));
     const source = contact.source.kind === "character" ? "Linked Character" : contact.source.kind === "council" ? "Linked Council member" : `Pocket NPC · ${contact.source.origin}`;
@@ -2308,11 +2356,10 @@ function renderContactsView(host) {
     if (contact.source.kind === "npc") {
       const bankId = contact.source.bankId;
       const bankEntry = bankId ? host.npcBank.find((entry) => entry.id === bankId) || null : null;
-      const bankCard = el("div", "lp-card");
-      bankCard.append(el("div", "lp-title", bankEntry ? "Saved to NPC Bank" : contact.source.bankId ? "NPC Bank copy missing" : "Reusable NPC"), el("p", "lp-copy", "NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically."));
+      const { section: bankCard, body: bankBody } = sectionBlock(bankEntry ? "Saved to NPC Bank" : contact.source.bankId ? "NPC Bank copy missing" : "Reusable NPC", "NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically.", "lp-card");
       const saveBank = button(bankEntry ? "Update NPC Bank" : contact.source.bankId ? "Restore NPC Bank" : "Save to NPC Bank", "lp-button lp-button-quiet");
       saveBank.addEventListener("click", () => host.send("lumiphone:npc_bank_save", { contactId: contact.id }));
-      bankCard.appendChild(saveBank);
+      bankBody.appendChild(saveBank);
       content2.appendChild(bankCard);
     }
     if (contact.source.kind !== "npc" || contact.source.origin === "discovered") {
@@ -2366,9 +2413,8 @@ function renderContactsView(host) {
     }).sort((a, b) => Number(b.presence.inScene) - Number(a.presence.inScene) || Date.parse(b.presence.lastSceneAt || "0") - Date.parse(a.presence.lastSceneAt || "0"));
     for (const entry of contacts) {
       const row2 = button("", "lp-card lp-contact-row");
-      const copy = el("div", "lp-grow");
-      copy.append(el("strong", "", entry.name), el("span", "lp-copy", entry.role));
-      row2.append(avatar(entry), copy, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
+      const identity = identityBlock({ name: entry.name, meta: entry.role, className: "lp-grow" });
+      row2.append(avatar(entry), identity, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
       row2.addEventListener("click", () => host.select(entry.id, "detail"));
       list.appendChild(row2);
     }
@@ -5000,6 +5046,74 @@ var PHONE_STYLES = `
   .lp-context-exact { max-height:220px; overflow:auto; white-space:pre-wrap; word-break:break-word; padding:9px; border-radius:9px; background:color-mix(in srgb,var(--lp-bg) 75%,black); font:8px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; }
   .lp-generation-history { display:grid; gap:5px; }
   .lp-generation-run[data-status="failed"] { border-color:color-mix(in srgb,#ff6a80 42%,var(--lp-border)); }
+
+  /* Semantic UI primitives.
+     Legacy lp-card/lp-copy/lp-row-* remain compatibility primitives for unmigrated apps. */
+  .lp-section { min-width:0; display:grid; gap:7px; }
+  .lp-section-head { min-width:0; display:grid; gap:3px; }
+  .lp-section-label {
+    color:var(--lp-muted); font-size:8px; line-height:1.2; font-weight:780;
+    letter-spacing:.11em; text-transform:uppercase;
+  }
+  .lp-section-help { margin:0; color:var(--lp-muted); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+  .lp-section-body { min-width:0; display:grid; gap:7px; }
+
+  .lp-identity { min-width:0; display:grid; gap:3px; text-align:left; }
+  .lp-identity-line {
+    min-width:0; display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;
+  }
+  .lp-identity-name {
+    min-width:0; color:var(--lp-text); font-size:11px; font-weight:760;
+    line-height:1.3; overflow-wrap:anywhere;
+  }
+  .lp-identity-meta {
+    min-width:0; color:var(--lp-muted); font-size:9px; font-weight:560;
+    line-height:1.3; overflow-wrap:anywhere;
+  }
+  .lp-identity-description {
+    margin:0; color:var(--lp-muted); font-size:10px; line-height:1.48; overflow-wrap:anywhere;
+  }
+  .lp-identity-prominent .lp-identity-name { font-size:14px; font-weight:790; }
+  .lp-identity-prominent .lp-identity-meta { font-size:10px; }
+  .lp-identity-centered { justify-items:center; text-align:center; }
+  .lp-identity-centered .lp-identity-line { justify-content:center; }
+
+  .lp-list-row {
+    min-width:0; display:flex; align-items:center; justify-content:space-between; gap:10px;
+  }
+  .lp-list-row > .lp-identity { flex:1 1 auto; }
+
+  .lp-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
+  .lp-status-badge {
+    min-height:24px; padding:4px 8px; display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid var(--lp-border); border-radius:999px;
+    background:color-mix(in srgb,var(--lp-surface-2) 80%,transparent);
+    color:var(--lp-muted); font-size:9px; line-height:1; font-weight:760; white-space:nowrap;
+  }
+  .lp-status-badge[data-tone="accent"] {
+    border-color:color-mix(in srgb,var(--lp-accent) 30%,var(--lp-border));
+    background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface));
+    color:color-mix(in srgb,var(--lp-accent) 72%,white);
+  }
+  .lp-status-badge[data-tone="success"] {
+    border-color:color-mix(in srgb,#55d69a 34%,var(--lp-border));
+    background:color-mix(in srgb,#55d69a 9%,var(--lp-surface));
+    color:#79e7b2;
+  }
+  .lp-status-badge[data-tone="danger"] {
+    border-color:color-mix(in srgb,#ff6f87 34%,var(--lp-border));
+    background:color-mix(in srgb,#ff6f87 9%,var(--lp-surface));
+    color:#ff8fa1;
+  }
+
+  .lp-field { min-width:0; display:grid; gap:5px; }
+  .lp-field-label { color:var(--lp-muted); font-size:9px; line-height:1.3; font-weight:680; }
+  .lp-field-help { color:var(--lp-muted); opacity:.78; font-size:8px; line-height:1.4; }
+
+  .lp-control-row { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+  .lp-control-copy { min-width:0; display:grid; gap:2px; }
+  .lp-control-label { color:var(--lp-text); font-size:11px; line-height:1.3; font-weight:720; }
+  .lp-control-help { color:var(--lp-muted); font-size:8px; line-height:1.4; }
 
   .lp-contact-list,.lp-contact-checklist,.lp-contact-source-section,.lp-contact-import { display:grid; gap:7px; }
   .lp-contact-row { width:100%; display:flex; align-items:center; gap:10px; text-align:left; }

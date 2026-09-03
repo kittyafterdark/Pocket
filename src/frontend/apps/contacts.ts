@@ -2,6 +2,7 @@ import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, 
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
+import { actionGroup, controlRow, fieldBlock, identityBlock, sectionBlock, statusBadge } from '../components/ui.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
 
@@ -52,27 +53,27 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   const description = el('textarea', 'lp-textarea'); description.placeholder = 'Stable identity brief — role, personality, relationship, enduring traits'; description.maxLength = 1_200; description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || ''
   const sceneNote = el('textarea', 'lp-textarea'); sceneNote.placeholder = 'Current scene note — temporary state, objective, or reason they are here'; sceneNote.maxLength = 600; sceneNote.value = contact?.sceneNote || ''
   const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || '') ? (contact?.accent || draft!.accent) : '#8b7dff'
-  const colorRow = el('label', 'lp-card lp-row-between'); colorRow.append(el('span', 'lp-title', 'Contact color'), accent)
+  const colorRow = controlRow('Contact color', accent)
   const colorMode = el('select', 'lp-select')
   for (const [value, label] of [['pocket', 'Pocket color'], ['source', contact?.sourceAccent ? 'Inherit source color' : 'Inherit source color (unavailable)']] as const) {
     const option = el('option', '', label); option.value = value; option.selected = (contact?.colorMode || 'pocket') === value; option.disabled = value === 'source' && !contact?.sourceAccent; colorMode.appendChild(option)
   }
-  const colorModeLabel = el('label', 'lp-label', 'Color source'); colorModeLabel.appendChild(colorMode)
+  const colorModeLabel = fieldBlock('Color source', colorMode)
   const relationship = el('select', 'lp-select')
   for (const [value, label] of [['background', 'Background / plot actor'], ['close', 'Close to this character']] as const) {
     const option = el('option', '', label); option.value = value; option.selected = (contact?.relationship || 'background') === value; relationship.appendChild(option)
   }
-  const relationshipLabel = el('label', 'lp-label', 'Relationship importance'); relationshipLabel.appendChild(relationship)
+  const relationshipLabel = fieldBlock('Relationship importance', relationship)
   const inScene = el('input'); inScene.type = 'checkbox'; inScene.checked = contact?.presence.inScene || false
-  const sceneRow = el('label', 'lp-card lp-row-between'); sceneRow.append(el('span', 'lp-title', 'Here in current scene'), inScene)
+  const sceneRow = controlRow('Here in current scene', inScene)
   const pinned = el('input'); pinned.type = 'checkbox'; pinned.checked = contact?.contextPolicy.pinned || false
-  const pinRow = el('label', 'lp-card lp-row-between'); pinRow.append(el('span', 'lp-title', 'Pin compact brief to model context'), pinned)
+  const pinRow = controlRow('Pin compact brief to model context', pinned)
   const relevant = el('input'); relevant.type = 'checkbox'; relevant.checked = contact?.generationPolicy.relevant ?? true
-  const relevantRow = el('label', 'lp-card lp-row-between'); relevantRow.append(el('span', 'lp-title', 'Relevant to Pocket generation'), relevant)
+  const relevantRow = controlRow('Relevant to Pocket generation', relevant)
   const remote = el('input'); remote.type = 'checkbox'; remote.checked = contact?.messagingPolicy.remoteEligible ?? true
-  const remoteRow = el('label', 'lp-card lp-row-between'); remoteRow.append(el('span', 'lp-title', 'Eligible for remote messages'), remote)
+  const remoteRow = controlRow('Eligible for remote messages', remote)
   const ambientHere = el('input'); ambientHere.type = 'checkbox'; ambientHere.checked = contact?.messagingPolicy.allowAmbientInScene || false
-  const ambientHereRow = el('label', 'lp-card lp-row-between'); ambientHereRow.append(el('span', 'lp-title', 'Allow ambient texts while in scene'), ambientHere)
+  const ambientHereRow = controlRow('Allow ambient texts while in scene', ambientHere)
   const style = contact?.messagingStyle || draft?.messagingStyle || { talkativeness: 50, fragmentation: 35 }
   const talkativeness = el('input'); talkativeness.type = 'range'; talkativeness.min = '0'; talkativeness.max = '100'; talkativeness.value = String(style.talkativeness)
   const talkValue = el('span', 'lp-copy', `${talkativeness.value}%`); talkativeness.addEventListener('input', () => { talkValue.textContent = `${talkativeness.value}%` })
@@ -101,7 +102,14 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
       source: contact?.source || (draft ? { kind: 'npc', origin: 'generated', description: description.value.trim() } : { kind: 'npc', origin: 'manual', description: description.value.trim() }),
     } })
   }
-  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
+  content.append(
+    fieldBlock('Name', name),
+    fieldBlock('Role', role),
+    fieldBlock('Stable identity brief', description, 'Role, personality, relationship, and enduring traits.'),
+    fieldBlock('Current scene note', sceneNote, 'Temporary state, objective, or reason they are here.'),
+    colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow,
+    sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow,
+  )
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button('Use source photo', 'lp-button lp-button-quiet')
@@ -117,8 +125,11 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
 
 function importView(host: ContactsViewHost): HTMLDivElement {
   const { page, content } = host.page('Add Contact', 'Character, Council, or Pocket NPC')
-  const manual = el('section', 'lp-card lp-contact-import')
-  manual.appendChild(el('div', 'lp-eyebrow', 'Pocket NPC'))
+  const { section: manual, body: manualBody } = sectionBlock(
+    'Pocket NPC',
+    'Generate a compact NPC seed or create one manually.',
+    'lp-card lp-contact-import',
+  )
   const description = el('textarea', 'lp-textarea'); description.placeholder = 'Describe someone; Pocket will generate one compact contact profile.'; description.maxLength = 2_000
   const generate = button('Generate NPC')
   const npcOperation = [...host.operations.values()].find((entry) => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
@@ -129,14 +140,14 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   })
   const primitive = button('Create manually', 'lp-button lp-button-quiet')
   primitive.addEventListener('click', () => host.select('', 'new'))
-  manual.append(description, generate, primitive)
+  manualBody.append(description, generate, primitive)
   if (host.npcDraft) {
     const draft = host.npcDraft
     const preview = el('section', 'lp-card lp-npc-draft')
     const previewHead = el('div', 'lp-row-between')
-    previewHead.append(el('span', 'lp-eyebrow', 'Unsaved preview'), el('span', 'lp-copy', `${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`))
-    preview.append(previewHead, el('h3', 'lp-title', draft.name), el('p', 'lp-copy', draft.role), el('p', 'lp-copy', draft.identityBrief))
-    const actions = el('div', 'lp-draft-actions')
+    previewHead.append(el('span', 'lp-eyebrow', 'Unsaved preview'), statusBadge(`${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`))
+    preview.append(previewHead, identityBlock({ name: draft.name, meta: draft.role, description: draft.identityBrief }))
+    const actions = actionGroup('lp-draft-actions')
     const retry = button('Retry', 'lp-button lp-button-quiet')
     retry.disabled = Boolean(npcOperation)
     retry.addEventListener('click', () => host.send('lumiphone:generate_contact', { description: draft.sourceDescription }))
@@ -149,7 +160,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
       actions.prepend(previous)
     }
     preview.appendChild(actions)
-    manual.appendChild(preview)
+    manualBody.appendChild(preview)
   }
   if (npcOperation) {
     const progress = el('div', 'lp-operation-progress')
@@ -158,35 +169,42 @@ function importView(host: ContactsViewHost): HTMLDivElement {
     progress.setAttribute('role', 'status')
     const message = el('strong', '', npcOperation.message || 'Generating contact…'); message.dataset.operationMessage = 'true'
     progress.append(el('span', 'lp-indeterminate'), message)
-    manual.appendChild(progress)
+    manualBody.appendChild(progress)
   }
   content.appendChild(manual)
 
-  const bank = el('section', 'lp-contact-source-section')
-  bank.appendChild(el('div', 'lp-eyebrow', 'NPC Bank'))
-  bank.appendChild(el('p', 'lp-copy', 'Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.'))
+  const { section: bank, body: bankBody } = sectionBlock(
+    'NPC Bank',
+    'Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.',
+    'lp-contact-source-section',
+  )
   if (!host.npcBank.length) {
-    bank.appendChild(el('div', 'lp-card lp-copy', 'No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”.'))
+    bankBody.appendChild(el('div', 'lp-card lp-copy', 'No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”.'))
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row = el('div', 'lp-card lp-row-between')
-      const copy = el('div')
-      copy.append(el('strong', '', entry.name), el('span', 'lp-copy', entry.role || 'Pocket NPC'))
-      if (entry.identityBrief) copy.appendChild(el('p', 'lp-copy', entry.identityBrief))
+      const row = el('div', 'lp-card lp-list-row')
+      const identity = identityBlock({
+        name: entry.name,
+        meta: entry.role || 'Pocket NPC',
+        description: entry.identityBrief,
+      })
       const linked = host.state.contacts.find((contact) => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
-      const actions = el('div', 'lp-draft-actions')
-      const add = button(linked ? 'Added' : 'Add to this RP', 'lp-button lp-button-quiet')
-      add.disabled = Boolean(linked)
-      add.addEventListener('click', () => host.send('lumiphone:npc_bank_add', { bankId: entry.id }))
+      const actions = actionGroup()
+      if (linked) actions.appendChild(statusBadge('Added', 'accent'))
+      else {
+        const add = button('Add to this RP', 'lp-button lp-button-quiet')
+        add.addEventListener('click', () => host.send('lumiphone:npc_bank_add', { bankId: entry.id }))
+        actions.appendChild(add)
+      }
       const forget = button('Forget', 'lp-button lp-button-quiet')
       forget.addEventListener('click', () => {
         if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
           host.send('lumiphone:npc_bank_delete', { bankId: entry.id })
         }
       })
-      actions.append(add, forget)
-      row.append(copy, actions)
-      bank.appendChild(row)
+      actions.appendChild(forget)
+      row.append(identity, actions)
+      bankBody.appendChild(row)
     }
   }
   content.appendChild(bank)
@@ -194,15 +212,19 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   const grouped = new Map<string, PocketContactSourceOption[]>()
   for (const option of host.sources) grouped.set(option.kind, [...(grouped.get(option.kind) || []), option])
   for (const [kind, sources] of grouped) {
-    const section = el('section', 'lp-contact-source-section')
-    section.appendChild(el('div', 'lp-eyebrow', kind === 'character' ? 'Lumiverse Characters' : 'Active Council'))
+    const { section, body } = sectionBlock(kind === 'character' ? 'Lumiverse Characters' : 'Active Council', '', 'lp-contact-source-section')
     for (const source of sources) {
-      const row = el('div', 'lp-card lp-row-between')
-      const copy = el('div'); copy.append(el('strong', '', source.name), el('span', 'lp-copy', source.role))
-      const add = button(source.importedContactId ? 'Imported' : 'Add', 'lp-button lp-button-quiet')
-      add.disabled = Boolean(source.importedContactId)
-      add.addEventListener('click', () => host.send('lumiphone:import_contact', { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }))
-      row.append(copy, add); section.appendChild(row)
+      const row = el('div', 'lp-card lp-list-row')
+      const identity = identityBlock({ name: source.name, meta: source.role })
+      let trailing: HTMLElement
+      if (source.importedContactId) trailing = statusBadge('Imported')
+      else {
+        const add = button('Add', 'lp-button lp-button-quiet')
+        add.addEventListener('click', () => host.send('lumiphone:import_contact', { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }))
+        trailing = add
+      }
+      row.append(identity, trailing)
+      body.appendChild(row)
     }
     content.appendChild(section)
   }
@@ -219,7 +241,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   if (contact && host.selectedView === 'detail') {
     const { page, content } = host.page(contact.name, contact.role, { label: 'Edit', callback: () => host.select(contact.id, 'config') })
     const hero = el('div', 'lp-card lp-contact-detail')
-    hero.append(avatar(contact), el('h2', 'lp-title', contact.name), el('p', 'lp-copy', contact.identityBrief || contact.description || 'No compact identity brief.'))
+    hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || 'No compact identity brief.', prominent: true, centered: true }))
     if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
     hero.append(el('span', 'lp-eyebrow', `${source} · ${contact.relationship === 'close' ? 'Close connection' : 'Background actor'}`))
@@ -235,14 +257,14 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     if (contact.source.kind === 'npc') {
       const bankId = contact.source.bankId
       const bankEntry = bankId ? host.npcBank.find((entry) => entry.id === bankId) || null : null
-      const bankCard = el('div', 'lp-card')
-      bankCard.append(
-        el('div', 'lp-title', bankEntry ? 'Saved to NPC Bank' : contact.source.bankId ? 'NPC Bank copy missing' : 'Reusable NPC'),
-        el('p', 'lp-copy', 'NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically.'),
+      const { section: bankCard, body: bankBody } = sectionBlock(
+        bankEntry ? 'Saved to NPC Bank' : contact.source.bankId ? 'NPC Bank copy missing' : 'Reusable NPC',
+        'NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically.',
+        'lp-card',
       )
       const saveBank = button(bankEntry ? 'Update NPC Bank' : contact.source.bankId ? 'Restore NPC Bank' : 'Save to NPC Bank', 'lp-button lp-button-quiet')
       saveBank.addEventListener('click', () => host.send('lumiphone:npc_bank_save', { contactId: contact.id }))
-      bankCard.appendChild(saveBank)
+      bankBody.appendChild(saveBank)
       content.appendChild(bankCard)
     }
     if (contact.source.kind !== 'npc' || contact.source.origin === 'discovered') {
@@ -285,8 +307,8 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     }).sort((a, b) => Number(b.presence.inScene) - Number(a.presence.inScene) || Date.parse(b.presence.lastSceneAt || '0') - Date.parse(a.presence.lastSceneAt || '0'))
     for (const entry of contacts) {
       const row = button('', 'lp-card lp-contact-row')
-      const copy = el('div', 'lp-grow'); copy.append(el('strong', '', entry.name), el('span', 'lp-copy', entry.role))
-      row.append(avatar(entry), copy, el('span', entry.presence.inScene ? 'lp-presence' : 'lp-presence lp-presence-away'))
+      const identity = identityBlock({ name: entry.name, meta: entry.role, className: 'lp-grow' })
+      row.append(avatar(entry), identity, el('span', entry.presence.inScene ? 'lp-presence' : 'lp-presence lp-presence-away'))
       row.addEventListener('click', () => host.select(entry.id, 'detail'))
       list.appendChild(row)
     }
