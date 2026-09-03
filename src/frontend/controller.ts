@@ -13,6 +13,7 @@ import type {
   PocketContactSourceOption,
   PocketActivity,
   PocketRoute,
+  PocketResolvedImage,
   PocketResolvedWallpapers,
   PhoneState,
   PhoneTracker,
@@ -42,6 +43,8 @@ type Cleanup = () => void
 type BackendPayload = Record<string, any>
 
 const PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>'
+
+const EMPTY_RESOLVED_IMAGE: PocketResolvedImage = { url: '', status: 'empty', sourceKind: 'none', sourceLabel: 'Theme gradient' }
 
 const ICONS: Record<string, string> = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
@@ -113,7 +116,10 @@ class PocketController {
   private caps: PhoneCapabilities | null = null
   private swarmProfile: SwarmVisualProfile | null = null
   private generation: PocketGenerationInfo | null = null
-  private resolvedWallpapers: PocketResolvedWallpapers = { deviceHome: '', deviceChat: '', personaHome: '', personaChat: '' }
+  private resolvedWallpapers: PocketResolvedWallpapers = {
+    deviceHome: { ...EMPTY_RESOLVED_IMAGE }, deviceChat: { ...EMPTY_RESOLVED_IMAGE },
+    personaHome: { ...EMPTY_RESOLVED_IMAGE }, personaChat: { ...EMPTY_RESOLVED_IMAGE },
+  }
   private contextPreview: PocketContextDiagnostics | null = null
   private personaPreview: ChatPocketPersona | null = null
   private operations = new Map<string, PocketOperationProgress>()
@@ -868,8 +874,8 @@ class PocketController {
     const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
     const homeSetting = persona?.enabled && persona.homeWallpaper.source ? persona.homeWallpaper : settings.homeWallpaper
     const chatSetting = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : settings.chatWallpaper
-    const homeImage = persona?.enabled && persona.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome
-    const chatImage = persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat
+    const homeImage = (persona?.enabled && persona.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url
+    const chatImage = (persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url
     const imageLayer = (url: string, setting: typeof homeSetting, gradient: string) => url
       ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}`
       : gradient

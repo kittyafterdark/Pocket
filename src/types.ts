@@ -74,11 +74,19 @@ export interface PocketWallpaper {
   scrim: number
 }
 
+export interface PocketResolvedImage {
+  url: string
+  status: 'empty' | 'ready' | 'error'
+  sourceKind: PocketImageSource['kind'] | 'none'
+  sourceLabel: string
+  error?: string
+}
+
 export interface PocketResolvedWallpapers {
-  deviceHome: string
-  deviceChat: string
-  personaHome: string
-  personaChat: string
+  deviceHome: PocketResolvedImage
+  deviceChat: PocketResolvedImage
+  personaHome: PocketResolvedImage
+  personaChat: PocketResolvedImage
 }
 
 export interface PersonaAppearanceOverride {
@@ -274,8 +282,8 @@ export interface PocketReplyDecision {
   relayId?: string
 }
 
-export interface PocketConversationSnapshot {
-  summary: string
+export interface PocketConversationTailSnapshot {
+  text: string
   recentMessageIds: string[]
   updatedAt: string
 }
@@ -323,7 +331,7 @@ export interface PocketConversation {
   unread: number
   pause?: { reason: ConversationPauseReason; createdAt: string; source: 'model' | 'scene' }
   availability: ConversationAvailability
-  snapshot?: PocketConversationSnapshot
+  tailSnapshot?: PocketConversationTailSnapshot
   lastDecision?: PocketReplyDecision
   outgoingBurst?: {
     id: string
@@ -385,9 +393,11 @@ export interface PocketRelay {
   characterId: string
   contactId: string
   conversationId: string
+  /** Outgoing decision burst which created this relay. Absent only on migrated/scene-created relays. */
+  burstId?: string
   reason: ConversationLocalReason
   actorState: 'in_scene' | 'arrived' | 'took_action' | 'continued_in_person'
-  conversationSnapshot: PocketConversationSnapshot
+  conversationTail: PocketConversationTailSnapshot
   latestExchange: string
   sourceMessageId?: string
   timelineEventId: string
@@ -395,10 +405,24 @@ export interface PocketRelay {
   status: 'pending' | 'consumed' | 'dismissed'
   consumedAt?: string
   consumedMessageId?: string
+  injectedAt?: string
+  injectedGenerationId?: string
+  serializedRelayChars?: number
+  serializedRelay?: string
+  relayExchangeMessageCount?: number
+  injectionError?: string
   continuation: {
-    state: 'idle' | 'launching' | 'requested' | 'completed' | 'failed' | 'stopped'
+    state: 'idle' | 'launching' | 'accepted' | 'started' | 'completed' | 'blocked' | 'failed' | 'stopped'
     generationId?: string
-    attemptedAt?: string
+    invokedAt?: string
+    permissionCheckedAt?: string
+    permissions?: { chatMutation: boolean; generation: boolean }
+    method?: 'spindle.chat.appendMessage(triggerGeneration)'
+    hostCallReturnedAt?: string
+    hostAcceptedAt?: string
+    generationStartedAt?: string
+    generationCompletedAt?: string
+    sourceMessageId?: string
     error?: string
   }
 }
@@ -522,7 +546,7 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 6
+  version: 7
   chatId: string
   characterId: string
   characterName: string
@@ -572,6 +596,7 @@ export interface PhoneCapabilities {
   characters: boolean
   personas: boolean
   images: boolean
+  corsProxy: boolean
   imageGen: boolean
   panels: boolean
   push: boolean

@@ -9,6 +9,7 @@
     "build:frontend": "bun build src/frontend.ts --target=browser --format=esm --outfile=dist/frontend.js",
     "typecheck": "bunx tsc --noEmit",
     "verify": "bun run typecheck && bun run build && bun test tests/domain.test.ts && node tests/contracts.mjs",
+    "test:real-host-relay": "node scripts/check-real-host-relay.mjs",
     "mount:local": "node scripts/mount-local.mjs --enable"
   },
   "devDependencies": {

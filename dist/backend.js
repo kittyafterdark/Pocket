@@ -792,6 +792,7 @@ function normalizeConversation(value, contacts, now, makeId) {
   const availability = availabilityValue?.state === "local" && migratedLocalReason ? resumePauseReason ? { state: "local", reason: migratedLocalReason, resumePauseReason } : { state: "local", reason: migratedLocalReason } : availabilityValue?.state === "arriving" || legacyArriving ? { state: "arriving" } : availabilityValue?.state === "paused" && pauseReasons.has(availabilityValue.reason) ? { state: "paused", reason: availabilityValue.reason } : pauseReason ? { state: "paused", reason: pauseReason } : { state: "remote" };
   const burstValue = record3(value.outgoingBurst) ? value.outgoingBurst : null;
   const burstId = clean2(burstValue?.id, 180);
+  const rawTail = value.tailSnapshot && typeof value.tailSnapshot === "object" && !Array.isArray(value.tailSnapshot) ? value.tailSnapshot : value.snapshot && typeof value.snapshot === "object" && !Array.isArray(value.snapshot) ? value.snapshot : null;
   return {
     id: clean2(value.id, 180) || makeId("conversation"),
     kind,
@@ -805,10 +806,10 @@ function normalizeConversation(value, contacts, now, makeId) {
       source: pauseValue?.source === "scene" ? "scene" : "model"
     } : undefined,
     availability,
-    snapshot: record3(value.snapshot) ? {
-      summary: clean2(value.snapshot.summary, 2400),
-      recentMessageIds: (Array.isArray(value.snapshot.recentMessageIds) ? value.snapshot.recentMessageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-8),
-      updatedAt: timestamp(value.snapshot.updatedAt, now)
+    tailSnapshot: rawTail ? {
+      text: clean2(rawTail.text ?? rawTail.summary, 2400),
+      recentMessageIds: (Array.isArray(rawTail.recentMessageIds) ? rawTail.recentMessageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-8),
+      updatedAt: timestamp(rawTail.updatedAt, now)
     } : undefined,
     lastDecision: record3(value.lastDecision) ? {
       rawAction: value.lastDecision.rawAction === "reply" || value.lastDecision.rawAction === "pause" || value.lastDecision.rawAction === "handoff" ? value.lastDecision.rawAction : "none",
@@ -1277,10 +1278,10 @@ var LOCAL_REASONS = new Set(["in_scene", "arrived", "took_action", "continued_in
 function compact(value, max) {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
 }
-function conversationSnapshot(conversation, createdAt) {
+function conversationTailSnapshot(conversation, createdAt) {
   const recent = conversation.messages.slice(-6);
   return {
-    summary: recent.map((message) => `${message.senderName}: ${compact(message.text, 360)}`).join(`
+    text: recent.map((message) => `${message.senderName}: ${compact(message.text, 360)}`).join(`
 `).slice(0, 2400),
     recentMessageIds: recent.map((message) => message.id),
     updatedAt: createdAt
@@ -1342,8 +1343,9 @@ function normalizeReplyDecision(input) {
     burstId: input.burstId
   };
 }
-function pendingRelayContext(state) {
-  const pending = state.relays.filter((relay) => relay.status === "pending").slice(-3);
+function pendingRelayContext(state, options = {}) {
+  const maxChars = Math.max(600, Math.min(6000, options.maxChars || 3600));
+  const pending = options.relayId ? state.relays.filter((relay) => relay.status === "pending" && relay.id === options.relayId).slice(-1) : [];
   if (!pending.length)
     return "";
   return pending.map((relay) => {
@@ -1352,17 +1354,27 @@ function pendingRelayContext(state) {
       "POCKET CONTINUITY RELAY (newer than older scene summaries)",
       `Actor: ${contact?.name || relay.contactId}`,
       `Channel transition: phone -> in-person (${relay.reason})`,
-      `Latest exchange:
-${relay.latestExchange}`,
-      `Conversation snapshot:
-${relay.conversationSnapshot.summary}`,
+      `Conversation tail:
+${relay.conversationTail.text}`,
       "Continue the physical roleplay from this handoff. Do not generate another remote phone reply unless the user explicitly texts from the scene.",
       `Relay provenance: ${relay.id}`
     ].join(`
 `);
   }).join(`
 
-`);
+`).slice(0, maxChars);
+}
+function relayIdFromMessages(messages) {
+  for (const message of [...messages].reverse()) {
+    const metadata = message.sourceMessageMetadata || message.__sourceMessageMetadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+      continue;
+    const value = metadata;
+    if (value.pocketContinuation !== true || typeof value.pocketRelayId !== "string")
+      continue;
+    return value.pocketRelayId.slice(0, 180);
+  }
+  return "";
 }
 function relayLatestExchange(conversation) {
   return conversation.messages.slice(-3).map((message) => `${message.senderName}: ${compact(message.text, 520)}`).join(`
@@ -1372,8 +1384,110 @@ function relayForGeneration(state, generationId) {
   return state.relays.find((relay) => relay.status === "pending" && relay.continuation.generationId === generationId);
 }
 
+// src/backend/image-sources.ts
+var URL_CACHE_PATH = "device/pocket-image-url-cache.json";
+var SOURCE_LABELS = {
+  gallery: "Lumiverse Gallery",
+  asset: "Uploaded asset",
+  url: "Image URL"
+};
+function empty() {
+  return { url: "", status: "empty", sourceKind: "none", sourceLabel: "Theme gradient" };
+}
+function failure(source, error) {
+  return {
+    url: "",
+    status: "error",
+    sourceKind: source.kind,
+    sourceLabel: SOURCE_LABELS[source.kind],
+    error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500)
+  };
+}
+async function getStoredImage(api, source, userId) {
+  if (!api.permissions.has("images"))
+    throw new Error("Images permission is required to resolve this image.");
+  const imageId = source.kind === "gallery" ? source.imageId : source.assetId;
+  const image = await api.images.get(imageId, {
+    specificity: "full",
+    onlyOwned: source.kind === "asset",
+    userId
+  });
+  if (!image)
+    throw new Error(source.kind === "asset" ? "The uploaded asset is missing or is not owned by Pocket." : "The Gallery image is missing.");
+  if (!String(image.mime_type || "").toLowerCase().startsWith("image/"))
+    throw new Error("The selected asset is not an image.");
+  if (!image.url)
+    throw new Error("Lumiverse did not return a renderable image URL.");
+  return { url: image.url, status: "ready", sourceKind: source.kind, sourceLabel: SOURCE_LABELS[source.kind] };
+}
+async function loadUrlCache(api, userId) {
+  const raw = await api.userStorage.getJson(URL_CACHE_PATH, { fallback: { version: 1, entries: [] }, userId });
+  return {
+    version: 1,
+    entries: Array.isArray(raw?.entries) ? raw.entries.flatMap((entry) => {
+      if (!entry || typeof entry !== "object")
+        return [];
+      const value = entry;
+      return typeof value.sourceUrl === "string" && typeof value.assetId === "string" ? [{ sourceUrl: value.sourceUrl.slice(0, 2000), assetId: value.assetId.slice(0, 180), updatedAt: String(value.updatedAt || "") }] : [];
+    }).slice(-32) : []
+  };
+}
+async function resolveRemoteUrl(api, source, userId) {
+  if (source.url.startsWith("/"))
+    return { url: source.url, status: "ready", sourceKind: "url", sourceLabel: SOURCE_LABELS.url };
+  if (!/^https:\/\//i.test(source.url))
+    throw new Error("Pocket image URLs must use HTTPS.");
+  if (!api.permissions.has("images"))
+    throw new Error("Images permission is required to cache a remote image safely.");
+  if (!api.permissions.has("cors_proxy"))
+    throw new Error("CORS Proxy permission is required to verify and cache a remote image.");
+  const cache = await loadUrlCache(api, userId);
+  const cached = [...cache.entries].reverse().find((entry2) => entry2.sourceUrl === source.url);
+  if (cached) {
+    const resolved2 = await getStoredImage(api, { kind: "asset", assetId: cached.assetId }, userId).catch(() => null);
+    if (resolved2)
+      return { ...resolved2, sourceKind: "url", sourceLabel: SOURCE_LABELS.url };
+    cache.entries = cache.entries.filter((entry2) => entry2 !== cached);
+  }
+  const response = await api.cors(source.url, { method: "GET", responseType: "arraybuffer", mediaType: "image" });
+  if (!response || Number(response.status) < 200 || Number(response.status) >= 300) {
+    throw new Error(`Remote image returned ${response?.status || "an invalid response"}${response?.statusText ? ` ${response.statusText}` : ""}.`);
+  }
+  if (response.encoding !== "base64" || !response.body)
+    throw new Error("Lumiverse could not read the remote image bytes.");
+  const mimeType = Object.entries(response.headers || {}).find(([key]) => key.toLowerCase() === "content-type")?.[1]?.split(";")[0]?.trim() || "image/png";
+  if (!mimeType.toLowerCase().startsWith("image/"))
+    throw new Error(`Remote URL returned ${mimeType}, not an image.`);
+  const uploaded = await api.images.uploadFromDataUrl(`data:${mimeType};base64,${response.body}`, {
+    originalFilename: "pocket-remote-wallpaper",
+    userId
+  });
+  if (!uploaded?.id)
+    throw new Error("Lumiverse did not return an asset ID for the cached remote image.");
+  const entry = { sourceUrl: source.url, assetId: uploaded.id, updatedAt: new Date().toISOString() };
+  cache.entries = [...cache.entries.filter((item) => item.sourceUrl !== source.url), entry].slice(-32);
+  await api.userStorage.setJson(URL_CACHE_PATH, cache, { indent: 2, userId });
+  const resolved = await getStoredImage(api, { kind: "asset", assetId: uploaded.id }, userId);
+  return { ...resolved, sourceKind: "url", sourceLabel: SOURCE_LABELS.url };
+}
+async function resolvePocketImageSource(api, source, userId) {
+  if (!source)
+    return empty();
+  try {
+    if (source.kind === "url")
+      return await resolveRemoteUrl(api, source, userId);
+    return await getStoredImage(api, source, userId);
+  } catch (error) {
+    return failure(source, error);
+  }
+}
+function assertPocketImageResolved(result) {
+  if (result.status !== "ready" || !result.url)
+    throw new Error(result.error || "Pocket could not resolve that image.");
+}
+
 // src/backend.ts
-var STATE_VERSION = 6;
+var STATE_VERSION = 7;
 var MAX_MESSAGES2 = 240;
 var MAX_NOTIFICATIONS = 80;
 var MAX_NOTES = 120;
@@ -1516,7 +1630,7 @@ function normalizeState(value, chatId, characterId, characterName) {
       whenKind: item.whenKind === "approximate" || item.whenKind === "relative" || item.whenKind === "unscheduled" ? item.whenKind : "exact",
       whenText: text2(item.whenText, 240) || text2(item.start, 80) || "Unscheduled",
       lane: text2(item.lane, 80) || "Main timeline",
-      completed: bool2(item.completed),
+      completed: item.kind === "phone-handoff" ? true : bool2(item.completed),
       createdBy,
       kind: item.kind === "phone-handoff" ? "phone-handoff" : "event",
       actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 8),
@@ -1624,12 +1738,12 @@ function normalizeState(value, chatId, characterId, characterName) {
     const relayId = text2(item.id, 180);
     const contactId = text2(item.contactId, 180);
     const conversationId = text2(item.conversationId, 180);
-    const snapshot = isRecord(item.conversationSnapshot) ? item.conversationSnapshot : {};
+    const tail = isRecord(item.conversationTail) ? item.conversationTail : isRecord(item.conversationSnapshot) ? item.conversationSnapshot : {};
     const continuation = isRecord(item.continuation) ? item.continuation : {};
     if (!relayId || !contactId || !conversationId)
       return [];
     const reason = item.reason === "arrived" || item.reason === "took_action" || item.reason === "continued_in_person" ? item.reason : "in_scene";
-    const continuationState = continuation.state === "launching" || continuation.state === "requested" || continuation.state === "completed" || continuation.state === "failed" || continuation.state === "stopped" ? continuation.state : "idle";
+    const continuationState = continuation.state === "launching" || continuation.state === "accepted" || continuation.state === "started" || continuation.state === "completed" || continuation.state === "blocked" || continuation.state === "failed" || continuation.state === "stopped" ? continuation.state : continuation.state === "requested" ? "accepted" : "idle";
     return [{
       id: relayId,
       chatId,
@@ -1638,10 +1752,11 @@ function normalizeState(value, chatId, characterId, characterName) {
       conversationId,
       reason,
       actorState: reason,
-      conversationSnapshot: {
-        summary: text2(snapshot.summary, 2400),
-        recentMessageIds: (Array.isArray(snapshot.recentMessageIds) ? snapshot.recentMessageIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(-8),
-        updatedAt: text2(snapshot.updatedAt, 40) || nowIso()
+      burstId: text2(item.burstId, 180) || undefined,
+      conversationTail: {
+        text: text2(tail.text ?? tail.summary, 2400),
+        recentMessageIds: (Array.isArray(tail.recentMessageIds) ? tail.recentMessageIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(-8),
+        updatedAt: text2(tail.updatedAt, 40) || nowIso()
       },
       latestExchange: text2(item.latestExchange, 1800),
       sourceMessageId: text2(item.sourceMessageId, 180) || undefined,
@@ -1650,7 +1765,22 @@ function normalizeState(value, chatId, characterId, characterName) {
       status: item.status === "consumed" || item.status === "dismissed" ? item.status : "pending",
       consumedAt: text2(item.consumedAt, 40) || undefined,
       consumedMessageId: text2(item.consumedMessageId, 180) || undefined,
-      continuation: { state: continuationState, generationId: text2(continuation.generationId, 180) || undefined, attemptedAt: text2(continuation.attemptedAt, 40) || undefined, error: text2(continuation.error, 500) || undefined }
+      continuation: {
+        state: continuationState,
+        generationId: text2(continuation.generationId, 180) || undefined,
+        invokedAt: text2(continuation.invokedAt ?? continuation.attemptedAt, 40) || undefined,
+        permissionCheckedAt: text2(continuation.permissionCheckedAt, 40) || undefined,
+        permissions: isRecord(continuation.permissions) ? {
+          chatMutation: continuation.permissions.chatMutation === true,
+          generation: continuation.permissions.generation === true
+        } : undefined,
+        method: continuation.method === "spindle.chat.appendMessage(triggerGeneration)" ? continuation.method : undefined,
+        hostCallReturnedAt: text2(continuation.hostCallReturnedAt, 40) || undefined,
+        hostAcceptedAt: text2(continuation.hostAcceptedAt, 40) || undefined,
+        generationStartedAt: text2(continuation.generationStartedAt, 40) || undefined,
+        sourceMessageId: text2(continuation.sourceMessageId, 180) || undefined,
+        error: text2(continuation.error, 500) || undefined
+      }
     }];
   });
   const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0);
@@ -1790,6 +1920,7 @@ function capabilities() {
     characters: spindle.permissions.has("characters"),
     personas: spindle.permissions.has("personas"),
     images: spindle.permissions.has("images"),
+    corsProxy: spindle.permissions.has("cors_proxy"),
     imageGen: spindle.permissions.has("image_gen"),
     panels: spindle.permissions.has("ui_panels"),
     push: spindle.permissions.has("push_notification"),
@@ -1799,29 +1930,13 @@ function capabilities() {
 function send(payload, userId) {
   spindle.sendToFrontend(payload, userId);
 }
-async function resolveWallpaperUrl(wallpaper, userId) {
-  const source = wallpaper.source;
-  if (!source)
-    return "";
-  if (source.kind === "url")
-    return /^(https?:\/\/|\/)/i.test(source.url) ? source.url : "";
-  if (!spindle.permissions.has("images"))
-    return "";
-  const imageId = source.kind === "gallery" ? source.imageId : source.assetId;
-  try {
-    const image = await spindle.images.get(imageId, { specificity: "full", userId });
-    return text2(image?.url, 2000);
-  } catch {
-    return "";
-  }
-}
 async function resolveWallpaperUrls(preferences, personaId, userId) {
   const persona = personaId ? preferences.personaAppearance[personaId] : null;
   const [deviceHome, deviceChat, personaHome, personaChat] = await Promise.all([
-    resolveWallpaperUrl(preferences.homeWallpaper, userId),
-    resolveWallpaperUrl(preferences.chatWallpaper, userId),
-    persona?.enabled ? resolveWallpaperUrl(persona.homeWallpaper, userId) : Promise.resolve(""),
-    persona?.enabled ? resolveWallpaperUrl(persona.chatWallpaper, userId) : Promise.resolve("")
+    resolvePocketImageSource(spindle, preferences.homeWallpaper.source, userId),
+    resolvePocketImageSource(spindle, preferences.chatWallpaper.source, userId),
+    resolvePocketImageSource(spindle, persona?.enabled ? persona.homeWallpaper.source : null, userId),
+    resolvePocketImageSource(spindle, persona?.enabled ? persona.chatWallpaper.source : null, userId)
   ]);
   return { deviceHome, deviceChat, personaHome, personaChat };
 }
@@ -1837,6 +1952,26 @@ function assignWallpaper(preferences, payload, forcedSource) {
     preferences.personaAppearance[personaId][target === "persona-chat" ? "chatWallpaper" : "homeWallpaper"] = wallpaper;
   } else
     preferences[target === "device-chat" || target === "chat" ? "chatWallpaper" : "homeWallpaper"] = wallpaper;
+}
+function imageSourceKey(source) {
+  if (!source)
+    return "";
+  return source.kind === "gallery" ? `gallery:${source.imageId}` : source.kind === "asset" ? `asset:${source.assetId}` : `url:${source.url}`;
+}
+async function validateChangedWallpaperSources(existing, next, userId) {
+  const pairs = [
+    [existing.homeWallpaper.source, next.homeWallpaper.source],
+    [existing.chatWallpaper.source, next.chatWallpaper.source]
+  ];
+  const personaIds = new Set([...Object.keys(existing.personaAppearance), ...Object.keys(next.personaAppearance)]);
+  for (const personaId of personaIds) {
+    pairs.push([existing.personaAppearance[personaId]?.homeWallpaper.source || null, next.personaAppearance[personaId]?.homeWallpaper.source || null], [existing.personaAppearance[personaId]?.chatWallpaper.source || null, next.personaAppearance[personaId]?.chatWallpaper.source || null]);
+  }
+  for (const [before, after] of pairs) {
+    if (!after || imageSourceKey(before) === imageSourceKey(after))
+      continue;
+    assertPocketImageResolved(await resolvePocketImageSource(spindle, after, userId));
+  }
 }
 async function sendState(state, userId, reason = "refresh", open = false) {
   const preferences = await loadPreferences(userId);
@@ -1856,6 +1991,10 @@ async function sendState(state, userId, reason = "refresh", open = false) {
     } catch {}
   }
   const resolvedWallpapers = await resolveWallpaperUrls(preferences, activePersona?.id || "", userId);
+  for (const [target, result] of Object.entries(resolvedWallpapers)) {
+    if (result.status === "error")
+      spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || "unknown error"}`);
+  }
   send({ type: "lumiphone:state", state, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
 }
 function viewKey(userId) {
@@ -2092,8 +2231,8 @@ function commitConversationHandoff(state, conversation, contact, decision) {
   const resumePauseReason = conversation.availability.state === "paused" ? conversation.availability.reason : undefined;
   conversation.availability = resumePauseReason ? { state: "local", reason, resumePauseReason } : { state: "local", reason };
   conversation.pause = undefined;
-  conversation.snapshot = conversationSnapshot(conversation, createdAt);
-  const existing = state.relays.find((entry) => entry.status === "pending" && entry.conversationId === conversation.id && decision.burstId && conversation.lastDecision?.burstId === decision.burstId);
+  conversation.tailSnapshot = conversationTailSnapshot(conversation, createdAt);
+  const existing = state.relays.find((entry) => entry.status === "pending" && entry.conversationId === conversation.id && decision.burstId && entry.burstId === decision.burstId);
   if (existing) {
     decision.relayId = existing.id;
     conversation.lastDecision = decision;
@@ -2108,9 +2247,10 @@ function commitConversationHandoff(state, conversation, contact, decision) {
     characterId: state.characterId,
     contactId: contact.id,
     conversationId: conversation.id,
+    burstId: decision.burstId,
     reason,
     actorState: reason,
-    conversationSnapshot: conversation.snapshot,
+    conversationTail: conversation.tailSnapshot,
     latestExchange: relayLatestExchange(conversation),
     sourceMessageId: latestMessageId,
     timelineEventId: eventId,
@@ -2132,7 +2272,7 @@ function commitConversationHandoff(state, conversation, contact, decision) {
     whenText: "Now",
     color: contactAccent(contact),
     lane: "Phone handoffs",
-    completed: false,
+    completed: true,
     createdBy: "model",
     kind: "phone-handoff",
     actorContactIds: [contact.id],
@@ -2150,24 +2290,54 @@ function commitConversationHandoff(state, conversation, contact, decision) {
   return relay;
 }
 async function requestRelayContinuation(chatId, characterId, relayId, userId) {
-  if (!spindle.permissions.has("chat_mutation"))
-    return;
-  const flightKey = `${viewKey(userId)}:${relayId}`;
+  const method = "spindle.chat.appendMessage(triggerGeneration)";
+  const permissions = {
+    chatMutation: spindle.permissions.has("chat_mutation"),
+    generation: spindle.permissions.has("generation")
+  };
+  const invokedAt = nowIso();
+  spindle.log.info(`Pocket relay continuation invoked: relay=${relayId} chat=${chatId} method=${method} chat_mutation=${permissions.chatMutation} generation=${permissions.generation}`);
+  const flightKey = `${viewKey(userId)}:${chatId}`;
   if (relayFlights.has(flightKey))
     return;
   relayFlights.add(flightKey);
   try {
-    const shouldLaunch = await withStateLock(stateKey(chatId, characterId), async () => {
+    const launch = await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
       const relay = state.relays.find((entry) => entry.id === relayId && entry.status === "pending");
-      if (!relay || relay.continuation.state === "launching" || relay.continuation.state === "requested")
-        return false;
-      relay.continuation = { state: "launching", attemptedAt: nowIso() };
+      if (!relay || relay.continuation.state === "launching" || relay.continuation.state === "accepted" || relay.continuation.state === "started")
+        return { proceed: false, error: "" };
+      const missing = [!permissions.chatMutation ? "Chat mutation" : "", !permissions.generation ? "Generation" : ""].filter(Boolean);
+      if (missing.length) {
+        const error = `${missing.join(" and ")} permission${missing.length > 1 ? "s are" : " is"} required to continue in roleplay.`;
+        relay.continuation = {
+          state: "blocked",
+          invokedAt,
+          permissionCheckedAt: nowIso(),
+          permissions,
+          method,
+          error
+        };
+        await saveState(state, userId);
+        await sendState(state, userId, "relay_blocked");
+        return { proceed: false, error };
+      }
+      relay.continuation = {
+        state: "launching",
+        invokedAt,
+        permissionCheckedAt: nowIso(),
+        permissions,
+        method
+      };
       await saveState(state, userId);
-      return true;
+      await sendState(state, userId, "relay_launching");
+      return { proceed: true, error: "" };
     });
-    if (!shouldLaunch)
+    if (!launch.proceed) {
+      if (launch.error)
+        send({ type: "lumiphone:error", error: launch.error }, userId);
       return;
+    }
     const appended = await spindle.chat.appendMessage(chatId, {
       role: "user",
       content: "Continue the current scene from the Pocket conversation handoff.",
@@ -2176,25 +2346,50 @@ async function requestRelayContinuation(chatId, characterId, relayId, userId) {
     await spindle.chat.setMessageHidden(chatId, appended.id, true).catch(() => {
       return;
     });
+    const generationId = text2(appended.generationId, 180);
+    if (!generationId)
+      throw new Error(`Lumiverse returned from ${method} without a generation ID; the continuation was not accepted.`);
+    const hostReturnedAt = nowIso();
+    spindle.log.info(`Pocket relay host call accepted: relay=${relayId} generation=${generationId} message=${appended.id}`);
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
       const relay = state.relays.find((entry) => entry.id === relayId && entry.status === "pending");
       if (!relay)
         return;
-      relay.continuation = { state: "requested", generationId: appended.generationId || relay.continuation.generationId, attemptedAt: relay.continuation.attemptedAt };
+      relay.continuation = {
+        ...relay.continuation,
+        state: relay.continuation.state === "started" ? "started" : "accepted",
+        generationId,
+        sourceMessageId: appended.id,
+        hostCallReturnedAt: hostReturnedAt,
+        hostAcceptedAt: hostReturnedAt,
+        error: undefined
+      };
       await saveState(state, userId);
-      await sendState(state, userId, "relay_requested");
+      await sendState(state, userId, relay.continuation.state === "started" ? "relay_started" : "relay_accepted");
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+    spindle.log.error(`Pocket relay continuation failed: relay=${relayId} method=${method} error=${message}`);
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
       const relay = state.relays.find((entry) => entry.id === relayId && entry.status === "pending");
       if (!relay)
         return;
-      relay.continuation = { state: "failed", attemptedAt: relay.continuation.attemptedAt || nowIso(), error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500) };
+      relay.continuation = {
+        ...relay.continuation,
+        state: "failed",
+        invokedAt: relay.continuation.invokedAt || invokedAt,
+        permissionCheckedAt: relay.continuation.permissionCheckedAt || invokedAt,
+        permissions: relay.continuation.permissions || permissions,
+        method,
+        hostCallReturnedAt: nowIso(),
+        error: message
+      };
       await saveState(state, userId);
       await sendState(state, userId, "relay_failed");
     });
+    send({ type: "lumiphone:error", error: message }, userId);
   } finally {
     relayFlights.delete(flightKey);
   }
@@ -3593,7 +3788,9 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:save_preferences":
       case "lumiphone:save_settings": {
         const existing = await loadPreferences(userId);
-        await savePreferences({ ...existing, ...isRecord(payload.preferences) ? payload.preferences : isRecord(payload.settings) ? payload.settings : {} }, userId);
+        const next = normalizePreferences({ ...existing, ...isRecord(payload.preferences) ? payload.preferences : isRecord(payload.settings) ? payload.settings : {} });
+        await validateChangedWallpaperSources(existing, next, userId);
+        await savePreferences(next, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
         break;
       }
@@ -3793,9 +3990,10 @@ ${marker}`;
         const imageId = text2(payload.imageId, 180);
         if (!imageId || !spindle.permissions.has("images"))
           throw new Error("That Gallery image is unavailable.");
-        await spindle.images.get(imageId, { specificity: "sm", userId });
+        const source = { kind: "gallery", imageId };
+        assertPocketImageResolved(await resolvePocketImageSource(spindle, source, userId));
         const preferences = await loadPreferences(userId);
-        assignWallpaper(preferences, { ...payload, target: payload.personaId ? payload.target === "chat" ? "persona-chat" : "persona-home" : payload.target === "chat" ? "device-chat" : "device-home" }, { kind: "gallery", imageId });
+        assignWallpaper(preferences, { ...payload, target: payload.personaId ? payload.target === "chat" ? "persona-chat" : "persona-home" : payload.target === "chat" ? "device-chat" : "device-home" }, source);
         await savePreferences(preferences, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
         send({ type: "lumiphone:gallery_action_done", requestId, action: "set-wallpaper", message: payload.target === "chat" ? "Chat wallpaper updated." : "Home wallpaper updated." }, userId);
@@ -3806,6 +4004,8 @@ ${marker}`;
         const source = payload.source === null ? null : normalizeImageSource(payload.source);
         if (payload.source !== null && !source)
           throw new Error("Choose a valid Gallery image, uploaded asset, or HTTPS image URL.");
+        if (source)
+          assertPocketImageResolved(await resolvePocketImageSource(spindle, source, userId));
         assignWallpaper(preferences, payload, source);
         await savePreferences(preferences, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
@@ -3823,8 +4023,10 @@ ${marker}`;
           owner_chat_id: context.chatId === "_lobby" ? undefined : context.chatId,
           userId
         });
+        const source = { kind: "asset", assetId: image.id };
+        assertPocketImageResolved(await resolvePocketImageSource(spindle, source, userId));
         const preferences = await loadPreferences(userId);
-        assignWallpaper(preferences, payload, { kind: "asset", assetId: image.id });
+        assignWallpaper(preferences, payload, source);
         await savePreferences(preferences, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
         send({ type: "lumiphone:wallpaper_uploaded", requestId, imageId: image.id }, userId);
@@ -3941,9 +4143,15 @@ ${marker}`;
           throw new Error("This backup uses a newer Pocket state schema.");
         const characterName = await characterNameFor(context.characterId, userId);
         const state = normalizeState(rawState, context.chatId, context.characterId, characterName);
+        let importedPreferences = null;
+        if (payload.data.preferences !== undefined) {
+          const existing = await loadPreferences(userId);
+          importedPreferences = normalizePreferences(payload.data.preferences);
+          await validateChangedWallpaperSources(existing, importedPreferences, userId);
+        }
         await saveState(state, userId);
-        if (payload.data.preferences !== undefined)
-          await savePreferences(payload.data.preferences, userId);
+        if (importedPreferences)
+          await savePreferences(importedPreferences, userId);
         await sendState(state, userId, "import");
         break;
       }
@@ -4007,14 +4215,29 @@ function ensureInterceptor() {
     try {
       const chatId = context.chatId || "_lobby";
       const characterId = context.characterId || "_none";
-      const state = await loadState(chatId, characterId, context.userId);
-      const relay = pendingRelayContext(state);
+      let state = await loadState(chatId, characterId, context.userId);
+      const metadataRelayId = relayIdFromMessages(messages);
+      const generationRelay = state.relays.find((entry) => entry.status === "pending" && entry.continuation.generationId === context.generationId);
+      const launching = state.relays.filter((entry) => entry.status === "pending" && entry.continuation.state === "launching" && !entry.continuation.generationId);
+      const targetRelayId = metadataRelayId || generationRelay?.id || (launching.length === 1 ? launching[0].id : "");
+      if (targetRelayId && context.generationId) {
+        state = await withStateLock(stateKey(chatId, characterId), async () => {
+          const current = await loadState(chatId, characterId, context.userId);
+          const target = current.relays.find((entry) => entry.id === targetRelayId && entry.status === "pending");
+          if (target && !target.continuation.generationId) {
+            target.continuation.generationId = context.generationId;
+            await saveState(current, context.userId);
+          }
+          return current;
+        });
+      }
+      const relay = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3600 });
       const injected = { role: "system", content: `${PHONE_GUIDANCE}
 Current Pocket snapshot:
 ${projectPhoneContext(state)}${relay ? `
 
 ${relay}` : ""}` };
-      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: "Pocket memory" }] };
+      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: relay ? "Pocket memory + matched handoff" : "Pocket memory" }] };
     } catch {
       return messages;
     }
@@ -4092,14 +4315,25 @@ spindle.on("GENERATION_STARTED", async (payload, userId) => {
     const characterId = text2(chat?.character_id, 180) || "_none";
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
-      const relay = [...state.relays].reverse().find((entry) => entry.status === "pending" && entry.continuation.state === "launching" && !entry.continuation.generationId);
+      let relay = relayForGeneration(state, generationId);
+      if (!relay) {
+        const launching = state.relays.filter((entry) => entry.status === "pending" && entry.continuation.state === "launching" && !entry.continuation.generationId);
+        if (launching.length === 1)
+          relay = launching[0];
+      }
       if (!relay)
         return;
-      relay.continuation.state = "requested";
+      relay.continuation.state = "started";
       relay.continuation.generationId = generationId;
+      relay.continuation.generationStartedAt = nowIso();
+      relay.continuation.error = undefined;
       await saveState(state, userId);
+      await sendState(state, userId, "relay_started");
+      spindle.log.info(`Pocket observed GENERATION_STARTED: relay=${relay.id} generation=${generationId}`);
     });
-  } catch {}
+  } catch (error) {
+    spindle.log.warn(`Pocket could not associate GENERATION_STARTED: ${error instanceof Error ? error.message : String(error)}`);
+  }
 });
 spindle.on("GENERATION_ENDED", async (payload, userId) => {
   const chatId = text2(payload?.chatId, 180);
@@ -4124,6 +4358,7 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
           relay.continuation = { ...relay.continuation, state: "completed", error: undefined };
         }
         changed = true;
+        spindle.log.info(`Pocket observed GENERATION_ENDED: relay=${relay.id} generation=${generationId || "unknown"} status=${relay.status} message=${messageId || "none"}`);
       }
       if (messageId && state.sceneSnapshot && state.sceneSnapshot.sourceMessageId !== messageId) {
         state.sceneSnapshot.stale = true;

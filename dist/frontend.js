@@ -413,15 +413,6 @@ function requestId(prefix = "req") {
 }
 
 // src/frontend/components/image-picker.ts
-function sourceLabel(wallpaper) {
-  if (!wallpaper.source)
-    return "Theme gradient";
-  if (wallpaper.source.kind === "gallery")
-    return "Lumiverse Gallery";
-  if (wallpaper.source.kind === "asset")
-    return "Uploaded asset";
-  return "Image URL";
-}
 function range(label, value, update) {
   const node = el("label", "lp-wallpaper-range");
   node.append(el("span", "lp-copy", label));
@@ -435,22 +426,23 @@ function range(label, value, update) {
   node.appendChild(input);
   return node;
 }
-function wallpaperImageControl(label, target, wallpaper, resolvedUrl, host) {
+function wallpaperImageControl(label, target, wallpaper, resolved, host) {
   const card = el("section", "lp-wallpaper-control");
   card.dataset.imageTarget = target;
   const heading = el("div", "lp-row-between");
   const copy = el("span");
-  copy.append(el("strong", "", label), el("span", "lp-copy", sourceLabel(wallpaper)));
+  copy.append(el("strong", "", label), el("span", "lp-copy", resolved.status === "error" ? `${resolved.sourceLabel} · unavailable` : resolved.sourceLabel));
   const clear = button("Clear", "lp-button lp-button-quiet");
   clear.disabled = !wallpaper.source;
   clear.addEventListener("click", () => host.change({ ...wallpaper, source: null }));
   heading.append(copy, clear);
   const preview = el("div", "lp-wallpaper-preview");
-  preview.dataset.empty = String(!resolvedUrl);
-  preview.style.backgroundImage = resolvedUrl ? `linear-gradient(rgba(5,4,8,${wallpaper.scrim}),rgba(5,4,8,${wallpaper.scrim})),url(${JSON.stringify(resolvedUrl)})` : "";
+  preview.dataset.empty = String(!resolved.url);
+  preview.dataset.resolutionStatus = resolved.status;
+  preview.style.backgroundImage = resolved.url ? `linear-gradient(rgba(5,4,8,${wallpaper.scrim}),rgba(5,4,8,${wallpaper.scrim})),url(${JSON.stringify(resolved.url)})` : "";
   preview.style.backgroundSize = wallpaper.fit === "stretch" ? "100% 100%" : wallpaper.fit;
   preview.style.backgroundPosition = `${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%`;
-  preview.textContent = resolvedUrl ? "" : "Theme background";
+  preview.textContent = resolved.url ? "" : resolved.error || "Theme background";
   const actions = el("div", "lp-wallpaper-actions");
   for (const [mode, text2] of [["gallery", "Gallery"], ["upload", "Upload"], ["url", "Image URL"]]) {
     const choose = button(text2, "lp-button lp-button-quiet");
@@ -1048,7 +1040,7 @@ function permissions(host) {
   const { page, content } = host.page("Permissions", "Lumiverse access");
   const grid = el("div", "lp-permission-grid");
   const caps = host.capabilities;
-  for (const [label, granted] of [["Generation", caps?.generation], ["Model tools", caps?.tools], ["Prompt memory", caps?.interceptor], ["Gallery", caps?.images], ["Camera", caps?.imageGen], ["Floating phone", caps?.panels], ["Characters", caps?.characters], ["Personas", caps?.personas], ["Scene sync", caps?.sceneSync], ["Push", caps?.push]]) {
+  for (const [label, granted] of [["Generation", caps?.generation], ["Model tools", caps?.tools], ["Prompt memory", caps?.interceptor], ["Gallery", caps?.images], ["Remote images", caps?.corsProxy], ["Camera", caps?.imageGen], ["Floating phone", caps?.panels], ["Characters", caps?.characters], ["Personas", caps?.personas], ["Scene sync", caps?.sceneSync], ["Push", caps?.push]]) {
     const cell = el("div", "lp-permission", label);
     cell.dataset.granted = String(Boolean(granted));
     grid.appendChild(cell);
@@ -1656,9 +1648,9 @@ function renderMessagesView(host) {
     const localActions = el("div", "lp-local-actions");
     const relay = [...host.state.relays].reverse().find((entry) => entry.conversationId === conversation.id);
     const pendingRelay = relay?.status === "pending" ? relay : undefined;
-    const continuing = pendingRelay?.continuation.state === "launching" || pendingRelay?.continuation.state === "requested";
-    const retrying = pendingRelay?.continuation.state === "failed" || pendingRelay?.continuation.state === "stopped";
-    const status = continuing ? "Continuing in roleplay…" : retrying ? "Continuation paused — retry when ready." : "Continue in main conversation";
+    const continuing = pendingRelay?.continuation.state === "launching" || pendingRelay?.continuation.state === "accepted" || pendingRelay?.continuation.state === "started";
+    const retrying = pendingRelay?.continuation.state === "blocked" || pendingRelay?.continuation.state === "failed" || pendingRelay?.continuation.state === "stopped";
+    const status = continuing ? pendingRelay?.continuation.state === "started" ? "Roleplay generation started…" : pendingRelay?.continuation.state === "accepted" ? "Host accepted the continuation…" : "Requesting roleplay continuation…" : retrying ? pendingRelay?.continuation.error || "Continuation paused — retry when ready." : "Continue in main conversation";
     const roleplay = button(retrying ? "Retry continuation" : "Return to roleplay", "lp-button");
     roleplay.disabled = continuing;
     roleplay.addEventListener("click", () => host.returnToRoleplay());
@@ -1669,6 +1661,26 @@ function renderMessagesView(host) {
       const timeline = button("View Timeline handoff", "lp-button lp-button-quiet");
       timeline.addEventListener("click", () => host.openTimeline(relay.timelineEventId));
       localActions.appendChild(timeline);
+    }
+    if (pendingRelay) {
+      const continuation = pendingRelay.continuation;
+      const details = el("details", "lp-channel-diagnostic");
+      const permissions2 = continuation.permissions ? `chat mutation ${continuation.permissions.chatMutation ? "granted" : "missing"} · generation ${continuation.permissions.generation ? "granted" : "missing"}` : "not checked";
+      const rows = [
+        `State: ${continuation.state}`,
+        `Invoked: ${continuation.invokedAt || "not yet"}`,
+        `Permissions: ${permissions2}`,
+        `Method: ${continuation.method || "not called"}`,
+        `Host accepted: ${continuation.hostAcceptedAt || "no"}`,
+        `Generation event: ${continuation.generationStartedAt || "not observed"}`,
+        `Generation ID: ${continuation.generationId || "none"}`,
+        continuation.error ? `Error: ${continuation.error}` : ""
+      ].filter(Boolean);
+      const diagnostics = el("div", "lp-settings-section");
+      for (const row2 of rows)
+        diagnostics.appendChild(el("span", "lp-copy", row2));
+      details.append(el("summary", "", "Continuation generation info"), diagnostics);
+      localActions.appendChild(details);
     }
     if (conversation.lastDecision) {
       const diagnostic = el("details", "lp-channel-diagnostic");
@@ -2163,6 +2175,7 @@ function activityReceipt(ctx, activity, openRoute) {
 
 // src/frontend/controller.ts
 var PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>';
+var EMPTY_RESOLVED_IMAGE = { url: "", status: "empty", sourceKind: "none", sourceLabel: "Theme gradient" };
 var ICONS2 = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
   messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
@@ -2230,7 +2243,12 @@ class PocketController {
   caps = null;
   swarmProfile = null;
   generation = null;
-  resolvedWallpapers = { deviceHome: "", deviceChat: "", personaHome: "", personaChat: "" };
+  resolvedWallpapers = {
+    deviceHome: { ...EMPTY_RESOLVED_IMAGE },
+    deviceChat: { ...EMPTY_RESOLVED_IMAGE },
+    personaHome: { ...EMPTY_RESOLVED_IMAGE },
+    personaChat: { ...EMPTY_RESOLVED_IMAGE }
+  };
   contextPreview = null;
   personaPreview = null;
   operations = new Map;
@@ -3105,8 +3123,8 @@ class PocketController {
     const chatWallpaper = wallpaperCss(appearance2.colors.chatPrimary, appearance2.colors.chatSecondary);
     const homeSetting = persona2?.enabled && persona2.homeWallpaper.source ? persona2.homeWallpaper : settings.homeWallpaper;
     const chatSetting = persona2?.enabled && persona2.chatWallpaper.source ? persona2.chatWallpaper : settings.chatWallpaper;
-    const homeImage = persona2?.enabled && persona2.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome;
-    const chatImage = persona2?.enabled && persona2.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat;
+    const homeImage = (persona2?.enabled && persona2.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url;
+    const chatImage = (persona2?.enabled && persona2.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url;
     const imageLayer = (url, setting, gradient) => url ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}` : gradient;
     this.shell.style.setProperty("--lp-wallpaper", imageLayer(homeImage, homeSetting, homeWallpaper));
     this.shell.style.setProperty("--lp-chat-wallpaper", imageLayer(chatImage, chatSetting, chatWallpaper));

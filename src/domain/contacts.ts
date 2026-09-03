@@ -193,6 +193,11 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
       : pauseReason ? { state: 'paused' as const, reason: pauseReason } : { state: 'remote' as const }
   const burstValue = record(value.outgoingBurst) ? value.outgoingBurst : null
   const burstId = clean(burstValue?.id, 180)
+  const rawTail = value.tailSnapshot && typeof value.tailSnapshot === 'object' && !Array.isArray(value.tailSnapshot)
+    ? value.tailSnapshot as Record<string, unknown>
+    : value.snapshot && typeof value.snapshot === 'object' && !Array.isArray(value.snapshot)
+      ? value.snapshot as Record<string, unknown>
+      : null
   return {
     id: clean(value.id, 180) || makeId('conversation'),
     kind,
@@ -206,10 +211,10 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
       source: pauseValue?.source === 'scene' ? 'scene' : 'model',
     } : undefined,
     availability,
-    snapshot: record(value.snapshot) ? {
-      summary: clean(value.snapshot.summary, 2_400),
-      recentMessageIds: (Array.isArray(value.snapshot.recentMessageIds) ? value.snapshot.recentMessageIds : []).map((entry) => clean(entry, 180)).filter(Boolean).slice(-8),
-      updatedAt: timestamp(value.snapshot.updatedAt, now),
+    tailSnapshot: rawTail ? {
+      text: clean(rawTail.text ?? rawTail.summary, 2_400),
+      recentMessageIds: (Array.isArray(rawTail.recentMessageIds) ? rawTail.recentMessageIds : []).map((entry) => clean(entry, 180)).filter(Boolean).slice(-8),
+      updatedAt: timestamp(rawTail.updatedAt, now),
     } : undefined,
     lastDecision: record(value.lastDecision) ? {
       rawAction: value.lastDecision.rawAction === 'reply' || value.lastDecision.rawAction === 'pause' || value.lastDecision.rawAction === 'handoff' ? value.lastDecision.rawAction : 'none',

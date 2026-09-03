@@ -4,7 +4,7 @@ import type {
   PhoneState,
   PocketContact,
   PocketConversation,
-  PocketConversationSnapshot,
+  PocketConversationTailSnapshot,
   PocketRelay,
   PocketReplyDecision,
   ReplyDecisionAction,
@@ -17,10 +17,10 @@ function compact(value: string, max: number): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
-export function conversationSnapshot(conversation: PocketConversation, createdAt: string): PocketConversationSnapshot {
+export function conversationTailSnapshot(conversation: PocketConversation, createdAt: string): PocketConversationTailSnapshot {
   const recent = conversation.messages.slice(-6)
   return {
-    summary: recent.map((message) => `${message.senderName}: ${compact(message.text, 360)}`).join('\n').slice(0, 2_400),
+    text: recent.map((message) => `${message.senderName}: ${compact(message.text, 360)}`).join('\n').slice(0, 2_400),
     recentMessageIds: recent.map((message) => message.id),
     updatedAt: createdAt,
   }
@@ -73,21 +73,45 @@ export function normalizeReplyDecision(input: {
   }
 }
 
-export function pendingRelayContext(state: PhoneState): string {
-  const pending = state.relays.filter((relay) => relay.status === 'pending').slice(-3)
+export function pendingRelayContext(state: PhoneState, options: { relayId?: string; maxChars?: number } = {}): string {
+  const maxChars = Math.max(600, Math.min(6_000, options.maxChars || 3_600))
+  const pending = options.relayId
+    ? state.relays.filter((relay) => relay.status === 'pending' && relay.id === options.relayId).slice(-1)
+    : []
   if (!pending.length) return ''
   return pending.map((relay) => {
     const contact = state.contacts.find((entry) => entry.id === relay.contactId)
+    const actorName = contact?.name || relay.contactId
+    const personaName = state.pocketPersona.displayName || 'the current Persona'
+    const physicalState = relay.reason === 'arrived' || relay.reason === 'in_scene'
+      ? `${actorName} is now physically present in the current scene.`
+      : `${actorName} has moved the interaction from the phone into the physical scene.`
     return [
-      'POCKET CONTINUITY RELAY (newer than older scene summaries)',
-      `Actor: ${contact?.name || relay.contactId}`,
-      `Channel transition: phone -> in-person (${relay.reason})`,
-      `Latest exchange:\n${relay.latestExchange}`,
-      `Conversation snapshot:\n${relay.conversationSnapshot.summary}`,
+      '=== POCKET CONTINUITY RELAY — NEWER STATE ===',
+      `relayId: ${relay.id}`,
+      `actor: ${actorName}`,
+      'transition: remote -> local',
+      `reason: ${relay.reason}`,
+      '',
+      `${actorName} and ${personaName} were texting immediately before this generation. ${physicalState} This information is newer than older roleplay scene state and supersedes conflicting location or presence information.`,
+      '',
+      `Immediate phone exchange:\n${relay.conversationTail.text}`,
+      '',
       'Continue the physical roleplay from this handoff. Do not generate another remote phone reply unless the user explicitly texts from the scene.',
-      `Relay provenance: ${relay.id}`,
+      '=== END POCKET CONTINUITY RELAY ===',
     ].join('\n')
-  }).join('\n\n')
+  }).join('\n\n').slice(0, maxChars)
+}
+
+export function relayIdFromMessages(messages: ReadonlyArray<Record<string, unknown>>): string {
+  for (const message of [...messages].reverse()) {
+    const metadata = message.sourceMessageMetadata || message.__sourceMessageMetadata
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) continue
+    const value = metadata as Record<string, unknown>
+    if (value.pocketContinuation !== true || typeof value.pocketRelayId !== 'string') continue
+    return value.pocketRelayId.slice(0, 180)
+  }
+  return ''
 }
 
 export function relayLatestExchange(conversation: PocketConversation): string {

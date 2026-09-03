@@ -1,4 +1,4 @@
-import type { PocketWallpaper } from '../../types.js'
+import type { PocketResolvedImage, PocketWallpaper } from '../../types.js'
 import { button, el } from '../shared.js'
 
 export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' | 'persona-chat' | 'contact-avatar'
@@ -6,13 +6,6 @@ export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' |
 export interface PocketImageControlHost {
   choose(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void
   change(wallpaper: PocketWallpaper): void
-}
-
-function sourceLabel(wallpaper: PocketWallpaper): string {
-  if (!wallpaper.source) return 'Theme gradient'
-  if (wallpaper.source.kind === 'gallery') return 'Lumiverse Gallery'
-  if (wallpaper.source.kind === 'asset') return 'Uploaded asset'
-  return 'Image URL'
 }
 
 function range(label: string, value: number, update: (value: number) => void): HTMLLabelElement {
@@ -30,23 +23,24 @@ export function wallpaperImageControl(
   label: string,
   target: PocketImageTarget,
   wallpaper: PocketWallpaper,
-  resolvedUrl: string,
+  resolved: PocketResolvedImage,
   host: PocketImageControlHost,
 ): HTMLElement {
   const card = el('section', 'lp-wallpaper-control')
   card.dataset.imageTarget = target
   const heading = el('div', 'lp-row-between')
-  const copy = el('span'); copy.append(el('strong', '', label), el('span', 'lp-copy', sourceLabel(wallpaper)))
+  const copy = el('span'); copy.append(el('strong', '', label), el('span', 'lp-copy', resolved.status === 'error' ? `${resolved.sourceLabel} · unavailable` : resolved.sourceLabel))
   const clear = button('Clear', 'lp-button lp-button-quiet')
   clear.disabled = !wallpaper.source
   clear.addEventListener('click', () => host.change({ ...wallpaper, source: null }))
   heading.append(copy, clear)
   const preview = el('div', 'lp-wallpaper-preview')
-  preview.dataset.empty = String(!resolvedUrl)
-  preview.style.backgroundImage = resolvedUrl ? `linear-gradient(rgba(5,4,8,${wallpaper.scrim}),rgba(5,4,8,${wallpaper.scrim})),url(${JSON.stringify(resolvedUrl)})` : ''
+  preview.dataset.empty = String(!resolved.url)
+  preview.dataset.resolutionStatus = resolved.status
+  preview.style.backgroundImage = resolved.url ? `linear-gradient(rgba(5,4,8,${wallpaper.scrim}),rgba(5,4,8,${wallpaper.scrim})),url(${JSON.stringify(resolved.url)})` : ''
   preview.style.backgroundSize = wallpaper.fit === 'stretch' ? '100% 100%' : wallpaper.fit
   preview.style.backgroundPosition = `${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%`
-  preview.textContent = resolvedUrl ? '' : 'Theme background'
+  preview.textContent = resolved.url ? '' : resolved.error || 'Theme background'
   const actions = el('div', 'lp-wallpaper-actions')
   for (const [mode, text] of [['gallery', 'Gallery'], ['upload', 'Upload'], ['url', 'Image URL']] as const) {
     const choose = button(text, 'lp-button lp-button-quiet')

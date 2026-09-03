@@ -187,14 +187,48 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     const localActions = el('div', 'lp-local-actions')
     const relay = [...host.state.relays].reverse().find((entry) => entry.conversationId === conversation.id)
     const pendingRelay = relay?.status === 'pending' ? relay : undefined
-    const continuing = pendingRelay?.continuation.state === 'launching' || pendingRelay?.continuation.state === 'requested'
-    const retrying = pendingRelay?.continuation.state === 'failed' || pendingRelay?.continuation.state === 'stopped'
-    const status = continuing ? 'Continuing in roleplay…' : retrying ? 'Continuation paused — retry when ready.' : 'Continue in main conversation'
+    const continuing = pendingRelay?.continuation.state === 'launching' || pendingRelay?.continuation.state === 'accepted' || pendingRelay?.continuation.state === 'started'
+    const retrying = pendingRelay?.continuation.state === 'blocked' || pendingRelay?.continuation.state === 'failed' || pendingRelay?.continuation.state === 'stopped'
+    const status = continuing
+      ? pendingRelay?.continuation.state === 'started' ? 'Roleplay generation started…' : pendingRelay?.continuation.state === 'accepted' ? 'Host accepted the continuation…' : 'Requesting roleplay continuation…'
+      : retrying ? pendingRelay?.continuation.error || 'Continuation paused — retry when ready.' : 'Continue in main conversation'
     const roleplay = button(retrying ? 'Retry continuation' : 'Return to roleplay', 'lp-button'); roleplay.disabled = continuing; roleplay.addEventListener('click', () => host.returnToRoleplay())
     const anyway = button('Message anyway', 'lp-button lp-button-quiet'); anyway.addEventListener('click', () => host.messageAnyway(conversation.id))
     localActions.append(el('strong', '', status), roleplay, anyway)
     if (relay?.timelineEventId) {
       const timeline = button('View Timeline handoff', 'lp-button lp-button-quiet'); timeline.addEventListener('click', () => host.openTimeline(relay.timelineEventId)); localActions.appendChild(timeline)
+    }
+    if (pendingRelay) {
+      const continuation = pendingRelay.continuation
+      const details = el('details', 'lp-channel-diagnostic')
+      const permissions = continuation.permissions
+        ? `chat mutation ${continuation.permissions.chatMutation ? 'granted' : 'missing'} · generation ${continuation.permissions.generation ? 'granted' : 'missing'}`
+        : 'not checked'
+      const rows = [
+        `State: ${continuation.state}`,
+        `Invoked: ${continuation.invokedAt || 'not yet'}`,
+        `Permissions: ${permissions}`,
+        `Method: ${continuation.method || 'not called'}`,
+        `Host accepted: ${continuation.hostAcceptedAt || 'no'}`,
+        `Generation event: ${continuation.generationStartedAt || 'not observed'}`,
+        `Generation ID: ${continuation.generationId || 'none'}`,
+        `Relay snapshot: ${pendingRelay.conversationTail.text.length} chars`,
+        `Recent exchange: ${pendingRelay.relayExchangeMessageCount ?? pendingRelay.conversationTail.recentMessageIds.length} messages`,
+        `Serialized relay: ${pendingRelay.serializedRelayChars || 0} chars`,
+        `Injected: ${pendingRelay.injectedAt ? `yes · ${pendingRelay.injectedGenerationId || 'generation association pending'}` : 'no'}`,
+        `Consumption: ${pendingRelay.status}`,
+        pendingRelay.injectionError ? `Injection error: ${pendingRelay.injectionError}` : '',
+        continuation.error ? `Error: ${continuation.error}` : '',
+      ].filter(Boolean)
+      const diagnostics = el('div', 'lp-settings-section')
+      for (const row of rows) diagnostics.appendChild(el('span', 'lp-copy', row))
+      details.append(el('summary', '', 'Continuation generation info'), diagnostics)
+      localActions.appendChild(details)
+      if (pendingRelay.serializedRelay) {
+        const serialized = el('details', 'lp-channel-diagnostic')
+        serialized.append(el('summary', '', 'View serialized relay'), el('pre', 'lp-code-block', pendingRelay.serializedRelay))
+        localActions.appendChild(serialized)
+      }
     }
     if (conversation.lastDecision) {
       const diagnostic = el('details', 'lp-channel-diagnostic')

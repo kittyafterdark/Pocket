@@ -287,7 +287,7 @@ function notifications(host: SettingsViewHost): HTMLDivElement {
 
 function permissions(host: SettingsViewHost): HTMLDivElement {
   const { page, content } = host.page('Permissions', 'Lumiverse access'); const grid = el('div', 'lp-permission-grid'); const caps = host.capabilities
-  for (const [label, granted] of [['Generation', caps?.generation], ['Model tools', caps?.tools], ['Prompt memory', caps?.interceptor], ['Gallery', caps?.images], ['Camera', caps?.imageGen], ['Floating phone', caps?.panels], ['Characters', caps?.characters], ['Personas', caps?.personas], ['Scene sync', caps?.sceneSync], ['Push', caps?.push]] as Array<[string, unknown]>) { const cell = el('div', 'lp-permission', label); cell.dataset.granted = String(Boolean(granted)); grid.appendChild(cell) }
+  for (const [label, granted] of [['Generation', caps?.generation], ['Model tools', caps?.tools], ['Prompt memory', caps?.interceptor], ['Gallery', caps?.images], ['Remote images', caps?.corsProxy], ['Camera', caps?.imageGen], ['Floating phone', caps?.panels], ['Characters', caps?.characters], ['Personas', caps?.personas], ['Scene sync', caps?.sceneSync], ['Push', caps?.push]] as Array<[string, unknown]>) { const cell = el('div', 'lp-permission', label); cell.dataset.granted = String(Boolean(granted)); grid.appendChild(cell) }
   const manage = button('Request or update permissions', 'lp-button'); manage.addEventListener('click', () => host.requestPermissions()); content.append(grid, manage); return page
 }
 

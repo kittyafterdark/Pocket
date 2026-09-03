@@ -10,7 +10,8 @@ import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/mes
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
-import { conversationSnapshot, normalizeReplyDecision, pendingRelayContext } from '../src/backend/continuity.js'
+import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, relayIdFromMessages } from '../src/backend/continuity.js'
+import { resolvePocketImageSource } from '../src/backend/image-sources.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
 describe('device preference schema', () => {
@@ -66,11 +67,48 @@ describe('conversation channel continuity', () => {
     const conversation = ensureDirectConversation(collections, contact.id, now, (prefix) => `${prefix}-z`)
     expect(normalizeReplyDecision({ rawAction: 'none', contact, conversation, explicitRemoteOverride: true, createdAt: now }).normalizedAction).toBe('none')
     conversation.messages.push({ id: 'm1', sender: 'persona', senderName: 'You', senderAccent: '', text: 'Come in.', createdAt: now, read: true, status: 'sent' })
-    const snapshot = conversationSnapshot(conversation, now)
-    const state = { contacts: collections.contacts, relays: [{ id: 'r1', chatId: 'c', characterId: 'active', contactId: 'z', conversationId: conversation.id, reason: 'in_scene', actorState: 'in_scene', conversationSnapshot: snapshot, latestExchange: snapshot.summary, timelineEventId: 'e1', createdAt: now, status: 'pending', continuation: { state: 'idle' } }] } as unknown as PhoneState
-    expect(pendingRelayContext(state)).toContain('phone -> in-person')
+    const snapshot = conversationTailSnapshot(conversation, now)
+    const state = { contacts: collections.contacts, relays: [{ id: 'r1', chatId: 'c', characterId: 'active', contactId: 'z', conversationId: conversation.id, burstId: 'burst-1', reason: 'in_scene', actorState: 'in_scene', conversationTail: snapshot, latestExchange: snapshot.text, timelineEventId: 'e1', createdAt: now, status: 'pending', continuation: { state: 'idle' } }] } as unknown as PhoneState
+    expect(pendingRelayContext(state)).toBe('', 'ordinary generations must not receive unrelated pending relays')
+    expect(pendingRelayContext(state, { relayId: 'r1' })).toContain('phone -> in-person')
+    expect(relayIdFromMessages([{ sourceMessageMetadata: { pocketContinuation: true, pocketRelayId: 'r1' } }])).toBe('r1')
     state.relays[0].status = 'consumed'
-    expect(pendingRelayContext(state)).toBe('')
+    expect(pendingRelayContext(state, { relayId: 'r1' })).toBe('')
+  })
+})
+
+describe('Pocket image source resolution', () => {
+  test('uses one resolver for gallery, uploaded assets, and cached URL images', async () => {
+    const cache = new Map<string, unknown>()
+    const images = new Map([
+      ['gallery-1', { id: 'gallery-1', mime_type: 'image/png', url: '/api/v1/images/gallery-1' }],
+      ['asset-1', { id: 'asset-1', mime_type: 'image/webp', url: '/api/v1/images/asset-1' }],
+    ])
+    const api = {
+      permissions: { has: (permission: string) => permission === 'images' || permission === 'cors_proxy' },
+      userStorage: {
+        getJson: async (path: string, options: { fallback: unknown }) => structuredClone(cache.get(path) ?? options.fallback),
+        setJson: async (path: string, value: unknown) => { cache.set(path, structuredClone(value)) },
+      },
+      images: {
+        get: async (id: string) => images.get(id) || null,
+        uploadFromDataUrl: async () => {
+          images.set('remote-cache-1', { id: 'remote-cache-1', mime_type: 'image/png', url: '/api/v1/images/remote-cache-1' })
+          return images.get('remote-cache-1')!
+        },
+      },
+      cors: async () => ({ status: 200, statusText: 'OK', headers: { 'content-type': 'image/png' }, body: 'iVBORw0KGgo=', encoding: 'base64' }),
+    } as any
+    expect((await resolvePocketImageSource(api, { kind: 'gallery', imageId: 'gallery-1' })).url).toBe('/api/v1/images/gallery-1')
+    expect((await resolvePocketImageSource(api, { kind: 'asset', assetId: 'asset-1' })).url).toBe('/api/v1/images/asset-1')
+    const remote = await resolvePocketImageSource(api, { kind: 'url', url: 'https://example.test/wall.png' })
+    expect(remote).toMatchObject({ status: 'ready', sourceKind: 'url', url: '/api/v1/images/remote-cache-1' })
+    expect(JSON.stringify(cache.get('device/pocket-image-url-cache.json'))).toContain('remote-cache-1')
+  })
+
+  test('surfaces a source-specific resolution error', async () => {
+    const api = { permissions: { has: () => true }, images: { get: async () => null }, userStorage: {}, cors: async () => null } as any
+    expect(await resolvePocketImageSource(api, { kind: 'asset', assetId: 'missing' })).toMatchObject({ status: 'error', sourceKind: 'asset' })
   })
 })
 
