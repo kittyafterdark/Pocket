@@ -211,6 +211,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
         `Method: ${continuation.method || 'not called'}`,
         `Host accepted: ${continuation.hostAcceptedAt || 'no'}`,
         `Generation event: ${continuation.generationStartedAt || 'not observed'}`,
+        `Generation completed: ${continuation.generationCompletedAt || 'not observed'}`,
         `Generation ID: ${continuation.generationId || 'none'}`,
         `Relay snapshot: ${pendingRelay.conversationTail.text.length} chars`,
         `Recent exchange: ${pendingRelay.relayExchangeMessageCount ?? pendingRelay.conversationTail.recentMessageIds.length} messages`,

@@ -68,9 +68,12 @@ describe('conversation channel continuity', () => {
     expect(normalizeReplyDecision({ rawAction: 'none', contact, conversation, explicitRemoteOverride: true, createdAt: now }).normalizedAction).toBe('none')
     conversation.messages.push({ id: 'm1', sender: 'persona', senderName: 'You', senderAccent: '', text: 'Come in.', createdAt: now, read: true, status: 'sent' })
     const snapshot = conversationTailSnapshot(conversation, now)
-    const state = { contacts: collections.contacts, relays: [{ id: 'r1', chatId: 'c', characterId: 'active', contactId: 'z', conversationId: conversation.id, burstId: 'burst-1', reason: 'in_scene', actorState: 'in_scene', conversationTail: snapshot, latestExchange: snapshot.text, timelineEventId: 'e1', createdAt: now, status: 'pending', continuation: { state: 'idle' } }] } as unknown as PhoneState
+    const state = { pocketPersona: { displayName: 'You' }, contacts: collections.contacts, relays: [{ id: 'r1', chatId: 'c', characterId: 'active', contactId: 'z', conversationId: conversation.id, burstId: 'burst-1', reason: 'in_scene', actorState: 'in_scene', conversationTail: snapshot, latestExchange: snapshot.text, timelineEventId: 'e1', createdAt: now, status: 'pending', continuation: { state: 'idle' } }] } as unknown as PhoneState
     expect(pendingRelayContext(state)).toBe('', 'ordinary generations must not receive unrelated pending relays')
-    expect(pendingRelayContext(state, { relayId: 'r1' })).toContain('phone -> in-person')
+    const relayContext = pendingRelayContext(state, { relayId: 'r1' })
+    expect(relayContext).toContain('POCKET CONTINUITY RELAY — NEWER STATE')
+    expect(relayContext).toContain('You: Come in.')
+    expect(relayContext.length).toBeLessThanOrEqual(3_600)
     expect(relayIdFromMessages([{ sourceMessageMetadata: { pocketContinuation: true, pocketRelayId: 'r1' } }])).toBe('r1')
     state.relays[0].status = 'consumed'
     expect(pendingRelayContext(state, { relayId: 'r1' })).toBe('')

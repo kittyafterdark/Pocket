@@ -1350,14 +1350,23 @@ function pendingRelayContext(state, options = {}) {
     return "";
   return pending.map((relay) => {
     const contact = state.contacts.find((entry) => entry.id === relay.contactId);
+    const actorName = contact?.name || relay.contactId;
+    const personaName = state.pocketPersona.displayName || "the current Persona";
+    const physicalState = relay.reason === "arrived" || relay.reason === "in_scene" ? `${actorName} is now physically present in the current scene.` : `${actorName} has moved the interaction from the phone into the physical scene.`;
     return [
-      "POCKET CONTINUITY RELAY (newer than older scene summaries)",
-      `Actor: ${contact?.name || relay.contactId}`,
-      `Channel transition: phone -> in-person (${relay.reason})`,
-      `Conversation tail:
+      "=== POCKET CONTINUITY RELAY \u2014 NEWER STATE ===",
+      `relayId: ${relay.id}`,
+      `actor: ${actorName}`,
+      "transition: remote -> local",
+      `reason: ${relay.reason}`,
+      "",
+      `${actorName} and ${personaName} were texting immediately before this generation. ${physicalState} This information is newer than older roleplay scene state and supersedes conflicting location or presence information.`,
+      "",
+      `Immediate phone exchange:
 ${relay.conversationTail.text}`,
+      "",
       "Continue the physical roleplay from this handoff. Do not generate another remote phone reply unless the user explicitly texts from the scene.",
-      `Relay provenance: ${relay.id}`
+      "=== END POCKET CONTINUITY RELAY ==="
     ].join(`
 `);
   }).join(`
@@ -1765,6 +1774,12 @@ function normalizeState(value, chatId, characterId, characterName) {
       status: item.status === "consumed" || item.status === "dismissed" ? item.status : "pending",
       consumedAt: text2(item.consumedAt, 40) || undefined,
       consumedMessageId: text2(item.consumedMessageId, 180) || undefined,
+      injectedAt: text2(item.injectedAt, 40) || undefined,
+      injectedGenerationId: text2(item.injectedGenerationId, 180) || undefined,
+      serializedRelayChars: Math.max(0, Math.round(numberValue(item.serializedRelayChars, 0))) || undefined,
+      serializedRelay: text2(item.serializedRelay, 3600) || undefined,
+      relayExchangeMessageCount: Math.max(0, Math.round(numberValue(item.relayExchangeMessageCount, 0))) || undefined,
+      injectionError: text2(item.injectionError, 500) || undefined,
       continuation: {
         state: continuationState,
         generationId: text2(continuation.generationId, 180) || undefined,
@@ -1778,6 +1793,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         hostCallReturnedAt: text2(continuation.hostCallReturnedAt, 40) || undefined,
         hostAcceptedAt: text2(continuation.hostAcceptedAt, 40) || undefined,
         generationStartedAt: text2(continuation.generationStartedAt, 40) || undefined,
+        generationCompletedAt: text2(continuation.generationCompletedAt, 40) || undefined,
         sourceMessageId: text2(continuation.sourceMessageId, 180) || undefined,
         error: text2(continuation.error, 500) || undefined
       }
@@ -1815,6 +1831,17 @@ async function characterNameFor(characterId, userId) {
   } catch {
     return "Character";
   }
+}
+async function stateCharacterIdForChat(chatId, hintedCharacterId, userId) {
+  if (chatId && chatId !== "_lobby" && spindle.permissions.has("chats")) {
+    try {
+      const chat = await spindle.chats.get(chatId, userId);
+      const characterId = text2(chat?.character_id, 180);
+      if (characterId)
+        return characterId;
+    } catch {}
+  }
+  return text2(hintedCharacterId, 180) || "_none";
 }
 async function resolveActivePocketPersona(userId) {
   if (!spindle.permissions.has("personas"))
@@ -2322,6 +2349,9 @@ async function requestRelayContinuation(chatId, characterId, relayId, userId) {
         await sendState(state, userId, "relay_blocked");
         return { proceed: false, error };
       }
+      const activeRelay = state.relays.find((entry) => entry.id !== relayId && entry.status === "pending" && (entry.continuation.state === "launching" || entry.continuation.state === "accepted" || entry.continuation.state === "started"));
+      if (activeRelay)
+        return { proceed: false, error: `Pocket is already continuing relay ${activeRelay.id} in this roleplay.` };
       relay.continuation = {
         state: "launching",
         invokedAt,
@@ -2329,6 +2359,12 @@ async function requestRelayContinuation(chatId, characterId, relayId, userId) {
         permissions,
         method
       };
+      relay.injectedAt = undefined;
+      relay.injectedGenerationId = undefined;
+      relay.serializedRelayChars = undefined;
+      relay.serializedRelay = undefined;
+      relay.relayExchangeMessageCount = undefined;
+      relay.injectionError = undefined;
       await saveState(state, userId);
       await sendState(state, userId, "relay_launching");
       return { proceed: true, error: "" };
@@ -2365,6 +2401,8 @@ async function requestRelayContinuation(chatId, characterId, relayId, userId) {
         hostAcceptedAt: hostReturnedAt,
         error: undefined
       };
+      if (relay.injectedAt && !relay.injectedGenerationId)
+        relay.injectedGenerationId = generationId;
       await saveState(state, userId);
       await sendState(state, userId, relay.continuation.state === "started" ? "relay_started" : "relay_accepted");
     });
@@ -4214,31 +4252,51 @@ function ensureInterceptor() {
   interceptorDisposer = spindle.registerInterceptor(async (messages, context) => {
     try {
       const chatId = context.chatId || "_lobby";
-      const characterId = context.characterId || "_none";
+      const characterId = await stateCharacterIdForChat(chatId, context.characterId, context.userId);
+      const generationId = text2(context.generationId, 180);
       let state = await loadState(chatId, characterId, context.userId);
       const metadataRelayId = relayIdFromMessages(messages);
-      const generationRelay = state.relays.find((entry) => entry.status === "pending" && entry.continuation.generationId === context.generationId);
-      const launching = state.relays.filter((entry) => entry.status === "pending" && entry.continuation.state === "launching" && !entry.continuation.generationId);
-      const targetRelayId = metadataRelayId || generationRelay?.id || (launching.length === 1 ? launching[0].id : "");
-      if (targetRelayId && context.generationId) {
+      const generationRelay = generationId ? state.relays.find((entry) => entry.status === "pending" && entry.continuation.generationId === generationId) : undefined;
+      const active = state.relays.filter((entry) => entry.status === "pending" && (entry.continuation.state === "launching" || entry.continuation.state === "accepted" || entry.continuation.state === "started"));
+      const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : "");
+      const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3600 });
+      const generic = { role: "system", content: `${PHONE_GUIDANCE}
+Current Pocket snapshot:
+${projectPhoneContext(state)}` };
+      if (!relayBlock || !targetRelayId) {
+        return { messages: [...messages, generic], breakdown: [{ messageIndex: messages.length, name: "Pocket memory" }] };
+      }
+      const injectedAt = nowIso();
+      try {
         state = await withStateLock(stateKey(chatId, characterId), async () => {
           const current = await loadState(chatId, characterId, context.userId);
           const target = current.relays.find((entry) => entry.id === targetRelayId && entry.status === "pending");
-          if (target && !target.continuation.generationId) {
-            target.continuation.generationId = context.generationId;
-            await saveState(current, context.userId);
-          }
+          if (!target)
+            throw new Error(`Pending relay ${targetRelayId} disappeared before injection.`);
+          const matchedGenerationId = generationId || target.continuation.generationId;
+          target.injectedAt = injectedAt;
+          target.injectedGenerationId = matchedGenerationId || undefined;
+          target.serializedRelayChars = relayBlock.length;
+          target.serializedRelay = relayBlock;
+          target.relayExchangeMessageCount = target.conversationTail.recentMessageIds.length;
+          target.injectionError = undefined;
+          await saveState(current, context.userId);
           return current;
         });
+      } catch (error) {
+        spindle.log.error(`Pocket relay injection receipt failed: relay=${targetRelayId} error=${error instanceof Error ? error.message : String(error)}`);
       }
-      const relay = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3600 });
-      const injected = { role: "system", content: `${PHONE_GUIDANCE}
-Current Pocket snapshot:
-${projectPhoneContext(state)}${relay ? `
-
-${relay}` : ""}` };
-      return { messages: [...messages, injected], breakdown: [{ messageIndex: messages.length, name: relay ? "Pocket memory + matched handoff" : "Pocket memory" }] };
-    } catch {
+      spindle.log.info(`Pocket relay injected: relay=${targetRelayId} generation=${generationId || state.relays.find((entry) => entry.id === targetRelayId)?.continuation.generationId || "awaiting-association"} chars=${relayBlock.length}`);
+      const relayMessage = { role: "system", content: relayBlock };
+      return {
+        messages: [...messages, generic, relayMessage],
+        breakdown: [
+          { messageIndex: messages.length, name: "Pocket memory" },
+          { messageIndex: messages.length + 1, name: "Pocket continuity relay \u2014 newer state" }
+        ]
+      };
+    } catch (error) {
+      spindle.log.error(`Pocket interceptor failed: ${error instanceof Error ? error.message : String(error)}`);
       return messages;
     }
   }, 70);
@@ -4327,6 +4385,8 @@ spindle.on("GENERATION_STARTED", async (payload, userId) => {
       relay.continuation.generationId = generationId;
       relay.continuation.generationStartedAt = nowIso();
       relay.continuation.error = undefined;
+      if (relay.injectedAt && !relay.injectedGenerationId)
+        relay.injectedGenerationId = generationId;
       await saveState(state, userId);
       await sendState(state, userId, "relay_started");
       spindle.log.info(`Pocket observed GENERATION_STARTED: relay=${relay.id} generation=${generationId}`);
@@ -4349,9 +4409,14 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
       let changed = false;
       const relay = generationId ? relayForGeneration(state, generationId) : undefined;
       if (relay) {
-        if (payload?.error || !messageId)
+        relay.continuation.generationCompletedAt = nowIso();
+        const injectionMatched = Boolean(relay.injectedAt && relay.injectedGenerationId === generationId);
+        if (payload?.error || !messageId) {
           relay.continuation = { ...relay.continuation, state: "failed", error: text2(payload?.error, 500) || "The roleplay continuation did not produce a message." };
-        else {
+        } else if (!injectionMatched) {
+          relay.injectionError = "The generation completed without a confirmed matching Pocket relay injection.";
+          relay.continuation = { ...relay.continuation, state: "failed", error: relay.injectionError };
+        } else {
           relay.status = "consumed";
           relay.consumedAt = nowIso();
           relay.consumedMessageId = messageId;

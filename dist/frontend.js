@@ -1673,7 +1673,14 @@ function renderMessagesView(host) {
         `Method: ${continuation.method || "not called"}`,
         `Host accepted: ${continuation.hostAcceptedAt || "no"}`,
         `Generation event: ${continuation.generationStartedAt || "not observed"}`,
+        `Generation completed: ${continuation.generationCompletedAt || "not observed"}`,
         `Generation ID: ${continuation.generationId || "none"}`,
+        `Relay snapshot: ${pendingRelay.conversationTail.text.length} chars`,
+        `Recent exchange: ${pendingRelay.relayExchangeMessageCount ?? pendingRelay.conversationTail.recentMessageIds.length} messages`,
+        `Serialized relay: ${pendingRelay.serializedRelayChars || 0} chars`,
+        `Injected: ${pendingRelay.injectedAt ? `yes · ${pendingRelay.injectedGenerationId || "generation association pending"}` : "no"}`,
+        `Consumption: ${pendingRelay.status}`,
+        pendingRelay.injectionError ? `Injection error: ${pendingRelay.injectionError}` : "",
         continuation.error ? `Error: ${continuation.error}` : ""
       ].filter(Boolean);
       const diagnostics = el("div", "lp-settings-section");
@@ -1681,6 +1688,11 @@ function renderMessagesView(host) {
         diagnostics.appendChild(el("span", "lp-copy", row2));
       details.append(el("summary", "", "Continuation generation info"), diagnostics);
       localActions.appendChild(details);
+      if (pendingRelay.serializedRelay) {
+        const serialized = el("details", "lp-channel-diagnostic");
+        serialized.append(el("summary", "", "View serialized relay"), el("pre", "lp-code-block", pendingRelay.serializedRelay));
+        localActions.appendChild(serialized);
+      }
     }
     if (conversation.lastDecision) {
       const diagnostic = el("details", "lp-channel-diagnostic");
@@ -4403,6 +4415,7 @@ var PHONE_STYLES = `
   .lp-channel-diagnostic { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
   .lp-channel-diagnostic summary { cursor:pointer; text-align:center; }
   .lp-channel-diagnostic > span { display:block; margin-top:4px; overflow-wrap:anywhere; text-align:center; }
+  .lp-code-block { max-height:220px; margin:8px 0 0; padding:10px; overflow:auto; border-radius:10px; background:rgba(0,0,0,.22); color:var(--lp-text); font:var(--pocket-font-xs)/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; text-align:left; }
   .lp-manual-reply { color:var(--lp-muted); background:transparent; }
   .lp-bubble-action { appearance:none; margin:5px 0 0 7px; padding:0; border:0; background:transparent; color:inherit; opacity:.58; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; }
   .lp-bubble-action:hover { opacity:1; text-decoration:underline; }

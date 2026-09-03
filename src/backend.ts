@@ -854,6 +854,10 @@ async function requestRelayContinuation(chatId: string, characterId: string, rel
         hostAcceptedAt: hostReturnedAt,
         error: undefined,
       }
+      // Interception can occur synchronously inside appendMessage before the host
+      // returns its generation id. Bind that already-recorded receipt here too;
+      // GENERATION_STARTED remains an independent observed diagnostic.
+      if (relay.injectedAt && !relay.injectedGenerationId) relay.injectedGenerationId = generationId
       await saveState(state, userId)
       await sendState(state, userId, relay.continuation.state === 'started' ? 'relay_started' : 'relay_accepted')
     })
@@ -2397,7 +2401,10 @@ function ensureInterceptor(): void {
       const active = state.relays.filter((entry) => entry.status === 'pending' && (
         entry.continuation.state === 'launching' || entry.continuation.state === 'accepted' || entry.continuation.state === 'started'
       ))
-      const targetRelayId = metadataRelayId || generationRelay?.id || (active.length === 1 ? active[0].id : '')
+      // Current Lumiverse releases omit generationId from interceptor context. Only use
+      // the single-active fallback when the host truly supplied no generation identity;
+      // an explicit, unrelated generation id must never inherit a Pocket relay.
+      const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : '')
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3_600 })
       const generic = { role: 'system' as const, content: `${PHONE_GUIDANCE}\nCurrent Pocket snapshot:\n${projectPhoneContext(state)}` }
       if (!relayBlock || !targetRelayId) {
