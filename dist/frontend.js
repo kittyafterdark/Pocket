@@ -286,7 +286,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return {
       app,
       contactId: shortId(raw.contactId),
-      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "list" ? raw.view : undefined
+      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -1526,6 +1526,146 @@ function groupEditor(host, conversation) {
   }
   return page;
 }
+function participantAvatar(contact, continuation = false) {
+  const node = el("div", continuation ? "lp-group-avatar lp-group-avatar-spacer" : "lp-group-avatar", contact.name.slice(0, 1).toUpperCase());
+  node.style.setProperty("--message-accent", contactAccent(contact));
+  if (!continuation && contactAvatar(contact)) {
+    const image = el("img");
+    image.src = contactAvatar(contact);
+    image.alt = "";
+    node.replaceChildren(image);
+  }
+  return node;
+}
+function handoffActivity(host, conversation, relay) {
+  const continuation = relay.continuation;
+  const failed = relay.status === "pending" && (continuation.state === "blocked" || continuation.state === "failed" || continuation.state === "stopped" || Boolean(relay.injectionError));
+  const completed = relay.status === "consumed" || continuation.state === "completed";
+  const generating = !failed && !completed && Boolean(relay.injectedAt || continuation.state === "started");
+  const accepted = !failed && !completed && !generating && continuation.state === "accepted";
+  const state = completed ? "completed" : failed ? "failed" : generating ? "generating" : accepted ? "accepted" : "preparing";
+  const actor = host.state.contacts.find((entry) => entry.id === relay.contactId)?.name || conversation.title || "Conversation";
+  const activity = el("div", "lp-handoff-activity");
+  activity.dataset.relayId = relay.id;
+  activity.dataset.state = state;
+  activity.setAttribute("role", "status");
+  const primary = el("div", "lp-handoff-primary");
+  const mark = el("span", "lp-handoff-mark", completed ? "✓" : failed ? "!" : "");
+  const copy = el("div", "lp-grow");
+  const title = completed ? "Continued in roleplay" : failed ? "Couldn’t continue in roleplay" : generating ? "Continuing in roleplay…" : accepted ? "Host accepted the handoff" : "Preparing roleplay handoff…";
+  const subtitle = completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || "The handoff is still pending." : generating ? "Pocket delivered the conversation context to the scene." : accepted ? "Waiting for relay injection." : "Gathering the latest phone exchange.";
+  copy.append(el("strong", "", title), el("span", "lp-copy", subtitle));
+  primary.append(mark, copy);
+  if (completed) {
+    const open = button("Open RP", "lp-handoff-action");
+    open.addEventListener("click", () => host.openRoleplay());
+    primary.appendChild(open);
+  } else if (failed) {
+    const retry = button("Retry", "lp-handoff-action");
+    retry.addEventListener("click", () => host.continueRelay());
+    primary.appendChild(retry);
+  }
+  activity.appendChild(primary);
+  const more = el("details", "lp-handoff-more");
+  const summary = el("summary", "", "More");
+  const secondary = el("div", "lp-handoff-secondary");
+  if (relay.status === "pending") {
+    const anyway = button("Message anyway", "lp-button lp-button-quiet");
+    anyway.addEventListener("click", () => host.messageAnyway(conversation.id));
+    secondary.appendChild(anyway);
+  }
+  if (relay.timelineEventId) {
+    const timeline = button("Timeline handoff", "lp-button lp-button-quiet");
+    timeline.addEventListener("click", () => host.openTimeline(relay.timelineEventId));
+    secondary.appendChild(timeline);
+  }
+  const permissions2 = continuation.permissions ? `chat mutation ${continuation.permissions.chatMutation ? "granted" : "missing"} · generation ${continuation.permissions.generation ? "granted" : "missing"}` : "not checked";
+  const diagnostics = el("div", "lp-handoff-diagnostics");
+  for (const row2 of [
+    `Relay: ${relay.id}`,
+    `State: ${continuation.state}`,
+    `Invoked: ${continuation.invokedAt || "not yet"}`,
+    `Permissions: ${permissions2}`,
+    `Method: ${continuation.method || "not called"}`,
+    `Host accepted: ${continuation.hostAcceptedAt || "no"}`,
+    `Generation event: ${continuation.generationStartedAt || "not observed"}`,
+    `Generation completed: ${continuation.generationCompletedAt || "not observed"}`,
+    `Generation ID: ${continuation.generationId || "none"}`,
+    `Relay snapshot: ${relay.conversationTail.text.length} chars`,
+    `Recent exchange: ${relay.relayExchangeMessageCount ?? relay.conversationTail.recentMessageIds.length} messages`,
+    `Serialized relay: ${relay.serializedRelayChars || 0} chars`,
+    `Injected: ${relay.injectedAt ? `yes · ${relay.injectedGenerationId || "generation association pending"}` : "no"}`,
+    `Consumption: ${relay.status}`,
+    relay.injectionError ? `Injection error: ${relay.injectionError}` : "",
+    continuation.error ? `Error: ${continuation.error}` : ""
+  ].filter(Boolean))
+    diagnostics.appendChild(el("span", "lp-copy", row2));
+  const decision = conversation.lastDecision;
+  if (decision?.relayId === relay.id)
+    diagnostics.appendChild(el("span", "lp-copy", `Channel decision: ${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
+  secondary.appendChild(diagnostics);
+  if (relay.serializedRelay) {
+    const serialized = el("details", "lp-channel-diagnostic");
+    serialized.append(el("summary", "", "View serialized relay"), el("pre", "lp-code-block", relay.serializedRelay));
+    secondary.appendChild(serialized);
+  }
+  more.append(summary, secondary);
+  activity.appendChild(more);
+  if (host.shouldFocusHandoff(relay.id))
+    requestAnimationFrame(() => activity.scrollIntoView?.({ block: "center", behavior: "smooth" }));
+  return activity;
+}
+function referenceAttachment(host, reference) {
+  const node = el("div", "lp-reference-attachment");
+  node.dataset.referenceId = reference.id;
+  node.dataset.state = reference.status;
+  node.setAttribute("role", "status");
+  const copy = el("div", "lp-grow");
+  const title = reference.status === "failed" ? "Reference wasn’t delivered" : reference.status === "injected" ? "Reference attached to roleplay generation" : "Attached to next roleplay turn";
+  const scope = reference.scope === "selected_messages" ? `${reference.messages.length} selected message${reference.messages.length === 1 ? "" : "s"}` : reference.scope === "recent_messages" ? "Recent messages" : "Current conversation";
+  copy.append(el("strong", "", title), el("span", "lp-copy", `${reference.conversationTitle} · ${scope}`));
+  const mark = el("span", "lp-reference-mark", reference.status === "failed" ? "!" : reference.status === "injected" ? "↗" : "✓");
+  const actions = el("div", "lp-reference-actions");
+  if (reference.status === "armed") {
+    const roleplay = button("Return to roleplay", "lp-reference-action");
+    roleplay.addEventListener("click", () => host.openRoleplay());
+    const cancel = button("Cancel", "lp-reference-action lp-reference-action-quiet");
+    cancel.addEventListener("click", () => host.cancelReference(reference.id));
+    actions.append(roleplay, cancel);
+  } else if (reference.status === "failed") {
+    const retry = button("Attach again", "lp-reference-action");
+    retry.addEventListener("click", () => host.rearmReference(reference.id));
+    const cancel = button("Dismiss", "lp-reference-action lp-reference-action-quiet");
+    cancel.addEventListener("click", () => host.cancelReference(reference.id));
+    actions.append(retry, cancel);
+  }
+  const head = el("div", "lp-reference-head");
+  head.append(mark, copy, actions);
+  node.appendChild(head);
+  node.appendChild(el("p", "lp-reference-safety", reference.status === "injected" ? "Pocket supplied this as context only; participant scene presence was not changed." : reference.status === "failed" ? reference.error || "The reference remains available to attach again." : "Pocket will wait for your RP message. This does not move any participant into the scene."));
+  const diagnostics = el("details", "lp-reference-diagnostics");
+  const body = el("div", "lp-handoff-diagnostics");
+  for (const row2 of [
+    `Reference: ${reference.id}`,
+    `Status: ${reference.status}`,
+    `Scope: ${reference.scope}`,
+    `Messages: ${reference.messages.length}`,
+    `Bound user message: ${reference.boundUserMessageId || "waiting for next RP turn"}`,
+    `Generation: ${reference.injectedGenerationId || "not bound"}`,
+    `Injected: ${reference.injectedAt || "no"}`,
+    `Serialized reference: ${reference.serializedReferenceChars || 0} chars`,
+    reference.error ? `Error: ${reference.error}` : ""
+  ].filter(Boolean))
+    body.appendChild(el("span", "lp-copy", row2));
+  if (reference.serializedReference) {
+    const serialized = el("details", "lp-channel-diagnostic");
+    serialized.append(el("summary", "", "View serialized reference"), el("pre", "lp-code-block", reference.serializedReference));
+    body.appendChild(serialized);
+  }
+  diagnostics.append(el("summary", "", "Diagnostics"), body);
+  node.appendChild(diagnostics);
+  return node;
+}
 function renderMessagesView(host) {
   const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId) || null;
   if (host.selectedView === "new-group")
@@ -1585,29 +1725,58 @@ function renderMessagesView(host) {
   back.addEventListener("click", () => host.back());
   const title = el("div", "lp-nav-title", titleText);
   title.appendChild(el("span", "lp-nav-subtitle", conversation.kind === "group" ? `${conversation.participantContactIds.length} contacts` : "Direct message"));
-  const info = button("Info", "lp-nav-action");
-  info.addEventListener("click", () => {
+  const menu = el("details", "lp-conversation-menu");
+  const menuToggle = el("summary", "lp-nav-action", "⋯");
+  menuToggle.setAttribute("aria-label", "Conversation menu");
+  const menuSheet = el("div", "lp-conversation-menu-sheet");
+  const menuAction = (label, callback) => {
+    const action = button(label, "lp-conversation-menu-action");
+    action.addEventListener("click", () => {
+      menu.open = false;
+      callback();
+    });
+    return action;
+  };
+  menuSheet.appendChild(menuAction(conversation.kind === "group" ? "Participants" : "Contact info", () => {
     if (conversation.kind === "group")
       host.selectConversation(conversation.id, "group-detail");
     else
       host.openContact(conversation.participantContactIds[0]);
-  });
-  nav.append(back, title, info);
+  }));
+  const referenceAction = menuAction("Reference in roleplay", () => host.showReferenceSheet(conversation.id));
+  referenceAction.disabled = !conversation.messages.some((message) => message.sender !== "system");
+  menuSheet.appendChild(referenceAction);
+  menuSheet.appendChild(menuAction("View Timeline", () => host.openTimeline("")));
+  menuSheet.appendChild(menuAction("Generation info", () => host.showConversationGenerationInfo(conversation.id)));
+  menu.append(menuToggle, menuSheet);
+  nav.append(back, title, menu);
+  page.appendChild(nav);
+  const referenceSlot = el("div", "lp-reference-slot");
+  const activeReference = [...host.state.references].reverse().find((entry) => entry.conversationId === conversation.id && (entry.status === "armed" || entry.status === "injected" || entry.status === "failed"));
+  if (activeReference)
+    referenceSlot.appendChild(referenceAttachment(host, activeReference));
+  page.appendChild(referenceSlot);
   const busy = host.busyConversations.get(conversation.id);
   const replyBusy = Boolean(busy);
   const directContact = conversation.kind === "direct" ? host.state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]) : null;
   const scenePresent = Boolean(directContact?.presence.inScene);
   const bubbles = el("div", "lp-bubbles");
   bubbles.dataset.pocketThread = conversation.id;
+  const conversationRelays = host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== "dismissed");
+  const renderedRelayIds = new Set;
+  let priorGroupSpeakerId = "";
   for (const message of conversation.messages) {
     const bubble = el("div", "lp-bubble");
     bubble.dataset.messageId = message.id;
     bubble.dataset.selected = String(message.id === host.selectedMessageId);
     bubble.dataset.sender = message.sender;
+    const senderContact = message.sender === "contact" ? host.state.contacts.find((entry) => entry.id === message.senderContactId) : undefined;
+    const resolvedAccent = senderContact ? contactAccent(senderContact) : message.senderAccent || (directContact ? contactAccent(directContact) : "");
     if (message.sender === "contact")
-      bubble.style.setProperty("--message-accent", message.senderAccent || (directContact ? contactAccent(directContact) : ""));
-    if (conversation.kind === "group" && message.sender === "contact")
-      bubble.appendChild(el("strong", "lp-bubble-sender", message.senderName));
+      bubble.style.setProperty("--message-accent", resolvedAccent);
+    const continuesRun = conversation.kind === "group" && message.sender === "contact" && priorGroupSpeakerId === message.senderContactId;
+    if (conversation.kind === "group" && message.sender === "contact" && !continuesRun)
+      bubble.appendChild(el("strong", "lp-bubble-sender", senderContact?.name || message.senderName));
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
     if (message.generation) {
       const retry = button("Retry", "lp-bubble-action");
@@ -1619,24 +1788,50 @@ function renderMessagesView(host) {
       generationInfo.addEventListener("click", () => host.showGenerationInfo(message));
       bubble.append(retry, generationInfo);
     }
-    bubbles.appendChild(bubble);
+    if (conversation.kind === "group" && message.sender === "contact" && senderContact) {
+      const row2 = el("div", "lp-group-message");
+      row2.style.setProperty("--message-accent", resolvedAccent);
+      row2.dataset.continuation = String(continuesRun);
+      row2.append(participantAvatar(senderContact, continuesRun), bubble);
+      bubbles.appendChild(row2);
+      priorGroupSpeakerId = senderContact.id;
+    } else {
+      bubbles.appendChild(bubble);
+      priorGroupSpeakerId = "";
+    }
+    for (const relay of conversationRelays.filter((entry) => entry.sourceMessageId === message.id)) {
+      bubbles.appendChild(handoffActivity(host, conversation, relay));
+      renderedRelayIds.add(relay.id);
+    }
   }
+  for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id)))
+    bubbles.appendChild(handoffActivity(host, conversation, relay));
   if (busy?.phase === "checking") {
-    const checking = el("div", "lp-conversation-status", "Checking for reply…");
+    const checking = el("div", conversation.kind === "group" ? "lp-group-typing" : "lp-conversation-status");
+    checking.appendChild(el("span", "", conversation.kind === "group" ? titleText : "Checking for reply…"));
+    if (conversation.kind === "group") {
+      const dots = el("span", "lp-typing-dots");
+      dots.append(el("i"), el("i"), el("i"));
+      checking.appendChild(dots);
+    }
     checking.setAttribute("role", "status");
     bubbles.appendChild(checking);
-  } else if (replyBusy) {
-    const pending = el("div", "lp-bubble lp-bubble-pending");
-    pending.dataset.sender = "contact";
+  } else if (busy) {
+    const pending = el("div", conversation.kind === "group" ? "lp-group-typing" : "lp-bubble lp-bubble-pending");
+    const busyContact = host.state.contacts.find((entry) => entry.id === busy.speakerContactId);
+    if (conversation.kind === "group")
+      pending.appendChild(el("span", "", `${busyContact?.name || "Someone"} is typing…`));
+    else
+      pending.dataset.sender = "contact";
     pending.setAttribute("role", "status");
-    pending.setAttribute("aria-label", "Contact is typing");
+    pending.setAttribute("aria-label", conversation.kind === "group" ? `${busyContact?.name || "Someone"} is typing` : "Contact is typing");
     const dots = el("span", "lp-typing-dots");
     dots.append(el("i"), el("i"), el("i"));
     pending.appendChild(dots);
     bubbles.appendChild(pending);
   }
   const availability = scenePresent && conversation.availability.state !== "local" ? { state: "local", reason: "in_scene" } : conversation.availability;
-  if (!replyBusy && (availability.state !== "remote" || conversation.pause)) {
+  if (!replyBusy && (availability.state === "arriving" || availability.state === "paused" || conversation.pause)) {
     const reason = availability.state === "local" ? LOCAL_COPY[availability.reason] : availability.state === "arriving" ? "is on the way." : PAUSE_COPY[availability.state === "paused" ? availability.reason : conversation.pause.reason];
     const banner = el("div", "lp-conversation-status", `${directContact?.name || titleText} ${reason}`);
     banner.dataset.pauseReason = availability.state === "local" ? availability.reason : availability.state === "arriving" ? "arriving" : availability.state === "paused" ? availability.reason : conversation.pause.reason;
@@ -1645,86 +1840,45 @@ function renderMessagesView(host) {
   if (!conversation.messages.length)
     bubbles.appendChild(host.empty("Say hello", "This thread is private to this Pocket roleplay state."));
   if (availability.state === "local" && !host.manualOverride) {
-    const localActions = el("div", "lp-local-actions");
-    const relay = [...host.state.relays].reverse().find((entry) => entry.conversationId === conversation.id);
-    const pendingRelay = relay?.status === "pending" ? relay : undefined;
-    const continuing = pendingRelay?.continuation.state === "launching" || pendingRelay?.continuation.state === "accepted" || pendingRelay?.continuation.state === "started";
-    const retrying = pendingRelay?.continuation.state === "blocked" || pendingRelay?.continuation.state === "failed" || pendingRelay?.continuation.state === "stopped";
-    const status = continuing ? pendingRelay?.continuation.state === "started" ? "Roleplay generation started…" : pendingRelay?.continuation.state === "accepted" ? "Host accepted the continuation…" : "Requesting roleplay continuation…" : retrying ? pendingRelay?.continuation.error || "Continuation paused — retry when ready." : "Continue in main conversation";
-    const roleplay = button(retrying ? "Retry continuation" : "Return to roleplay", "lp-button");
-    roleplay.disabled = continuing;
-    roleplay.addEventListener("click", () => host.returnToRoleplay());
-    const anyway = button("Message anyway", "lp-button lp-button-quiet");
-    anyway.addEventListener("click", () => host.messageAnyway(conversation.id));
-    localActions.append(el("strong", "", status), roleplay, anyway);
-    if (relay?.timelineEventId) {
-      const timeline = button("View Timeline handoff", "lp-button lp-button-quiet");
-      timeline.addEventListener("click", () => host.openTimeline(relay.timelineEventId));
-      localActions.appendChild(timeline);
-    }
-    if (pendingRelay) {
-      const continuation = pendingRelay.continuation;
-      const details = el("details", "lp-channel-diagnostic");
-      const permissions2 = continuation.permissions ? `chat mutation ${continuation.permissions.chatMutation ? "granted" : "missing"} · generation ${continuation.permissions.generation ? "granted" : "missing"}` : "not checked";
-      const rows = [
-        `State: ${continuation.state}`,
-        `Invoked: ${continuation.invokedAt || "not yet"}`,
-        `Permissions: ${permissions2}`,
-        `Method: ${continuation.method || "not called"}`,
-        `Host accepted: ${continuation.hostAcceptedAt || "no"}`,
-        `Generation event: ${continuation.generationStartedAt || "not observed"}`,
-        `Generation completed: ${continuation.generationCompletedAt || "not observed"}`,
-        `Generation ID: ${continuation.generationId || "none"}`,
-        `Relay snapshot: ${pendingRelay.conversationTail.text.length} chars`,
-        `Recent exchange: ${pendingRelay.relayExchangeMessageCount ?? pendingRelay.conversationTail.recentMessageIds.length} messages`,
-        `Serialized relay: ${pendingRelay.serializedRelayChars || 0} chars`,
-        `Injected: ${pendingRelay.injectedAt ? `yes · ${pendingRelay.injectedGenerationId || "generation association pending"}` : "no"}`,
-        `Consumption: ${pendingRelay.status}`,
-        pendingRelay.injectionError ? `Injection error: ${pendingRelay.injectionError}` : "",
-        continuation.error ? `Error: ${continuation.error}` : ""
-      ].filter(Boolean);
-      const diagnostics = el("div", "lp-settings-section");
-      for (const row2 of rows)
-        diagnostics.appendChild(el("span", "lp-copy", row2));
-      details.append(el("summary", "", "Continuation generation info"), diagnostics);
-      localActions.appendChild(details);
-      if (pendingRelay.serializedRelay) {
-        const serialized = el("details", "lp-channel-diagnostic");
-        serialized.append(el("summary", "", "View serialized relay"), el("pre", "lp-code-block", pendingRelay.serializedRelay));
-        localActions.appendChild(serialized);
-      }
-    }
-    if (conversation.lastDecision) {
-      const diagnostic = el("details", "lp-channel-diagnostic");
-      const decision = conversation.lastDecision;
-      diagnostic.append(el("summary", "", "Channel decision"), el("span", "lp-copy", `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
-      localActions.appendChild(diagnostic);
-    }
-    page.append(nav, bubbles, localActions);
+    if (!conversationRelays.length)
+      bubbles.appendChild(el("div", "lp-conversation-status", `${directContact?.name || titleText} is currently with you.`));
+    page.appendChild(bubbles);
     return page;
   }
   const compose = el("form", "lp-compose");
   const sparkle = scenePresent || conversation.pause ? button("⋯", "lp-button lp-button-icon lp-manual-reply") : host.iconButton("sparkle", "Generate one contact reply");
-  sparkle.setAttribute("aria-label", scenePresent ? "Manually generate a reply while contact is here" : conversation.pause ? "Manually generate a reply in paused conversation" : "Generate one contact reply");
-  sparkle.title = scenePresent ? "Manual reply — this contact is currently with you" : conversation.pause ? "Manual reply — conversation is paused" : "Generate one contact reply";
+  const selectedGroupSpeaker = conversation.kind === "group" && conversation.participantContactIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : "auto";
+  const selectedGroupContact = selectedGroupSpeaker === "auto" ? null : host.state.contacts.find((entry) => entry.id === selectedGroupSpeaker);
+  const generationLabel = conversation.kind === "group" ? selectedGroupContact ? `Generate one reply from ${selectedGroupContact.name}` : "Generate the next natural group burst" : "Generate one contact reply";
+  sparkle.setAttribute("aria-label", scenePresent ? "Manually generate a reply while contact is here" : conversation.pause ? "Manually generate a reply in paused conversation" : generationLabel);
+  sparkle.title = scenePresent ? "Manual reply — this contact is currently with you" : conversation.pause ? "Manual reply — conversation is paused" : generationLabel;
   sparkle.disabled = !host.generationAvailable || replyBusy;
-  const speaker = el("select", "lp-speaker-select");
+  const speakerMenu = el("details", "lp-speaker-menu");
   if (conversation.kind === "group") {
-    const auto = el("option", "", "Auto speaker");
-    auto.value = "auto";
-    speaker.appendChild(auto);
+    const summary = el("summary", "", selectedGroupContact ? `Next reply: ${selectedGroupContact.name} ×` : `${conversation.participantContactIds.length} contacts · Auto speaker`);
+    const sheet = el("div", "lp-speaker-sheet");
+    sheet.appendChild(el("strong", "", "Who replies?"));
+    const auto = button(`${selectedGroupSpeaker === "auto" ? "✓ " : ""}Auto`, "lp-speaker-option");
+    auto.addEventListener("click", () => {
+      speakerMenu.open = false;
+      host.selectGroupSpeaker(conversation.id, "auto");
+    });
+    sheet.appendChild(auto);
     for (const contactId of conversation.participantContactIds) {
       const contact = host.state.contacts.find((entry) => entry.id === contactId);
       if (!contact)
         continue;
-      const option = el("option", "", contact.name);
-      option.value = contact.id;
-      speaker.appendChild(option);
+      const option = button(`${selectedGroupSpeaker === contact.id ? "✓ " : ""}${contact.name}`, "lp-speaker-option");
+      option.addEventListener("click", () => {
+        speakerMenu.open = false;
+        host.selectGroupSpeaker(conversation.id, contact.id);
+      });
+      sheet.appendChild(option);
     }
-    speaker.setAttribute("aria-label", "Reply speaker");
+    speakerMenu.append(summary, sheet);
   } else
-    speaker.hidden = true;
-  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? speaker.value : conversation.participantContactIds[0]));
+    speakerMenu.hidden = true;
+  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : conversation.participantContactIds[0]));
   const textarea = el("textarea", "lp-textarea");
   textarea.rows = 1;
   textarea.placeholder = "Message…";
@@ -1750,7 +1904,7 @@ function renderMessagesView(host) {
     event.preventDefault();
     compose.requestSubmit();
   });
-  compose.append(sparkle, speaker, textarea, submit);
+  compose.append(sparkle, textarea, submit);
   compose.addEventListener("submit", (event) => {
     event.preventDefault();
     const message = inputValue(textarea);
@@ -1761,7 +1915,11 @@ function renderMessagesView(host) {
     host.updateDraft(conversation.id, "");
     resizeComposer();
   });
-  page.append(nav, bubbles, compose);
+  const composerStack = el("div", "lp-compose-stack");
+  if (conversation.kind === "group")
+    composerStack.appendChild(speakerMenu);
+  composerStack.appendChild(compose);
+  page.append(bubbles, composerStack);
   requestAnimationFrame(() => {
     resizeComposer();
     const selected = host.selectedMessageId ? bubbles.querySelector(`[data-message-id="${CSS.escape(host.selectedMessageId)}"]`) : null;
@@ -1785,26 +1943,42 @@ function avatar(contact) {
   }
   return node;
 }
-function contactEditor(host, contact) {
+function draftPayload(draft) {
+  return {
+    name: draft.name,
+    role: draft.role,
+    identityBrief: draft.identityBrief,
+    description: draft.identityBrief,
+    accent: draft.accent,
+    colorMode: "pocket",
+    messagingStyle: draft.messagingStyle,
+    source: { kind: "npc", origin: "generated", description: draft.identityBrief },
+    presence: { inScene: false, lastSceneAt: "" },
+    contextPolicy: { pinned: false },
+    generationPolicy: { relevant: true },
+    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" }
+  };
+}
+function contactEditor(host, contact, draft = null) {
   let saveContact = () => {};
-  const { page, content } = host.page(contact ? "Contact Settings" : "New Contact", contact?.source.kind || "Pocket NPC", { label: "Save", callback: () => saveContact() });
+  const { page, content } = host.page(contact ? "Contact Settings" : draft ? "Edit Draft" : "New Contact", contact?.source.kind || (draft ? "Generated preview · unsaved" : "Pocket NPC"), { label: "Save", callback: () => saveContact() });
   const name = el("input", "lp-input");
   name.placeholder = "Name";
-  name.value = contact?.name || "";
+  name.value = contact?.name || draft?.name || "";
   const role = el("input", "lp-input");
   role.placeholder = "Role";
-  role.value = contact?.role || "";
+  role.value = contact?.role || draft?.role || "";
   const description = el("textarea", "lp-textarea");
   description.placeholder = "Stable identity brief — role, personality, relationship, enduring traits";
   description.maxLength = 1200;
-  description.value = contact?.identityBrief || contact?.description || "";
+  description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || "";
   const sceneNote = el("textarea", "lp-textarea");
   sceneNote.placeholder = "Current scene note — temporary state, objective, or reason they are here";
   sceneNote.maxLength = 600;
   sceneNote.value = contact?.sceneNote || "";
   const accent = el("input", "lp-color-input");
   accent.type = "color";
-  accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || "") ? contact.accent : "#8b7dff";
+  accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || "") ? contact?.accent || draft.accent : "#8b7dff";
   const colorRow = el("label", "lp-card lp-row-between");
   colorRow.append(el("span", "lp-title", "Contact color"), accent);
   const colorMode = el("select", "lp-select");
@@ -1842,6 +2016,37 @@ function contactEditor(host, contact) {
   ambientHere.checked = contact?.messagingPolicy.allowAmbientInScene || false;
   const ambientHereRow = el("label", "lp-card lp-row-between");
   ambientHereRow.append(el("span", "lp-title", "Allow ambient texts while in scene"), ambientHere);
+  const style = contact?.messagingStyle || draft?.messagingStyle || { talkativeness: 50, fragmentation: 35 };
+  const talkativeness = el("input");
+  talkativeness.type = "range";
+  talkativeness.min = "0";
+  talkativeness.max = "100";
+  talkativeness.value = String(style.talkativeness);
+  const talkValue = el("span", "lp-copy", `${talkativeness.value}%`);
+  talkativeness.addEventListener("input", () => {
+    talkValue.textContent = `${talkativeness.value}%`;
+  });
+  const talkHead = el("span", "lp-row-between");
+  talkHead.append(el("strong", "", "Talkativeness"), talkValue);
+  const talkEnds = el("span", "lp-range-ends");
+  talkEnds.append(el("span", "", "Quiet"), el("span", "", "Chatty"));
+  const talkRow = el("label", "lp-style-control");
+  talkRow.append(talkHead, talkativeness, talkEnds);
+  const fragmentation = el("input");
+  fragmentation.type = "range";
+  fragmentation.min = "0";
+  fragmentation.max = "100";
+  fragmentation.value = String(style.fragmentation);
+  const fragmentValue = el("span", "lp-copy", `${fragmentation.value}%`);
+  fragmentation.addEventListener("input", () => {
+    fragmentValue.textContent = `${fragmentation.value}%`;
+  });
+  const fragmentHead = el("span", "lp-row-between");
+  fragmentHead.append(el("strong", "", "Texting style"), fragmentValue);
+  const fragmentEnds = el("span", "lp-range-ends");
+  fragmentEnds.append(el("span", "", "Compact"), el("span", "", "Bursty"));
+  const fragmentRow = el("label", "lp-style-control");
+  fragmentRow.append(fragmentHead, fragmentation, fragmentEnds);
   saveContact = () => {
     if (!name.value.trim()) {
       host.showError("A contact needs a name.");
@@ -1864,11 +2069,12 @@ function contactEditor(host, contact) {
         allowAmbientInScene: ambientHere.checked,
         lastInitiatedMessageAt: contact?.messagingPolicy.lastInitiatedMessageAt || "",
         lastInitiatedRoleplayAt: contact?.messagingPolicy.lastInitiatedRoleplayAt || ""
-      }
+      },
+      messagingStyle: { talkativeness: Number(talkativeness.value), fragmentation: Number(fragmentation.value) },
+      source: contact?.source || (draft ? { kind: "npc", origin: "generated", description: description.value.trim() } : { kind: "npc", origin: "manual", description: description.value.trim() })
     } });
-    host.select(contact?.id || "", "list");
   };
-  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
@@ -1904,6 +2110,29 @@ function importView(host) {
   const primitive = button("Create manually", "lp-button lp-button-quiet");
   primitive.addEventListener("click", () => host.select("", "new"));
   manual.append(description, generate, primitive);
+  if (host.npcDraft) {
+    const draft = host.npcDraft;
+    const preview = el("section", "lp-card lp-npc-draft");
+    const previewHead = el("div", "lp-row-between");
+    previewHead.append(el("span", "lp-eyebrow", "Unsaved preview"), el("span", "lp-copy", `${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`));
+    preview.append(previewHead, el("h3", "lp-title", draft.name), el("p", "lp-copy", draft.role), el("p", "lp-copy", draft.identityBrief));
+    const actions = el("div", "lp-draft-actions");
+    const retry = button("Retry", "lp-button lp-button-quiet");
+    retry.disabled = Boolean(npcOperation);
+    retry.addEventListener("click", () => host.send("lumiphone:generate_contact", { description: draft.sourceDescription }));
+    const edit = button("Edit", "lp-button lp-button-quiet");
+    edit.addEventListener("click", () => host.select("", "draft"));
+    const use = button("Use", "lp-button lp-button-primary");
+    use.addEventListener("click", () => host.send("lumiphone:save_contact", { contact: draftPayload(draft) }));
+    actions.append(retry, edit, use);
+    if (host.previousNpcDraft) {
+      const previous = button("Undo reroll", "lp-button lp-button-quiet");
+      previous.addEventListener("click", () => host.restorePreviousNpcDraft());
+      actions.prepend(previous);
+    }
+    preview.appendChild(actions);
+    manual.appendChild(preview);
+  }
   if (npcOperation) {
     const progress = el("div", "lp-operation-progress");
     progress.dataset.operationRequest = npcOperation.requestId;
@@ -1943,6 +2172,8 @@ function renderContactsView(host) {
     host.requestSources();
     return importView(host);
   }
+  if (host.selectedView === "draft" && host.npcDraft)
+    return contactEditor(host, null, host.npcDraft);
   if (host.selectedView === "new")
     return contactEditor(host, null);
   if (contact && host.selectedView === "config")
@@ -2271,6 +2502,8 @@ class PocketController {
   pendingWallpaperTarget = null;
   selectedContactId = "";
   selectedContactView = "list";
+  npcDraft = null;
+  previousNpcDraft = null;
   selectedConversationId = "";
   selectedConversationView = "thread";
   selectedMessageId = "";
@@ -2286,7 +2519,9 @@ class PocketController {
   cameraRequestId = "";
   messageRequests = new Map;
   messageDrafts = new Map;
+  groupSpeakerSelections = new Map;
   manualMessageOverrides = new Set;
+  focusedHandoffRelays = new Set;
   contactSources = [];
   contactSourcesRequested = false;
   lastTagKeys = new Set;
@@ -2929,13 +3164,27 @@ class PocketController {
         this.render(false);
       return;
     }
+    if (payload.type === "lumiphone:contact_draft" && payload.draft) {
+      if (this.npcDraft)
+        this.previousNpcDraft = structuredClone(this.npcDraft);
+      this.npcDraft = structuredClone(payload.draft);
+      if (this.currentApp === "contacts")
+        this.openPocket({ app: "contacts", view: "import" }, false);
+      return;
+    }
+    if (payload.type === "lumiphone:reference_armed") {
+      this.showFeedback("Conversation attached to your next roleplay turn.");
+      return;
+    }
     if (payload.type === "lumiphone:conversation_opened" && payload.conversationId) {
       this.openPocket({ app: "messages", conversationId: payload.conversationId, view: "thread" });
       return;
     }
     if ((payload.type === "lumiphone:contact_created" || payload.type === "lumiphone:contact_saved") && payload.contactId) {
       this.contactSourcesRequested = false;
-      this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" });
+      this.npcDraft = null;
+      this.previousNpcDraft = null;
+      this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" }, false);
       return;
     }
     if (payload.type === "lumiphone:swarm_profile") {
@@ -3410,6 +3659,7 @@ class PocketController {
       selectedView: this.selectedConversationView,
       generationAvailable: Boolean(this.caps?.generation),
       busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
+      selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || "auto",
       draft: this.messageDrafts.get(this.selectedConversationId) || "",
       updateDraft: (conversationId, value) => {
         if (value)
@@ -3426,6 +3676,13 @@ class PocketController {
         this.send(type, payload);
       },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
+      selectGroupSpeaker: (conversationId, speakerContactId) => {
+        if (speakerContactId === "auto")
+          this.groupSpeakerSelections.delete(conversationId);
+        else
+          this.groupSpeakerSelections.set(conversationId, speakerContactId);
+        this.render(false);
+      },
       composerState: (conversationId, held) => {
         this.send("lumiphone:composer_state", { conversationId, held });
       },
@@ -3434,12 +3691,25 @@ class PocketController {
         this.render(false);
       },
       manualOverride: this.manualMessageOverrides.has(this.selectedConversationId),
-      returnToRoleplay: () => {
-        if (this.state?.relays.some((entry) => entry.conversationId === this.selectedConversationId && entry.status === "pending"))
-          this.send("lumiphone:continue_relay", { conversationId: this.selectedConversationId });
-        this.close();
+      continueRelay: () => {
+        this.send("lumiphone:continue_relay", { conversationId: this.selectedConversationId });
       },
+      openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: "calendar", eventId }),
+      showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
+      cancelReference: (referenceId) => this.send("lumiphone:cancel_reference", { referenceId }),
+      rearmReference: (referenceId) => this.send("lumiphone:rearm_reference", { referenceId }),
+      showConversationGenerationInfo: (conversationId) => this.showConversationGenerationInfo(conversationId),
+      shouldFocusHandoff: (relayId) => {
+        if (this.focusedHandoffRelays.has(relayId))
+          return false;
+        const relay = this.state?.relays.find((entry) => entry.id === relayId);
+        const conversation = relay ? this.state?.conversations.find((entry) => entry.id === relay.conversationId) : null;
+        if (!relay || conversation?.availability.state !== "local")
+          return false;
+        this.focusedHandoffRelays.add(relayId);
+        return true;
+      },
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back()
     });
@@ -3474,7 +3744,130 @@ class PocketController {
         row2.append(el("strong", "", "Channel decision"), el("span", "lp-copy", `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
         content.appendChild(row2);
       }
+      if (info.groupBatch) {
+        for (const [label, value] of [
+          ["Group batch", info.groupBatch.id],
+          ["Batch position", `${info.groupBatch.position} of ${info.groupBatch.size}`],
+          ["Eligible contacts", String(info.groupBatch.eligibleCount)]
+        ]) {
+          const row2 = el("div", "lp-row-between");
+          row2.append(el("strong", "", label), el("span", "lp-copy", value));
+          content.appendChild(row2);
+        }
+      }
     }
+    modal.root.appendChild(content);
+  }
+  showReferenceSheet(conversationId) {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
+    if (!conversation)
+      return;
+    const modal = this.ctx.ui.showModal({ title: "Reference in roleplay", width: 480, maxHeight: 680 });
+    const content = el("div", "lp-reference-sheet");
+    content.appendChild(el("p", "lp-copy", "Attach Pocket context to your next normal roleplay turn. Pocket will wait for your RP message and will not change anyone’s scene presence."));
+    let scope = "conversation";
+    const messageInputs = [];
+    const attach = button("Attach to next RP turn", "lp-button lp-button-primary");
+    const update = () => {
+      for (const input of messageInputs)
+        input.disabled = scope !== "selected_messages";
+      attach.disabled = scope === "selected_messages" && !messageInputs.some((input) => input.checked);
+    };
+    const addScope = (value, label, description) => {
+      const row2 = el("label", "lp-reference-scope");
+      const input = el("input");
+      input.type = "radio";
+      input.name = `reference-scope-${conversation.id}`;
+      input.value = value;
+      input.checked = scope === value;
+      input.dataset.referenceScope = value;
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          scope = value;
+          update();
+        }
+      });
+      const copy = el("span", "lp-grow");
+      copy.append(el("strong", "", label), el("span", "lp-copy", description));
+      row2.append(input, copy);
+      content.appendChild(row2);
+    };
+    addScope("conversation", "Current conversation", "Conversation state, participants, and up to 8 recent messages.");
+    addScope("recent_messages", "Recent messages", "Only the last 6 messages and minimal conversation context.");
+    addScope("selected_messages", "Selected messages", "Choose the exact bubbles Pocket should attach.");
+    const choices = el("div", "lp-reference-message-list");
+    for (const message of conversation.messages.filter((entry) => entry.sender !== "system").slice(-12)) {
+      const row2 = el("label", "lp-reference-message-choice");
+      const input = el("input");
+      input.type = "checkbox";
+      input.value = message.id;
+      input.dataset.referenceMessage = message.id;
+      input.checked = message.id === this.selectedMessageId;
+      input.addEventListener("change", update);
+      const copy = el("span", "lp-grow");
+      copy.append(el("strong", "", message.senderName), el("span", "lp-copy", message.text.slice(0, 180)));
+      row2.append(input, copy);
+      choices.appendChild(row2);
+      messageInputs.push(input);
+    }
+    content.appendChild(choices);
+    attach.addEventListener("click", () => {
+      const messageIds = messageInputs.filter((input) => input.checked).map((input) => input.value);
+      this.send("lumiphone:arm_reference", { conversationId, scope, messageIds });
+      modal.dismiss();
+    });
+    content.appendChild(attach);
+    modal.root.appendChild(content);
+    update();
+  }
+  showConversationGenerationInfo(conversationId) {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
+    if (!conversation)
+      return;
+    const modal = this.ctx.ui.showModal({ title: "Conversation diagnostics", width: 500, maxHeight: 680 });
+    const content = el("div", "lp-settings-section");
+    const generated = conversation.messages.filter((message) => message.generation).slice(-5);
+    const reference = [...this.state?.references || []].reverse().find((entry) => entry.conversationId === conversationId);
+    for (const [label, value] of [
+      ["Conversation", conversation.title],
+      ["Kind", conversation.kind],
+      ["Messages", String(conversation.messages.length)],
+      ["Generated messages", String(conversation.messages.filter((message) => message.generation).length)],
+      ["Latest reference", reference ? `${reference.id} · ${reference.status}` : "none"]
+    ]) {
+      const row2 = el("div", "lp-row-between");
+      row2.append(el("strong", "", label), el("span", "lp-copy", value));
+      content.appendChild(row2);
+    }
+    if (reference) {
+      const referenceDetails = el("details", "lp-channel-diagnostic");
+      const detail2 = el("div", "lp-handoff-diagnostics");
+      for (const row2 of [
+        `Scope: ${reference.scope}`,
+        `Messages: ${reference.messages.length}`,
+        `Bound user message: ${reference.boundUserMessageId || "none"}`,
+        `Generation: ${reference.injectedGenerationId || "none"}`,
+        `Injected: ${reference.injectedAt || "no"}`,
+        `Serialized: ${reference.serializedReferenceChars || 0} chars`,
+        `Consumed message: ${reference.consumedMessageId || "none"}`,
+        reference.error ? `Error: ${reference.error}` : ""
+      ].filter(Boolean))
+        detail2.appendChild(el("span", "lp-copy", row2));
+      if (reference.serializedReference)
+        detail2.appendChild(el("pre", "lp-code-block", reference.serializedReference));
+      referenceDetails.append(el("summary", "", "Reference diagnostics"), detail2);
+      content.appendChild(referenceDetails);
+    }
+    for (const message of generated) {
+      const row2 = button(`${message.senderName} · ${formatTime(message.createdAt)}`, "lp-button lp-button-quiet");
+      row2.addEventListener("click", () => {
+        modal.dismiss();
+        this.showMessageGenerationInfo(message);
+      });
+      content.appendChild(row2);
+    }
+    if (!generated.length)
+      content.appendChild(el("p", "lp-copy", "No generated Pocket bubbles have diagnostics yet."));
     modal.root.appendChild(content);
   }
   generateReply(conversationId, speakerContactId = "") {
@@ -3483,6 +3876,8 @@ class PocketController {
     const id = requestId("reply");
     this.messageRequests.set(id, { conversationId, speakerContactId, phase: "pending" });
     this.send("lumiphone:generate_message", { requestId: id, conversationId, speakerContactId });
+    if (speakerContactId && speakerContactId !== "auto")
+      this.groupSpeakerSelections.delete(conversationId);
     this.render();
   }
   renderContacts() {
@@ -3495,7 +3890,17 @@ class PocketController {
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty("contacts", title, copy),
       operations: this.operations,
-      select: (contactId, view = contactId ? "detail" : "list") => this.openPocket({ app: "contacts", contactId: contactId || undefined, view }),
+      npcDraft: this.npcDraft,
+      previousNpcDraft: this.previousNpcDraft,
+      select: (contactId, view = contactId ? "detail" : "list", replace = false) => this.openPocket({ app: "contacts", contactId: contactId || undefined, view }, !replace),
+      restorePreviousNpcDraft: () => {
+        if (!this.previousNpcDraft)
+          return;
+        const current = this.npcDraft;
+        this.npcDraft = this.previousNpcDraft;
+        this.previousNpcDraft = current;
+        this.render(false);
+      },
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
       requestSources: () => {
         if (this.contactSourcesRequested)
@@ -4198,8 +4603,35 @@ var PHONE_STYLES = `
   .lp-list-separator { height:1px; margin-left:52px; background:var(--lp-border); }
   .lp-unread { min-width:20px; height:20px; padding:0 5px; display:grid; place-items:center; border-radius:99px; background:var(--lp-accent); color:#fff; font-size:9px; font-weight:800; }
 
-  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
+  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
   .lp-thread .lp-nav { position:relative; }
+  .lp-conversation-menu { position:relative; justify-self:end; }
+  .lp-conversation-menu > summary { display:grid; place-items:center; min-width:30px; cursor:pointer; list-style:none; font-size:18px; line-height:1; }
+  .lp-conversation-menu > summary::-webkit-details-marker { display:none; }
+  .lp-conversation-menu-sheet { position:absolute; z-index:30; top:calc(100% + 5px); right:0; width:190px; padding:6px; display:grid; gap:2px; border:1px solid var(--lp-border); border-radius:13px; background:var(--lp-bg); box-shadow:0 16px 34px rgba(0,0,0,.28); }
+  .lp-conversation-menu-action { appearance:none; min-height:34px; padding:7px 9px; border:0; border-radius:8px; background:transparent; color:var(--lp-text); font:inherit; font-size:var(--pocket-font-sm); text-align:left; cursor:pointer; }
+  .lp-conversation-menu-action:hover { background:var(--lp-surface-2); }
+  .lp-conversation-menu-action:disabled { opacity:.42; cursor:not-allowed; }
+  .lp-reference-slot:empty { min-height:0; }
+  .lp-reference-attachment { margin:7px 9px 0; padding:8px 9px; display:grid; gap:5px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:13px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); box-shadow:0 5px 16px rgba(0,0,0,.09); }
+  .lp-reference-head { display:flex; align-items:center; gap:8px; }
+  .lp-reference-head .lp-grow { display:grid; gap:1px; }
+  .lp-reference-mark { width:21px; height:21px; flex:0 0 21px; display:grid; place-items:center; border-radius:50%; background:color-mix(in srgb,var(--lp-accent) 15%,transparent); color:var(--lp-accent); font-size:10px; font-weight:900; }
+  .lp-reference-attachment[data-state="injected"] .lp-reference-mark { animation:lp-reference-pulse 1.4s ease-in-out infinite; }
+  .lp-reference-attachment[data-state="failed"] { border-color:color-mix(in srgb,#ff6f87 55%,var(--lp-border)); }
+  .lp-reference-attachment[data-state="failed"] .lp-reference-mark { color:#ff6f87; background:color-mix(in srgb,#ff6f87 15%,transparent); }
+  .lp-reference-actions { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
+  .lp-reference-action { appearance:none; min-height:27px; padding:5px 7px; border:1px solid var(--lp-border); border-radius:8px; background:var(--lp-accent); color:#fff; font:inherit; font-size:var(--pocket-font-xs); font-weight:750; cursor:pointer; }
+  .lp-reference-action-quiet { background:transparent; color:var(--lp-muted); }
+  .lp-reference-safety { margin:0 0 0 29px; color:var(--lp-muted); font-size:var(--pocket-font-xs); line-height:1.35; }
+  .lp-reference-diagnostics { margin-left:29px; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
+  .lp-reference-diagnostics > summary { cursor:pointer; }
+  .lp-reference-sheet { display:grid; gap:9px; }
+  .lp-reference-scope,.lp-reference-message-choice { padding:9px; display:flex; align-items:flex-start; gap:8px; border:1px solid var(--lp-border); border-radius:11px; background:var(--lp-surface); cursor:pointer; }
+  .lp-reference-scope .lp-grow,.lp-reference-message-choice .lp-grow { display:grid; gap:2px; }
+  .lp-reference-message-list { max-height:260px; padding:7px; overflow:auto; display:grid; gap:5px; border:1px solid var(--lp-border); border-radius:12px; background:var(--lp-surface-2); }
+  .lp-reference-message-choice:has(input:disabled) { opacity:.48; cursor:default; }
+  @keyframes lp-reference-pulse { 50% { transform:translateY(-1px); box-shadow:0 0 0 5px color-mix(in srgb,var(--lp-accent) 10%,transparent); } }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
   .lp-bubble[data-sender="persona"] { align-self:flex-end; border-bottom-right-radius:5px; background:var(--lp-accent); color:#fff; }
@@ -4207,15 +4639,25 @@ var PHONE_STYLES = `
   .lp-bubble[data-sender="system"] { align-self:center; max-width:90%; background:transparent; color:var(--lp-muted); text-align:center; font-size:9px; box-shadow:none; }
   .lp-bubble-time { display:block; margin-top:4px; opacity:.58; font-size:7px; text-align:right; }
   .lp-bubble-sender { display:block; margin-bottom:2px; color:var(--lp-accent); font-size:8px; }
+  .lp-group-message { max-width:88%; align-self:flex-start; display:grid; grid-template-columns:25px minmax(0,1fr); align-items:end; gap:6px; }
+  .lp-group-message .lp-bubble { max-width:100%; border-left:2px solid color-mix(in srgb,var(--message-accent) 72%,transparent); }
+  .lp-group-avatar { width:24px; height:24px; overflow:hidden; display:grid; place-items:center; border:2px solid var(--message-accent); border-radius:50%; background:var(--lp-surface-2); color:var(--message-accent); font-size:8px; font-weight:800; }
+  .lp-group-avatar img { width:100%; height:100%; object-fit:cover; }
+  .lp-group-avatar-spacer { visibility:hidden; }
+  .lp-group-typing { align-self:flex-start; min-height:30px; padding:6px 10px; display:flex; align-items:center; gap:7px; border-radius:13px; background:var(--lp-surface-2); color:var(--lp-muted); font-size:var(--pocket-font-sm); }
   .lp-bubble-pending { opacity:.82; min-width:42px; }
   .lp-typing-dots { min-height:12px; display:flex; align-items:center; justify-content:center; gap:3px; }
   .lp-typing-dots i { width:5px; height:5px; border-radius:50%; background:currentColor; opacity:.42; animation:lp-typing 1s ease-in-out infinite; }
   .lp-typing-dots i:nth-child(2) { animation-delay:.14s; }
   .lp-typing-dots i:nth-child(3) { animation-delay:.28s; }
-  .lp-compose { padding:8px 9px 10px; display:grid; grid-template-columns:auto minmax(0,78px) minmax(0,1fr) auto; gap:6px; align-items:end; border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
-  .lp-speaker-select { min-width:0; min-height:34px; padding:5px; border:1px solid var(--lp-border); border-radius:11px; background:var(--lp-surface); color:var(--lp-text); font:inherit; font-size:8px; }
-  .lp-speaker-select[hidden] { display:none; }
-  .lp-compose:has(.lp-speaker-select[hidden]) { grid-template-columns:auto minmax(0,1fr) auto; }
+  .lp-compose-stack { border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
+  .lp-compose { padding:8px 9px 10px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:end; }
+  .lp-speaker-menu { position:relative; padding:5px 9px 0; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
+  .lp-speaker-menu summary { width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--lp-border); border-radius:99px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; list-style:none; }
+  .lp-speaker-menu summary::-webkit-details-marker { display:none; }
+  .lp-speaker-sheet { position:absolute; z-index:4; left:9px; right:9px; bottom:calc(100% + 5px); max-height:220px; padding:9px; overflow:auto; display:grid; gap:4px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-bg); box-shadow:0 14px 30px rgba(0,0,0,.26); }
+  .lp-speaker-option { appearance:none; padding:7px 8px; border:0; border-radius:9px; background:transparent; color:var(--lp-text); text-align:left; font:inherit; cursor:pointer; }
+  .lp-speaker-option:hover { background:var(--lp-surface-2); }
   .lp-compose .lp-textarea { min-height:34px; max-height:96px; padding:8px 10px; resize:none; border-radius:17px; }
   .lp-compose .lp-button-icon { border-radius:50%; }
 
@@ -4223,6 +4665,11 @@ var PHONE_STYLES = `
   .lp-indeterminate { display:block; height:4px; overflow:hidden; border-radius:99px; background:color-mix(in srgb,var(--lp-accent) 16%,var(--lp-surface-2)); position:relative; }
   .lp-indeterminate::after { content:""; position:absolute; inset:0 auto 0 -42%; width:42%; border-radius:inherit; background:var(--lp-accent); animation:lp-indeterminate 1.1s ease-in-out infinite; }
   @keyframes lp-indeterminate { to { left:100%; } }
+  .lp-npc-draft { display:grid; gap:7px; border-color:color-mix(in srgb,var(--lp-accent) 42%,var(--lp-border)); }
+  .lp-draft-actions { display:flex; flex-wrap:wrap; gap:6px; }
+  .lp-style-control { padding:9px 2px; display:grid; gap:6px; color:var(--lp-text); font-size:var(--pocket-font-sm); }
+  .lp-style-control input { width:100%; accent-color:var(--lp-accent); }
+  .lp-range-ends { display:flex; justify-content:space-between; white-space:pre; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
 
   .lp-notification-group { display:grid; gap:7px; }
   .lp-notification-row { padding:0; display:grid; grid-template-columns:minmax(0,1fr) auto; overflow:hidden; }
@@ -4407,11 +4854,28 @@ var PHONE_STYLES = `
   .lumiphone-shell .lp-avatar { width:calc(42px * var(--pocket-ui-scale)); height:calc(42px * var(--pocket-ui-scale)); flex-basis:calc(42px * var(--pocket-ui-scale)); font-size:calc(15px * var(--pocket-ui-scale)); }
   .lumiphone-shell .lp-bubbles { padding:calc(14px * var(--pocket-ui-scale)) calc(12px * var(--pocket-ui-scale)); gap:calc(7px * var(--pocket-ui-scale)); }
   .lumiphone-shell .lp-bubble { padding:calc(8px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); border-radius:calc(16px * var(--pocket-ui-scale)); font-size:calc(11px * var(--pocket-ui-scale)); }
-  .lumiphone-shell .lp-compose { padding:calc(8px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); gap:calc(6px * var(--pocket-ui-scale)); grid-template-columns:auto minmax(0,calc(78px * var(--pocket-ui-scale))) minmax(0,1fr) auto; }
+  .lumiphone-shell .lp-compose { padding:calc(8px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); gap:calc(6px * var(--pocket-ui-scale)); grid-template-columns:auto minmax(0,1fr) auto; }
   .lumiphone-shell .lp-compose .lp-textarea { min-height:calc(34px * var(--pocket-ui-scale)); max-height:calc(112px * var(--pocket-ui-scale)); border-radius:calc(17px * var(--pocket-ui-scale)); }
   .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
-  .lp-local-actions { padding:10px 12px calc(12px + env(safe-area-inset-bottom)); display:grid; grid-template-columns:1fr 1fr; gap:7px; border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
-  .lp-local-actions strong { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-handoff-activity { align-self:stretch; margin:7px 0; border:1px solid color-mix(in srgb,var(--lp-accent) 28%,var(--lp-border)); border-radius:14px; background:color-mix(in srgb,var(--lp-surface) 92%,transparent); box-shadow:0 6px 20px rgba(0,0,0,.10); overflow:hidden; }
+  .lp-handoff-primary { min-height:52px; padding:9px 10px; display:flex; align-items:center; gap:9px; }
+  .lp-handoff-primary .lp-grow { display:grid; gap:2px; min-width:0; }
+  .lp-handoff-mark { width:22px; height:22px; flex:0 0 22px; display:grid; place-items:center; border-radius:50%; background:color-mix(in srgb,var(--lp-accent) 15%,transparent); color:var(--lp-accent); font-size:11px; font-weight:900; }
+  .lp-handoff-activity[data-state="preparing"] .lp-handoff-mark::after,.lp-handoff-activity[data-state="accepted"] .lp-handoff-mark::after,.lp-handoff-activity[data-state="generating"] .lp-handoff-mark::after { content:""; width:9px; height:9px; border:2px solid color-mix(in srgb,var(--lp-accent) 25%,transparent); border-top-color:var(--lp-accent); border-radius:50%; animation:lp-handoff-spin .9s linear infinite; }
+  .lp-handoff-activity[data-state="generating"] { border-color:color-mix(in srgb,var(--lp-accent) 58%,var(--lp-border)); animation:lp-handoff-glow 1.8s ease-in-out infinite; }
+  .lp-handoff-activity[data-state="completed"] { box-shadow:none; }
+  .lp-handoff-activity[data-state="failed"] { border-color:color-mix(in srgb,#ff6f87 58%,var(--lp-border)); }
+  .lp-handoff-activity[data-state="failed"] .lp-handoff-mark { background:color-mix(in srgb,#ff6f87 15%,transparent); color:#ff6f87; }
+  .lp-handoff-action { appearance:none; min-height:27px; padding:5px 8px; border:1px solid var(--lp-border); border-radius:9px; background:transparent; color:var(--lp-accent); font:inherit; font-size:var(--pocket-font-xs); font-weight:750; cursor:pointer; }
+  .lp-handoff-more { border-top:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-xs); }
+  .lp-handoff-more > summary { padding:5px 10px; cursor:pointer; text-align:right; list-style:none; }
+  .lp-handoff-more > summary::-webkit-details-marker { display:none; }
+  .lp-handoff-secondary { padding:0 10px 10px; display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .lp-handoff-diagnostics { grid-column:1/-1; padding-top:6px; display:grid; gap:3px; border-top:1px solid var(--lp-border); }
+  .lp-handoff-diagnostics > span { overflow-wrap:anywhere; }
+  @keyframes lp-handoff-spin { to { transform:rotate(360deg); } }
+  @keyframes lp-handoff-glow { 50% { box-shadow:0 7px 24px color-mix(in srgb,var(--lp-accent) 20%,transparent); } }
+  .lumiphone-shell[data-reduced-motion="true"] .lp-handoff-activity,.lumiphone-shell[data-reduced-motion="true"] .lp-handoff-mark::after,.lumiphone-shell[data-reduced-motion="true"] .lp-reference-mark { animation:none !important; }
   .lp-channel-diagnostic { grid-column:1/-1; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
   .lp-channel-diagnostic summary { cursor:pointer; text-align:center; }
   .lp-channel-diagnostic > span { display:block; margin-top:4px; overflow-wrap:anywhere; text-align:center; }

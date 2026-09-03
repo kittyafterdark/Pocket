@@ -22,7 +22,7 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
   if (app === 'contacts') return {
     app,
     contactId: shortId(raw.contactId),
-    view: raw.view === 'detail' || raw.view === 'config' || raw.view === 'import' || raw.view === 'new' || raw.view === 'list' ? raw.view : undefined,
+    view: raw.view === 'detail' || raw.view === 'config' || raw.view === 'import' || raw.view === 'new' || raw.view === 'draft' || raw.view === 'list' ? raw.view : undefined,
   }
   if (app === 'trackers') return {
     app,

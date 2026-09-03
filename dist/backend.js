@@ -571,7 +571,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return {
       app,
       contactId: shortId(raw.contactId),
-      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "list" ? raw.view : undefined
+      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -623,6 +623,10 @@ function clean2(value, max) {
 }
 function flag(value, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
+}
+function percentage(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
 }
 function timestamp(value, fallback) {
   const candidate = clean2(value, 40);
@@ -681,6 +685,7 @@ function normalizePocketContact(value, context) {
   const contextPolicy = record3(value.contextPolicy) ? value.contextPolicy : {};
   const generationPolicy = record3(value.generationPolicy) ? value.generationPolicy : {};
   const messagingPolicy = record3(value.messagingPolicy) ? value.messagingPolicy : {};
+  const messagingStyle = record3(value.messagingStyle) ? value.messagingStyle : {};
   const createdAt = timestamp(value.createdAt, context.now);
   return {
     id: contactId,
@@ -708,6 +713,10 @@ function normalizePocketContact(value, context) {
       lastInitiatedMessageAt: timestamp(messagingPolicy.lastInitiatedMessageAt, ""),
       lastInitiatedRoleplayAt: timestamp(messagingPolicy.lastInitiatedRoleplayAt, "")
     },
+    messagingStyle: {
+      talkativeness: percentage(messagingStyle.talkativeness, 50),
+      fragmentation: percentage(messagingStyle.fragmentation, 35)
+    },
     createdAt,
     updatedAt: timestamp(value.updatedAt, createdAt)
   };
@@ -726,6 +735,7 @@ function normalizeMessage(value, fallbackContact, now, makeId) {
   const generation = record3(value.generation) ? value.generation : null;
   const info = generation && record3(generation.info) ? generation.info : null;
   const decision = info && record3(info.replyDecision) ? info.replyDecision : null;
+  const groupBatch = info && record3(info.groupBatch) ? info.groupBatch : null;
   const count = (input) => Math.max(0, Math.round(Number(input) || 0));
   return {
     id: clean2(value.id, 120) || makeId("msg"),
@@ -761,6 +771,12 @@ function normalizeMessage(value, fallbackContact, now, makeId) {
         generationMode: info.generationMode === "sidecar" ? "sidecar" : "roleplay",
         connectionName: clean2(info.connectionName, 180),
         model: clean2(info.model, 500),
+        groupBatch: groupBatch && clean2(groupBatch.id, 180) ? {
+          id: clean2(groupBatch.id, 180),
+          position: Math.max(1, count(groupBatch.position)),
+          size: Math.max(1, count(groupBatch.size)),
+          eligibleCount: count(groupBatch.eligibleCount)
+        } : undefined,
         replyDecision: decision ? {
           rawAction: decision.rawAction === "reply" || decision.rawAction === "pause" || decision.rawAction === "handoff" ? decision.rawAction : "none",
           normalizedAction: decision.normalizedAction === "reply" || decision.normalizedAction === "pause" || decision.normalizedAction === "handoff" ? decision.normalizedAction : "none",
@@ -856,6 +872,7 @@ function activeContact(context) {
     contextPolicy: { pinned: false },
     generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+    messagingStyle: { talkativeness: 50, fragmentation: 35 },
     createdAt: context.now,
     updatedAt: context.now
   };
@@ -1495,8 +1512,121 @@ function assertPocketImageResolved(result) {
     throw new Error(result.error || "Pocket could not resolve that image.");
 }
 
+// src/backend/references.ts
+function compact2(value, max) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+function availabilityCopy(conversation) {
+  if (conversation.availability.state === "local")
+    return "The direct conversation is currently local, but this reference itself does not establish anyone\u2019s presence.";
+  if (conversation.availability.state === "arriving")
+    return "The conversation says a participant is arriving; only explicit scene state may establish physical presence.";
+  if (conversation.availability.state === "paused")
+    return `The remote conversation is paused (${conversation.availability.reason}).`;
+  return "This is a remote phone conversation.";
+}
+function createPocketReference(input) {
+  const { state, conversation, scope, createdAt, makeId } = input;
+  const selected = new Set((input.selectedMessageIds || []).slice(0, 12));
+  const sourceMessages = scope === "selected_messages" ? conversation.messages.filter((message) => selected.has(message.id)).slice(-8) : conversation.messages.slice(scope === "recent_messages" ? -6 : -8);
+  const messages = sourceMessages.flatMap((message) => message.sender === "system" ? [] : [{
+    messageId: message.id,
+    sender: message.sender,
+    senderContactId: message.senderContactId,
+    senderName: compact2(message.senderName || (message.sender === "persona" ? state.pocketPersona.displayName : "Participant"), 120),
+    text: compact2(message.text, 420),
+    createdAt: message.createdAt
+  }]);
+  const participants = conversation.participantContactIds.slice(0, 16).flatMap((contactId) => {
+    const contact = state.contacts.find((entry) => entry.id === contactId);
+    if (!contact)
+      return [];
+    return [{
+      contactId: contact.id,
+      name: compact2(contact.name, 120),
+      role: compact2(contact.role, 100),
+      identityBrief: compact2(contact.identityBrief, 180)
+    }];
+  });
+  const kind = conversation.kind === "group" ? "Group chat" : "Direct message";
+  const participantNames = participants.map((entry) => entry.name).join(", ") || "Unknown participants";
+  return {
+    id: makeId("reference"),
+    chatId: state.chatId,
+    characterId: state.characterId,
+    sourceApp: "messages",
+    conversationId: conversation.id,
+    conversationTitle: compact2(conversation.title || participantNames, 120) || "Pocket conversation",
+    conversationKind: conversation.kind,
+    scope,
+    visibility: "context",
+    participants,
+    snapshot: compact2(`${kind} with ${participantNames}. ${availabilityCopy(conversation)}`, 600),
+    messages,
+    createdAt,
+    status: "armed"
+  };
+}
+function serializePocketReference(reference, maxChars = 2200) {
+  const budget = Math.max(1200, Math.min(3000, maxChars));
+  const participantNames = compact2(reference.participants.map((entry) => entry.name).join(", "), 360) || "Unknown participants";
+  const identityRows = reference.participants.slice(0, 8).map((entry) => {
+    const detail = [entry.role, entry.identityBrief].filter(Boolean).join(" \u2014 ");
+    return detail ? `- ${entry.name}: ${detail}` : `- ${entry.name}`;
+  });
+  const messageRows = reference.messages.map((message) => `${message.senderName}: ${JSON.stringify(compact2(message.text, 360))}`);
+  const fixedStart = [
+    "=== POCKET USER REFERENCE \u2014 THIS TURN ===",
+    `referenceId: ${reference.id}`,
+    `source: messages/${reference.conversationId}`,
+    `scope: ${reference.scope}`,
+    `Conversation: ${reference.conversationTitle}`,
+    `Participants: ${participantNames}`,
+    "",
+    `Pocket context: ${compact2(reference.snapshot, 320)}`
+  ];
+  const fixedEnd = [
+    "",
+    "This is phone/social context explicitly attached by the user for this roleplay turn. It does not hand off the conversation, change channel ownership, or establish that any participant is physically present.",
+    "Use it only to understand the user\u2019s roleplay message. Do not assume a scene actor saw, heard, or knows the phone content unless the user\u2019s narration establishes that.",
+    "=== END POCKET USER REFERENCE ==="
+  ];
+  const render = () => [
+    ...fixedStart,
+    ...identityRows.length ? ["", "Participant context:", ...identityRows] : [],
+    "",
+    "Referenced phone messages:",
+    ...messageRows,
+    ...fixedEnd
+  ].join(`
+`);
+  let serialized = render();
+  while (serialized.length > budget && identityRows.length > 2) {
+    identityRows.pop();
+    serialized = render();
+  }
+  while (serialized.length > budget && messageRows.length > 1) {
+    messageRows.shift();
+    serialized = render();
+  }
+  if (serialized.length <= budget)
+    return serialized;
+  const ending = `
+${fixedEnd.join(`
+`)}`;
+  const beginning = [...fixedStart, "", "Referenced phone messages:", messageRows.at(-1) || "(No referenced message text was available.)"].join(`
+`);
+  return `${beginning.slice(0, Math.max(0, budget - ending.length)).trimEnd()}${ending}`;
+}
+function referenceForGeneration(state, generationId) {
+  return state.references.find((reference) => reference.status === "injected" && reference.injectedGenerationId === generationId);
+}
+function latestArmedReference(state) {
+  return [...state.references].reverse().find((reference) => reference.status === "armed");
+}
+
 // src/backend.ts
-var STATE_VERSION = 7;
+var STATE_VERSION = 9;
 var MAX_MESSAGES2 = 240;
 var MAX_NOTIFICATIONS = 80;
 var MAX_NOTES = 120;
@@ -1510,6 +1640,7 @@ var ambientFlights = new Set;
 var replyDecisionFlights = new Set;
 var replyBurstTimers = new Map;
 var relayFlights = new Set;
+var groupBatchFlights = new Map;
 var frontendViews = new Map;
 var PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
 <lumi-phone action="message|contact|scene|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
@@ -1591,6 +1722,8 @@ function defaultState(chatId, characterId, characterName = "Character") {
     notes: [],
     events: [],
     relays: [],
+    references: [],
+    groupBatches: [],
     weather: defaultWeather(),
     trackers: [],
     notifications: [],
@@ -1799,7 +1932,106 @@ function normalizeState(value, chatId, characterId, characterName) {
       }
     }];
   });
-  const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0);
+  const references = (Array.isArray(value.references) ? value.references : []).slice(-24).flatMap((item) => {
+    if (!isRecord(item))
+      return [];
+    const referenceId = text2(item.id, 180);
+    const conversationId = text2(item.conversationId, 180);
+    if (!referenceId || !conversationId)
+      return [];
+    const scope = item.scope === "recent_messages" || item.scope === "selected_messages" ? item.scope : "conversation";
+    const status = item.status === "injected" || item.status === "consumed" || item.status === "cancelled" || item.status === "failed" ? item.status : "armed";
+    const participants = (Array.isArray(item.participants) ? item.participants : []).slice(0, 16).flatMap((participant) => {
+      if (!isRecord(participant))
+        return [];
+      const contactId = text2(participant.contactId, 180);
+      const name = text2(participant.name, 120);
+      if (!contactId || !name)
+        return [];
+      return [{ contactId, name, role: text2(participant.role, 100), identityBrief: text2(participant.identityBrief, 180) }];
+    });
+    const messages = (Array.isArray(item.messages) ? item.messages : []).slice(-8).flatMap((message) => {
+      if (!isRecord(message))
+        return [];
+      const messageId = text2(message.messageId, 180);
+      const body = text2(message.text, 420);
+      if (!messageId || !body)
+        return [];
+      return [{
+        messageId,
+        sender: message.sender === "contact" ? "contact" : "persona",
+        senderContactId: text2(message.senderContactId, 180) || undefined,
+        senderName: text2(message.senderName, 120) || (message.sender === "contact" ? "Participant" : "Persona"),
+        text: body,
+        createdAt: text2(message.createdAt, 40) || nowIso()
+      }];
+    });
+    return [{
+      id: referenceId,
+      chatId,
+      characterId,
+      sourceApp: "messages",
+      conversationId,
+      conversationTitle: text2(item.conversationTitle, 120) || "Pocket conversation",
+      conversationKind: item.conversationKind === "group" ? "group" : "direct",
+      scope,
+      visibility: "context",
+      participants,
+      snapshot: text2(item.snapshot, 600),
+      messages,
+      createdAt: text2(item.createdAt, 40) || nowIso(),
+      status,
+      injectedAt: text2(item.injectedAt, 40) || undefined,
+      injectedGenerationId: text2(item.injectedGenerationId, 180) || undefined,
+      boundUserMessageId: text2(item.boundUserMessageId, 180) || undefined,
+      serializedReferenceChars: Math.max(0, Math.round(numberValue(item.serializedReferenceChars, 0))) || undefined,
+      serializedReference: text2(item.serializedReference, 3000) || undefined,
+      consumedAt: text2(item.consumedAt, 40) || undefined,
+      consumedMessageId: text2(item.consumedMessageId, 180) || undefined,
+      error: text2(item.error, 500) || undefined
+    }];
+  });
+  const groupBatches = (Array.isArray(value.groupBatches) ? value.groupBatches : []).slice(-24).flatMap((item) => {
+    if (!isRecord(item))
+      return [];
+    const batchId = text2(item.id, 180);
+    const requestId = text2(item.requestId, 180);
+    const conversationId = text2(item.conversationId, 180);
+    if (!batchId || !requestId || !conversationId)
+      return [];
+    const status = item.status === "queued" || item.status === "delivering" || item.status === "completed" || item.status === "cancelled" || item.status === "failed" ? item.status : "cancelled";
+    const messages = (Array.isArray(item.messages) ? item.messages : []).slice(0, 4).flatMap((message) => {
+      if (!isRecord(message))
+        return [];
+      const id2 = text2(message.id, 180);
+      const speakerId = text2(message.speakerId, 180);
+      const body = text2(message.text, 8000);
+      if (!id2 || !speakerId || !body)
+        return [];
+      const messageState = message.state === "delivered" || message.state === "cancelled" ? message.state : "queued";
+      return [{
+        id: id2,
+        speakerId,
+        text: body,
+        state: messageState,
+        deliveredMessageId: text2(message.deliveredMessageId, 180) || undefined,
+        deliveredAt: text2(message.deliveredAt, 40) || undefined
+      }];
+    });
+    return [{
+      id: batchId,
+      requestId,
+      conversationId,
+      sourceBurstId: text2(item.sourceBurstId, 180) || undefined,
+      eligibleContactIds: (Array.isArray(item.eligibleContactIds) ? item.eligibleContactIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 16),
+      messages,
+      status,
+      createdAt: text2(item.createdAt, 40) || nowIso(),
+      updatedAt: text2(item.updatedAt, 40) || nowIso(),
+      error: text2(item.error, 500) || undefined
+    }];
+  });
+  const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0 || relays.length > 0 || references.length > 0 || groupBatches.length > 0);
   return {
     version: STATE_VERSION,
     chatId,
@@ -1814,6 +2046,8 @@ function normalizeState(value, chatId, characterId, characterName) {
     notes,
     events,
     relays,
+    references,
+    groupBatches,
     weather,
     trackers,
     notifications,
@@ -2216,11 +2450,11 @@ async function runStructuredGeneration(task, requestId, request, userId) {
     return retry.content;
   });
 }
-function upsertContact(state, contact) {
+function upsertContact(state, contact, preserveCustomization = true) {
   const sourceKey = contactSourceKey(contact.source);
   const existing = state.contacts.find((entry) => entry.id === contact.id || contact.source.kind !== "npc" && contactSourceKey(entry.source) === sourceKey || contact.source.kind === "npc" && entry.source.kind === "npc" && contact.source.sceneKey && entry.source.sceneKey === contact.source.sceneKey);
   if (existing) {
-    const preserved = {
+    const preserved = preserveCustomization ? {
       createdAt: existing.createdAt,
       accent: existing.accent,
       contextPolicy: existing.contextPolicy,
@@ -2228,8 +2462,9 @@ function upsertContact(state, contact) {
       colorMode: existing.colorMode,
       sourceAccent: contact.sourceAccent || existing.sourceAccent,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
-      messagingPolicy: contact.messagingPolicy || existing.messagingPolicy
-    };
+      messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
+      messagingStyle: contact.messagingStyle || existing.messagingStyle
+    } : { createdAt: existing.createdAt };
     Object.assign(existing, contact, preserved, { updatedAt: nowIso() });
     return existing;
   }
@@ -2453,6 +2688,7 @@ function contactFromSource(option) {
     contextPolicy: { pinned: false },
     generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+    messagingStyle: { talkativeness: 50, fragmentation: 35 },
     createdAt,
     updatedAt: createdAt
   };
@@ -2858,6 +3094,216 @@ ${instruction}` }
     }, userId);
   });
 }
+function groupRevealDelayMs(preferences, body, position, seed) {
+  if (preferences.replyCadence === "instant")
+    return 0;
+  let hash = 0;
+  for (const character of seed)
+    hash = (hash << 5) - hash + character.charCodeAt(0) | 0;
+  const jitter = Math.abs(hash) % 650;
+  const base = position === 0 ? 700 : 1150;
+  const typing = Math.min(2800, body.length * 18);
+  const multiplier = preferences.replyCadence === "quick" ? 0.62 : preferences.replyCadence === "relaxed" ? 1.35 : 1;
+  return Math.round((base + typing + jitter) * multiplier);
+}
+async function generateGroupBatch(input, userId) {
+  if (!spindle.permissions.has("generation"))
+    throw new Error("Enable the Generation permission to create a group reply.");
+  const context = await resolveContext(input, userId);
+  const requestId = text2(input.requestId, 180) || id("group_reply");
+  const conversationId = text2(input.conversationId, 180);
+  const flightKey = `${viewKey(userId)}:${stateKey(context.chatId, context.characterId)}:${conversationId}`;
+  if (groupBatchFlights.has(flightKey))
+    throw new Error("This group is already generating a reply burst.");
+  const flightToken = id("group_flight");
+  groupBatchFlights.set(flightKey, flightToken);
+  let progressOpen = false;
+  try {
+    const state = await loadState(context.chatId, context.characterId, userId);
+    const preferences = await loadPreferences(userId);
+    const conversation = state.conversations.find((entry) => entry.id === conversationId && entry.kind === "group");
+    if (!conversation)
+      throw new Error("That group conversation no longer exists.");
+    const activeBatch = state.groupBatches.find((entry) => entry.conversationId === conversation.id && (entry.status === "queued" || entry.status === "delivering"));
+    if (activeBatch)
+      throw new Error("This group already has a reply burst in progress.");
+    const sourceBurstId = text2(input.sourceBurstId, 180) || conversation.outgoingBurst?.id;
+    const eligible = conversation.participantContactIds.map((contactId) => state.contacts.find((entry) => entry.id === contactId)).filter((entry) => Boolean(entry && entry.generationPolicy.relevant && entry.messagingPolicy.remoteEligible && !entry.presence.inScene));
+    if (!eligible.length) {
+      send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, conversationId, phase: "done" }, userId);
+      return;
+    }
+    progressOpen = true;
+    send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, conversationId, phase: "checking" }, userId);
+    const profiles = await Promise.all(eligible.map(async (contact) => ({ contact, profile: await resolveContactProfile(contact, userId) })));
+    const primary = profiles[0];
+    const assembled = await assemblePocketContext({
+      state,
+      contact: primary.contact,
+      conversation,
+      preferences,
+      actorIdentity: profiles.map(({ contact, profile }) => `${contact.name} (${contact.id}) \u2014 ${contact.identityBrief || profile.description}`.slice(0, 700)).join(`
+`).slice(0, 1200),
+      getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined
+    });
+    const roster = profiles.map(({ contact }) => [
+      `id=${contact.id}`,
+      `name=${contact.name}`,
+      `role=${contact.role}`,
+      `talkativeness=${contact.messagingStyle.talkativeness}/100`,
+      `fragmentation=${contact.messagingStyle.fragmentation}/100`,
+      `identity=${(contact.identityBrief || contact.description).slice(0, 600)}`
+    ].join(" | ")).join(`
+`).slice(0, 5000);
+    const parsed = await runStructuredGeneration("group-reply", requestId, {
+      type: "quiet",
+      messages: [
+        { role: "system", content: 'Generate the next natural burst in a fictional private group chat. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0\u20133 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
+        { role: "user", content: `${assembled.text || "(no context)"}
+
+ELIGIBLE GROUP PARTICIPANTS
+${roster}
+
+Generate the next group-chat burst.` }
+      ],
+      parameters: { temperature: 0.82, max_tokens: 900 },
+      userId
+    }, userId);
+    const generatedRows = (Array.isArray(parsed.messages) ? parsed.messages : []).slice(0, 4).flatMap((row) => {
+      if (!isRecord(row))
+        return [];
+      const speakerId = text2(row.speakerId, 180);
+      const body = text2(row.text, 8000);
+      if (!body || !eligible.some((contact) => contact.id === speakerId))
+        return [];
+      return [{ id: id("group_slot"), speakerId, text: body, state: "queued" }];
+    });
+    const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
+    const batchId = id("group_batch");
+    const batch = await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+      const latest = await loadState(context.chatId, context.characterId, userId);
+      const latestConversation = latest.conversations.find((entry) => entry.id === conversationId && entry.kind === "group");
+      if (!latestConversation)
+        return null;
+      if (sourceBurstId && latestConversation.outgoingBurst?.id !== sourceBurstId)
+        return null;
+      const createdAt = nowIso();
+      const next = {
+        id: batchId,
+        requestId,
+        conversationId,
+        sourceBurstId,
+        eligibleContactIds: eligible.map((entry) => entry.id),
+        messages: generatedRows,
+        status: generatedRows.length ? "queued" : "completed",
+        createdAt,
+        updatedAt: createdAt
+      };
+      latest.groupBatches.push(next);
+      latest.groupBatches = latest.groupBatches.slice(-24);
+      await saveState(latest, userId);
+      await sendState(latest, userId, generatedRows.length ? "group_batch_queued" : "group_batch_empty");
+      return next;
+    });
+    if (!batch || !batch.messages.length)
+      return;
+    for (let position = 0;position < batch.messages.length; position += 1) {
+      const slot = batch.messages[position];
+      const speaker = eligible.find((entry) => entry.id === slot.speakerId);
+      if (!speaker)
+        continue;
+      send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, conversationId, contactId: speaker.id, speakerContactId: speaker.id, phase: "pending" }, userId);
+      const delay = groupRevealDelayMs(preferences, slot.text, position, slot.id);
+      if (delay)
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      const delivered = await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+        const latest = await loadState(context.chatId, context.characterId, userId);
+        const latestBatch = latest.groupBatches.find((entry) => entry.id === batch.id);
+        const latestSlot = latestBatch?.messages.find((entry) => entry.id === slot.id);
+        const latestConversation = latest.conversations.find((entry) => entry.id === conversationId);
+        if (!latestBatch || !latestSlot || !latestConversation || latestBatch.status === "cancelled" || latestSlot.state !== "queued")
+          return null;
+        latestBatch.status = "delivering";
+        const visible = notificationDestinationVisible(latest, { app: "messages", conversationId }, userId);
+        const profile = profiles.find((entry) => entry.contact.id === speaker.id).profile;
+        const message = {
+          id: id("msg"),
+          sender: "contact",
+          senderContactId: speaker.id,
+          senderName: speaker.name,
+          senderAccent: contactAccent(speaker),
+          text: latestSlot.text,
+          createdAt: nowIso(),
+          read: visible,
+          status: visible ? "read" : "delivered",
+          generation: { requestId, info: {
+            speaker: profile.name,
+            source: profile.source,
+            sourceId: speaker.source.kind === "character" ? speaker.source.characterId : speaker.source.kind === "council" ? speaker.source.memberId || speaker.source.itemId : speaker.id,
+            sourceResolution: speaker.source.kind === "character" || speaker.source.kind === "council" ? "resolved" : speaker.source.origin === "manual" ? "manual" : "snapshot",
+            activeCharacterId: latest.characterId,
+            activeCharacterUsed: speaker.source.kind === "character" && speaker.source.characterId === latest.characterId,
+            identityChars: (speaker.identityBrief || speaker.description).length,
+            sceneSnapshotStale: latest.sceneSnapshot?.stale ?? true,
+            contextMode: preferences.roleplayContextMode,
+            recentCount: assembled.diagnostics.recentRoleplay.count,
+            recentChars: assembled.diagnostics.recentRoleplay.chars,
+            storyCount: assembled.diagnostics.story.count,
+            storyChars: assembled.diagnostics.story.chars,
+            threadCount: assembled.diagnostics.phoneThread.count,
+            threadChars: assembled.diagnostics.phoneThread.chars,
+            generationMode: preferences.generationMode,
+            connectionName: generationInfo.effective?.name || "",
+            model: preferences.sidecarModelOverride || generationInfo.effective?.model || "",
+            groupBatch: { id: batch.id, position: position + 1, size: batch.messages.length, eligibleCount: eligible.length }
+          } }
+        };
+        latestConversation.messages.push(message);
+        latestConversation.messages = latestConversation.messages.slice(-MAX_MESSAGES2);
+        latestConversation.updatedAt = message.createdAt;
+        if (!visible)
+          latestConversation.unread += 1;
+        latestSlot.state = "delivered";
+        latestSlot.deliveredMessageId = message.id;
+        latestSlot.deliveredAt = message.createdAt;
+        latestBatch.updatedAt = message.createdAt;
+        if (!latestBatch.messages.some((entry) => entry.state === "queued"))
+          latestBatch.status = "completed";
+        const route = { app: "messages", conversationId, messageId: message.id };
+        const notification = preferences.notifyMessages ? addNotification(latest, { app: "messages", title: speaker.name, body: preferences.notificationPreviews ? message.text.slice(0, 220) : "New message", route, source: "model", severity: "important" }, userId) : null;
+        const activity = addActivity(latest, { kind: "message", title: speaker.name, summary: message.text.slice(0, 280), route, source: { contactId: speaker.id, conversationId } });
+        await saveState(latest, userId);
+        await sendState(latest, userId, "group_message", preferences.autoOpenOnModelAction);
+        return { notification, activity };
+      });
+      if (!delivered)
+        break;
+      if (delivered.notification)
+        await maybePush(await loadState(context.chatId, context.characterId, userId), preferences, delivered.notification, userId);
+      sendActivity(delivered.activity, userId);
+      sendNotification(delivered.notification, userId);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+    await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+      const state = await loadState(context.chatId, context.characterId, userId);
+      const batch = [...state.groupBatches].reverse().find((entry) => entry.requestId === requestId && (entry.status === "queued" || entry.status === "delivering"));
+      if (batch) {
+        batch.status = "failed";
+        batch.error = message;
+        batch.updatedAt = nowIso();
+        await saveState(state, userId);
+        await sendState(state, userId, "group_batch_failed");
+      }
+    });
+    throw error;
+  } finally {
+    if (groupBatchFlights.get(flightKey) === flightToken)
+      groupBatchFlights.delete(flightKey);
+    if (progressOpen)
+      send({ type: "lumiphone:message_progress", requestId, chatId: context.chatId, characterId: context.characterId, conversationId, phase: "done" }, userId);
+  }
+}
 async function generateNpcContact(input, userId) {
   if (!spindle.permissions.has("generation"))
     throw new Error("Enable Generation to create an NPC contact from a description.");
@@ -2870,7 +3316,7 @@ async function generateNpcContact(input, userId) {
   const request = {
     type: "quiet",
     messages: [
-      { role: "system", content: 'Create one compact roleplay phone contact from the user description. Return strict JSON only with exactly these string fields: {"name":"","role":"","identityBrief":""}. No markdown. identityBrief contains only stable facts useful across scenes: role, general personality, enduring relationship, distinctive behavior. Do not invent unsupported backstory. Name and role max 120 characters; identityBrief max 900.' },
+      { role: "system", content: 'Create one compact roleplay phone contact draft from the user description. Return strict JSON only: {"name":"","role":"","identityBrief":"","talkativeness":50,"fragmentation":35}. No markdown. identityBrief contains only stable facts useful across scenes: role, general personality, enduring relationship, distinctive behavior. Infer talkativeness and fragmentation from 0 to 100; these are editable messaging tendencies, never guarantees. Do not invent unsupported backstory. Name and role max 120 characters; identityBrief max 900.' },
       { role: "user", content: prompt }
     ],
     parameters: { temperature: 0.55, max_tokens: 350 },
@@ -2881,39 +3327,20 @@ async function generateNpcContact(input, userId) {
   const name = text2(parsed.name, 120);
   if (!name)
     throw new Error("NPC generation did not return a valid name.");
-  await withStateLock(stateKey(context.chatId, context.characterId), async () => {
-    send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "saving", message: "Saving contact\u2026" }, userId);
-    const state = await loadState(context.chatId, context.characterId, userId);
-    const createdAt = nowIso();
-    const identityBrief = text2(parsed.identityBrief ?? parsed.description, 900);
-    const contact = upsertContact(state, {
-      id: id("contact"),
-      name,
-      role: text2(parsed.role, 120) || "Pocket NPC",
-      description: identityBrief,
-      identityBrief,
-      sceneNote: "",
-      avatarUrl: "",
-      sourceAvatarUrl: "",
-      avatarOverrideUrl: "",
-      accent: stableContactAccent(name),
-      sourceAccent: "",
-      colorMode: "pocket",
-      source: { kind: "npc", origin: "generated", description: identityBrief },
-      presence: { inScene: false, lastSceneAt: "" },
-      contextPolicy: { pinned: false },
-      generationPolicy: { relevant: true },
-      messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
-      createdAt,
-      updatedAt: createdAt
-    });
-    const activity = addActivity(state, { kind: "contact", title: `${contact.name} added`, summary: contact.role, route: { app: "contacts", contactId: contact.id, view: "detail" }, source: { contactId: contact.id } });
-    await saveState(state, userId);
-    await sendState(state, userId, "contact");
-    sendActivity(activity, userId);
-    send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "complete", message: "Contact saved" }, userId);
-    send({ type: "lumiphone:contact_created", requestId, contactId: contact.id }, userId);
-  });
+  const identityBrief = text2(parsed.identityBrief ?? parsed.description, 900);
+  const draft = {
+    name,
+    role: text2(parsed.role, 120) || "Pocket NPC",
+    identityBrief,
+    accent: stableContactAccent(name),
+    messagingStyle: {
+      talkativeness: Math.max(0, Math.min(100, Math.round(numberValue(parsed.talkativeness, 50)))),
+      fragmentation: Math.max(0, Math.min(100, Math.round(numberValue(parsed.fragmentation, 35))))
+    },
+    sourceDescription: prompt
+  };
+  send({ type: "lumiphone:contact_draft", requestId, chatId: context.chatId, characterId: context.characterId, draft }, userId);
+  send({ type: "lumiphone:operation_progress", task: "npc-contact", requestId, phase: "complete", message: "Draft ready" }, userId);
 }
 async function refreshCompactContactProfile(input, userId) {
   if (!spindle.permissions.has("generation"))
@@ -3059,6 +3486,7 @@ async function syncSceneContacts(input, userId) {
         contextPolicy: existing?.contextPolicy || { pinned: false },
         generationPolicy: existing?.generationPolicy || { relevant: true },
         messagingPolicy: existing?.messagingPolicy || { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+        messagingStyle: existing?.messagingStyle || { talkativeness: 50, fragmentation: 35 },
         createdAt,
         updatedAt: sceneAt
       });
@@ -3146,11 +3574,28 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId, 
       return;
     const state = await loadState(chatId, characterId, userId);
     const conversation = state.conversations.find((entry) => entry.id === conversationId);
-    if (!conversation || conversation.kind !== "direct" || conversation.messages.at(-1)?.sender !== "persona")
+    if (!conversation || conversation.messages.at(-1)?.sender !== "persona")
       return;
     const burst = conversation.outgoingBurst;
     if (expectedBurstId && (!burst || burst.id !== expectedBurstId || !burst.open || burst.finalized || burst.held))
       return;
+    if (conversation.kind === "group") {
+      if (!burst)
+        return;
+      await withStateLock(stateKey(chatId, characterId), async () => {
+        const latest = await loadState(chatId, characterId, userId);
+        const current = latest.conversations.find((entry) => entry.id === conversationId);
+        if (!current?.outgoingBurst || current.outgoingBurst.id !== burst.id || current.outgoingBurst.finalized)
+          return;
+        current.outgoingBurst.open = false;
+        current.outgoingBurst.finalized = true;
+        current.outgoingBurst.updatedAt = nowIso();
+        await saveState(latest, userId);
+      });
+      replyDecisionFlights.delete(flightKey);
+      await generateGroupBatch({ requestId: id("group_auto"), chatId, characterId, conversationId, sourceBurstId: burst.id, autonomous: true }, userId);
+      return;
+    }
     const contact = state.contacts.find((entry) => entry.id === conversation.participantContactIds[0]);
     if (!contact || !contact.generationPolicy.relevant)
       return;
@@ -3401,6 +3846,7 @@ async function applyAction(input, userId, source = "model") {
             contextPolicy: { pinned: false },
             generationPolicy: { relevant: true },
             messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+            messagingStyle: { talkativeness: 50, fragmentation: 35 },
             createdAt: sceneAt,
             updatedAt: sceneAt
           });
@@ -3451,6 +3897,7 @@ async function applyAction(input, userId, source = "model") {
           contextPolicy: { pinned: false },
           generationPolicy: { relevant: true },
           messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+          messagingStyle: { talkativeness: 50, fragmentation: 35 },
           createdAt,
           updatedAt: createdAt
         };
@@ -3480,6 +3927,16 @@ async function applyAction(input, userId, source = "model") {
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
       conversation.updatedAt = message.createdAt;
       if (sender === "persona" && source === "user") {
+        if (conversation.kind === "group") {
+          for (const batch of state.groupBatches.filter((entry) => entry.conversationId === conversation.id && (entry.status === "queued" || entry.status === "delivering"))) {
+            batch.status = "cancelled";
+            batch.updatedAt = message.createdAt;
+            for (const queued of batch.messages)
+              if (queued.state === "queued")
+                queued.state = "cancelled";
+          }
+          groupBatchFlights.delete(`${viewKey(userId)}:${stateKey(context.chatId, context.characterId)}:${conversation.id}`);
+        }
         const previousBurst = conversation.outgoingBurst;
         const explicitRemoteOverride = bool2(payload.explicitRemoteOverride ?? payload.explicit_remote_override);
         conversation.outgoingBurst = previousBurst?.open && !previousBurst.finalized ? { ...previousBurst, messageIds: [...previousBurst.messageIds, message.id].slice(-12), explicitRemoteOverride: previousBurst.explicitRemoteOverride || explicitRemoteOverride, updatedAt: message.createdAt } : { id: id("burst"), messageIds: [message.id], open: true, held: false, finalized: false, explicitRemoteOverride, updatedAt: message.createdAt };
@@ -3537,6 +3994,10 @@ async function applyAction(input, userId, source = "model") {
           allowAmbientInScene: bool2(payload.allowAmbientInScene ?? payload.allow_ambient_in_scene, existing?.messagingPolicy.allowAmbientInScene),
           lastInitiatedMessageAt: existing?.messagingPolicy.lastInitiatedMessageAt || "",
           lastInitiatedRoleplayAt: existing?.messagingPolicy.lastInitiatedRoleplayAt || ""
+        },
+        messagingStyle: {
+          talkativeness: Math.max(0, Math.min(100, Math.round(numberValue(payload.talkativeness, existing?.messagingStyle.talkativeness ?? 50)))),
+          fragmentation: Math.max(0, Math.min(100, Math.round(numberValue(payload.fragmentation, existing?.messagingStyle.fragmentation ?? 35))))
         },
         createdAt,
         updatedAt: nowIso()
@@ -3737,6 +4198,7 @@ async function handleFrontend(payload, userId) {
         break;
       }
       case "lumiphone:save_contact": {
+        spindle.log.info(`Pocket contact save invoked: request=${requestId} chat=${context.chatId}`);
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           const raw = isRecord(payload.contact) ? payload.contact : payload;
@@ -3751,11 +4213,12 @@ async function handleFrontend(payload, userId) {
           }, { characterId: state.characterId, characterName: state.characterName, now: nowIso(), makeId: id });
           if (!candidate)
             throw new Error("A contact needs a name.");
-          const contact = upsertContact(state, candidate);
+          const contact = upsertContact(state, candidate, false);
           reconcileContactAvailability(state, contact);
           await saveState(state, userId);
           await sendState(state, userId, "contact");
-          send({ type: "lumiphone:contact_saved", requestId, contactId: contact.id }, userId);
+          spindle.log.info(`Pocket contact save completed: request=${requestId} contact=${contact.id} accent=${contactAccent(contact)}`);
+          send({ type: "lumiphone:contact_saved", requestId, contactId: contact.id, contact }, userId);
         });
         break;
       }
@@ -3944,10 +4407,12 @@ async function handleFrontend(payload, userId) {
           scheduleReplyBurst(context.chatId, context.characterId, text2(payload.conversationId, 180), userId);
         break;
       }
-      case "lumiphone:generate_message":
+      case "lumiphone:generate_message": {
+        let groupAuto = false;
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
+          groupAuto = Boolean(conversation?.kind === "group" && (!text2(payload.speakerContactId, 180) || text2(payload.speakerContactId, 180) === "auto"));
           if (conversation?.outgoingBurst) {
             conversation.outgoingBurst.open = false;
             conversation.outgoingBurst.finalized = true;
@@ -3955,8 +4420,12 @@ async function handleFrontend(payload, userId) {
             await saveState(state, userId);
           }
         });
-        await generateMessage({ ...payload, manualOverride: true }, userId);
+        if (groupAuto)
+          await generateGroupBatch({ ...payload, manualOverride: true }, userId);
+        else
+          await generateMessage({ ...payload, manualOverride: true }, userId);
         break;
+      }
       case "lumiphone:retry_message": {
         const state = await loadState(context.chatId, context.characterId, userId);
         const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
@@ -3978,6 +4447,73 @@ async function handleFrontend(payload, userId) {
         if (!relay)
           throw new Error("There is no pending Pocket handoff for this conversation.");
         requestRelayContinuation(context.chatId, context.characterId, relay.id, userId);
+        break;
+      }
+      case "lumiphone:arm_reference": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          if (state.references.some((entry) => entry.status === "injected"))
+            throw new Error("A Pocket reference is already attached to an active roleplay generation.");
+          const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
+          if (!conversation)
+            throw new Error("That Pocket conversation no longer exists.");
+          const scope = payload.scope === "recent_messages" || payload.scope === "selected_messages" ? payload.scope : "conversation";
+          const selectedMessageIds = (Array.isArray(payload.messageIds) ? payload.messageIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 12);
+          if (scope === "selected_messages" && !selectedMessageIds.some((messageId) => conversation.messages.some((message) => message.id === messageId))) {
+            throw new Error("Select at least one message to reference.");
+          }
+          const reference = createPocketReference({ state, conversation, scope, selectedMessageIds, createdAt: nowIso(), makeId: id });
+          if (!reference.messages.length)
+            throw new Error("That conversation has no messages to reference yet.");
+          for (const existing of state.references) {
+            if (existing.status === "armed" || existing.status === "failed")
+              existing.status = "cancelled";
+          }
+          state.references.push(reference);
+          state.references = state.references.slice(-24);
+          await saveState(state, userId);
+          await sendState(state, userId, "reference_armed");
+          send({ type: "lumiphone:reference_armed", requestId, referenceId: reference.id, conversationId: conversation.id }, userId);
+        });
+        break;
+      }
+      case "lumiphone:rearm_reference": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          if (state.references.some((entry) => entry.status === "injected"))
+            throw new Error("A Pocket reference is already attached to an active roleplay generation.");
+          const reference = state.references.find((entry) => entry.id === text2(payload.referenceId, 180) && entry.status === "failed");
+          if (!reference)
+            throw new Error("That failed Pocket reference is no longer available to retry.");
+          for (const existing of state.references)
+            if (existing.status === "armed")
+              existing.status = "cancelled";
+          reference.status = "armed";
+          reference.injectedAt = undefined;
+          reference.injectedGenerationId = undefined;
+          reference.boundUserMessageId = undefined;
+          reference.serializedReferenceChars = undefined;
+          reference.serializedReference = undefined;
+          reference.consumedAt = undefined;
+          reference.consumedMessageId = undefined;
+          reference.error = undefined;
+          await saveState(state, userId);
+          await sendState(state, userId, "reference_rearmed");
+          send({ type: "lumiphone:reference_armed", requestId, referenceId: reference.id, conversationId: reference.conversationId }, userId);
+        });
+        break;
+      }
+      case "lumiphone:cancel_reference": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const reference = state.references.find((entry) => entry.id === text2(payload.referenceId, 180) && (entry.status === "armed" || entry.status === "failed"));
+          if (!reference)
+            throw new Error("That Pocket reference can no longer be cancelled.");
+          reference.status = "cancelled";
+          reference.error = undefined;
+          await saveState(state, userId);
+          await sendState(state, userId, "reference_cancelled");
+        });
         break;
       }
       case "lumiphone:test_generation": {
@@ -4263,38 +4799,71 @@ function ensureInterceptor() {
       const generic = { role: "system", content: `${PHONE_GUIDANCE}
 Current Pocket snapshot:
 ${projectPhoneContext(state)}` };
-      if (!relayBlock || !targetRelayId) {
-        return { messages: [...messages, generic], breakdown: [{ messageIndex: messages.length, name: "Pocket memory" }] };
+      const injectedMessages = [...messages, generic];
+      const breakdown = [{ messageIndex: messages.length, name: "Pocket memory" }];
+      if (relayBlock && targetRelayId) {
+        const injectedAt = nowIso();
+        let receiptStored = false;
+        try {
+          state = await withStateLock(stateKey(chatId, characterId), async () => {
+            const current = await loadState(chatId, characterId, context.userId);
+            const target = current.relays.find((entry) => entry.id === targetRelayId && entry.status === "pending");
+            if (!target)
+              throw new Error(`Pending relay ${targetRelayId} disappeared before injection.`);
+            const matchedGenerationId = generationId || target.continuation.generationId;
+            target.injectedAt = injectedAt;
+            target.injectedGenerationId = matchedGenerationId || undefined;
+            target.serializedRelayChars = relayBlock.length;
+            target.serializedRelay = relayBlock;
+            target.relayExchangeMessageCount = target.conversationTail.recentMessageIds.length;
+            target.injectionError = undefined;
+            await saveState(current, context.userId);
+            receiptStored = true;
+            return current;
+          });
+        } catch (error) {
+          spindle.log.error(`Pocket relay injection receipt failed: relay=${targetRelayId} error=${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (receiptStored) {
+          injectedMessages.push({ role: "system", content: relayBlock });
+          breakdown.push({ messageIndex: injectedMessages.length - 1, name: "Pocket continuity relay \u2014 newer state" });
+          spindle.log.info(`Pocket relay injected: relay=${targetRelayId} generation=${generationId || state.relays.find((entry) => entry.id === targetRelayId)?.continuation.generationId || "awaiting-association"} chars=${relayBlock.length}`);
+        }
       }
-      const injectedAt = nowIso();
-      try {
-        state = await withStateLock(stateKey(chatId, characterId), async () => {
-          const current = await loadState(chatId, characterId, context.userId);
-          const target = current.relays.find((entry) => entry.id === targetRelayId && entry.status === "pending");
-          if (!target)
-            throw new Error(`Pending relay ${targetRelayId} disappeared before injection.`);
-          const matchedGenerationId = generationId || target.continuation.generationId;
-          target.injectedAt = injectedAt;
-          target.injectedGenerationId = matchedGenerationId || undefined;
-          target.serializedRelayChars = relayBlock.length;
-          target.serializedRelay = relayBlock;
-          target.relayExchangeMessageCount = target.conversationTail.recentMessageIds.length;
-          target.injectionError = undefined;
-          await saveState(current, context.userId);
-          return current;
-        });
-      } catch (error) {
-        spindle.log.error(`Pocket relay injection receipt failed: relay=${targetRelayId} error=${error instanceof Error ? error.message : String(error)}`);
+      const generationType = text2(context.generationType, 40);
+      const lastUserMessage = [...messages].reverse().find((message) => message?.role === "user" && message.__isChatHistory === true && text2(message.sourceMessageId, 180));
+      const referenceEligible = !targetRelayId && context.isDryRun !== true && generationType === "normal" && Boolean(lastUserMessage);
+      const armedReference = referenceEligible ? latestArmedReference(state) : undefined;
+      if (armedReference) {
+        let referenceBlock = "";
+        try {
+          state = await withStateLock(stateKey(chatId, characterId), async () => {
+            const current = await loadState(chatId, characterId, context.userId);
+            const target = current.references.find((entry) => entry.id === armedReference.id && entry.status === "armed");
+            if (!target)
+              return current;
+            referenceBlock = serializePocketReference(target, 2200);
+            target.status = "injected";
+            target.injectedAt = nowIso();
+            target.injectedGenerationId = generationId || undefined;
+            target.boundUserMessageId = text2(lastUserMessage?.sourceMessageId, 180) || undefined;
+            target.serializedReferenceChars = referenceBlock.length;
+            target.serializedReference = referenceBlock;
+            target.error = undefined;
+            await saveState(current, context.userId);
+            return current;
+          });
+        } catch (error) {
+          spindle.log.error(`Pocket reference injection receipt failed: reference=${armedReference.id} error=${error instanceof Error ? error.message : String(error)}`);
+          referenceBlock = "";
+        }
+        if (referenceBlock) {
+          injectedMessages.push({ role: "system", content: referenceBlock });
+          breakdown.push({ messageIndex: injectedMessages.length - 1, name: "Pocket user reference \u2014 this turn" });
+          spindle.log.info(`Pocket reference injected: reference=${armedReference.id} generation=${generationId || "awaiting-association"} chars=${referenceBlock.length}`);
+        }
       }
-      spindle.log.info(`Pocket relay injected: relay=${targetRelayId} generation=${generationId || state.relays.find((entry) => entry.id === targetRelayId)?.continuation.generationId || "awaiting-association"} chars=${relayBlock.length}`);
-      const relayMessage = { role: "system", content: relayBlock };
-      return {
-        messages: [...messages, generic, relayMessage],
-        breakdown: [
-          { messageIndex: messages.length, name: "Pocket memory" },
-          { messageIndex: messages.length + 1, name: "Pocket continuity relay \u2014 newer state" }
-        ]
-      };
+      return { messages: injectedMessages, breakdown };
     } catch (error) {
       spindle.log.error(`Pocket interceptor failed: ${error instanceof Error ? error.message : String(error)}`);
       return messages;
@@ -4379,17 +4948,30 @@ spindle.on("GENERATION_STARTED", async (payload, userId) => {
         if (launching.length === 1)
           relay = launching[0];
       }
-      if (!relay)
+      let reference = referenceForGeneration(state, generationId);
+      if (!reference) {
+        const unbound = state.references.filter((entry) => entry.status === "injected" && entry.injectedAt && !entry.injectedGenerationId);
+        if (unbound.length === 1)
+          reference = unbound[0];
+      }
+      if (!relay && !reference)
         return;
-      relay.continuation.state = "started";
-      relay.continuation.generationId = generationId;
-      relay.continuation.generationStartedAt = nowIso();
-      relay.continuation.error = undefined;
-      if (relay.injectedAt && !relay.injectedGenerationId)
-        relay.injectedGenerationId = generationId;
+      if (relay) {
+        relay.continuation.state = "started";
+        relay.continuation.generationId = generationId;
+        relay.continuation.generationStartedAt = nowIso();
+        relay.continuation.error = undefined;
+        if (relay.injectedAt && !relay.injectedGenerationId)
+          relay.injectedGenerationId = generationId;
+        spindle.log.info(`Pocket observed GENERATION_STARTED: relay=${relay.id} generation=${generationId}`);
+      }
+      if (reference) {
+        reference.injectedGenerationId = generationId;
+        reference.error = undefined;
+        spindle.log.info(`Pocket observed GENERATION_STARTED: reference=${reference.id} generation=${generationId}`);
+      }
       await saveState(state, userId);
-      await sendState(state, userId, "relay_started");
-      spindle.log.info(`Pocket observed GENERATION_STARTED: relay=${relay.id} generation=${generationId}`);
+      await sendState(state, userId, relay ? "relay_started" : "reference_started");
     });
   } catch (error) {
     spindle.log.warn(`Pocket could not associate GENERATION_STARTED: ${error instanceof Error ? error.message : String(error)}`);
@@ -4408,6 +4990,7 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
       const state = await loadState(chatId, characterId, userId);
       let changed = false;
       const relay = generationId ? relayForGeneration(state, generationId) : undefined;
+      const reference = generationId ? referenceForGeneration(state, generationId) : undefined;
       if (relay) {
         relay.continuation.generationCompletedAt = nowIso();
         const injectionMatched = Boolean(relay.injectedAt && relay.injectedGenerationId === generationId);
@@ -4425,6 +5008,23 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
         changed = true;
         spindle.log.info(`Pocket observed GENERATION_ENDED: relay=${relay.id} generation=${generationId || "unknown"} status=${relay.status} message=${messageId || "none"}`);
       }
+      if (reference) {
+        const injectionMatched = Boolean(reference.injectedAt && reference.injectedGenerationId === generationId);
+        if (payload?.error || !messageId) {
+          reference.status = "failed";
+          reference.error = text2(payload?.error, 500) || "The roleplay generation did not produce a message. The reference was not consumed.";
+        } else if (!injectionMatched) {
+          reference.status = "failed";
+          reference.error = "The generation completed without a confirmed matching Pocket reference injection.";
+        } else {
+          reference.status = "consumed";
+          reference.consumedAt = nowIso();
+          reference.consumedMessageId = messageId;
+          reference.error = undefined;
+        }
+        changed = true;
+        spindle.log.info(`Pocket observed GENERATION_ENDED: reference=${reference.id} generation=${generationId || "unknown"} status=${reference.status} message=${messageId || "none"}`);
+      }
       if (messageId && state.sceneSnapshot && state.sceneSnapshot.sourceMessageId !== messageId) {
         state.sceneSnapshot.stale = true;
         changed = true;
@@ -4432,7 +5032,8 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
       if (!changed)
         return;
       await saveState(state, userId);
-      await sendState(state, userId, relay ? relay.status === "consumed" ? "relay_consumed" : "relay_failed" : "scene_stale");
+      const reason = relay ? relay.status === "consumed" ? "relay_consumed" : "relay_failed" : reference ? reference.status === "consumed" ? "reference_consumed" : "reference_failed" : "scene_stale";
+      await sendState(state, userId, reason);
     });
   } catch (error) {
     spindle.log.warn(`Pocket could not mark the scene snapshot stale: ${error instanceof Error ? error.message : String(error)}`);
@@ -4449,11 +5050,17 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
       const relay = relayForGeneration(state, generationId);
-      if (!relay)
+      const reference = referenceForGeneration(state, generationId);
+      if (!relay && !reference)
         return;
-      relay.continuation = { ...relay.continuation, state: "stopped", error: "Generation was stopped. The relay remains pending." };
+      if (relay)
+        relay.continuation = { ...relay.continuation, state: "stopped", error: "Generation was stopped. The relay remains pending." };
+      if (reference) {
+        reference.status = "failed";
+        reference.error = "Generation was stopped. The reference was not consumed.";
+      }
       await saveState(state, userId);
-      await sendState(state, userId, "relay_stopped");
+      await sendState(state, userId, relay ? "relay_stopped" : "reference_failed");
     });
   } catch {}
 });

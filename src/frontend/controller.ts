@@ -11,6 +11,7 @@ import type {
   ChatPocketPersona,
   PocketOperationProgress,
   PocketContactSourceOption,
+  PocketContactDraft,
   PocketActivity,
   PocketRoute,
   PocketResolvedImage,
@@ -129,7 +130,9 @@ class PocketController {
   private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string }>()
   private pendingWallpaperTarget: PocketImageTarget | null = null
   private selectedContactId = ''
-  private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'new' = 'list'
+  private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft' = 'list'
+  private npcDraft: PocketContactDraft | null = null
+  private previousNpcDraft: PocketContactDraft | null = null
   private selectedConversationId = ''
   private selectedConversationView: 'thread' | 'new-group' | 'group-detail' = 'thread'
   private selectedMessageId = ''
@@ -145,7 +148,9 @@ class PocketController {
   private cameraRequestId = ''
   private messageRequests = new Map<string, { conversationId: string; speakerContactId: string; phase: 'checking' | 'pending' }>()
   private messageDrafts = new Map<string, string>()
+  private groupSpeakerSelections = new Map<string, string>()
   private manualMessageOverrides = new Set<string>()
+  private focusedHandoffRelays = new Set<string>()
   private contactSources: PocketContactSourceOption[] = []
   private contactSourcesRequested = false
   private lastTagKeys = new Set<string>()
@@ -691,13 +696,25 @@ class PocketController {
       if (this.currentApp === 'contacts') this.render(false)
       return
     }
+    if (payload.type === 'lumiphone:contact_draft' && payload.draft) {
+      if (this.npcDraft) this.previousNpcDraft = structuredClone(this.npcDraft)
+      this.npcDraft = structuredClone(payload.draft as PocketContactDraft)
+      if (this.currentApp === 'contacts') this.openPocket({ app: 'contacts', view: 'import' }, false)
+      return
+    }
+    if (payload.type === 'lumiphone:reference_armed') {
+      this.showFeedback('Conversation attached to your next roleplay turn.')
+      return
+    }
     if (payload.type === 'lumiphone:conversation_opened' && payload.conversationId) {
       this.openPocket({ app: 'messages', conversationId: payload.conversationId, view: 'thread' })
       return
     }
     if ((payload.type === 'lumiphone:contact_created' || payload.type === 'lumiphone:contact_saved') && payload.contactId) {
       this.contactSourcesRequested = false
-      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' })
+      this.npcDraft = null
+      this.previousNpcDraft = null
+      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, false)
       return
     }
     if (payload.type === 'lumiphone:swarm_profile') {
@@ -1158,6 +1175,7 @@ class PocketController {
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
+      selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || 'auto',
       draft: this.messageDrafts.get(this.selectedConversationId) || '',
       updateDraft: (conversationId, value) => { if (value) this.messageDrafts.set(conversationId, value); else this.messageDrafts.delete(conversationId) },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
@@ -1166,14 +1184,29 @@ class PocketController {
       openContact: (contactId) => this.openPocket({ app: 'contacts', contactId, view: 'detail' }),
       send: (type, payload) => { this.send(type, payload) },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
+      selectGroupSpeaker: (conversationId, speakerContactId) => {
+        if (speakerContactId === 'auto') this.groupSpeakerSelections.delete(conversationId)
+        else this.groupSpeakerSelections.set(conversationId, speakerContactId)
+        this.render(false)
+      },
       composerState: (conversationId, held) => { this.send('lumiphone:composer_state', { conversationId, held }) },
       messageAnyway: (conversationId) => { this.manualMessageOverrides.add(conversationId); this.render(false) },
       manualOverride: this.manualMessageOverrides.has(this.selectedConversationId),
-      returnToRoleplay: () => {
-        if (this.state?.relays.some((entry) => entry.conversationId === this.selectedConversationId && entry.status === 'pending')) this.send('lumiphone:continue_relay', { conversationId: this.selectedConversationId })
-        this.close()
-      },
+      continueRelay: () => { this.send('lumiphone:continue_relay', { conversationId: this.selectedConversationId }) },
+      openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
+      showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
+      cancelReference: (referenceId) => this.send('lumiphone:cancel_reference', { referenceId }),
+      rearmReference: (referenceId) => this.send('lumiphone:rearm_reference', { referenceId }),
+      showConversationGenerationInfo: (conversationId) => this.showConversationGenerationInfo(conversationId),
+      shouldFocusHandoff: (relayId) => {
+        if (this.focusedHandoffRelays.has(relayId)) return false
+        const relay = this.state?.relays.find((entry) => entry.id === relayId)
+        const conversation = relay ? this.state?.conversations.find((entry) => entry.id === relay.conversationId) : null
+        if (!relay || conversation?.availability.state !== 'local') return false
+        this.focusedHandoffRelays.add(relayId)
+        return true
+      },
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back(),
     })
@@ -1201,7 +1234,109 @@ class PocketController {
         row.append(el('strong', '', 'Channel decision'), el('span', 'lp-copy', `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ''}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ''}`))
         content.appendChild(row)
       }
+      if (info.groupBatch) {
+        for (const [label, value] of [
+          ['Group batch', info.groupBatch.id],
+          ['Batch position', `${info.groupBatch.position} of ${info.groupBatch.size}`],
+          ['Eligible contacts', String(info.groupBatch.eligibleCount)],
+        ]) {
+          const row = el('div', 'lp-row-between'); row.append(el('strong', '', label), el('span', 'lp-copy', value)); content.appendChild(row)
+        }
+      }
     }
+    modal.root.appendChild(content)
+  }
+
+  private showReferenceSheet(conversationId: string): void {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId)
+    if (!conversation) return
+    const modal = this.ctx.ui.showModal({ title: 'Reference in roleplay', width: 480, maxHeight: 680 })
+    const content = el('div', 'lp-reference-sheet')
+    content.appendChild(el('p', 'lp-copy', 'Attach Pocket context to your next normal roleplay turn. Pocket will wait for your RP message and will not change anyone’s scene presence.'))
+    let scope: 'conversation' | 'recent_messages' | 'selected_messages' = 'conversation'
+    const messageInputs: HTMLInputElement[] = []
+    const attach = button('Attach to next RP turn', 'lp-button lp-button-primary')
+    const update = () => {
+      for (const input of messageInputs) input.disabled = scope !== 'selected_messages'
+      attach.disabled = scope === 'selected_messages' && !messageInputs.some((input) => input.checked)
+    }
+    const addScope = (value: typeof scope, label: string, description: string) => {
+      const row = el('label', 'lp-reference-scope')
+      const input = el('input')
+      input.type = 'radio'; input.name = `reference-scope-${conversation.id}`; input.value = value; input.checked = scope === value
+      input.dataset.referenceScope = value
+      input.addEventListener('change', () => { if (input.checked) { scope = value; update() } })
+      const copy = el('span', 'lp-grow')
+      copy.append(el('strong', '', label), el('span', 'lp-copy', description))
+      row.append(input, copy)
+      content.appendChild(row)
+    }
+    addScope('conversation', 'Current conversation', 'Conversation state, participants, and up to 8 recent messages.')
+    addScope('recent_messages', 'Recent messages', 'Only the last 6 messages and minimal conversation context.')
+    addScope('selected_messages', 'Selected messages', 'Choose the exact bubbles Pocket should attach.')
+    const choices = el('div', 'lp-reference-message-list')
+    for (const message of conversation.messages.filter((entry) => entry.sender !== 'system').slice(-12)) {
+      const row = el('label', 'lp-reference-message-choice')
+      const input = el('input')
+      input.type = 'checkbox'; input.value = message.id; input.dataset.referenceMessage = message.id
+      input.checked = message.id === this.selectedMessageId
+      input.addEventListener('change', update)
+      const copy = el('span', 'lp-grow')
+      copy.append(el('strong', '', message.senderName), el('span', 'lp-copy', message.text.slice(0, 180)))
+      row.append(input, copy)
+      choices.appendChild(row)
+      messageInputs.push(input)
+    }
+    content.appendChild(choices)
+    attach.addEventListener('click', () => {
+      const messageIds = messageInputs.filter((input) => input.checked).map((input) => input.value)
+      this.send('lumiphone:arm_reference', { conversationId, scope, messageIds })
+      modal.dismiss()
+    })
+    content.appendChild(attach)
+    modal.root.appendChild(content)
+    update()
+  }
+
+  private showConversationGenerationInfo(conversationId: string): void {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId)
+    if (!conversation) return
+    const modal = this.ctx.ui.showModal({ title: 'Conversation diagnostics', width: 500, maxHeight: 680 })
+    const content = el('div', 'lp-settings-section')
+    const generated = conversation.messages.filter((message) => message.generation).slice(-5)
+    const reference = [...(this.state?.references || [])].reverse().find((entry) => entry.conversationId === conversationId)
+    for (const [label, value] of [
+      ['Conversation', conversation.title],
+      ['Kind', conversation.kind],
+      ['Messages', String(conversation.messages.length)],
+      ['Generated messages', String(conversation.messages.filter((message) => message.generation).length)],
+      ['Latest reference', reference ? `${reference.id} · ${reference.status}` : 'none'],
+    ]) {
+      const row = el('div', 'lp-row-between'); row.append(el('strong', '', label), el('span', 'lp-copy', value)); content.appendChild(row)
+    }
+    if (reference) {
+      const referenceDetails = el('details', 'lp-channel-diagnostic')
+      const detail = el('div', 'lp-handoff-diagnostics')
+      for (const row of [
+        `Scope: ${reference.scope}`,
+        `Messages: ${reference.messages.length}`,
+        `Bound user message: ${reference.boundUserMessageId || 'none'}`,
+        `Generation: ${reference.injectedGenerationId || 'none'}`,
+        `Injected: ${reference.injectedAt || 'no'}`,
+        `Serialized: ${reference.serializedReferenceChars || 0} chars`,
+        `Consumed message: ${reference.consumedMessageId || 'none'}`,
+        reference.error ? `Error: ${reference.error}` : '',
+      ].filter(Boolean)) detail.appendChild(el('span', 'lp-copy', row))
+      if (reference.serializedReference) detail.appendChild(el('pre', 'lp-code-block', reference.serializedReference))
+      referenceDetails.append(el('summary', '', 'Reference diagnostics'), detail)
+      content.appendChild(referenceDetails)
+    }
+    for (const message of generated) {
+      const row = button(`${message.senderName} · ${formatTime(message.createdAt)}`, 'lp-button lp-button-quiet')
+      row.addEventListener('click', () => { modal.dismiss(); this.showMessageGenerationInfo(message) })
+      content.appendChild(row)
+    }
+    if (!generated.length) content.appendChild(el('p', 'lp-copy', 'No generated Pocket bubbles have diagnostics yet.'))
     modal.root.appendChild(content)
   }
 
@@ -1210,6 +1345,7 @@ class PocketController {
     const id = requestId('reply')
     this.messageRequests.set(id, { conversationId, speakerContactId, phase: 'pending' })
     this.send('lumiphone:generate_message', { requestId: id, conversationId, speakerContactId })
+    if (speakerContactId && speakerContactId !== 'auto') this.groupSpeakerSelections.delete(conversationId)
     this.render()
   }
 
@@ -1220,7 +1356,15 @@ class PocketController {
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('contacts', title, copy),
       operations: this.operations,
-      select: (contactId, view = contactId ? 'detail' : 'list') => this.openPocket({ app: 'contacts', contactId: contactId || undefined, view }),
+      npcDraft: this.npcDraft, previousNpcDraft: this.previousNpcDraft,
+      select: (contactId, view = contactId ? 'detail' : 'list', replace = false) => this.openPocket({ app: 'contacts', contactId: contactId || undefined, view }, !replace),
+      restorePreviousNpcDraft: () => {
+        if (!this.previousNpcDraft) return
+        const current = this.npcDraft
+        this.npcDraft = this.previousNpcDraft
+        this.previousNpcDraft = current
+        this.render(false)
+      },
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       requestSources: () => {
         if (this.contactSourcesRequested) return

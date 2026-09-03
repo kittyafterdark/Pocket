@@ -19,6 +19,11 @@ function flag(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
+function percentage(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback
+}
+
 function timestamp(value: unknown, fallback: string): string {
   const candidate = clean(value, 40)
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback
@@ -84,6 +89,7 @@ export function normalizePocketContact(value: unknown, context: {
   const contextPolicy = record(value.contextPolicy) ? value.contextPolicy : {}
   const generationPolicy = record(value.generationPolicy) ? value.generationPolicy : {}
   const messagingPolicy = record(value.messagingPolicy) ? value.messagingPolicy : {}
+  const messagingStyle = record(value.messagingStyle) ? value.messagingStyle : {}
   const createdAt = timestamp(value.createdAt, context.now)
   return {
     id: contactId,
@@ -111,6 +117,10 @@ export function normalizePocketContact(value: unknown, context: {
       lastInitiatedMessageAt: timestamp(messagingPolicy.lastInitiatedMessageAt, ''),
       lastInitiatedRoleplayAt: timestamp(messagingPolicy.lastInitiatedRoleplayAt, ''),
     },
+    messagingStyle: {
+      talkativeness: percentage(messagingStyle.talkativeness, 50),
+      fragmentation: percentage(messagingStyle.fragmentation, 35),
+    },
     createdAt,
     updatedAt: timestamp(value.updatedAt, createdAt),
   }
@@ -129,6 +139,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
   const generation = record(value.generation) ? value.generation : null
   const info = generation && record(generation.info) ? generation.info : null
   const decision = info && record(info.replyDecision) ? info.replyDecision : null
+  const groupBatch = info && record(info.groupBatch) ? info.groupBatch : null
   const count = (input: unknown) => Math.max(0, Math.round(Number(input) || 0))
   return {
     id: clean(value.id, 120) || makeId('msg'),
@@ -154,6 +165,12 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
         recentCount: count(info.recentCount), recentChars: count(info.recentChars), storyCount: count(info.storyCount), storyChars: count(info.storyChars),
         threadCount: count(info.threadCount), threadChars: count(info.threadChars), generationMode: info.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
         connectionName: clean(info.connectionName, 180), model: clean(info.model, 500),
+        groupBatch: groupBatch && clean(groupBatch.id, 180) ? {
+          id: clean(groupBatch.id, 180),
+          position: Math.max(1, count(groupBatch.position)),
+          size: Math.max(1, count(groupBatch.size)),
+          eligibleCount: count(groupBatch.eligibleCount),
+        } : undefined,
         replyDecision: decision ? {
           rawAction: decision.rawAction === 'reply' || decision.rawAction === 'pause' || decision.rawAction === 'handoff' ? decision.rawAction : 'none',
           normalizedAction: decision.normalizedAction === 'reply' || decision.normalizedAction === 'pause' || decision.normalizedAction === 'handoff' ? decision.normalizedAction : 'none',
@@ -258,6 +275,7 @@ function activeContact(context: { characterId: string; characterName: string; no
     contextPolicy: { pinned: false },
     generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+    messagingStyle: { talkativeness: 50, fragmentation: 35 },
     createdAt: context.now,
     updatedAt: context.now,
   }

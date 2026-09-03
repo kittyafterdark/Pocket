@@ -11,6 +11,7 @@ import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, relayIdFromMessages } from '../src/backend/continuity.js'
+import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
 
@@ -77,6 +78,31 @@ describe('conversation channel continuity', () => {
     expect(relayIdFromMessages([{ sourceMessageMetadata: { pocketContinuation: true, pocketRelayId: 'r1' } }])).toBe('r1')
     state.relays[0].status = 'consumed'
     expect(pendingRelayContext(state, { relayId: 'r1' })).toBe('')
+  })
+
+  test('serializes one-shot phone context without implying scene presence', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'mizi', name: 'Mizi', role: 'Friend', identityBrief: 'Loud and opinionated.' }] }, { characterId: 'active', characterName: 'Ivan', now, makeId: (prefix) => `${prefix}-id` })
+    const conversation = {
+      id: 'gc-disaster', kind: 'group' as const, title: 'Disaster GC', participantContactIds: ['mizi'], unread: 0,
+      availability: { state: 'remote' as const }, createdAt: now, updatedAt: now,
+      messages: Array.from({ length: 10 }, (_, index) => ({
+        id: `message-${index}`, sender: 'contact' as const, senderContactId: 'mizi', senderName: 'Mizi', senderAccent: '#ff00aa',
+        text: `Message ${index} ${'chaos '.repeat(90)}`, createdAt: now, read: true, status: 'read' as const,
+      })),
+    }
+    const state = {
+      version: 9, chatId: 'chat', characterId: 'active', characterName: 'Ivan', roleplayNow: now,
+      pocketPersona: { displayName: 'You' }, contacts: collections.contacts, conversations: [conversation], references: [],
+    } as unknown as PhoneState
+    const reference = createPocketReference({ state, conversation, scope: 'conversation', createdAt: now, makeId: () => 'reference-1' })
+    expect(reference.messages).toHaveLength(8)
+    const serialized = serializePocketReference(reference, 1_500)
+    expect(serialized.length).toBeLessThanOrEqual(1_500)
+    expect(serialized).toContain('POCKET USER REFERENCE — THIS TURN')
+    expect(serialized).toContain('does not hand off the conversation')
+    expect(serialized).toContain('Do not assume a scene actor')
+    expect(serialized).toContain('=== END POCKET USER REFERENCE ===')
   })
 })
 
@@ -188,6 +214,7 @@ describe('Pocket routes', () => {
   test('normalizes typed deep links and rejects unknown apps', () => {
     expect(normalizePocketRoute({ app: 'trackers', trackerId: 'trust', view: 'config' })).toEqual({ app: 'trackers', trackerId: 'trust', view: 'config' })
     expect(normalizePocketRoute({ app: 'messages', contactId: 'alice', messageId: 'message-1' })).toEqual({ app: 'messages', contactId: 'alice', messageId: 'message-1' })
+    expect(normalizePocketRoute({ app: 'contacts', view: 'draft' })).toEqual({ app: 'contacts', contactId: undefined, view: 'draft' })
     expect(normalizePocketRoute({ app: 'malware', trackerId: 'x' })).toEqual({ app: 'home' })
   })
 })
@@ -243,11 +270,20 @@ describe('contacts and conversations', () => {
     }
     const migrated = normalizeContactCollections(legacy, { characterId: 'alice', characterName: 'Alice', now: '2026-01-01T00:00:00.000Z', makeId })
     expect(migrated.contacts).toHaveLength(1)
+    expect(migrated.contacts[0].messagingStyle).toEqual({ talkativeness: 50, fragmentation: 35 })
     expect(migrated.conversations).toHaveLength(1)
     expect(migrated.conversations[0].messages[0]).toMatchObject({ sender: 'contact', senderContactId: 'alice', senderName: 'Alice' })
     const again = normalizeContactCollections({ version: 3, contacts: migrated.contacts, conversations: migrated.conversations }, { characterId: 'alice', characterName: 'Alice', now: '2026-01-01T00:00:00.000Z', makeId })
     expect(again.conversations).toHaveLength(1)
     expect(again.conversations[0].messages).toHaveLength(1)
+  })
+
+  test('normalizes independent participation and fragmentation preferences', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const contacts = normalizeContactCollections({ contacts: [{
+      id: 'stylist', name: 'Stylist', messagingStyle: { talkativeness: 140, fragmentation: -20 },
+    }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` }).contacts
+    expect(contacts.find((entry) => entry.id === 'stylist')?.messagingStyle).toEqual({ talkativeness: 100, fragmentation: 0 })
   })
 
   test('reuses the existing direct conversation instead of duplicating it', () => {

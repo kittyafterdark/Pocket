@@ -17,7 +17,7 @@ export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 export type PocketRoute =
   | { app: 'home' }
   | { app: 'messages'; conversationId?: string; contactId?: string; messageId?: string; view?: 'thread' | 'new-group' | 'group-detail' }
-  | { app: 'contacts'; contactId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'new' }
+  | { app: 'contacts'; contactId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft' }
   | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
   | { app: 'calendar'; eventId?: string }
   | { app: 'notes'; noteId?: string }
@@ -100,7 +100,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -257,6 +257,12 @@ export interface PhoneMessage {
       generationMode: PocketGenerationMode
       connectionName: string
       model: string
+      groupBatch?: {
+        id: string
+        position: number
+        size: number
+        eligibleCount: number
+      }
       replyDecision?: {
         rawAction: ReplyDecisionAction
         normalizedAction: ReplyDecisionAction
@@ -293,6 +299,22 @@ export type PocketContactSource =
   | { kind: 'council'; memberId: string; itemId: string }
   | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene'; description: string; sceneKey?: string }
 
+export interface PocketMessagingStyle {
+  /** Participation likelihood, not a guarantee that this contact speaks. */
+  talkativeness: number
+  /** Likelihood of short consecutive bubbles instead of one compact text. */
+  fragmentation: number
+}
+
+export interface PocketContactDraft {
+  name: string
+  role: string
+  identityBrief: string
+  accent: string
+  messagingStyle: PocketMessagingStyle
+  sourceDescription: string
+}
+
 export interface PocketContact {
   id: string
   name: string
@@ -318,8 +340,31 @@ export interface PocketContact {
     lastInitiatedMessageAt: string
     lastInitiatedRoleplayAt: string
   }
+  messagingStyle: PocketMessagingStyle
   createdAt: string
   updatedAt: string
+}
+
+export interface PendingGroupBatchMessage {
+  id: string
+  speakerId: string
+  text: string
+  state: 'queued' | 'delivered' | 'cancelled'
+  deliveredMessageId?: string
+  deliveredAt?: string
+}
+
+export interface PendingGroupBatch {
+  id: string
+  requestId: string
+  conversationId: string
+  sourceBurstId?: string
+  eligibleContactIds: string[]
+  messages: PendingGroupBatchMessage[]
+  status: 'queued' | 'delivering' | 'completed' | 'cancelled' | 'failed'
+  createdAt: string
+  updatedAt: string
+  error?: string
 }
 
 export interface PocketConversation {
@@ -425,6 +470,53 @@ export interface PocketRelay {
     sourceMessageId?: string
     error?: string
   }
+}
+
+export type PocketReferenceScope = 'conversation' | 'recent_messages' | 'selected_messages'
+
+export interface PocketReferenceParticipant {
+  contactId: string
+  name: string
+  role: string
+  identityBrief: string
+}
+
+export interface PocketReferenceMessage {
+  messageId: string
+  sender: 'persona' | 'contact'
+  senderContactId?: string
+  senderName: string
+  text: string
+  createdAt: string
+}
+
+/**
+ * A user-armed, one-shot Pocket context attachment for the next normal RP turn.
+ * Unlike PocketRelay this never changes channel ownership or scene presence.
+ */
+export interface PocketContextReference {
+  id: string
+  chatId: string
+  characterId: string
+  sourceApp: 'messages'
+  conversationId: string
+  conversationTitle: string
+  conversationKind: 'direct' | 'group'
+  scope: PocketReferenceScope
+  visibility: 'context'
+  participants: PocketReferenceParticipant[]
+  snapshot: string
+  messages: PocketReferenceMessage[]
+  createdAt: string
+  status: 'armed' | 'injected' | 'consumed' | 'cancelled' | 'failed'
+  injectedAt?: string
+  injectedGenerationId?: string
+  boundUserMessageId?: string
+  serializedReferenceChars?: number
+  serializedReference?: string
+  consumedAt?: string
+  consumedMessageId?: string
+  error?: string
 }
 
 export interface RoleplayWeather {
@@ -546,7 +638,7 @@ export interface ProcessedPocketCommand {
 }
 
 export interface PhoneState {
-  version: 7
+  version: 9
   chatId: string
   characterId: string
   characterName: string
@@ -559,6 +651,8 @@ export interface PhoneState {
   notes: PhoneNote[]
   events: CalendarEvent[]
   relays: PocketRelay[]
+  references: PocketContextReference[]
+  groupBatches: PendingGroupBatch[]
   weather: RoleplayWeather
   trackers: PhoneTracker[]
   notifications: PhoneNotification[]

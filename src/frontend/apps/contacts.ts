@@ -1,4 +1,4 @@
-import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactSourceOption, PocketOperationProgress } from '../../types.js'
+import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketOperationProgress } from '../../types.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -8,13 +8,16 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export interface ContactsViewHost {
   state: PhoneState
   selectedContactId: string
-  selectedView: 'list' | 'detail' | 'config' | 'import' | 'new'
+  selectedView: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft'
+  npcDraft: PocketContactDraft | null
+  previousNpcDraft: PocketContactDraft | null
   sources: PocketContactSourceOption[]
   capabilities: PhoneCapabilities | null
   operations: Map<string, PocketOperationProgress>
   page(title: string, subtitle?: string, action?: PageAction): Page
   empty(title: string, copy: string): HTMLDivElement
-  select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'new'): void
+  select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft', replace?: boolean): void
+  restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
   requestSources(): void
   send(type: string, payload?: Record<string, unknown>): void
@@ -30,14 +33,24 @@ function avatar(contact: PocketContact): HTMLDivElement {
   return node
 }
 
-function contactEditor(host: ContactsViewHost, contact: PocketContact | null): HTMLDivElement {
+function draftPayload(draft: PocketContactDraft): Record<string, unknown> {
+  return {
+    name: draft.name, role: draft.role, identityBrief: draft.identityBrief, description: draft.identityBrief,
+    accent: draft.accent, colorMode: 'pocket', messagingStyle: draft.messagingStyle,
+    source: { kind: 'npc', origin: 'generated', description: draft.identityBrief },
+    presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
+    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+  }
+}
+
+function contactEditor(host: ContactsViewHost, contact: PocketContact | null, draft: PocketContactDraft | null = null): HTMLDivElement {
   let saveContact = () => {}
-  const { page, content } = host.page(contact ? 'Contact Settings' : 'New Contact', contact?.source.kind || 'Pocket NPC', { label: 'Save', callback: () => saveContact() })
-  const name = el('input', 'lp-input'); name.placeholder = 'Name'; name.value = contact?.name || ''
-  const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = contact?.role || ''
-  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Stable identity brief — role, personality, relationship, enduring traits'; description.maxLength = 1_200; description.value = contact?.identityBrief || contact?.description || ''
+  const { page, content } = host.page(contact ? 'Contact Settings' : draft ? 'Edit Draft' : 'New Contact', contact?.source.kind || (draft ? 'Generated preview · unsaved' : 'Pocket NPC'), { label: 'Save', callback: () => saveContact() })
+  const name = el('input', 'lp-input'); name.placeholder = 'Name'; name.value = contact?.name || draft?.name || ''
+  const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = contact?.role || draft?.role || ''
+  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Stable identity brief — role, personality, relationship, enduring traits'; description.maxLength = 1_200; description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || ''
   const sceneNote = el('textarea', 'lp-textarea'); sceneNote.placeholder = 'Current scene note — temporary state, objective, or reason they are here'; sceneNote.maxLength = 600; sceneNote.value = contact?.sceneNote || ''
-  const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || '') ? contact!.accent : '#8b7dff'
+  const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || '') ? (contact?.accent || draft!.accent) : '#8b7dff'
   const colorRow = el('label', 'lp-card lp-row-between'); colorRow.append(el('span', 'lp-title', 'Contact color'), accent)
   const colorMode = el('select', 'lp-select')
   for (const [value, label] of [['pocket', 'Pocket color'], ['source', contact?.sourceAccent ? 'Inherit source color' : 'Inherit source color (unavailable)']] as const) {
@@ -54,6 +67,17 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null): H
   const remoteRow = el('label', 'lp-card lp-row-between'); remoteRow.append(el('span', 'lp-title', 'Eligible for remote messages'), remote)
   const ambientHere = el('input'); ambientHere.type = 'checkbox'; ambientHere.checked = contact?.messagingPolicy.allowAmbientInScene || false
   const ambientHereRow = el('label', 'lp-card lp-row-between'); ambientHereRow.append(el('span', 'lp-title', 'Allow ambient texts while in scene'), ambientHere)
+  const style = contact?.messagingStyle || draft?.messagingStyle || { talkativeness: 50, fragmentation: 35 }
+  const talkativeness = el('input'); talkativeness.type = 'range'; talkativeness.min = '0'; talkativeness.max = '100'; talkativeness.value = String(style.talkativeness)
+  const talkValue = el('span', 'lp-copy', `${talkativeness.value}%`); talkativeness.addEventListener('input', () => { talkValue.textContent = `${talkativeness.value}%` })
+  const talkHead = el('span', 'lp-row-between'); talkHead.append(el('strong', '', 'Talkativeness'), talkValue)
+  const talkEnds = el('span', 'lp-range-ends'); talkEnds.append(el('span', '', 'Quiet'), el('span', '', 'Chatty'))
+  const talkRow = el('label', 'lp-style-control'); talkRow.append(talkHead, talkativeness, talkEnds)
+  const fragmentation = el('input'); fragmentation.type = 'range'; fragmentation.min = '0'; fragmentation.max = '100'; fragmentation.value = String(style.fragmentation)
+  const fragmentValue = el('span', 'lp-copy', `${fragmentation.value}%`); fragmentation.addEventListener('input', () => { fragmentValue.textContent = `${fragmentation.value}%` })
+  const fragmentHead = el('span', 'lp-row-between'); fragmentHead.append(el('strong', '', 'Texting style'), fragmentValue)
+  const fragmentEnds = el('span', 'lp-range-ends'); fragmentEnds.append(el('span', '', 'Compact'), el('span', '', 'Bursty'))
+  const fragmentRow = el('label', 'lp-style-control'); fragmentRow.append(fragmentHead, fragmentation, fragmentEnds)
   saveContact = () => {
     if (!name.value.trim()) { host.showError('A contact needs a name.'); return }
     host.send('lumiphone:save_contact', { contact: {
@@ -66,10 +90,11 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null): H
         lastInitiatedMessageAt: contact?.messagingPolicy.lastInitiatedMessageAt || '',
         lastInitiatedRoleplayAt: contact?.messagingPolicy.lastInitiatedRoleplayAt || '',
       },
+      messagingStyle: { talkativeness: Number(talkativeness.value), fragmentation: Number(fragmentation.value) },
+      source: contact?.source || (draft ? { kind: 'npc', origin: 'generated', description: description.value.trim() } : { kind: 'npc', origin: 'manual', description: description.value.trim() }),
     } })
-    host.select(contact?.id || '', 'list')
   }
-  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
+  content.append(name, role, description, sceneNote, colorRow, colorModeLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow)
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button('Use source photo', 'lp-button lp-button-quiet')
@@ -98,6 +123,27 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   const primitive = button('Create manually', 'lp-button lp-button-quiet')
   primitive.addEventListener('click', () => host.select('', 'new'))
   manual.append(description, generate, primitive)
+  if (host.npcDraft) {
+    const draft = host.npcDraft
+    const preview = el('section', 'lp-card lp-npc-draft')
+    const previewHead = el('div', 'lp-row-between')
+    previewHead.append(el('span', 'lp-eyebrow', 'Unsaved preview'), el('span', 'lp-copy', `${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`))
+    preview.append(previewHead, el('h3', 'lp-title', draft.name), el('p', 'lp-copy', draft.role), el('p', 'lp-copy', draft.identityBrief))
+    const actions = el('div', 'lp-draft-actions')
+    const retry = button('Retry', 'lp-button lp-button-quiet')
+    retry.disabled = Boolean(npcOperation)
+    retry.addEventListener('click', () => host.send('lumiphone:generate_contact', { description: draft.sourceDescription }))
+    const edit = button('Edit', 'lp-button lp-button-quiet'); edit.addEventListener('click', () => host.select('', 'draft'))
+    const use = button('Use', 'lp-button lp-button-primary'); use.addEventListener('click', () => host.send('lumiphone:save_contact', { contact: draftPayload(draft) }))
+    actions.append(retry, edit, use)
+    if (host.previousNpcDraft) {
+      const previous = button('Undo reroll', 'lp-button lp-button-quiet')
+      previous.addEventListener('click', () => host.restorePreviousNpcDraft())
+      actions.prepend(previous)
+    }
+    preview.appendChild(actions)
+    manual.appendChild(preview)
+  }
   if (npcOperation) {
     const progress = el('div', 'lp-operation-progress')
     progress.dataset.operationRequest = npcOperation.requestId
@@ -131,6 +177,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
 export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null
   if (host.selectedView === 'import') { host.requestSources(); return importView(host) }
+  if (host.selectedView === 'draft' && host.npcDraft) return contactEditor(host, null, host.npcDraft)
   if (host.selectedView === 'new') return contactEditor(host, null)
   if (contact && host.selectedView === 'config') return contactEditor(host, contact)
   if (contact && host.selectedView === 'detail') {
