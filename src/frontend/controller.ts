@@ -631,9 +631,15 @@ class PocketController {
     mark.innerHTML = PHONE_ICON
 
     const copy = el('span', 'pocket-composer-reference-copy')
+    const meta = el('span', 'pocket-composer-reference-meta')
     const source = el('span', 'pocket-composer-reference-source', 'Pocket attached')
+    const separator = el('span', 'pocket-composer-reference-separator', '·')
+    const conversation = el('span', 'pocket-composer-reference-conversation')
+    const count = el('span', 'pocket-composer-reference-count')
+    count.hidden = true
     const preview = el('span', 'pocket-composer-reference-preview')
-    copy.append(source, preview)
+    meta.append(source, separator, conversation, count)
+    copy.append(meta, preview)
     open.append(mark, copy)
 
     const clear = button('×', 'pocket-composer-reference-clear')
@@ -705,6 +711,8 @@ class PocketController {
     if (pill.parentElement !== mount) mount.appendChild(pill)
 
     const status = pill.querySelector<HTMLSpanElement>('.pocket-composer-reference-source')
+    const conversation = pill.querySelector<HTMLSpanElement>('.pocket-composer-reference-conversation')
+    const count = pill.querySelector<HTMLSpanElement>('.pocket-composer-reference-count')
     const preview = pill.querySelector<HTMLSpanElement>('.pocket-composer-reference-preview')
     const open = pill.querySelector<HTMLButtonElement>('.pocket-composer-reference-open')
     const clear = pill.querySelector<HTMLButtonElement>('.pocket-composer-reference-clear')
@@ -721,7 +729,15 @@ class PocketController {
         ? 'Pocket attach failed'
         : 'Pocket attached'
 
-    if (status) status.textContent = `${statusLabel} · ${conversationTitle}`
+    if (status) status.textContent = statusLabel
+    if (conversation) conversation.textContent = conversationTitle
+    if (count) {
+      const messageCount = reference.messages.length
+      count.hidden = messageCount <= 1
+      count.textContent = messageCount > 1 ? `${messageCount} msgs` : ''
+      count.title = messageCount > 1 ? `${messageCount} Pocket messages attached` : ''
+      count.setAttribute('aria-label', count.title || 'One Pocket message attached')
+    }
 
     if (preview) {
       if (messageText) {
