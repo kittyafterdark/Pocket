@@ -131,6 +131,7 @@ class PocketController {
   private galleryScope = 'chat'
   private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string }>()
   private pendingWallpaperTarget: PocketImageTarget | null = null
+  private pendingContactPhotoId = ''
   private selectedContactId = ''
   private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft' = 'list'
   private npcDraft: PocketContactDraft | null = null
@@ -1394,6 +1395,7 @@ class PocketController {
         if (actor?.contact) this.openPocket({ app: 'contacts', contactId: actor.contact.id, view: 'detail' })
         else if (actor?.discovered) this.send('lumiphone:promote_discovered_actor', { actorId })
       },
+      openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       send: (type, payload) => { this.send(type, payload) },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
       selectGroupSpeaker: (conversationId, speakerContactId) => {
@@ -1578,6 +1580,8 @@ class PocketController {
         this.render(false)
       },
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
+      choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
+      useSourcePhoto: (contactId) => this.send('lumiphone:set_contact_photo', { contactId, useSource: true }),
       requestSources: () => {
         if (this.contactSourcesRequested) return
         this.contactSourcesRequested = true
@@ -1587,6 +1591,13 @@ class PocketController {
     })
   }
 
+  private chooseContactPhoto(contactId: string): void {
+    if (!contactId) return
+    this.pendingWallpaperTarget = 'contact-avatar'
+    this.pendingContactPhotoId = contactId
+    this.requestGallery('all')
+    this.openPocket({ app: 'gallery' })
+  }
   private requestGallery(scope: string): void {
     this.galleryScope = scope
     this.send('lumiphone:gallery_list', { scope })
@@ -1636,7 +1647,17 @@ class PocketController {
     image.alt = item.filename || 'Pocket photo'
     image.style.cssText = 'display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808'
     const actions = el('div', 'lp-gallery-actions')
-    if (this.pendingWallpaperTarget && this.pendingWallpaperTarget !== 'contact-avatar') {
+    if (this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId) {
+      const contactId = this.pendingContactPhotoId
+      const targetContact = this.state?.contacts.find((entry) => entry.id === contactId)
+      const use = button(`Use for ${targetContact?.name || 'contact'}`, 'lp-button lp-button-primary')
+      use.addEventListener('click', () => {
+        this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId, imageUrl: item.fullUrl || item.url })
+        this.pendingWallpaperTarget = null
+        this.pendingContactPhotoId = ''
+      })
+      actions.appendChild(use)
+    } else if (this.pendingWallpaperTarget) {
       const target = this.pendingWallpaperTarget
       const use = button('Use this image', 'lp-button')
       use.addEventListener('click', () => {
@@ -1676,7 +1697,7 @@ class PocketController {
       personaChat.addEventListener('click', () => this.runGalleryAction(personaChat, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'chat', personaId: this.activePersona!.id }))
       actions.append(personaHome, personaChat)
     }
-    actions.append(contact, setPhoto)
+    if (!(this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId)) actions.append(contact, setPhoto)
     modal.root.append(image, actions)
   }
 

@@ -2476,15 +2476,29 @@ function normalizeState(value, chatId, characterId, characterName) {
     updatedAt: text2(value.updatedAt, 40) || fallback.updatedAt
   };
 }
-async function characterNameFor(characterId, userId) {
+async function characterPresentationFor(characterId, userId) {
   if (!characterId || !spindle.permissions.has("characters"))
-    return "Character";
+    return { name: "Character", avatarUrl: "", accent: "" };
   try {
     const character = await spindle.characters.get(characterId, userId);
-    return text2(character?.name, 120) || "Character";
+    let avatarUrl = text2(character?.avatar_url ?? character?.avatarUrl, 2000);
+    const imageId = text2(character?.image_id ?? character?.imageId, 180);
+    if (!avatarUrl && imageId && spindle.permissions.has("images")) {
+      const image = await spindle.images.get(imageId, { specificity: "sm", userId }).catch(() => null);
+      avatarUrl = text2(image?.url, 2000);
+    }
+    const accentCandidate = text2(character?.color ?? character?.accent ?? character?.metadata?.color ?? character?.metadata?.accent, 20);
+    return {
+      name: text2(character?.name, 120) || "Character",
+      avatarUrl,
+      accent: /^#[0-9a-f]{6}$/i.test(accentCandidate) ? accentCandidate : ""
+    };
   } catch {
-    return "Character";
+    return { name: "Character", avatarUrl: "", accent: "" };
   }
+}
+async function characterNameFor(characterId, userId) {
+  return (await characterPresentationFor(characterId, userId)).name;
 }
 async function stateCharacterIdForChat(chatId, hintedCharacterId, userId) {
   if (chatId && chatId !== "_lobby" && spindle.permissions.has("chats")) {
@@ -2527,7 +2541,8 @@ async function resolveActivePocketPersona(userId) {
   }
 }
 async function loadState(chatId, characterId, userId) {
-  const characterName = await characterNameFor(characterId, userId);
+  const characterPresentation = await characterPresentationFor(characterId, userId);
+  const characterName = characterPresentation.name;
   const raw = await spindle.userStorage.getJson(statePath(chatId, characterId), {
     fallback: null,
     userId
@@ -2543,8 +2558,20 @@ async function loadState(chatId, characterId, userId) {
     return result.tracker;
   });
   const contact = state.contacts.find((item) => item.source.kind === "character" && item.source.characterId === characterId);
-  if (contact && characterName !== "Character")
-    contact.name = characterName;
+  if (contact) {
+    if (characterName !== "Character" && contact.name !== characterName) {
+      contact.name = characterName;
+      stateChanged = true;
+    }
+    if (characterPresentation.avatarUrl && contact.sourceAvatarUrl !== characterPresentation.avatarUrl) {
+      contact.sourceAvatarUrl = characterPresentation.avatarUrl;
+      stateChanged = true;
+    }
+    if (characterPresentation.accent && contact.sourceAccent !== characterPresentation.accent) {
+      contact.sourceAccent = characterPresentation.accent;
+      stateChanged = true;
+    }
+  }
   state.characterName = characterName;
   if (state.pocketPersona.source === "lumiverse") {
     const hostPersona = await resolveActivePocketPersona(userId);
@@ -4833,9 +4860,13 @@ async function handleFrontend(payload, userId) {
           const kind = text2(payload.kind, 30);
           const sourceId = text2(payload.sourceId, 180);
           const itemId = text2(payload.itemId, 180);
-          const option = (await listContactSources(state, userId)).find((entry) => entry.kind === kind && entry.sourceId === sourceId && (!itemId || entry.itemId === itemId));
+          let option = (await listContactSources(state, userId)).find((entry) => entry.kind === kind && entry.sourceId === sourceId && (!itemId || entry.itemId === itemId));
           if (!option)
             throw new Error("That Character or Council source is no longer available.");
+          if (option.kind === "character" && (!option.avatarUrl || !option.accent)) {
+            const presentation = await characterPresentationFor(option.sourceId, userId);
+            option = { ...option, avatarUrl: presentation.avatarUrl || option.avatarUrl, accent: presentation.accent || option.accent };
+          }
           const contact = upsertContact(state, contactFromSource(option));
           const conversation = ensureDirectConversation(state, contact.id, nowIso(), id);
           const activity = addActivity(state, { kind: "contact", title: `${contact.name} imported`, summary: contact.role, route: { app: "contacts", contactId: contact.id, view: "detail" }, source: { contactId: contact.id, conversationId: conversation.id } });

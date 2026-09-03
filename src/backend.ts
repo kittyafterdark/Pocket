@@ -447,14 +447,28 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
   }
 }
 
-async function characterNameFor(characterId: string, userId?: string): Promise<string> {
-  if (!characterId || !spindle.permissions.has('characters')) return 'Character'
+async function characterPresentationFor(characterId: string, userId?: string): Promise<{ name: string; avatarUrl: string; accent: string }> {
+  if (!characterId || !spindle.permissions.has('characters')) return { name: 'Character', avatarUrl: '', accent: '' }
   try {
-    const character = await (spindle.characters.get as any)(characterId, userId)
-    return text(character?.name, 120) || 'Character'
+    const character: any = await (spindle.characters.get as any)(characterId, userId)
+    let avatarUrl = text(character?.avatar_url ?? character?.avatarUrl, 2_000)
+    const imageId = text(character?.image_id ?? character?.imageId, 180)
+    if (!avatarUrl && imageId && spindle.permissions.has('images')) {
+      const image: any = await spindle.images.get(imageId, { specificity: 'sm', userId }).catch(() => null)
+      avatarUrl = text(image?.url, 2_000)
+    }
+    const accentCandidate = text(character?.color ?? character?.accent ?? character?.metadata?.color ?? character?.metadata?.accent, 20)
+    return {
+      name: text(character?.name, 120) || 'Character',
+      avatarUrl,
+      accent: /^#[0-9a-f]{6}$/i.test(accentCandidate) ? accentCandidate : '',
+    }
   } catch {
-    return 'Character'
+    return { name: 'Character', avatarUrl: '', accent: '' }
   }
+}
+async function characterNameFor(characterId: string, userId?: string): Promise<string> {
+  return (await characterPresentationFor(characterId, userId)).name
 }
 
 /** Interceptor DTOs in some Lumiverse builds omit characterId; chat ownership is authoritative for Pocket state scope. */
@@ -492,7 +506,8 @@ async function resolveActivePocketPersona(userId?: string): Promise<ChatPocketPe
 }
 
 async function loadState(chatId: string, characterId: string, userId?: string): Promise<PhoneState> {
-  const characterName = await characterNameFor(characterId, userId)
+  const characterPresentation = await characterPresentationFor(characterId, userId)
+  const characterName = characterPresentation.name
   const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), {
     fallback: null,
     userId,
@@ -507,7 +522,20 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
     return result.tracker
   })
   const contact = state.contacts.find((item) => item.source.kind === 'character' && item.source.characterId === characterId)
-  if (contact && characterName !== 'Character') contact.name = characterName
+  if (contact) {
+    if (characterName !== 'Character' && contact.name !== characterName) {
+      contact.name = characterName
+      stateChanged = true
+    }
+    if (characterPresentation.avatarUrl && contact.sourceAvatarUrl !== characterPresentation.avatarUrl) {
+      contact.sourceAvatarUrl = characterPresentation.avatarUrl
+      stateChanged = true
+    }
+    if (characterPresentation.accent && contact.sourceAccent !== characterPresentation.accent) {
+      contact.sourceAccent = characterPresentation.accent
+      stateChanged = true
+    }
+  }
   state.characterName = characterName
   if (state.pocketPersona.source === 'lumiverse') {
     const hostPersona = await resolveActivePocketPersona(userId)
@@ -2431,8 +2459,12 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const kind = text(payload.kind, 30)
           const sourceId = text(payload.sourceId, 180)
           const itemId = text(payload.itemId, 180)
-          const option = (await listContactSources(state, userId)).find((entry) => entry.kind === kind && entry.sourceId === sourceId && (!itemId || entry.itemId === itemId))
+          let option = (await listContactSources(state, userId)).find((entry) => entry.kind === kind && entry.sourceId === sourceId && (!itemId || entry.itemId === itemId))
           if (!option) throw new Error('That Character or Council source is no longer available.')
+          if (option.kind === 'character' && (!option.avatarUrl || !option.accent)) {
+            const presentation = await characterPresentationFor(option.sourceId, userId)
+            option = { ...option, avatarUrl: presentation.avatarUrl || option.avatarUrl, accent: presentation.accent || option.accent }
+          }
           const contact = upsertContact(state, contactFromSource(option))
           const conversation = ensureDirectConversation(state, contact.id, nowIso(), id)
           const activity = addActivity(state, { kind: 'contact', title: `${contact.name} imported`, summary: contact.role, route: { app: 'contacts', contactId: contact.id, view: 'detail' }, source: { contactId: contact.id, conversationId: conversation.id } })

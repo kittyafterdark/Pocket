@@ -21,6 +21,8 @@ export interface ContactsViewHost {
   select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft', replace?: boolean): void
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
+  choosePhoto(contactId: string): void
+  useSourcePhoto(contactId: string): void
   requestSources(): void
   send(type: string, payload?: Record<string, unknown>): void
   showError(message: string): void
@@ -85,6 +87,25 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   const fragmentHead = el('span', 'lp-row-between'); fragmentHead.append(el('strong', '', 'Texting style'), fragmentValue)
   const fragmentEnds = el('span', 'lp-range-ends'); fragmentEnds.append(el('span', '', 'Compact'), el('span', '', 'Bursty'))
   const fragmentRow = el('label', 'lp-style-control'); fragmentRow.append(fragmentHead, fragmentation, fragmentEnds)
+  let photoCard: HTMLElement | null = null
+  if (contact) {
+    const { section, body } = sectionBlock(
+      'Contact photo',
+      contact.sourceAvatarUrl ? 'Uses the linked source image unless you choose a Pocket override.' : 'Choose any Pocket/Lumiverse gallery image as a local override.',
+      'lp-card lp-contact-photo-editor',
+    )
+    const actions = actionGroup()
+    const choosePhoto = button('Choose from Gallery', 'lp-button lp-button-quiet')
+    choosePhoto.addEventListener('click', () => host.choosePhoto(contact.id))
+    actions.appendChild(choosePhoto)
+    if (contact.sourceAvatarUrl && contact.avatarOverrideUrl) {
+      const sourcePhoto = button('Use linked image', 'lp-button lp-button-quiet')
+      sourcePhoto.addEventListener('click', () => host.useSourcePhoto(contact.id))
+      actions.appendChild(sourcePhoto)
+    }
+    body.append(avatar(contact), actions)
+    photoCard = section
+  }
   saveContact = () => {
     if (!name.value.trim()) { host.showError('A contact needs a name.'); return }
     host.send('lumiphone:save_contact', { contact: {
@@ -102,6 +123,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
       source: contact?.source || (draft ? { kind: 'npc', origin: 'generated', description: description.value.trim() } : { kind: 'npc', origin: 'manual', description: description.value.trim() }),
     } })
   }
+  if (photoCard) content.appendChild(photoCard)
   content.append(
     fieldBlock('Name', name),
     fieldBlock('Role', role),

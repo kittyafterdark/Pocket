@@ -1526,6 +1526,57 @@ function renderTrackersView(host) {
   return dashboard(host);
 }
 
+// src/frontend/components/ui.ts
+function classes(...values) {
+  return values.filter(Boolean).join(" ");
+}
+function identityBlock(options) {
+  const root = el("div", classes("lp-identity", options.prominent && "lp-identity-prominent", options.centered && "lp-identity-centered", options.className));
+  const line = el("div", "lp-identity-line");
+  line.appendChild(el("strong", "lp-identity-name", options.name));
+  if (options.meta)
+    line.appendChild(el("span", "lp-identity-meta", options.meta));
+  root.appendChild(line);
+  if (options.description)
+    root.appendChild(el("p", "lp-identity-description", options.description));
+  return root;
+}
+function statusBadge(label, tone = "neutral") {
+  const node = el("span", "lp-status-badge", label);
+  node.dataset.tone = tone;
+  return node;
+}
+function actionGroup(className = "") {
+  return el("div", classes("lp-actions", className));
+}
+function sectionBlock(label, help = "", className = "") {
+  const section = el("section", classes("lp-section", className));
+  const head = el("header", "lp-section-head");
+  head.appendChild(el("div", "lp-section-label", label));
+  if (help)
+    head.appendChild(el("p", "lp-section-help", help));
+  const body = el("div", "lp-section-body");
+  section.append(head, body);
+  return { section, body };
+}
+function fieldBlock(label, control, help = "") {
+  const field = el("label", "lp-field");
+  field.appendChild(el("span", "lp-field-label", label));
+  field.appendChild(control);
+  if (help)
+    field.appendChild(el("span", "lp-field-help", help));
+  return field;
+}
+function controlRow(label, control, help = "") {
+  const row2 = el("label", "lp-card lp-control-row");
+  const copy = el("span", "lp-control-copy");
+  copy.appendChild(el("span", "lp-control-label", label));
+  if (help)
+    copy.appendChild(el("span", "lp-control-help", help));
+  row2.append(copy, control);
+  return row2;
+}
+
 // src/frontend/apps/messages.ts
 var PAUSE_COPY = {
   ended: "stopped responding.",
@@ -1545,34 +1596,83 @@ function conversationTitle(state, conversation) {
     return conversation.title || "Group";
   return resolvePocketActor(state, conversationActorIds(conversation)[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || "Conversation";
 }
+function newConversationView(host) {
+  const { page, content } = host.page("New Message", "Choose a contact or start a group");
+  const { section: directSection, body: directBody } = sectionBlock("Direct message", "Start or reopen a private Pocket conversation.");
+  const contacts = [...host.state.contacts].sort((a, b) => a.name.localeCompare(b.name));
+  for (const contact of contacts) {
+    const row2 = button("", "lp-message-picker-row");
+    row2.type = "button";
+    const actor = resolvePocketActor(host.state, contact.id);
+    const avatar = el("span", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
+    if (actor?.accent)
+      avatar.style.setProperty("--contact-accent", actor.accent);
+    if (actor?.avatarUrl) {
+      const image = el("img");
+      image.src = actor.avatarUrl;
+      image.alt = "";
+      avatar.replaceChildren(image);
+    }
+    row2.append(avatar, identityBlock({ name: contact.name, meta: contact.role }), el("span", "lp-message-picker-chevron", "›"));
+    row2.addEventListener("click", () => host.openDirect(contact.id));
+    directBody.appendChild(row2);
+  }
+  if (!contacts.length)
+    directBody.appendChild(el("p", "lp-copy", "No contacts are available yet."));
+  const { section: groupSection, body: groupBody } = sectionBlock("Group chat", "Create a conversation with two or more Pocket actors.");
+  const startGroup = button("Create a group", "lp-button lp-button-quiet");
+  startGroup.disabled = listPocketActors(host.state).length < 2;
+  startGroup.addEventListener("click", () => page.replaceWith(groupEditor(host, null)));
+  groupBody.appendChild(startGroup);
+  content.append(directSection, groupSection);
+  return page;
+}
 function groupEditor(host, conversation) {
   let saveGroup = () => {};
   const { page, content } = host.page(conversation ? "Group Details" : "New Group", "Choose at least two contacts", { label: "Save", callback: () => saveGroup() });
   const title = el("input", "lp-input");
   title.placeholder = "Group name";
   title.value = conversation?.title || "";
-  const choices = el("div", "lp-contact-checklist");
+  const choices = el("div", "lp-contact-checklist lp-participant-picker");
   const selected = new Set(conversation ? conversationActorIds(conversation) : []);
   for (const actor of listPocketActors(host.state)) {
-    const row2 = el("label", "lp-card lp-row-between");
-    const copy = el("span");
-    copy.append(el("strong", "", actor.name), el("span", "lp-copy", `${actor.role}${actor.kind === "discovered" ? " · discovered" : ""}`));
-    const checkbox = el("input");
+    const row2 = el("label", "lp-picker-row");
+    const checkbox = el("input", "lp-visually-hidden");
     checkbox.type = "checkbox";
     checkbox.value = actor.actorId;
     checkbox.checked = selected.has(actor.actorId);
-    row2.append(copy, checkbox);
+    const avatar = el("span", "lp-picker-avatar", actor.name.slice(0, 1).toUpperCase());
+    avatar.style.setProperty("--message-accent", actor.accent);
+    if (actor.avatarUrl) {
+      const image = el("img");
+      image.src = actor.avatarUrl;
+      image.alt = "";
+      avatar.replaceChildren(image);
+    }
+    const identity = identityBlock({
+      name: actor.name,
+      meta: `${actor.role}${actor.kind === "discovered" ? " · discovered" : ""}`
+    });
+    const check = el("span", "lp-picker-check", "✓");
+    const sync = () => {
+      row2.dataset.selected = String(checkbox.checked);
+    };
+    checkbox.addEventListener("change", sync);
+    sync();
+    row2.append(avatar, identity, checkbox, check);
     choices.appendChild(row2);
   }
   saveGroup = () => {
     const participantActorIds = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
+    if (participantActorIds.length < 2)
+      return;
     host.send(conversation ? "lumiphone:update_conversation" : "lumiphone:create_conversation", {
       conversationId: conversation?.id,
       title: title.value.trim(),
       participantActorIds
     });
   };
-  content.append(title, choices);
+  content.append(fieldBlock("Group name", title), choices);
   if (conversation) {
     const remove = button("Delete group", "lp-button lp-button-danger");
     remove.addEventListener("click", () => host.send("lumiphone:delete", { kind: "conversation", id: conversation.id }));
@@ -1723,22 +1823,22 @@ function referenceAttachment(host, reference) {
 function renderMessagesView(host) {
   const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId) || null;
   if (host.selectedView === "new-group")
-    return groupEditor(host, null);
+    return newConversationView(host);
   if (selectedConversation?.kind === "group" && host.selectedView === "group-detail")
     return groupEditor(host, selectedConversation);
   if (!selectedConversation) {
     const conversations = [...host.state.conversations].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     const { page: page2, content } = host.page("Messages", `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}`, {
-      label: "New Group",
+      label: "New",
       callback: () => host.selectConversation("", "new-group"),
-      enabled: host.state.contacts.length >= 2
+      enabled: host.state.contacts.length > 0
     });
+    content.classList.add("lp-conversation-list");
     for (const conversation2 of conversations) {
-      const card = el("div", "lp-card");
-      card.dataset.clickable = "true";
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-      const row2 = el("div", "lp-row");
+      const row2 = el("div", "lp-conversation-row");
+      row2.dataset.clickable = "true";
+      row2.tabIndex = 0;
+      row2.setAttribute("role", "button");
       const titleText2 = conversationTitle(host.state, conversation2);
       const members = conversationActorIds(conversation2);
       const avatar = el("div", "lp-avatar", conversation2.kind === "group" ? String(members.length) : titleText2.slice(0, 1).toUpperCase());
@@ -1750,23 +1850,20 @@ function renderMessagesView(host) {
         avatar.replaceChildren(image);
       }
       const latest = conversation2.messages.at(-1);
-      const copy = el("div", "lp-grow");
-      const nameRow = el("div", "lp-row-between");
-      nameRow.append(el("h3", "lp-title", titleText2), el("span", "lp-copy", latest ? formatTime(latest.createdAt) : ""));
-      copy.append(nameRow, el("p", "lp-copy", latest ? `${conversation2.kind === "group" && latest.sender === "contact" ? `${latest.senderName}: ` : ""}${latest.text}` : "Start a conversation"));
-      row2.append(avatar, copy);
+      const description = latest ? `${conversation2.kind === "group" && latest.sender === "contact" ? `${latest.senderName}: ` : ""}${latest.text}` : "Start a conversation";
+      const identity = identityBlock({ name: titleText2, meta: latest ? formatTime(latest.createdAt) : "", description });
+      row2.append(avatar, identity);
       if (conversation2.unread)
         row2.appendChild(el("span", "lp-unread", String(conversation2.unread)));
-      card.appendChild(row2);
       const open = () => host.selectConversation(conversation2.id);
-      card.addEventListener("click", open);
-      card.addEventListener("keydown", (event) => {
+      row2.addEventListener("click", open);
+      row2.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           open();
         }
       });
-      content.appendChild(card);
+      content.appendChild(row2);
     }
     if (!conversations.length)
       content.appendChild(host.empty("No conversations yet", "Open Contacts to message a character, Council member, or Pocket NPC."));
@@ -1819,6 +1916,7 @@ function renderMessagesView(host) {
   const scenePresent = Boolean(directContact?.presence.inScene);
   const bubbles = el("div", "lp-bubbles");
   bubbles.dataset.pocketThread = conversation.id;
+  bubbles.dataset.conversationKind = conversation.kind;
   const conversationRelays = host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== "dismissed");
   const renderedRelayIds = new Set;
   let priorGroupSpeakerId = "";
@@ -1843,14 +1941,19 @@ function renderMessagesView(host) {
     }
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
     if (message.generation) {
-      const retry = button("Retry", "lp-bubble-action");
+      const tools = el("span", "lp-bubble-tools");
+      const retry = button("↻", "lp-bubble-action");
       retry.type = "button";
+      retry.title = "Retry";
       retry.setAttribute("aria-label", `Retry message from ${message.senderName}`);
       retry.addEventListener("click", () => host.send("lumiphone:retry_message", { conversationId: conversation.id, messageId: message.id }));
-      const generationInfo = button("Generation info", "lp-bubble-action");
+      const generationInfo = button("ⓘ", "lp-bubble-action");
       generationInfo.type = "button";
+      generationInfo.title = "Generation info";
+      generationInfo.setAttribute("aria-label", "Generation info");
       generationInfo.addEventListener("click", () => host.showGenerationInfo(message));
-      bubble.append(retry, generationInfo);
+      tools.append(retry, generationInfo);
+      bubble.appendChild(tools);
     }
     if (conversation.kind === "group" && message.sender === "contact" && senderActor) {
       const row2 = el("div", "lp-group-message");
@@ -2006,57 +2109,6 @@ function renderMessagesView(host) {
   return page;
 }
 
-// src/frontend/components/ui.ts
-function classes(...values) {
-  return values.filter(Boolean).join(" ");
-}
-function identityBlock(options) {
-  const root = el("div", classes("lp-identity", options.prominent && "lp-identity-prominent", options.centered && "lp-identity-centered", options.className));
-  const line = el("div", "lp-identity-line");
-  line.appendChild(el("strong", "lp-identity-name", options.name));
-  if (options.meta)
-    line.appendChild(el("span", "lp-identity-meta", options.meta));
-  root.appendChild(line);
-  if (options.description)
-    root.appendChild(el("p", "lp-identity-description", options.description));
-  return root;
-}
-function statusBadge(label, tone = "neutral") {
-  const node = el("span", "lp-status-badge", label);
-  node.dataset.tone = tone;
-  return node;
-}
-function actionGroup(className = "") {
-  return el("div", classes("lp-actions", className));
-}
-function sectionBlock(label, help = "", className = "") {
-  const section = el("section", classes("lp-section", className));
-  const head = el("header", "lp-section-head");
-  head.appendChild(el("div", "lp-section-label", label));
-  if (help)
-    head.appendChild(el("p", "lp-section-help", help));
-  const body = el("div", "lp-section-body");
-  section.append(head, body);
-  return { section, body };
-}
-function fieldBlock(label, control, help = "") {
-  const field = el("label", "lp-field");
-  field.appendChild(el("span", "lp-field-label", label));
-  field.appendChild(control);
-  if (help)
-    field.appendChild(el("span", "lp-field-help", help));
-  return field;
-}
-function controlRow(label, control, help = "") {
-  const row2 = el("label", "lp-card lp-control-row");
-  const copy = el("span", "lp-control-copy");
-  copy.appendChild(el("span", "lp-control-label", label));
-  if (help)
-    copy.appendChild(el("span", "lp-control-help", help));
-  row2.append(copy, control);
-  return row2;
-}
-
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
@@ -2174,6 +2226,21 @@ function contactEditor(host, contact, draft = null) {
   fragmentEnds.append(el("span", "", "Compact"), el("span", "", "Bursty"));
   const fragmentRow = el("label", "lp-style-control");
   fragmentRow.append(fragmentHead, fragmentation, fragmentEnds);
+  let photoCard = null;
+  if (contact) {
+    const { section, body } = sectionBlock("Contact photo", contact.sourceAvatarUrl ? "Uses the linked source image unless you choose a Pocket override." : "Choose any Pocket/Lumiverse gallery image as a local override.", "lp-card lp-contact-photo-editor");
+    const actions = actionGroup();
+    const choosePhoto = button("Choose from Gallery", "lp-button lp-button-quiet");
+    choosePhoto.addEventListener("click", () => host.choosePhoto(contact.id));
+    actions.appendChild(choosePhoto);
+    if (contact.sourceAvatarUrl && contact.avatarOverrideUrl) {
+      const sourcePhoto = button("Use linked image", "lp-button lp-button-quiet");
+      sourcePhoto.addEventListener("click", () => host.useSourcePhoto(contact.id));
+      actions.appendChild(sourcePhoto);
+    }
+    body.append(avatar(contact), actions);
+    photoCard = section;
+  }
   saveContact = () => {
     if (!name.value.trim()) {
       host.showError("A contact needs a name.");
@@ -2202,6 +2269,8 @@ function contactEditor(host, contact, draft = null) {
       source: contact?.source || (draft ? { kind: "npc", origin: "generated", description: description.value.trim() } : { kind: "npc", origin: "manual", description: description.value.trim() })
     } });
   };
+  if (photoCard)
+    content.appendChild(photoCard);
   content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Stable identity brief", description, "Role, personality, relationship, and enduring traits."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
@@ -2670,6 +2739,7 @@ class PocketController {
   galleryScope = "chat";
   galleryActionButtons = new Map;
   pendingWallpaperTarget = null;
+  pendingContactPhotoId = "";
   selectedContactId = "";
   selectedContactView = "list";
   npcDraft = null;
@@ -4024,6 +4094,7 @@ class PocketController {
         else if (actor?.discovered)
           this.send("lumiphone:promote_discovered_actor", { actorId });
       },
+      openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
       send: (type, payload) => {
         this.send(type, payload);
       },
@@ -4255,6 +4326,8 @@ class PocketController {
         this.render(false);
       },
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
+      choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
+      useSourcePhoto: (contactId) => this.send("lumiphone:set_contact_photo", { contactId, useSource: true }),
       requestSources: () => {
         if (this.contactSourcesRequested)
           return;
@@ -4266,6 +4339,14 @@ class PocketController {
       },
       showError: (message) => this.showError(message)
     });
+  }
+  chooseContactPhoto(contactId) {
+    if (!contactId)
+      return;
+    this.pendingWallpaperTarget = "contact-avatar";
+    this.pendingContactPhotoId = contactId;
+    this.requestGallery("all");
+    this.openPocket({ app: "gallery" });
   }
   requestGallery(scope) {
     this.galleryScope = scope;
@@ -4316,7 +4397,17 @@ class PocketController {
     image.alt = item.filename || "Pocket photo";
     image.style.cssText = "display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808";
     const actions = el("div", "lp-gallery-actions");
-    if (this.pendingWallpaperTarget && this.pendingWallpaperTarget !== "contact-avatar") {
+    if (this.pendingWallpaperTarget === "contact-avatar" && this.pendingContactPhotoId) {
+      const contactId = this.pendingContactPhotoId;
+      const targetContact = this.state?.contacts.find((entry) => entry.id === contactId);
+      const use = button(`Use for ${targetContact?.name || "contact"}`, "lp-button lp-button-primary");
+      use.addEventListener("click", () => {
+        this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId, imageUrl: item.fullUrl || item.url });
+        this.pendingWallpaperTarget = null;
+        this.pendingContactPhotoId = "";
+      });
+      actions.appendChild(use);
+    } else if (this.pendingWallpaperTarget) {
       const target = this.pendingWallpaperTarget;
       const use = button("Use this image", "lp-button");
       use.addEventListener("click", () => {
@@ -4365,7 +4456,8 @@ class PocketController {
       personaChat.addEventListener("click", () => this.runGalleryAction(personaChat, "Applying…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, imageUrl: item.fullUrl || item.url, target: "chat", personaId: this.activePersona.id }));
       actions.append(personaHome, personaChat);
     }
-    actions.append(contact, setPhoto);
+    if (!(this.pendingWallpaperTarget === "contact-avatar" && this.pendingContactPhotoId))
+      actions.append(contact, setPhoto);
     modal.root.append(image, actions);
   }
   runGalleryAction(buttonNode, progress, type, payload) {
@@ -5498,6 +5590,125 @@ var PHONE_STYLES = `
       transition:none !important;
     }
   }
+
+  /* Messages + Contacts usability v1 */
+  .lp-empty > div { min-width:0; display:grid; justify-items:center; text-align:center; }
+  .lp-empty > div > span:first-child { display:grid; place-items:center; }
+  .lp-empty > div > span:first-child svg { display:block; margin-inline:auto; }
+
+  .lp-conversation-list { gap:0; padding-top:4px; padding-bottom:4px; }
+  .lp-conversation-row {
+    min-width:0; padding:10px 2px; display:flex; align-items:center; gap:10px;
+    border-bottom:1px solid color-mix(in srgb,var(--lp-border) 76%,transparent);
+    background:transparent; color:var(--lp-text); cursor:pointer;
+  }
+  .lp-conversation-row:last-child { border-bottom:0; }
+  .lp-conversation-row:hover { background:color-mix(in srgb,var(--lp-surface-2) 42%,transparent); }
+  .lp-conversation-row:focus-visible { outline:2px solid color-mix(in srgb,var(--lp-accent) 55%,white); outline-offset:1px; border-radius:10px; }
+  .lp-conversation-row > .lp-identity { flex:1 1 auto; }
+  .lp-conversation-row .lp-identity-description { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .lp-message-picker-row {
+    appearance:none; width:100%; min-width:0; padding:9px 7px; border:0;
+    border-bottom:1px solid color-mix(in srgb,var(--lp-border) 72%,transparent);
+    display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:center; gap:9px;
+    background:transparent; color:var(--lp-text); text-align:left; font:inherit; cursor:pointer;
+  }
+  .lp-message-picker-row:last-child { border-bottom:0; }
+  .lp-message-picker-row:hover { background:color-mix(in srgb,var(--lp-surface-2) 48%,transparent); }
+  .lp-message-picker-row .lp-avatar { width:34px; height:34px; font-size:11px; }
+  .lp-message-picker-chevron { color:var(--lp-muted); font-size:20px; line-height:1; }
+
+  .lp-visually-hidden {
+    position:absolute !important; width:1px !important; height:1px !important; padding:0 !important;
+    margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important;
+    white-space:nowrap !important; border:0 !important;
+  }
+  .lp-participant-picker { gap:5px; }
+  .lp-picker-row {
+    min-width:0; padding:8px 9px; display:grid; grid-template-columns:32px minmax(0,1fr) 22px;
+    align-items:center; gap:9px; border:1px solid var(--lp-border); border-radius:13px;
+    background:var(--lp-surface); color:var(--lp-text); cursor:pointer;
+    transition:border-color .16s ease,background .16s ease;
+  }
+  .lp-picker-row:hover { border-color:color-mix(in srgb,var(--lp-accent) 34%,var(--lp-border)); }
+  .lp-picker-row[data-selected="true"] {
+    border-color:color-mix(in srgb,var(--lp-accent) 60%,var(--lp-border));
+    background:color-mix(in srgb,var(--lp-accent) 8%,var(--lp-surface));
+  }
+  .lp-picker-avatar {
+    width:32px; height:32px; overflow:hidden; display:grid; place-items:center;
+    border:1px solid color-mix(in srgb,var(--message-accent,var(--lp-accent)) 58%,var(--lp-border));
+    border-radius:50%; background:var(--lp-surface-2); color:var(--message-accent,var(--lp-accent));
+    font-size:10px; font-weight:800;
+  }
+  .lp-picker-avatar img { width:100%; height:100%; object-fit:cover; }
+  .lp-picker-check {
+    width:20px; height:20px; display:grid; place-items:center; border:1px solid var(--lp-border);
+    border-radius:50%; color:transparent; font-size:10px; font-weight:900;
+  }
+  .lp-picker-row[data-selected="true"] .lp-picker-check { border-color:var(--lp-accent); background:var(--lp-accent); color:#fff; }
+
+  .lp-bubbles[data-conversation-kind="direct"] .lp-bubble:not([data-sender="system"]) { position:relative; }
+  .lp-bubbles[data-conversation-kind="direct"] .lp-bubble[data-sender="persona"]::after {
+    content:""; position:absolute; right:-5px; bottom:1px; width:10px; height:11px;
+    background:var(--lp-accent); clip-path:polygon(0 0,0 100%,100% 100%);
+  }
+  .lp-bubbles[data-conversation-kind="direct"] .lp-bubble[data-sender="contact"]::after {
+    content:""; position:absolute; left:-5px; bottom:1px; width:10px; height:11px;
+    background:var(--lp-surface-2); clip-path:polygon(100% 0,0 100%,100% 100%);
+  }
+
+  .lp-group-message { max-width:90%; grid-template-columns:22px minmax(0,1fr); align-items:end; gap:6px; }
+  .lp-group-message[data-continuation="true"] { margin-top:-4px; }
+  .lp-group-message .lp-bubble {
+    max-width:100%; padding:7px 9px; border:1px solid color-mix(in srgb,var(--message-accent) 16%,var(--lp-border));
+    border-left:0; border-radius:13px; box-shadow:none;
+    background:color-mix(in srgb,var(--message-accent) 5%,var(--lp-surface-2));
+  }
+  .lp-group-avatar { width:21px; height:21px; border-width:1px; font-size:7px; }
+  .lp-bubble-sender { margin-bottom:3px; color:var(--message-accent,var(--lp-accent)); font-size:8px; }
+  .lp-bubble-time { margin-top:3px; }
+
+  .lp-bubble-tools { margin-top:2px; display:flex; justify-content:flex-end; gap:3px; }
+  .lp-bubble-action {
+    width:20px; height:20px; margin:0; padding:0; display:grid; place-items:center;
+    border:0; border-radius:50%; background:transparent; color:inherit;
+    opacity:.42; font:inherit; font-size:11px; line-height:1; cursor:pointer;
+  }
+  .lp-bubble-action:hover { opacity:.9; background:rgba(127,127,127,.13); text-decoration:none; }
+
+  .lp-compose {
+    padding:7px 9px 9px;
+    grid-template-columns:calc(36px * var(--pocket-ui-scale)) minmax(0,1fr) calc(36px * var(--pocket-ui-scale));
+    gap:calc(7px * var(--pocket-ui-scale)); align-items:center;
+  }
+  .lp-compose .lp-button-icon,.lp-compose .lp-manual-reply {
+    width:calc(36px * var(--pocket-ui-scale)); height:calc(36px * var(--pocket-ui-scale));
+    min-height:calc(36px * var(--pocket-ui-scale)); padding:0; border-radius:50%;
+    display:grid; place-items:center;
+  }
+  .lp-compose .lp-textarea { min-height:calc(36px * var(--pocket-ui-scale)); padding:8px 11px; border-radius:calc(18px * var(--pocket-ui-scale)); }
+  .lp-speaker-menu { padding:4px 9px 0; }
+  .lp-speaker-menu summary { padding:3px 7px; font-size:var(--pocket-font-xs); opacity:.8; }
+
+  .lp-handoff-activity {
+    margin:5px 0; border-radius:11px; border-color:color-mix(in srgb,var(--lp-accent) 24%,var(--lp-border));
+    border-left:2px solid var(--lp-accent); background:color-mix(in srgb,var(--lp-surface) 82%,transparent);
+    box-shadow:none;
+  }
+  .lp-handoff-primary { min-height:0; padding:7px 8px; gap:7px; }
+  .lp-handoff-primary .lp-grow { gap:1px; }
+  .lp-handoff-primary .lp-grow > strong { font-size:9px; line-height:1.25; }
+  .lp-handoff-primary .lp-grow > .lp-copy { font-size:8px; line-height:1.35; }
+  .lp-handoff-mark { width:18px; height:18px; flex-basis:18px; font-size:9px; }
+  .lp-handoff-action { min-height:23px; padding:3px 6px; border-radius:7px; }
+  .lp-handoff-more > summary { padding:4px 8px; opacity:.75; }
+  .lp-handoff-secondary { padding:0 8px 8px; gap:5px; }
+
+  .lp-contact-photo-editor .lp-section-body { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:10px; }
+  .lp-contact-photo-editor .lp-avatar { width:54px; height:54px; font-size:18px; }
+  .lp-contact-photo-editor .lp-actions { justify-content:flex-start; }
 
 `;
 
