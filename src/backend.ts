@@ -17,6 +17,7 @@ import type {
   PocketContact,
   PocketContactDraft,
   PocketContactSourceOption,
+  PocketNpcBank,
   PocketContextReference,
   PocketConversation,
   PendingGroupBatch,
@@ -33,6 +34,7 @@ import { projectPhoneContext } from './domain/projection.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
+import { applyNpcBankProfile, contactFromNpcBank, findNpcBankMatch, isFutureNpcBank, normalizeNpcBank, normalizeNpcBankName, NPC_BANK_PATH, removeNpcBankEntry, upsertNpcBankFromContact } from './domain/npc-bank.js'
 import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
@@ -66,9 +68,19 @@ const groupBatchFlights = new Map<string, string>()
 interface PocketViewState { chatId: string; characterId: string; open: boolean; route: PocketRoute; updatedAt: number }
 const frontendViews = new Map<string, PocketViewState>()
 
-const PHONE_GUIDANCE = `Pocket is available as an in-world phone shared with the current character. Use the registered phone_action tool when it is available. If tools are unavailable and a phone action materially belongs in the scene, emit exactly one hidden tag:
-<lumi-phone action="message|conversation|contact|scene|note|event|weather|tracker|camera|notify|open" app="messages|contacts|notes|calendar|weather|trackers|camera|home" title="short title">content or compact JSON</lumi-phone>
-Do not explain the tag. Do not use it for ordinary narration. A named message sender may be new; Pocket will persist a lightweight discovered actor without requiring a profile. Creating or changing group membership requires the explicit conversation action. Pocket messages, notes, calendar events, weather, and trackers persist separately for this chat and character.`
+const PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-world phone state.
+
+Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt.
+
+When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Normal prose may narrate the physical act of using the phone; Pocket owns the persisted message payload.
+
+For a new direct message, use action="message" with payload containing channel="dm", speaker (or sender="persona" for the user's persona), target or conversationId, and text. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
+
+ONLY when no Pocket Action function/tool is present in the model's available tools, emit hidden machine data using one <lumi-phone> tag per distinct Pocket action (maximum 3):
+<lumi-phone action="message">{"channel":"dm","speaker":"Name","target":"Name","text":"message text"}</lumi-phone>
+The tag is machine data and will be removed from the rendered roleplay. Do not explain it, quote it, wrap it in markdown, or imitate it elsewhere in the response. Other supported actions are conversation, contact, scene, note, event, weather, tracker, camera, notify, and open.
+
+Pocket messages, contacts, notes, calendar events, weather, trackers, and scene state persist separately for this chat and character.`
 
 function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -528,6 +540,24 @@ async function savePreferences(value: unknown, userId?: string): Promise<DeviceP
   return preferences
 }
 
+async function loadNpcBank(userId?: string): Promise<PocketNpcBank> {
+  const raw = await spindle.userStorage.getJson<unknown>(NPC_BANK_PATH, { fallback: null, userId })
+  const bank = normalizeNpcBank(raw, nowIso())
+  if (isFutureNpcBank(raw)) {
+    spindle.log.warn('Pocket left a newer NPC Bank untouched and used an empty bank for this session.')
+    return bank
+  }
+  if (raw === null || Number(isRecord(raw) ? raw.version : 0) !== bank.version) {
+    await spindle.userStorage.setJson(NPC_BANK_PATH, bank, { indent: 2, userId })
+  }
+  return bank
+}
+async function saveNpcBank(value: unknown, userId?: string): Promise<PocketNpcBank> {
+  const bank = normalizeNpcBank(value, nowIso())
+  await spindle.userStorage.setJson(NPC_BANK_PATH, bank, { indent: 2, userId })
+  return bank
+}
+
 async function saveState(state: PhoneState, userId?: string): Promise<void> {
   state.updatedAt = nowIso()
   await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId })
@@ -609,6 +639,7 @@ async function validateChangedWallpaperSources(existing: DevicePreferences, next
 
 async function sendState(state: PhoneState, userId?: string, reason = 'refresh', open = false): Promise<void> {
   const preferences = await loadPreferences(userId)
+  const npcBank = await loadNpcBank(userId)
   let generation: PocketGenerationInfo = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride }
   try { generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId) }
   catch (error) { spindle.log.warn(`Pocket could not inspect generation profiles: ${error instanceof Error ? error.message : String(error)}`) }
@@ -624,7 +655,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
   for (const [target, result] of Object.entries(resolvedWallpapers)) {
     if (result.status === 'error') spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || 'unknown error'}`)
   }
-  send({ type: 'lumiphone:state', state, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  send({ type: 'lumiphone:state', state, npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -1700,6 +1731,7 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     send({ type: 'lumiphone:operation_progress', task: 'scene-sync', requestId, phase: 'saving', message: 'Saving scene contacts…' }, userId)
     const state = await loadState(context.chatId, context.characterId, userId)
+    const npcBank = await loadNpcBank(userId)
     const sceneAt = nowIso()
     for (const contact of state.contacts) contact.presence.inScene = false
     const contactIds: string[] = []
@@ -1711,6 +1743,12 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
       if (!existing) {
         const discovered = state.discoveredActors.find((entry) => entry.normalizedName === normalizeActorName(candidate.name))
         if (discovered) existing = promoteDiscoveredActor(state, discovered.id, sceneAt, id)
+      }
+      const bankEntry = findNpcBankMatch(npcBank, candidate.name)
+      if (existing?.source.kind === 'npc' && !existing.source.bankId && bankEntry) {
+        existing = applyNpcBankProfile(existing, bankEntry, sceneAt)
+      } else if (!existing && bankEntry) {
+        existing = upsertContact(state, contactFromNpcBank(bankEntry, sceneAt, id), false)
       }
       if (existing && !(existing.source.kind === 'npc' && existing.source.origin === 'scene')) {
         existing.presence.inScene = true
@@ -1727,7 +1765,7 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
         sceneNote: candidate.sceneNote,
         avatarUrl: existing?.avatarUrl || '', sourceAvatarUrl: existing?.sourceAvatarUrl || '', avatarOverrideUrl: existing?.avatarOverrideUrl || '',
         accent: existing?.accent || stableContactAccent(sceneKey), sourceAccent: existing?.sourceAccent || '', colorMode: existing?.colorMode || 'pocket',
-        source: { kind: 'npc', origin: 'scene', description: existing?.identityBrief || candidate.identityBrief, sceneKey },
+        source: { kind: 'npc', origin: 'scene', description: existing?.identityBrief || candidate.identityBrief, sceneKey, bankId: existing?.source.kind === 'npc' ? existing.source.bankId : undefined },
         relationship: existing?.relationship || 'background',
         presence: { inScene: true, lastSceneAt: sceneAt }, contextPolicy: existing?.contextPolicy || { pinned: false },
         generationPolicy: existing?.generationPolicy || { relevant: true },
@@ -2203,6 +2241,14 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         const discoveredMatch = state.discoveredActors.find((entry) => entry.normalizedName === requestedName.trim().replace(/\s+/g, ' ').toLocaleLowerCase())
         if (discoveredMatch) existing = promoteDiscoveredActor(state, discoveredMatch.id, nowIso(), id)
       }
+      if (requestedName && (!existing || (existing.source.kind === 'npc' && !existing.source.bankId))) {
+        const bankEntry = findNpcBankMatch(await loadNpcBank(userId), requestedName)
+        if (bankEntry) {
+          existing = existing && existing.source.kind === 'npc'
+            ? applyNpcBankProfile(existing, bankEntry, nowIso())
+            : upsertContact(state, contactFromNpcBank(bankEntry, nowIso(), id), false)
+        }
+      }
       const name = requestedName || existing?.name
       if (!name) throw new Error('A contact action needs a name.')
       const createdAt = existing?.createdAt || nowIso()
@@ -2419,6 +2465,68 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         })
         break
       }
+      case 'lumiphone:npc_bank_save': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const contact = state.contacts.find((entry) => entry.id === text(payload.contactId, 180))
+          if (!contact) throw new Error('That contact no longer exists.')
+          if (contact.source.kind !== 'npc') throw new Error('Only Pocket NPC contacts can be saved to NPC Bank.')
+          const savedEntry = await withStateLock(`npc-bank:${viewKey(userId)}`, async () => {
+            const bank = await loadNpcBank(userId)
+            const entry = upsertNpcBankFromContact(bank, contact, nowIso(), id)
+            await saveNpcBank(bank, userId)
+            return entry
+          })
+          contact.source = { ...contact.source, bankId: savedEntry.id, description: savedEntry.identityBrief }
+          contact.updatedAt = nowIso()
+          await saveState(state, userId)
+          await sendState(state, userId, 'npc_bank')
+          send({ type: 'lumiphone:npc_bank_saved', requestId, contactId: contact.id, bankId: savedEntry.id, name: savedEntry.name }, userId)
+        })
+        break
+      }
+      case 'lumiphone:npc_bank_add': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const bank = await loadNpcBank(userId)
+          const bankId = text(payload.bankId, 180)
+          const bankEntry = bank.entries.find((entry) => entry.id === bankId)
+          if (!bankEntry) throw new Error('That NPC Bank profile no longer exists.')
+          const bankNames = new Set([bankEntry.name, ...bankEntry.aliases].map((name) => normalizeNpcBankName(name)))
+          let contact = state.contacts.find((entry) => entry.source.kind === 'npc' && entry.source.bankId === bankId)
+            || state.contacts.find((entry) => entry.source.kind === 'npc' && bankNames.has(normalizeNpcBankName(entry.name)))
+          if (!contact) {
+            const discovered = state.discoveredActors.find((entry) => bankNames.has(normalizeNpcBankName(entry.displayName)))
+            if (discovered) {
+              contact = promoteDiscoveredActor(state, discovered.id, nowIso(), id)
+              for (const conversation of state.conversations) {
+                if (!conversationActorIds(conversation).includes(discovered.id) || conversation.participantContactIds.includes(contact.id)) continue
+                conversation.participantContactIds.push(contact.id)
+              }
+            }
+          }
+          if (contact) contact = applyNpcBankProfile(contact, bankEntry, nowIso())
+          else contact = upsertContact(state, contactFromNpcBank(bankEntry, nowIso(), id), false)
+          await saveState(state, userId)
+          await sendState(state, userId, 'npc_bank')
+          send({ type: 'lumiphone:contact_created', requestId, contactId: contact.id }, userId)
+        })
+        break
+      }
+      case 'lumiphone:npc_bank_delete': {
+        const bankId = text(payload.bankId, 180)
+        if (!bankId) throw new Error('Choose an NPC Bank profile to forget.')
+        const removedName = await withStateLock(`npc-bank:${viewKey(userId)}`, async () => {
+          const bank = await loadNpcBank(userId)
+          const existing = bank.entries.find((entry) => entry.id === bankId)
+          if (!existing || !removeNpcBankEntry(bank, bankId, nowIso())) throw new Error('That NPC Bank profile no longer exists.')
+          await saveNpcBank(bank, userId)
+          return existing.name
+        })
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'npc_bank')
+        send({ type: 'lumiphone:npc_bank_deleted', requestId, bankId, name: removedName }, userId)
+        break
+      }
       case 'lumiphone:generate_contact':
         await generateNpcContact(payload, userId)
         break
@@ -2444,7 +2552,12 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
           const actorId = text(payload.actorId, 180)
-          const contact = promoteDiscoveredActor(state, actorId, nowIso(), id)
+          const promotedAt = nowIso()
+          let contact = promoteDiscoveredActor(state, actorId, promotedAt, id)
+          const bankEntry = findNpcBankMatch(await loadNpcBank(userId), contact.name)
+          if (contact.source.kind === 'npc' && !contact.source.bankId && bankEntry) {
+            contact = applyNpcBankProfile(contact, bankEntry, promotedAt)
+          }
           for (const conversation of state.conversations) {
             if (!conversationActorIds(conversation).includes(actorId) || conversation.participantContactIds.includes(contact.id)) continue
             conversation.participantContactIds.push(contact.id)
@@ -2858,7 +2971,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:export_data': {
         const state = await loadState(context.chatId, context.characterId, userId)
-        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 5, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId) } }, userId)
+        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 6, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId), npcBank: await loadNpcBank(userId) } }, userId)
         break
       }
       case 'lumiphone:import_data': {
@@ -2868,13 +2981,19 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const characterName = await characterNameFor(context.characterId, userId)
         const state = normalizeState(rawState, context.chatId, context.characterId, characterName)
         let importedPreferences: DevicePreferences | null = null
+        let importedNpcBank: PocketNpcBank | null = null
         if (payload.data.preferences !== undefined) {
           const existing = await loadPreferences(userId)
           importedPreferences = normalizePreferences(payload.data.preferences)
           await validateChangedWallpaperSources(existing, importedPreferences, userId)
         }
+        if (payload.data.npcBank !== undefined) {
+          if (isFutureNpcBank(payload.data.npcBank)) throw new Error('This backup uses a newer NPC Bank schema.')
+          importedNpcBank = normalizeNpcBank(payload.data.npcBank, nowIso())
+        }
         await saveState(state, userId)
         if (importedPreferences) await savePreferences(importedPreferences, userId)
+        if (importedNpcBank) await saveNpcBank(importedNpcBank, userId)
         await sendState(state, userId, 'import')
         break
       }
@@ -2912,7 +3031,7 @@ function registerTool(): void {
   spindle.registerTool({
     name: 'phone_action',
     display_name: 'Pocket Action',
-    description: 'Use Pocket, the character-aware roleplay phone. Named DM senders may be new: Pocket lazily persists a minimal discovered actor and does not require a profile. Group messages must target an existing group and the sender must already be a member; create or change membership with the explicit conversation action. Contact profiles are optional enrichment. State persists per chat and character.',
+    description: 'Pocket persistence tool for the primary roleplay model. Call this tool instead of formatting phone messages into narrative text whenever the generated scene creates a new phone action that should appear in Pocket. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
@@ -2927,6 +3046,7 @@ function registerTool(): void {
       },
       required: ['action', 'payload'],
     },
+    inline_available: true,
     council_eligible: false,
   } as any)
 }
@@ -3134,8 +3254,42 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
       let changed = false
+      const generationType = text(payload?.generationType ?? payload?.generation_type, 40)
       const relay = generationId ? relayForGeneration(state, generationId) : undefined
-      const reference = generationId ? referenceForGeneration(state, generationId) : undefined
+      let reference = generationId ? referenceForGeneration(state, generationId) : undefined
+      let endedBoundUserMessageId = ''
+
+      // Some host/runtime combinations can lose the generation association between
+      // interception and GENERATION_ENDED even though the assistant message itself
+      // was committed. The reference already records the exact user turn it bound
+      // to, so reconcile through chat history before leaving it stuck "applying".
+      if (!reference && generationType === 'normal' && messageId && spindle.permissions.has('chat_mutation')) {
+        try {
+          const hostMessages: any[] = await spindle.chat.getMessages(chatId)
+          const generatedIndex = hostMessages.findIndex((message: any) => text(message?.id, 180) === messageId)
+          if (generatedIndex >= 0) {
+            const precedingUser = hostMessages
+              .slice(0, generatedIndex)
+              .reverse()
+              .find((message: any) => message?.role === 'user' && text(message?.id, 180))
+            endedBoundUserMessageId = text(precedingUser?.id, 180)
+            if (endedBoundUserMessageId) {
+              const boundMatches = state.references.filter((entry) =>
+                entry.status === 'injected'
+                && entry.boundUserMessageId === endedBoundUserMessageId
+                && (!generationId || !entry.injectedGenerationId || entry.injectedGenerationId === generationId)
+              )
+              if (boundMatches.length === 1) {
+                reference = boundMatches[0]
+                if (generationId && !reference.injectedGenerationId) reference.injectedGenerationId = generationId
+                spindle.log.info(`Pocket reference completion fallback matched bound user turn: reference=${reference.id} generation=${generationId || 'missing'} userMessage=${endedBoundUserMessageId}`)
+              }
+            }
+          }
+        } catch (error) {
+          spindle.log.warn(`Pocket could not reconcile reference completion from chat history: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
       if (relay) {
         relay.continuation.generationCompletedAt = nowIso()
         const injectionMatched = Boolean(relay.injectedAt && relay.injectedGenerationId === generationId)
@@ -3154,7 +3308,10 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
         spindle.log.info(`Pocket observed GENERATION_ENDED: relay=${relay.id} generation=${generationId || 'unknown'} status=${relay.status} message=${messageId || 'none'}`)
       }
       if (reference) {
-        const injectionMatched = Boolean(reference.injectedAt && reference.injectedGenerationId === generationId)
+        const injectionMatched = Boolean(reference.injectedAt && (
+          (generationId && reference.injectedGenerationId === generationId)
+          || (endedBoundUserMessageId && reference.boundUserMessageId === endedBoundUserMessageId)
+        ))
         if (payload?.error || !messageId) {
           reference.status = 'failed'
           reference.error = text(payload?.error, 500) || 'The roleplay generation did not produce a message. The reference was not consumed.'

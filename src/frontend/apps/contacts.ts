@@ -1,4 +1,4 @@
-import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketOperationProgress } from '../../types.js'
+import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketNpcBankEntry, PocketOperationProgress } from '../../types.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -12,6 +12,7 @@ export interface ContactsViewHost {
   npcDraft: PocketContactDraft | null
   previousNpcDraft: PocketContactDraft | null
   sources: PocketContactSourceOption[]
+  npcBank: PocketNpcBankEntry[]
   capabilities: PhoneCapabilities | null
   operations: Map<string, PocketOperationProgress>
   page(title: string, subtitle?: string, action?: PageAction): Page
@@ -161,6 +162,35 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   }
   content.appendChild(manual)
 
+  const bank = el('section', 'lp-contact-source-section')
+  bank.appendChild(el('div', 'lp-eyebrow', 'NPC Bank'))
+  bank.appendChild(el('p', 'lp-copy', 'Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.'))
+  if (!host.npcBank.length) {
+    bank.appendChild(el('div', 'lp-card lp-copy', 'No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”.'))
+  } else {
+    for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
+      const row = el('div', 'lp-card lp-row-between')
+      const copy = el('div')
+      copy.append(el('strong', '', entry.name), el('span', 'lp-copy', entry.role || 'Pocket NPC'))
+      if (entry.identityBrief) copy.appendChild(el('p', 'lp-copy', entry.identityBrief))
+      const linked = host.state.contacts.find((contact) => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
+      const actions = el('div', 'lp-draft-actions')
+      const add = button(linked ? 'Added' : 'Add to this RP', 'lp-button lp-button-quiet')
+      add.disabled = Boolean(linked)
+      add.addEventListener('click', () => host.send('lumiphone:npc_bank_add', { bankId: entry.id }))
+      const forget = button('Forget', 'lp-button lp-button-quiet')
+      forget.addEventListener('click', () => {
+        if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
+          host.send('lumiphone:npc_bank_delete', { bankId: entry.id })
+        }
+      })
+      actions.append(add, forget)
+      row.append(copy, actions)
+      bank.appendChild(row)
+    }
+  }
+  content.appendChild(bank)
+
   const grouped = new Map<string, PocketContactSourceOption[]>()
   for (const option of host.sources) grouped.set(option.kind, [...(grouped.get(option.kind) || []), option])
   for (const [kind, sources] of grouped) {
@@ -202,6 +232,19 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
     content.append(hero, presence)
+    if (contact.source.kind === 'npc') {
+      const bankId = contact.source.bankId
+      const bankEntry = bankId ? host.npcBank.find((entry) => entry.id === bankId) || null : null
+      const bankCard = el('div', 'lp-card')
+      bankCard.append(
+        el('div', 'lp-title', bankEntry ? 'Saved to NPC Bank' : contact.source.bankId ? 'NPC Bank copy missing' : 'Reusable NPC'),
+        el('p', 'lp-copy', 'NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically.'),
+      )
+      const saveBank = button(bankEntry ? 'Update NPC Bank' : contact.source.bankId ? 'Restore NPC Bank' : 'Save to NPC Bank', 'lp-button lp-button-quiet')
+      saveBank.addEventListener('click', () => host.send('lumiphone:npc_bank_save', { contactId: contact.id }))
+      bankCard.appendChild(saveBank)
+      content.appendChild(bankCard)
+    }
     if (contact.source.kind !== 'npc' || contact.source.origin === 'discovered') {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === 'profile-refresh' && entry.phase !== 'complete' && entry.phase !== 'error')
       const refresh = button(contact.source.kind === 'npc' ? 'Describe from RP ✦' : 'Refresh compact profile ✦', 'lp-button lp-button-quiet')

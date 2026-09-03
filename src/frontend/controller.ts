@@ -12,6 +12,7 @@ import type {
   PocketOperationProgress,
   PocketContactSourceOption,
   PocketContactDraft,
+  PocketNpcBankEntry,
   PocketActivity,
   PocketRoute,
   PocketResolvedImage,
@@ -153,6 +154,7 @@ class PocketController {
   private manualMessageOverrides = new Set<string>()
   private focusedHandoffRelays = new Set<string>()
   private contactSources: PocketContactSourceOption[] = []
+  private npcBank: PocketNpcBankEntry[] = []
   private contactSourcesRequested = false
   private lastTagKeys = new Set<string>()
   private tagKeyOrder: string[] = []
@@ -777,6 +779,7 @@ class PocketController {
       if (active.characterId && payload.state.characterId !== active.characterId) return
       const previousUnread = this.unreadCount()
       this.state = payload.state as PhoneState
+      this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries as PocketNpcBankEntry[] : []
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
@@ -911,6 +914,14 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:discovered_actor_promoted' && payload.contactId) {
       this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, false)
+      return
+    }
+    if (payload.type === 'lumiphone:npc_bank_saved') {
+      this.showFeedback(`${payload.name || 'NPC'} saved to NPC Bank.`)
+      return
+    }
+    if (payload.type === 'lumiphone:npc_bank_deleted') {
+      this.showFeedback(`${payload.name || 'NPC'} removed from NPC Bank. Existing RP contacts were left untouched.`)
       return
     }
     if (payload.type === 'lumiphone:swarm_profile') {
@@ -1553,7 +1564,7 @@ class PocketController {
   private renderContacts(): HTMLDivElement {
     return renderContactsView({
       state: this.state!, selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
-      sources: this.contactSources, capabilities: this.caps,
+      sources: this.contactSources, npcBank: this.npcBank, capabilities: this.caps,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('contacts', title, copy),
       operations: this.operations,

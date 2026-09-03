@@ -67,6 +67,7 @@ function normalizeSource(value: unknown, contactId: string, characterId: string,
       description: clean(value.description, 600) || description,
       sceneKey: clean(value.sceneKey, 180) || undefined,
       discoveredActorId: clean(value.discoveredActorId, 180) || undefined,
+      bankId: clean(value.bankId, 180) || undefined,
     }
   }
   if (contactId === characterId) return { kind: 'character', characterId }

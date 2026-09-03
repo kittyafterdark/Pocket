@@ -301,7 +301,7 @@ export interface PocketConversationTailSnapshot {
 export type PocketContactSource =
   | { kind: 'character'; characterId: string }
   | { kind: 'council'; memberId: string; itemId: string }
-  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene' | 'discovered'; description: string; sceneKey?: string; discoveredActorId?: string }
+  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene' | 'discovered'; description: string; sceneKey?: string; discoveredActorId?: string; bankId?: string }
 
 export type PocketRelationship = 'background' | 'close'
 
@@ -326,6 +326,26 @@ export interface PocketMessagingStyle {
   talkativeness: number
   /** Likelihood of short consecutive bubbles instead of one compact text. */
   fragmentation: number
+}
+
+export interface PocketNpcBankEntry {
+  id: string
+  name: string
+  normalizedName: string
+  aliases: string[]
+  role: string
+  identityBrief: string
+  avatarUrl: string
+  accent: string
+  messagingStyle: PocketMessagingStyle
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+}
+export interface PocketNpcBank {
+  version: 1
+  entries: PocketNpcBankEntry[]
+  updatedAt: string
 }
 
 export interface PocketContactDraft {

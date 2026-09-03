@@ -2229,6 +2229,35 @@ function importView(host) {
     manual.appendChild(progress);
   }
   content.appendChild(manual);
+  const bank = el("section", "lp-contact-source-section");
+  bank.appendChild(el("div", "lp-eyebrow", "NPC Bank"));
+  bank.appendChild(el("p", "lp-copy", "Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP."));
+  if (!host.npcBank.length) {
+    bank.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
+  } else {
+    for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
+      const row2 = el("div", "lp-card lp-row-between");
+      const copy = el("div");
+      copy.append(el("strong", "", entry.name), el("span", "lp-copy", entry.role || "Pocket NPC"));
+      if (entry.identityBrief)
+        copy.appendChild(el("p", "lp-copy", entry.identityBrief));
+      const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
+      const actions = el("div", "lp-draft-actions");
+      const add = button(linked ? "Added" : "Add to this RP", "lp-button lp-button-quiet");
+      add.disabled = Boolean(linked);
+      add.addEventListener("click", () => host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
+      const forget = button("Forget", "lp-button lp-button-quiet");
+      forget.addEventListener("click", () => {
+        if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
+          host.send("lumiphone:npc_bank_delete", { bankId: entry.id });
+        }
+      });
+      actions.append(add, forget);
+      row2.append(copy, actions);
+      bank.appendChild(row2);
+    }
+  }
+  content.appendChild(bank);
   const grouped = new Map;
   for (const option of host.sources)
     grouped.set(option.kind, [...grouped.get(option.kind) || [], option]);
@@ -2276,6 +2305,16 @@ function renderContactsView(host) {
     const message = button("Message");
     message.addEventListener("click", () => host.openDirect(contact.id));
     content2.append(hero, presence);
+    if (contact.source.kind === "npc") {
+      const bankId = contact.source.bankId;
+      const bankEntry = bankId ? host.npcBank.find((entry) => entry.id === bankId) || null : null;
+      const bankCard = el("div", "lp-card");
+      bankCard.append(el("div", "lp-title", bankEntry ? "Saved to NPC Bank" : contact.source.bankId ? "NPC Bank copy missing" : "Reusable NPC"), el("p", "lp-copy", "NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically."));
+      const saveBank = button(bankEntry ? "Update NPC Bank" : contact.source.bankId ? "Restore NPC Bank" : "Save to NPC Bank", "lp-button lp-button-quiet");
+      saveBank.addEventListener("click", () => host.send("lumiphone:npc_bank_save", { contactId: contact.id }));
+      bankCard.appendChild(saveBank);
+      content2.appendChild(bankCard);
+    }
     if (contact.source.kind !== "npc" || contact.source.origin === "discovered") {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === "profile-refresh" && entry.phase !== "complete" && entry.phase !== "error");
       const refresh = button(contact.source.kind === "npc" ? "Describe from RP ✦" : "Refresh compact profile ✦", "lp-button lp-button-quiet");
@@ -2608,6 +2647,7 @@ class PocketController {
   manualMessageOverrides = new Set;
   focusedHandoffRelays = new Set;
   contactSources = [];
+  npcBank = [];
   contactSourcesRequested = false;
   lastTagKeys = new Set;
   tagKeyOrder = [];
@@ -3270,6 +3310,7 @@ class PocketController {
         return;
       const previousUnread = this.unreadCount();
       this.state = payload.state;
+      this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries : [];
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId);
         if (!conversation || conversation.availability.state !== "local")
@@ -3435,6 +3476,14 @@ class PocketController {
     }
     if (payload.type === "lumiphone:discovered_actor_promoted" && payload.contactId) {
       this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" }, false);
+      return;
+    }
+    if (payload.type === "lumiphone:npc_bank_saved") {
+      this.showFeedback(`${payload.name || "NPC"} saved to NPC Bank.`);
+      return;
+    }
+    if (payload.type === "lumiphone:npc_bank_deleted") {
+      this.showFeedback(`${payload.name || "NPC"} removed from NPC Bank. Existing RP contacts were left untouched.`);
       return;
     }
     if (payload.type === "lumiphone:swarm_profile") {
@@ -4143,6 +4192,7 @@ class PocketController {
       selectedContactId: this.selectedContactId,
       selectedView: this.selectedContactView,
       sources: this.contactSources,
+      npcBank: this.npcBank,
       capabilities: this.caps,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty("contacts", title, copy),

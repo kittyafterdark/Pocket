@@ -8,6 +8,7 @@ import { ensureDirectConversation, normalizeContactCollections } from '../src/do
 import { ensureDirectActorConversation, ensureDiscoveredActor, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
+import { contactFromNpcBank, findNpcBankMatch, normalizeNpcBank, upsertNpcBankFromContact } from '../src/domain/npc-bank.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
@@ -437,5 +438,73 @@ describe('typed trackers', () => {
     expect(tracker.kind === 'state' && tracker.state).toBe('Critical')
     tracker = applyTrackerOperation(tracker, { operation: 'reset', source: 'user' })
     expect(tracker.kind === 'state' && tracker.state).toBe('Stable')
+  })
+})
+
+
+describe('NPC bank', () => {
+  const now = '2026-01-01T00:00:00.000Z'
+  const later = '2026-02-01T00:00:00.000Z'
+  const rawEntry = {
+    id: 'npcbank-maya',
+    name: 'Maya Sato',
+    normalizedName: 'maya sato',
+    aliases: ['Maya'],
+    role: 'Operations coordinator',
+    identityBrief: 'Dry, efficient, observant, and protective of her team.',
+    avatarUrl: '',
+    accent: '#8b7dff',
+    messagingStyle: { talkativeness: 58, fragmentation: 28 },
+    tags: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  test('matches a canonical NPC by exact alias without fuzzy identity bleed', () => {
+    const bank = normalizeNpcBank({ version: 1, entries: [rawEntry], updatedAt: now }, now)
+    expect(findNpcBankMatch(bank, 'Maya')?.id).toBe('npcbank-maya')
+    expect(findNpcBankMatch(bank, 'maya sato')?.id).toBe('npcbank-maya')
+    expect(findNpcBankMatch(bank, 'May')).toBeNull()
+  })
+
+  test('instantiates a bank profile with fresh per-roleplay state', () => {
+    const bank = normalizeNpcBank({ version: 1, entries: [rawEntry], updatedAt: now }, now)
+    const contact = contactFromNpcBank(bank.entries[0], later, () => 'contact-local')
+    expect(contact).toMatchObject({
+      id: 'contact-local',
+      name: 'Maya Sato',
+      sceneNote: '',
+      relationship: 'background',
+      presence: { inScene: false, lastSceneAt: '' },
+      messagingStyle: { talkativeness: 58, fragmentation: 28 },
+    })
+    expect(contact.source.kind).toBe('npc')
+    if (contact.source.kind === 'npc') expect(contact.source.bankId).toBe('npcbank-maya')
+  })
+
+  test('saving canonical identity never serializes scene state and preserves renamed aliases', () => {
+    const bank = normalizeNpcBank(null, now)
+    const seed = normalizeNpcBank({ version: 1, entries: [rawEntry], updatedAt: now }, now).entries[0]
+    const contact = contactFromNpcBank(seed, now, () => 'contact-local')
+    contact.sceneNote = 'Currently carrying a stack of patrol reports.'
+    contact.presence = { inScene: true, lastSceneAt: later }
+    const first = upsertNpcBankFromContact(bank, contact, now, () => 'npcbank-new')
+    expect((first as any).sceneNote).toBeUndefined()
+    if (contact.source.kind === 'npc') contact.source.bankId = first.id
+    contact.name = 'Maya Ishikawa'
+    const renamed = upsertNpcBankFromContact(bank, contact, later, () => 'unexpected')
+    expect(renamed.id).toBe(first.id)
+    expect(renamed.aliases).toContain('Maya Sato')
+  })
+
+  test('bank linkage survives ordinary contact normalization', () => {
+    const bank = normalizeNpcBank({ version: 1, entries: [rawEntry], updatedAt: now }, now)
+    const contact = contactFromNpcBank(bank.entries[0], now, () => 'contact-bank')
+    const normalized = normalizeContactCollections({ contacts: [contact], conversations: [] }, {
+      characterId: 'alice', characterName: 'Alice', now, makeId: (prefix) => `${prefix}-fallback`,
+    })
+    const restored = normalized.contacts.find((entry) => entry.id === 'contact-bank')
+    expect(restored?.source.kind).toBe('npc')
+    if (restored?.source.kind === 'npc') expect(restored.source.bankId).toBe('npcbank-maya')
   })
 })
