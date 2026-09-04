@@ -720,35 +720,55 @@ function persona(host) {
   const role = el("input", "lp-input");
   role.placeholder = "Role";
   role.value = profile.role;
-  const brief = el("textarea", "lp-textarea");
-  brief.placeholder = "Stable identity and roleplay facts";
-  brief.value = profile.identityBrief;
+  const phoneProfile = profile.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
+  const personality = el("textarea", "lp-textarea");
+  personality.placeholder = "Personality — stable traits that shape conversation";
+  personality.value = phoneProfile.personality;
+  const appearance2 = el("textarea", "lp-textarea");
+  appearance2.placeholder = "Minimal appearance — only recognizable details worth texting about";
+  appearance2.value = phoneProfile.appearance;
+  const textingStyle = el("textarea", "lp-textarea");
+  textingStyle.placeholder = "Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, message length…";
+  textingStyle.value = phoneProfile.textingStyle;
   const canAppear = toggle("Can appear as phone participant", profile.canAppear, () => {}, "Off by default. The active Persona is never imported as a Contact.");
   const fields = el("div", "lp-fields");
-  fields.append(name, pronouns, role, brief, canAppear);
+  fields.append(name, pronouns, role, el("div", "lp-label", "Personality"), personality, el("div", "lp-label", "Minimal appearance"), appearance2, el("div", "lp-label", "Texting quirks"), textingStyle, canAppear);
   const syncDisabled = () => {
     const disabled = source.value === "lumiverse";
-    for (const control of [name, pronouns, role, brief])
+    for (const control of [name, pronouns, role])
       control.disabled = disabled;
     canAppear.querySelector("button").toggleAttribute("disabled", disabled);
   };
   source.addEventListener("change", syncDisabled);
   syncDisabled();
   const actions = el("div", "lp-row");
-  const describe = button("Describe from roleplay", "lp-button lp-button-quiet");
+  const describe = button("Enrich with LLM", "lp-button lp-button-quiet");
   describe.disabled = !host.capabilities?.generation;
   describe.addEventListener("click", () => host.send("lumiphone:generate_pocket_persona"));
   const save = button("Save profile", "lp-button");
   save.addEventListener("click", () => host.send("lumiphone:save_pocket_persona", {
     followLumiverse: source.value === "lumiverse",
-    persona: { ...profile, source: source.value, displayName: name.value.trim(), pronouns: pronouns.value.trim(), role: role.value.trim(), identityBrief: brief.value.trim(), canAppear: canAppear.querySelector("button")?.getAttribute("aria-pressed") === "true" }
+    persona: {
+      ...profile,
+      source: source.value,
+      displayName: name.value.trim(),
+      pronouns: pronouns.value.trim(),
+      role: role.value.trim(),
+      phoneProfile: {
+        personality: personality.value.trim(),
+        appearance: appearance2.value.trim(),
+        textingStyle: textingStyle.value.trim()
+      },
+      canAppear: canAppear.querySelector("button")?.getAttribute("aria-pressed") === "true"
+    }
   }));
   actions.append(describe, save);
   identity.append(source, fields, actions);
   if (host.personaPreview) {
     const preview = el("section", "lp-card lp-settings-section");
     preview.dataset.pocketPersonaPreview = "true";
-    preview.append(el("div", "lp-eyebrow", "Generated preview"), el("strong", "", host.personaPreview.displayName), el("p", "lp-copy", [host.personaPreview.pronouns, host.personaPreview.role].filter(Boolean).join(" · ")), el("p", "lp-copy", host.personaPreview.identityBrief));
+    const generatedPhone = host.personaPreview.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
+    preview.append(el("div", "lp-eyebrow", "Generated phone profile"), el("strong", "", host.personaPreview.displayName), el("p", "lp-copy", [host.personaPreview.pronouns, host.personaPreview.role].filter(Boolean).join(" · ")), generatedPhone.personality ? el("p", "lp-copy", `Personality: ${generatedPhone.personality}`) : el("span"), generatedPhone.appearance ? el("p", "lp-copy", `Appearance: ${generatedPhone.appearance}`) : el("span"), generatedPhone.textingStyle ? el("p", "lp-copy", `Texting: ${generatedPhone.textingStyle}`) : el("span"));
     const use = button("Use profile", "lp-button");
     use.addEventListener("click", () => host.send("lumiphone:save_pocket_persona", { persona: host.personaPreview }));
     preview.appendChild(use);
@@ -2795,6 +2815,7 @@ class PocketController {
   setupModalOpen = false;
   setupModalBody = null;
   setupModalDismiss = null;
+  setupPersonaEditing = false;
   composerReferencePill = null;
   composerSyncFrame = 0;
   lastComposerReferenceId = "";
@@ -3523,12 +3544,18 @@ class PocketController {
     }
     if (payload.type === "lumiphone:pocket_persona_preview" && payload.persona) {
       this.personaPreview = payload.persona;
-      if (this.currentApp === "settings")
+      if (this.setupModalOpen && this.setupPersonaEditing)
+        this.renderFirstChatPersonaEditor();
+      else if (this.currentApp === "settings")
         this.render(false);
       return;
     }
     if (payload.type === "lumiphone:pocket_persona_saved") {
       this.personaPreview = null;
+      if (this.setupModalOpen && this.setupPersonaEditing) {
+        this.setupPersonaEditing = false;
+        this.renderFirstChatSetupBody();
+      }
       return;
     }
     if (payload.type === "lumiphone:operation_progress" && payload.requestId) {
@@ -4944,6 +4971,7 @@ ${body}`;
     if (this.setupModalOpen || !this.state || this.state.setup.initialized || this.state.setup.dismissed)
       return;
     this.setupModalOpen = true;
+    this.setupPersonaEditing = false;
     const modal = this.ctx.ui.showModal({ title: "Set up Pocket", width: 500, maxHeight: 680 });
     const body = el("div", "lp-settings-section");
     this.setupModalBody = body;
@@ -4952,6 +4980,7 @@ ${body}`;
     this.renderFirstChatSetupBody();
     modal.onDismiss(() => {
       this.setupModalOpen = false;
+      this.setupPersonaEditing = false;
       this.setupModalBody = null;
       this.setupModalDismiss = null;
     });
@@ -5005,8 +5034,9 @@ ${body}`;
     }
     const customize = button("Customize", "lp-button lp-button-quiet");
     customize.addEventListener("click", () => {
-      this.setupModalDismiss?.();
-      this.openPocket({ app: "settings", section: "persona" });
+      this.setupPersonaEditing = true;
+      this.personaPreview = null;
+      this.renderFirstChatPersonaEditor();
     });
     personaActions.appendChild(customize);
     persona2.appendChild(personaActions);
@@ -5040,6 +5070,91 @@ ${body}`;
       this.setupModalDismiss?.();
     });
     body.append(llm, persona2, world, start, later);
+  }
+  renderFirstChatPersonaEditor() {
+    const body = this.setupModalBody;
+    const state = this.state;
+    if (!body || !state)
+      return;
+    body.replaceChildren();
+    const profile = this.personaPreview || state.pocketPersona;
+    const phoneProfile = profile.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
+    const back = button("← Back to setup", "lp-button lp-button-quiet");
+    back.addEventListener("click", () => {
+      this.setupPersonaEditing = false;
+      this.personaPreview = null;
+      this.renderFirstChatSetupBody();
+    });
+    body.append(back, el("div", "lp-eyebrow", "Persona · phone profile"), el("p", "lp-copy", "Keep this compact and useful for texting. Pocket does not need a full prose character card to generate a DM."));
+    const source = el("select", "lp-select");
+    for (const [value, label] of [["lumiverse", "Follow Lumiverse Persona"], ["manual", "Use Pocket profile"]]) {
+      const option = el("option", "", label);
+      option.value = value;
+      option.selected = profile.source === value || profile.source === "generated" && value === "manual";
+      source.appendChild(option);
+    }
+    const name = el("input", "lp-input");
+    name.placeholder = "Display name";
+    name.value = profile.displayName;
+    const pronouns = el("input", "lp-input");
+    pronouns.placeholder = "Pronouns";
+    pronouns.value = profile.pronouns;
+    const role = el("input", "lp-input");
+    role.placeholder = "Role";
+    role.value = profile.role;
+    const personality = el("textarea", "lp-textarea");
+    personality.placeholder = "Personality — stable traits that shape conversation";
+    personality.value = phoneProfile.personality;
+    const appearance2 = el("textarea", "lp-textarea");
+    appearance2.placeholder = "Minimal appearance — only a few recognizable details";
+    appearance2.value = phoneProfile.appearance;
+    const textingStyle = el("textarea", "lp-textarea");
+    textingStyle.placeholder = "Texting quirks — lowercase, punctuation, slang/register, emoji/kaomoji habits, fragmentation…";
+    textingStyle.value = phoneProfile.textingStyle;
+    const coreFields = [name, pronouns, role];
+    const syncSource = () => {
+      const followsLumiverse = source.value === "lumiverse";
+      for (const field of coreFields)
+        field.disabled = followsLumiverse;
+    };
+    source.addEventListener("change", syncSource);
+    syncSource();
+    const fields = el("section", "lp-card lp-settings-section");
+    fields.append(source, name, pronouns, role, el("div", "lp-label", "Personality"), personality, el("div", "lp-label", "Minimal appearance"), appearance2, el("div", "lp-label", "Texting quirks"), textingStyle);
+    const actions = el("div", "lp-row");
+    const enrich = button("Enrich with LLM", "lp-button lp-button-quiet");
+    enrich.disabled = !this.caps?.generation;
+    enrich.addEventListener("click", () => {
+      enrich.disabled = true;
+      enrich.textContent = "Enriching…";
+      this.send("lumiphone:generate_pocket_persona");
+    });
+    const save = button("Save phone profile", "lp-button");
+    save.addEventListener("click", () => {
+      save.disabled = true;
+      save.textContent = "Saving…";
+      this.send("lumiphone:save_pocket_persona", {
+        followLumiverse: source.value === "lumiverse",
+        persona: {
+          ...state.pocketPersona,
+          ...profile,
+          source: source.value,
+          displayName: name.value.trim(),
+          pronouns: pronouns.value.trim(),
+          role: role.value.trim(),
+          phoneProfile: {
+            personality: personality.value.trim(),
+            appearance: appearance2.value.trim(),
+            textingStyle: textingStyle.value.trim()
+          }
+        }
+      });
+    });
+    actions.append(enrich, save);
+    body.append(fields, actions);
+    if (this.personaPreview) {
+      body.insertBefore(el("p", "lp-copy", "✓ LLM enrichment loaded into the fields above. Review it, then save."), actions);
+    }
   }
   field(labelText, value = "", type = "text") {
     const label = el("label", "lp-label", labelText);

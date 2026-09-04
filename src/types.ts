@@ -152,6 +152,12 @@ export interface ChatPocketPersona {
   pronouns: string
   role: string
   identityBrief: string
+  /** Compact Pocket-only profile optimized for phone conversation generation. */
+  phoneProfile?: {
+    personality: string
+    appearance: string
+    textingStyle: string
+  }
   avatarUrl: string
   accent: string
   canAppear: boolean

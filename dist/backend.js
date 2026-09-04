@@ -2162,11 +2162,25 @@ function defaultWeather() {
   };
 }
 function defaultPocketPersona(createdAt = nowIso()) {
-  return { source: "lumiverse", linkedPersonaId: "", displayName: "You", pronouns: "", role: "Persona", identityBrief: "", avatarUrl: "", accent: "#8b7dff", canAppear: false, updatedAt: createdAt };
+  return {
+    source: "lumiverse",
+    linkedPersonaId: "",
+    displayName: "You",
+    pronouns: "",
+    role: "Persona",
+    identityBrief: "",
+    phoneProfile: { personality: "", appearance: "", textingStyle: "" },
+    avatarUrl: "",
+    accent: "#8b7dff",
+    canAppear: false,
+    updatedAt: createdAt
+  };
 }
 function normalizePocketPersona(value, fallback = defaultPocketPersona()) {
   const raw = isRecord(value) ? value : {};
   const source = raw.source === "manual" || raw.source === "generated" ? raw.source : "lumiverse";
+  const rawPhoneProfile = isRecord(raw.phoneProfile) ? raw.phoneProfile : null;
+  const fallbackPhoneProfile = fallback.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
   return {
     source,
     linkedPersonaId: text2(raw.linkedPersonaId, 180),
@@ -2174,11 +2188,28 @@ function normalizePocketPersona(value, fallback = defaultPocketPersona()) {
     pronouns: text2(raw.pronouns, 120),
     role: text2(raw.role, 120) || fallback.role,
     identityBrief: text2(raw.identityBrief, 1200),
+    phoneProfile: rawPhoneProfile ? {
+      personality: text2(rawPhoneProfile.personality, 600),
+      appearance: text2(rawPhoneProfile.appearance, 360),
+      textingStyle: text2(rawPhoneProfile.textingStyle, 600)
+    } : { ...fallbackPhoneProfile },
     avatarUrl: text2(raw.avatarUrl, 2000),
     accent: /^#[0-9a-f]{6}$/i.test(text2(raw.accent, 20)) ? text2(raw.accent, 20) : fallback.accent,
     canAppear: bool2(raw.canAppear),
     updatedAt: text2(raw.updatedAt, 40) || fallback.updatedAt
   };
+}
+function pocketPersonaPhoneBrief(persona) {
+  const profile = persona.phoneProfile;
+  const lines = [
+    profile?.personality ? `Personality: ${text2(profile.personality, 420)}` : "",
+    profile?.appearance ? `Minimal appearance: ${text2(profile.appearance, 240)}` : "",
+    profile?.textingStyle ? `Texting style: ${text2(profile.textingStyle, 420)}` : ""
+  ].filter(Boolean);
+  if (lines.length)
+    return lines.join(`
+`).slice(0, 900);
+  return text2(persona.identityBrief, 520);
 }
 function defaultState(chatId, characterId, characterName = "Character") {
   const createdAt = nowIso();
@@ -2686,8 +2717,10 @@ async function loadState(chatId, characterId, userId) {
   if (state.pocketPersona.source === "lumiverse") {
     const hostPersona = await resolveActivePocketPersona(userId);
     if (hostPersona) {
-      const changed = JSON.stringify({ ...state.pocketPersona, updatedAt: "" }) !== JSON.stringify({ ...hostPersona, updatedAt: "" });
-      state.pocketPersona = changed ? hostPersona : state.pocketPersona;
+      const preservedPhoneProfile = state.pocketPersona.phoneProfile;
+      const mergedHostPersona = { ...hostPersona, phoneProfile: preservedPhoneProfile };
+      const changed = JSON.stringify({ ...state.pocketPersona, updatedAt: "" }) !== JSON.stringify({ ...mergedHostPersona, updatedAt: "" });
+      state.pocketPersona = changed ? mergedHostPersona : state.pocketPersona;
       stateChanged ||= changed;
     }
   }
@@ -4052,7 +4085,7 @@ async function generateMessage(input, userId) {
     const generationTask = replaceIndex >= 0 ? "message-retry" : "message-reply";
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
     const personaName = generationPersona.displayName?.trim() || "You";
-    const personaIdentity = text2(generationPersona.identityBrief, 900);
+    const personaIdentity = pocketPersonaPhoneBrief(generationPersona);
     const continuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(continuitySeed, profile.name, [profile.name, personaName]);
     const generationMessages = conversation.kind === "direct" ? [
       {
@@ -5740,9 +5773,11 @@ async function handleFrontend(payload, userId) {
           const next = normalizePocketPersona(payload.persona, state.pocketPersona);
           next.source = payload.followLumiverse === true ? "lumiverse" : next.source === "lumiverse" ? "manual" : next.source;
           if (next.source === "lumiverse") {
+            const preservedPhoneProfile = next.phoneProfile;
             const hostPersona = await resolveActivePocketPersona(userId);
             if (hostPersona)
               Object.assign(next, hostPersona);
+            next.phoneProfile = preservedPhoneProfile;
           }
           next.updatedAt = nowIso();
           state.pocketPersona = next;
@@ -5817,9 +5852,15 @@ async function handleFrontend(payload, userId) {
         const response = await runStructuredGeneration("persona-profile", requestId || id("persona"), {
           type: "quiet",
           messages: [
-            { role: "system", content: 'Describe only the user/persona represented in this roleplay. Return strict JSON: {"displayName":"","pronouns":"","role":"","identityBrief":""}. Use evidence from the transcript, keep identityBrief under 900 characters, and do not include the primary character as the persona.' },
-            { role: "user", content: messages.slice(-18).map((message) => `${message.role}: ${text2(message.content, 700)}`).join(`
-`).slice(-9000) || `Known persona: ${state.pocketPersona.displayName}` }
+            { role: "system", content: 'Create a compact PHONE-SPECIFIC Pocket Persona profile for text-message generation. Describe only the user/persona, never the primary host-RP character. Return strict JSON only: {"displayName":"","pronouns":"","role":"","identityBrief":"","phoneProfile":{"personality":"","appearance":"","textingStyle":""}}. personality: stable temperament/social traits that affect conversation, max 420 chars. appearance: only 1-3 recognizable physical/style details useful for occasional texting references, max 240 chars; no body dossier. textingStyle: casing, punctuation, slang/register, dialect or AAVE only when actually established, emoji vs kaomoji habits, message length/fragmentation, abbreviations, and other stable texting quirks, max 420 chars. identityBrief: a compact fallback identity/role summary, max 300 chars. Infer only from supplied evidence; do not stereotype from demographics and leave unsupported quirks blank. No markdown.' },
+            { role: "user", content: `CURRENT POCKET PERSONA
+Name: ${state.pocketPersona.displayName}
+Role: ${state.pocketPersona.role}
+Source description: ${text2(state.pocketPersona.identityBrief, 1500) || "(none)"}
+
+RECENT ROLEPLAY EVIDENCE
+${messages.slice(-18).map((message) => `${message.role}: ${text2(message.content, 700)}`).join(`
+`).slice(-9000) || "(none)"}` }
           ],
           parameters: { temperature: 0.2, max_tokens: 360 },
           userId

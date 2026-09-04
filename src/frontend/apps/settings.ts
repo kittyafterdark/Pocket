@@ -145,21 +145,58 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const name = el('input', 'lp-input'); name.placeholder = 'Display name'; name.value = profile.displayName
   const pronouns = el('input', 'lp-input'); pronouns.placeholder = 'Pronouns'; pronouns.value = profile.pronouns
   const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = profile.role
-  const brief = el('textarea', 'lp-textarea'); brief.placeholder = 'Stable identity and roleplay facts'; brief.value = profile.identityBrief
+  const phoneProfile = profile.phoneProfile || { personality: '', appearance: '', textingStyle: '' }
+  const personality = el('textarea', 'lp-textarea'); personality.placeholder = 'Personality — stable traits that shape conversation'; personality.value = phoneProfile.personality
+  const appearance = el('textarea', 'lp-textarea'); appearance.placeholder = 'Minimal appearance — only recognizable details worth texting about'; appearance.value = phoneProfile.appearance
+  const textingStyle = el('textarea', 'lp-textarea'); textingStyle.placeholder = 'Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, message length…'; textingStyle.value = phoneProfile.textingStyle
   const canAppear = toggle('Can appear as phone participant', profile.canAppear, () => {}, 'Off by default. The active Persona is never imported as a Contact.')
-  const fields = el('div', 'lp-fields'); fields.append(name, pronouns, role, brief, canAppear)
-  const syncDisabled = () => { const disabled = source.value === 'lumiverse'; for (const control of [name, pronouns, role, brief]) control.disabled = disabled; canAppear.querySelector('button')!.toggleAttribute('disabled', disabled) }
+  const fields = el('div', 'lp-fields')
+  fields.append(
+    name,
+    pronouns,
+    role,
+    el('div', 'lp-label', 'Personality'), personality,
+    el('div', 'lp-label', 'Minimal appearance'), appearance,
+    el('div', 'lp-label', 'Texting quirks'), textingStyle,
+    canAppear,
+  )
+  const syncDisabled = () => {
+    const disabled = source.value === 'lumiverse'
+    for (const control of [name, pronouns, role]) control.disabled = disabled
+    // Pocket phone-profile fields are an overlay and remain editable while following Lumiverse Persona.
+    canAppear.querySelector('button')!.toggleAttribute('disabled', disabled)
+  }
   source.addEventListener('change', syncDisabled); syncDisabled()
   const actions = el('div', 'lp-row')
-  const describe = button('Describe from roleplay', 'lp-button lp-button-quiet'); describe.disabled = !host.capabilities?.generation; describe.addEventListener('click', () => host.send('lumiphone:generate_pocket_persona'))
+  const describe = button('Enrich with LLM', 'lp-button lp-button-quiet'); describe.disabled = !host.capabilities?.generation; describe.addEventListener('click', () => host.send('lumiphone:generate_pocket_persona'))
   const save = button('Save profile', 'lp-button'); save.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', {
     followLumiverse: source.value === 'lumiverse',
-    persona: { ...profile, source: source.value, displayName: name.value.trim(), pronouns: pronouns.value.trim(), role: role.value.trim(), identityBrief: brief.value.trim(), canAppear: canAppear.querySelector('button')?.getAttribute('aria-pressed') === 'true' },
+    persona: {
+      ...profile,
+      source: source.value,
+      displayName: name.value.trim(),
+      pronouns: pronouns.value.trim(),
+      role: role.value.trim(),
+      phoneProfile: {
+        personality: personality.value.trim(),
+        appearance: appearance.value.trim(),
+        textingStyle: textingStyle.value.trim(),
+      },
+      canAppear: canAppear.querySelector('button')?.getAttribute('aria-pressed') === 'true',
+    },
   }))
   actions.append(describe, save); identity.append(source, fields, actions)
   if (host.personaPreview) {
     const preview = el('section', 'lp-card lp-settings-section'); preview.dataset.pocketPersonaPreview = 'true'
-    preview.append(el('div', 'lp-eyebrow', 'Generated preview'), el('strong', '', host.personaPreview.displayName), el('p', 'lp-copy', [host.personaPreview.pronouns, host.personaPreview.role].filter(Boolean).join(' · ')), el('p', 'lp-copy', host.personaPreview.identityBrief))
+    const generatedPhone = host.personaPreview.phoneProfile || { personality: '', appearance: '', textingStyle: '' }
+    preview.append(
+      el('div', 'lp-eyebrow', 'Generated phone profile'),
+      el('strong', '', host.personaPreview.displayName),
+      el('p', 'lp-copy', [host.personaPreview.pronouns, host.personaPreview.role].filter(Boolean).join(' · ')),
+      generatedPhone.personality ? el('p', 'lp-copy', `Personality: ${generatedPhone.personality}`) : el('span'),
+      generatedPhone.appearance ? el('p', 'lp-copy', `Appearance: ${generatedPhone.appearance}`) : el('span'),
+      generatedPhone.textingStyle ? el('p', 'lp-copy', `Texting: ${generatedPhone.textingStyle}`) : el('span'),
+    )
     const use = button('Use profile', 'lp-button'); use.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', { persona: host.personaPreview })); preview.appendChild(use); identity.appendChild(preview)
   }
   content.appendChild(identity)
