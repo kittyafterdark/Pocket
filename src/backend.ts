@@ -1348,7 +1348,18 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
 type NarrativeSeedVisibility = 'public' | 'scene' | 'private'
 type NarrativeSeedTtl = 'turn' | 'scene' | 'persistent'
 type NarrativeActorStatus = 'available' | 'busy' | 'away' | 'asleep' | 'in_scene' | 'unknown'
+type NarrativeTimelineScope = 'world' | 'actor'
 
+interface NarrativeSeedWeather {
+  condition: string
+  location: string
+  details: string
+}
+interface NarrativeSeedWorld {
+  setting: string
+  facts: string[]
+  weather: NarrativeSeedWeather | null
+}
 interface NarrativeSeedFact {
   text: string
   visibility: NarrativeSeedVisibility
@@ -1366,6 +1377,7 @@ interface NarrativeSeedActor {
   ttl: NarrativeSeedTtl
 }
 interface NarrativeSeedTimeline {
+  scope: NarrativeTimelineScope
   title: string
   description: string
   whenText: string
@@ -1376,16 +1388,17 @@ interface NarrativeSeedTimeline {
   knownBy: string[]
 }
 interface NarrativeSeedSnapshot {
-  version: 1
+  version: 3
   sourceKey: string
   sourceMessageIds: string[]
+  world: NarrativeSeedWorld
   facts: NarrativeSeedFact[]
   actors: NarrativeSeedActor[]
   timeline: NarrativeSeedTimeline[]
   updatedAt: string
 }
 
-const POCKET_CONTINUITY_SEED_VERSION = 1 as const
+const POCKET_CONTINUITY_SEED_VERSION = 3 as const
 const narrativeSeedFlights = new Map<string, Promise<NarrativeSeedSnapshot | null>>()
 
 function continuitySeedPath(chatId: string, characterId: string): string {
@@ -1403,18 +1416,41 @@ function seedTtl(value: unknown): NarrativeSeedTtl {
 }
 function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds: string[] = []): NarrativeSeedSnapshot {
   const raw = isRecord(value) ? value : {}
+  const rawWorld = isRecord(raw.world) ? raw.world : {}
+  const rawWeather = isRecord(rawWorld.weather) ? rawWorld.weather : null
+  const worldFacts = (Array.isArray(rawWorld.facts) ? rawWorld.facts : [])
+    .map((entry) => text(entry, 360))
+    .filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
+    .slice(0, 8)
+
+  const world: NarrativeSeedWorld = {
+    setting: text(rawWorld.setting, 360),
+    facts: worldFacts,
+    weather: rawWeather
+      ? {
+          condition: text(rawWeather.condition, 120),
+          location: text(rawWeather.location, 180),
+          details: text(rawWeather.details, 360),
+        }
+      : null,
+  }
+
   const facts: NarrativeSeedFact[] = (Array.isArray(raw.facts) ? raw.facts : []).slice(0, 10).flatMap((entry) => {
     if (!isRecord(entry)) return []
     const body = text(entry.text ?? entry.fact, 360)
-    if (!body) return []
+    const actors = seedStringList(entry.actors)
+    // Ambiguous actorless facts are intentionally dropped. World facts have an
+    // explicit home at world.facts; "forgot to scope it" never becomes global.
+    if (!body || !actors.length) return []
     return [{
       text: body,
       visibility: seedVisibility(entry.visibility),
       knownBy: seedStringList(entry.knownBy ?? entry.known_by),
-      actors: seedStringList(entry.actors),
+      actors,
       ttl: seedTtl(entry.ttl),
     }]
   })
+
   const rawActors = Array.isArray(raw.actors) ? raw.actors : Array.isArray(raw.actorUpdates) ? raw.actorUpdates : []
   const actors: NarrativeSeedActor[] = rawActors.slice(0, 12).flatMap((entry) => {
     if (!isRecord(entry)) return []
@@ -1433,27 +1469,35 @@ function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds
       ttl: seedTtl(entry.ttl),
     }]
   })
+
   const timeline: NarrativeSeedTimeline[] = (Array.isArray(raw.timeline) ? raw.timeline : []).slice(0, 6).flatMap((entry) => {
     if (!isRecord(entry)) return []
     const title = text(entry.title ?? entry.event, 180)
     if (!title) return []
+    const scope: NarrativeTimelineScope = entry.scope === 'world' ? 'world' : 'actor'
+    const actors = seedStringList(entry.actors, 8)
+    // Actor-scoped events without subjects are ambiguous and stay out.
+    if (scope === 'actor' && !actors.length) return []
     const whenKind: NarrativeSeedTimeline['whenKind'] =
       entry.whenKind === 'exact' || entry.whenKind === 'approximate' || entry.whenKind === 'relative' ? entry.whenKind : 'unscheduled'
     return [{
+      scope,
       title,
       description: text(entry.description, 500),
       whenText: text(entry.whenText ?? entry.when, 180) || 'Unscheduled',
       whenKind,
-      actors: seedStringList(entry.actors, 8),
+      actors: scope === 'world' ? [] : actors,
       completed: entry.completed === true,
       visibility: seedVisibility(entry.visibility),
       knownBy: seedStringList(entry.knownBy ?? entry.known_by),
     }]
   })
+
   return {
     version: POCKET_CONTINUITY_SEED_VERSION,
     sourceKey: text(raw.sourceKey, 1_600) || sourceKey,
     sourceMessageIds: seedStringList(raw.sourceMessageIds, 8).length ? seedStringList(raw.sourceMessageIds, 8) : sourceMessageIds.slice(-8),
+    world,
     facts,
     actors,
     timeline,
@@ -1463,11 +1507,27 @@ function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds
 function mergeNarrativeSeed(previous: NarrativeSeedSnapshot | null, fresh: NarrativeSeedSnapshot): NarrativeSeedSnapshot {
   const factMap = new Map<string, NarrativeSeedFact>()
   const actorMap = new Map<string, NarrativeSeedActor>()
+
   for (const entry of (previous?.facts || []).filter((item) => item.ttl !== 'turn')) factMap.set(entry.text.toLocaleLowerCase(), entry)
   for (const entry of fresh.facts) factMap.set(entry.text.toLocaleLowerCase(), entry)
   for (const entry of (previous?.actors || []).filter((item) => item.ttl !== 'turn')) actorMap.set(normalizeActorName(entry.name), entry)
   for (const entry of fresh.actors) actorMap.set(normalizeActorName(entry.name), entry)
-  return { ...fresh, facts: [...factMap.values()].slice(-12), actors: [...actorMap.values()].slice(-16) }
+
+  const previousWorldFacts = previous?.world?.facts || []
+  const worldFacts = [...previousWorldFacts, ...fresh.world.facts]
+    .filter((entry, index, all) => Boolean(entry) && all.findIndex((other) => other.toLocaleLowerCase() === entry.toLocaleLowerCase()) === index)
+    .slice(-10)
+
+  return {
+    ...fresh,
+    world: {
+      setting: fresh.world.setting || previous?.world?.setting || '',
+      facts: worldFacts,
+      weather: fresh.world.weather || previous?.world?.weather || null,
+    },
+    facts: [...factMap.values()].slice(-12),
+    actors: [...actorMap.values()].slice(-16),
+  }
 }
 function narrativeSeedSourceKey(messages: any[]): string {
   return messages.map((message, index) => {
@@ -1487,55 +1547,82 @@ function narrativeSeedContext(seed: NarrativeSeedSnapshot | null, speakerName = 
   const participants = new Set(participantNames.map(normalizeActorName).filter(Boolean))
   if (speaker) participants.add(speaker)
 
-  const actorRelevant = (actors: string[]): boolean => {
-    // actors: [] is reserved by the extractor for genuinely actor-neutral/world facts.
-    if (!actors.length) return true
-    return actors.some((name) => participants.has(normalizeActorName(name)))
-  }
+  const intersectsParticipants = (actors: string[]): boolean =>
+    actors.some((name) => participants.has(normalizeActorName(name)))
 
   const facts = seed.facts.filter((entry) => {
-    const visible = seedVisibleTo(entry, speakerName)
+    if (!intersectsParticipants(entry.actors)) return false
+    return seedVisibleTo(entry, speakerName)
       || Boolean(speaker && entry.actors.some((name) => normalizeActorName(name) === speaker))
-    return visible && actorRelevant(entry.actors)
   }).slice(-8)
 
   const actors = seed.actors.filter((entry) => {
-    const subjectIsParticipant = participants.has(normalizeActorName(entry.name))
-    if (!subjectIsParticipant) return false
+    if (!participants.has(normalizeActorName(entry.name))) return false
     return seedVisibleTo(entry, speakerName)
       || Boolean(speaker && normalizeActorName(entry.name) === speaker)
   }).slice(-8)
 
-  const timeline = seed.timeline.filter((entry) =>
-    seedVisibleTo(entry, speakerName) && actorRelevant(entry.actors)
-  ).slice(-4)
+  const timeline = seed.timeline.filter((entry) => {
+    if (!seedVisibleTo(entry, speakerName)) return false
+    return entry.scope === 'world' || intersectsParticipants(entry.actors)
+  }).slice(-4)
 
-  const lines = [
+  const worldLines = [
+    seed.world.setting ? `Setting: ${seed.world.setting}` : '',
+    ...seed.world.facts.map((entry) => `World fact: ${entry}`),
+    seed.world.weather?.condition
+      ? `Weather: ${seed.world.weather.condition}${seed.world.weather.location ? ` at ${seed.world.weather.location}` : ''}${seed.world.weather.details ? `; ${seed.world.weather.details}` : ''}`
+      : '',
+  ].filter(Boolean)
+
+  return [
+    'WORLD STATE — SHARED SETTING, NOT ACTOR ROUTING',
+    ...worldLines,
+    '',
     'CURRENT PHONE PARTICIPANTS ONLY: ' + participantNames.filter(Boolean).join(', '),
     'Actor-specific continuity about anyone outside this channel is intentionally omitted.',
-    ...facts.map((entry) => `Fact: ${entry.text}`),
+    ...facts.map((entry) => `Actor fact: ${entry.text}`),
     ...actors.map((entry) => `Actor status: ${entry.name} — ${entry.status}${entry.activity ? `; ${entry.activity}` : ''}${entry.location ? `; at ${entry.location}` : ''}`),
     ...timeline.map((entry) => `Timeline: ${entry.whenText} — ${entry.title}`),
-  ]
-  return lines.join('\n').slice(0, 2_400)
+  ].filter((entry, index, all) => Boolean(entry) || (index > 0 && index < all.length - 1)).join('\n').slice(0, 2_800)
 }
 function seedActorContactIds(state: PhoneState, names: string[]): string[] {
   const wanted = new Set(names.map(normalizeActorName).filter(Boolean))
   return state.contacts.filter((contact) => wanted.has(normalizeActorName(contact.name))).map((contact) => contact.id).slice(0, 8)
 }
-function applyNarrativeSeedTimeline(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
+function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
   let changed = false
+
+  const weather = seed.world.weather
+  if (weather) {
+    const nextCondition = weather.condition || state.weather.condition
+    const nextLocation = weather.location || state.weather.location
+    const nextDetails = weather.details || state.weather.details
+    if (state.weather.condition !== nextCondition || state.weather.location !== nextLocation || state.weather.details !== nextDetails) {
+      state.weather.condition = nextCondition
+      state.weather.location = nextLocation
+      state.weather.details = nextDetails
+      state.weather.updatedAt = seed.updatedAt
+      changed = true
+    }
+  }
+
   for (const item of seed.timeline) {
-    const actorContactIds = seedActorContactIds(state, item.actors)
+    const actorContactIds = item.scope === 'actor' ? seedActorContactIds(state, item.actors) : []
     const existing = state.events.find((event) =>
       event.lane === 'Continuity'
       && event.title.trim().toLocaleLowerCase() === item.title.trim().toLocaleLowerCase()
       && event.whenText.trim().toLocaleLowerCase() === item.whenText.trim().toLocaleLowerCase()
     )
+
     if (existing) {
       const nextDescription = item.description || existing.description
       const nextActors = actorContactIds.length ? actorContactIds : existing.actorContactIds
-      if (existing.description !== nextDescription || JSON.stringify(existing.actorContactIds || []) !== JSON.stringify(nextActors || []) || existing.completed !== item.completed) {
+      if (
+        existing.description !== nextDescription
+        || JSON.stringify(existing.actorContactIds || []) !== JSON.stringify(nextActors || [])
+        || existing.completed !== item.completed
+      ) {
         existing.description = nextDescription
         existing.actorContactIds = nextActors
         existing.completed = item.completed
@@ -1543,6 +1630,7 @@ function applyNarrativeSeedTimeline(state: PhoneState, seed: NarrativeSeedSnapsh
       }
       continue
     }
+
     const firstContact = actorContactIds.length ? state.contacts.find((contact) => contact.id === actorContactIds[0]) : undefined
     const start = state.roleplayNow || seed.updatedAt
     state.events.push({
@@ -1561,12 +1649,18 @@ function applyNarrativeSeedTimeline(state: PhoneState, seed: NarrativeSeedSnapsh
     })
     changed = true
   }
+
   if (changed) state.events = state.events.slice(-MAX_EVENTS)
   return changed
 }
 async function loadNarrativeSeed(chatId: string, characterId: string, userId?: string): Promise<NarrativeSeedSnapshot | null> {
   const raw = await spindle.userStorage.getJson<unknown>(continuitySeedPath(chatId, characterId), { fallback: null, userId })
-  return isRecord(raw) ? normalizeNarrativeSeed(raw) : null
+  if (!isRecord(raw)) return null
+  if (raw.version !== POCKET_CONTINUITY_SEED_VERSION) {
+    spindle.log.info(`Pocket continuity seed cache invalidated (stored v${String(raw.version ?? 'legacy')} → world-seed v${POCKET_CONTINUITY_SEED_VERSION}).`)
+    return null
+  }
+  return normalizeNarrativeSeed(raw)
 }
 async function refreshNarrativeSeed(chatId: string, characterId: string, userId?: string): Promise<NarrativeSeedSnapshot | null> {
   if (!chatId || chatId === '_lobby' || !spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) {
@@ -1584,7 +1678,7 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
       .slice(-4)
     if (!sourceMessages.length) return loadNarrativeSeed(chatId, characterId, userId)
 
-    const sourceKey = narrativeSeedSourceKey(sourceMessages)
+    const sourceKey = `v${POCKET_CONTINUITY_SEED_VERSION}:${narrativeSeedSourceKey(sourceMessages)}`
     const sourceMessageIds = sourceMessages.map((message) => text(message?.id, 180)).filter(Boolean).slice(-8)
     const previous = await loadNarrativeSeed(chatId, characterId, userId)
     if (previous?.sourceKey === sourceKey) return previous
@@ -1606,27 +1700,31 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
       messages: [
         {
           role: 'system',
-          content: `Extract a small structured continuity delta from recent fictional roleplay prose. This is NOT a phone conversation and nobody in the prose becomes a phone recipient.
+          content: `Extract a small structured RP WORLD STATE delta from recent fictional roleplay prose. This is NOT a phone conversation and nobody in the prose becomes a phone recipient.
 
 Return strict JSON only:
 {
-  "facts":[{"text":"short factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["exact actor names"],"ttl":"turn|scene|persistent"}],
+  "world":{
+    "setting":"short shared setting/location/era if explicitly established, else empty",
+    "facts":["genuinely actor-neutral shared world/group facts only"],
+    "weather":{"condition":"short condition","location":"where it applies","details":"short atmospheric detail"} | null
+  },
+  "facts":[{"text":"actor-specific factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["REQUIRED subject actor names"],"ttl":"turn|scene|persistent"}],
   "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
-  "timeline":[{"title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["exact actor names"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}]
+  "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}]
 }
 
 Rules:
-- Extract only facts supported by the supplied prose.
-- Do not invent recipients, phone conversations, relationships, or off-screen knowledge.
-- public = reasonably shared/cast-visible information such as an announced group event, public schedule, or common plan.
-- scene = information available to explicitly present witnesses; list those witnesses in knownBy.
-- private is the default for personal/internal/private information.
+- Extract only facts supported by the supplied prose. Do not invent recipients, phone conversations, relationships, weather, or off-screen knowledge.
+- WORLD means genuinely shared setting state that is not primarily ABOUT one named actor. Examples: "The kingdom requires a seasonal tribute", "Class 1-A is holding a party tonight", "A storm is hitting the city".
+- A named actor doing/feeling/planning/having something is NEVER a world fact. Put it in facts/actors with that actor explicitly listed.
+- weather is null unless weather/atmosphere is actually established by the prose. Never invent temperature.
+- facts is actor-specific only. Every facts entry MUST have at least one subject in actors.
+- timeline scope=world only for group/world events. If an event concerns a named actor (Shoto's press conference, Bakugo's cooking shift, Mina's arrival), scope=actor and actors MUST identify them.
+- public means reasonably shared/cast-visible information. scene means explicitly witnessed; list witnesses in knownBy. private is the default for personal/internal information.
 - knownBy must be conservative. Never assume everyone knows a private fact.
-- Actor status describes world/physical state only. busy does NOT mean unable to text.
-- Timeline contains only appointments, plans, deadlines, arrivals/departures, scheduled beats, or major current events.
-- CRITICAL ACTOR SCOPING: whenever a fact or timeline item is about, performed by, scheduled for, or otherwise specifically concerns a named actor, list that actor in its actors array.
-- Use actors: [] ONLY for genuinely actor-neutral world/group facts. "Shoto has a patrol", "Bakugo is cooking", and "Mina is arriving" MUST NOT have an empty actors array.
-- Prefer 0–6 facts, 0–8 actor updates, and 0–4 timeline rows.
+- Actor status is world/physical state only. busy does NOT mean unable to text.
+- Prefer 0–6 world facts, 0–6 actor facts, 0–8 actor updates, and 0–4 timeline rows.
 - Use exact names from KNOWN ACTORS when possible.`,
         },
         {
@@ -1649,7 +1747,7 @@ ${recentNarrative}`,
 
     await withStateLock(stateKey(chatId, characterId), async () => {
       const latest = await loadState(chatId, characterId, userId)
-      if (!applyNarrativeSeedTimeline(latest, seed)) return
+      if (!applyNarrativeSeedState(latest, seed)) return
       await saveState(latest, userId)
       await sendState(latest, userId, 'continuity_seed')
     })
