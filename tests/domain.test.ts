@@ -14,7 +14,7 @@ import { contactFromNpcBank, findNpcBankMatch, normalizeNpcBank, upsertNpcBankFr
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
-import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, relayIdFromMessages } from '../src/backend/continuity.js'
+import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayIdFromMessages } from '../src/backend/continuity.js'
 import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
@@ -82,6 +82,38 @@ describe('conversation channel continuity', () => {
     expect(relayIdFromMessages([{ sourceMessageMetadata: { pocketContinuation: true, pocketRelayId: 'r1' } }])).toBe('r1')
     state.relays[0].status = 'consumed'
     expect(pendingRelayContext(state, { relayId: 'r1' })).toBe('')
+  })
+
+  test('keeps a completed handoff as shared RP history after the one-shot relay is consumed', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'shoto', name: 'Shoto Todoroki' }] }, { characterId: 'active', characterName: 'Shoto Todoroki', now, makeId: (prefix) => `${prefix}-id` })
+    const conversation = ensureDirectConversation(collections, 'shoto', now, (prefix) => `${prefix}-shoto`)
+    conversation.messages.push(
+      { id: 'm1', sender: 'persona', senderName: 'Katsuki Bakugo', senderAccent: '', text: "I'm fucking dead.", createdAt: now, read: true, status: 'sent' },
+      { id: 'm2', sender: 'persona', senderName: 'Katsuki Bakugo', senderAccent: '', text: "I'm close, ten minutes.", createdAt: now, read: true, status: 'sent' },
+      { id: 'm3', sender: 'contact', senderContactId: 'shoto', senderName: 'Shoto Todoroki', senderAccent: '', text: "Understood. I'll have the food ready.", createdAt: now, read: true, status: 'read' },
+    )
+    const snapshot = conversationTailSnapshot(conversation, now)
+    const state = {
+      pocketPersona: { displayName: 'Katsuki Bakugo' },
+      contacts: collections.contacts,
+      relays: [{
+        id: 'relay-shoto', chatId: 'chat', characterId: 'active', contactId: 'shoto', conversationId: conversation.id,
+        reason: 'continued_in_person', actorState: 'continued_in_person', conversationTail: snapshot, latestExchange: snapshot.text,
+        timelineEventId: 'event-shoto', createdAt: now, status: 'consumed', consumedAt: now, consumedMessageId: 'rp-1',
+        continuation: { state: 'completed', generationId: 'gen-1', generationCompletedAt: now },
+      }],
+    } as unknown as PhoneState
+
+    expect(pendingRelayContext(state, { relayId: 'relay-shoto' })).toBe('')
+    const persisted = persistentHandoffContext(state)
+    expect(persisted).toContain('POCKET HANDOFF MEMORY — ESTABLISHED SHARED HISTORY')
+    expect(persisted).toContain("Katsuki Bakugo: I'm fucking dead.")
+    expect(persisted).toContain("Shoto Todoroki: Understood. I'll have the food ready.")
+    expect(persisted).toContain('Both participants may remember and act on what was directly said here')
+    expect(persisted).toContain('current roleplay transcript is newer authority for present location')
+    expect(persisted).toContain('Do not replay, resend, or re-enact these phone messages')
+    expect(persisted.length).toBeLessThanOrEqual(2_600)
   })
 
   test('serializes one-shot phone context without implying scene presence', () => {

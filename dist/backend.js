@@ -2053,6 +2053,33 @@ ${relay.conversationTail.text}`,
 
 `).slice(0, maxChars);
 }
+function persistentHandoffContext(state, options = {}) {
+  const maxChars = Math.max(700, Math.min(4000, options.maxChars || 2600));
+  const relay = [...state.relays].reverse().find((entry) => entry.status === "consumed" && entry.continuation.state === "completed" && Boolean(entry.conversationTail.text.trim()));
+  if (!relay)
+    return "";
+  const contact = state.contacts.find((entry) => entry.id === relay.contactId);
+  const actorName = contact?.name || relay.contactId;
+  const personaName = state.pocketPersona.displayName || "the current Persona";
+  const exchange = relay.conversationTail.text.trim();
+  return [
+    "=== POCKET HANDOFF MEMORY \u2014 ESTABLISHED SHARED HISTORY ===",
+    `sourceRelayId: ${relay.id}`,
+    `participants: ${actorName} + ${personaName}`,
+    "",
+    `The following phone exchange happened immediately before a prior transition into the physical scene. It is no longer a live phone channel, but it remains established shared history between ${actorName} and ${personaName}.`,
+    "Both participants may remember and act on what was directly said here on later roleplay turns.",
+    "Do not make either participant forget this exchange merely because the one-shot handoff relay has already been consumed.",
+    "The current roleplay transcript is newer authority for present location, timing, and physical actions. Transitional statements such as \u201Cten minutes away\u201D are historical once the scene has advanced.",
+    "",
+    `Persisted handoff exchange:
+${exchange}`,
+    "",
+    "This block preserves prior knowledge and conversation history only. Do not replay, resend, or re-enact these phone messages as new messages.",
+    "=== END POCKET HANDOFF MEMORY ==="
+  ].join(`
+`).slice(0, maxChars);
+}
 function relayIdFromMessages(messages) {
   for (const message of [...messages].reverse()) {
     const metadata = message.sourceMessageMetadata || message.__sourceMessageMetadata;
@@ -2312,6 +2339,7 @@ var PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-world
 Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt.
 
 When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Normal prose may narrate the physical act of using the phone; Pocket owns the persisted message payload.
+A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
 
 For a new direct message, use action="message" with payload containing channel="dm", speaker (or sender="persona" for the user's persona), target or conversationId, and text. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
@@ -6854,11 +6882,16 @@ function ensureInterceptor() {
       const active = state.relays.filter((entry) => entry.status === "pending" && (entry.continuation.state === "launching" || entry.continuation.state === "accepted" || entry.continuation.state === "started"));
       const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : "");
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3600 });
+      const handoffMemoryBlock = targetRelayId ? "" : persistentHandoffContext(state, { maxChars: 2600 });
       const generic = { role: "system", content: `${PHONE_GUIDANCE}
 Current Pocket snapshot:
 ${projectPhoneContext(state)}` };
       const injectedMessages = [...messages, generic];
       const breakdown = [{ messageIndex: messages.length, name: "Pocket memory" }];
+      if (handoffMemoryBlock) {
+        injectedMessages.push({ role: "system", content: handoffMemoryBlock });
+        breakdown.push({ messageIndex: injectedMessages.length - 1, name: "Pocket handoff memory \u2014 established history" });
+      }
       if (relayBlock && targetRelayId) {
         const injectedAt = nowIso();
         let receiptStored = false;

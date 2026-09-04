@@ -103,6 +103,40 @@ export function pendingRelayContext(state: PhoneState, options: { relayId?: stri
   }).join('\n\n').slice(0, maxChars)
 }
 
+export function persistentHandoffContext(
+  state: PhoneState,
+  options: { maxChars?: number } = {},
+): string {
+  const maxChars = Math.max(700, Math.min(4_000, options.maxChars || 2_600))
+  const relay = [...state.relays].reverse().find((entry) =>
+    entry.status === 'consumed'
+    && entry.continuation.state === 'completed'
+    && Boolean(entry.conversationTail.text.trim())
+  )
+  if (!relay) return ''
+
+  const contact = state.contacts.find((entry) => entry.id === relay.contactId)
+  const actorName = contact?.name || relay.contactId
+  const personaName = state.pocketPersona.displayName || 'the current Persona'
+  const exchange = relay.conversationTail.text.trim()
+
+  return [
+    '=== POCKET HANDOFF MEMORY — ESTABLISHED SHARED HISTORY ===',
+    `sourceRelayId: ${relay.id}`,
+    `participants: ${actorName} + ${personaName}`,
+    '',
+    `The following phone exchange happened immediately before a prior transition into the physical scene. It is no longer a live phone channel, but it remains established shared history between ${actorName} and ${personaName}.`,
+    'Both participants may remember and act on what was directly said here on later roleplay turns.',
+    'Do not make either participant forget this exchange merely because the one-shot handoff relay has already been consumed.',
+    'The current roleplay transcript is newer authority for present location, timing, and physical actions. Transitional statements such as “ten minutes away” are historical once the scene has advanced.',
+    '',
+    `Persisted handoff exchange:\n${exchange}`,
+    '',
+    'This block preserves prior knowledge and conversation history only. Do not replay, resend, or re-enact these phone messages as new messages.',
+    '=== END POCKET HANDOFF MEMORY ===',
+  ].join('\n').slice(0, maxChars)
+}
+
 export function relayIdFromMessages(messages: ReadonlyArray<Record<string, unknown>>): string {
   for (const message of [...messages].reverse()) {
     const metadata = message.sourceMessageMetadata || message.__sourceMessageMetadata

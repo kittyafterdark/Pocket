@@ -45,7 +45,7 @@ import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/sch
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
-import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
+import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
 import { assertPocketImageResolved, resolvePocketImageSource } from './backend/image-sources.js'
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
 
@@ -77,6 +77,7 @@ const PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-wor
 Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt.
 
 When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Normal prose may narrate the physical act of using the phone; Pocket owns the persisted message payload.
+A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
 
 For a new direct message, use action="message" with payload containing channel="dm", speaker (or sender="persona" for the user's persona), target or conversationId, and text. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
@@ -4234,9 +4235,14 @@ function ensureInterceptor(): void {
       // an explicit, unrelated generation id must never inherit a Pocket relay.
       const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : '')
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3_600 })
+      const handoffMemoryBlock = targetRelayId ? '' : persistentHandoffContext(state, { maxChars: 2_600 })
       const generic = { role: 'system' as const, content: `${PHONE_GUIDANCE}\nCurrent Pocket snapshot:\n${projectPhoneContext(state)}` }
       const injectedMessages = [...messages, generic]
       const breakdown = [{ messageIndex: messages.length, name: 'Pocket memory' }]
+      if (handoffMemoryBlock) {
+        injectedMessages.push({ role: 'system' as const, content: handoffMemoryBlock })
+        breakdown.push({ messageIndex: injectedMessages.length - 1, name: 'Pocket handoff memory — established history' })
+      }
       if (relayBlock && targetRelayId) {
         const injectedAt = nowIso()
         let receiptStored = false
