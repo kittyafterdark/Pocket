@@ -31,6 +31,8 @@ export interface MessagesViewHost {
   continueRelay(): void
   openRoleplay(): void
   openTimeline(eventId: string): void
+  scheduleEventSuggestion(conversationId: string, messageId: string): void
+  declineEventSuggestion(conversationId: string, messageId: string): void
   showReferenceSheet(conversationId: string): void
   cancelReference(referenceId: string): void
   rearmReference(referenceId: string): void
@@ -406,6 +408,33 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
       tools.append(retry, generationInfo)
       bubble.appendChild(tools)
+    }
+    if (message.eventSuggestion) {
+      const suggestion = message.eventSuggestion
+      const suggestionBox = el('div', 'lp-event-suggestion-actions')
+      suggestionBox.style.display = 'flex'
+      suggestionBox.style.gap = '6px'
+      suggestionBox.style.flexWrap = 'wrap'
+      suggestionBox.style.marginTop = '7px'
+      suggestionBox.style.width = '100%'
+
+      if (suggestion.status === 'pending') {
+        const schedule = button('! Schedule event', 'lp-button lp-button-quiet')
+        schedule.addEventListener('click', () => host.scheduleEventSuggestion(conversation.id, message.id))
+        const decline = button('× Decline', 'lp-button lp-button-quiet')
+        decline.addEventListener('click', () => host.declineEventSuggestion(conversation.id, message.id))
+        suggestionBox.append(schedule, decline)
+      } else if (suggestion.status === 'scheduled' && suggestion.scheduledEventId) {
+        const scheduled = button('✓ Scheduled · open', 'lp-button lp-button-quiet')
+        scheduled.addEventListener('click', () => host.openTimeline(suggestion.scheduledEventId!))
+        suggestionBox.appendChild(scheduled)
+      } else {
+        const declined = button('× Declined', 'lp-button lp-button-quiet')
+        declined.disabled = true
+        suggestionBox.appendChild(declined)
+      }
+
+      bubble.appendChild(suggestionBox)
     }
     if (conversation.kind === 'group' && message.sender === 'contact' && senderActor) {
       const row = el('div', 'lp-group-message')

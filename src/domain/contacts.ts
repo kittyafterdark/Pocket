@@ -1,4 +1,5 @@
 import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
+import { normalizeEventSuggestion } from './scheduler.js'
 
 const MAX_CONTACTS = 80
 const MAX_CONVERSATIONS = 80
@@ -168,6 +169,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     status,
     imageId: clean(value.imageId, 160) || undefined,
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
+    eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     generation: generation && clean(generation.requestId, 180) ? {
       requestId: clean(generation.requestId, 180),
       retryOf: clean(generation.retryOf, 180) || undefined,

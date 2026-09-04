@@ -323,6 +323,9 @@ function contactAccent(contact) {
 }
 
 // src/domain/actors.ts
+function normalizeActorName(value) {
+  return typeof value === "string" ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase().slice(0, 160) : "";
+}
 function conversationActorIds(conversation) {
   return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds;
 }
@@ -1996,6 +1999,31 @@ function renderMessagesView(host) {
       tools.append(retry, generationInfo);
       bubble.appendChild(tools);
     }
+    if (message.eventSuggestion) {
+      const suggestion = message.eventSuggestion;
+      const suggestionBox = el("div", "lp-event-suggestion-actions");
+      suggestionBox.style.display = "flex";
+      suggestionBox.style.gap = "6px";
+      suggestionBox.style.flexWrap = "wrap";
+      suggestionBox.style.marginTop = "7px";
+      suggestionBox.style.width = "100%";
+      if (suggestion.status === "pending") {
+        const schedule = button("! Schedule event", "lp-button lp-button-quiet");
+        schedule.addEventListener("click", () => host.scheduleEventSuggestion(conversation.id, message.id));
+        const decline = button("× Decline", "lp-button lp-button-quiet");
+        decline.addEventListener("click", () => host.declineEventSuggestion(conversation.id, message.id));
+        suggestionBox.append(schedule, decline);
+      } else if (suggestion.status === "scheduled" && suggestion.scheduledEventId) {
+        const scheduled = button("✓ Scheduled · open", "lp-button lp-button-quiet");
+        scheduled.addEventListener("click", () => host.openTimeline(suggestion.scheduledEventId));
+        suggestionBox.appendChild(scheduled);
+      } else {
+        const declined = button("× Declined", "lp-button lp-button-quiet");
+        declined.disabled = true;
+        suggestionBox.appendChild(declined);
+      }
+      bubble.appendChild(suggestionBox);
+    }
     if (conversation.kind === "group" && message.sender === "contact" && senderActor) {
       const row2 = el("div", "lp-group-message");
       row2.style.setProperty("--message-accent", resolvedAccent);
@@ -2844,6 +2872,7 @@ class PocketController {
   selectedMessageId = "";
   selectedNoteId = "";
   selectedEventId = "";
+  pendingEventSuggestion = null;
   selectedTrackerId = "";
   selectedGalleryImageId = "";
   selectedSettingsSection = "";
@@ -4251,6 +4280,8 @@ class PocketController {
       },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: "calendar", eventId }),
+      scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
+      declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
       cancelReference: (referenceId) => this.send("lumiphone:cancel_reference", { referenceId }),
       rearmReference: (referenceId) => this.send("lumiphone:rearm_reference", { referenceId }),
@@ -4268,6 +4299,33 @@ class PocketController {
       },
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back()
+    });
+  }
+  scheduleEventSuggestion(conversationId, messageId) {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
+    const message = conversation?.messages.find((entry) => entry.id === messageId);
+    const suggestion = message?.eventSuggestion;
+    if (!conversation || !message || !suggestion || suggestion.status !== "pending")
+      return;
+    this.pendingEventSuggestion = { conversationId, messageId, suggestion: structuredClone(suggestion) };
+    this.openPocket({ app: "calendar", eventId: "__new__" });
+  }
+  declineEventSuggestion(conversationId, messageId) {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
+    const message = conversation?.messages.find((entry) => entry.id === messageId);
+    const suggestion = message?.eventSuggestion;
+    if (!suggestion || suggestion.status !== "pending")
+      return;
+    this.send("lumiphone:decline_event_suggestion", {
+      conversationId,
+      messageId,
+      suggestionId: suggestion.id
+    });
+    requestAnimationFrame(() => {
+      const composer = this.screen.querySelector(`[data-pocket-composer="${CSS.escape(conversationId)}"]`);
+      composer?.focus({ preventScroll: false });
+      composer?.classList.add("lp-scheduler-composer-focus");
+      window.setTimeout(() => composer?.classList.remove("lp-scheduler-composer-focus"), 900);
     });
   }
   showMessageGenerationInfo(message) {
@@ -4929,20 +4987,22 @@ ${body}`;
   }
   renderEventEditor(event) {
     const { page, content } = this.page(event ? "Edit Event" : "New Event", "Roleplay timeline", { label: "Save", callback: () => save() });
-    const title = this.field("Title", event?.title || "");
-    const lane = this.field("Timeline lane", event?.lane || "Main timeline");
+    const schedulerSeed = !event ? this.pendingEventSuggestion : null;
+    const suggestion = schedulerSeed?.suggestion || null;
+    const title = this.field("Title", event?.title || suggestion?.title || "");
+    const lane = this.field("Timeline lane", event?.lane || (suggestion ? "Plans" : "Main timeline"));
     const whenKindLabel = el("label", "lp-label", "Time precision");
     const whenKind = el("select", "lp-select");
     for (const [value, label] of [["exact", "Exact date/time"], ["approximate", "Approximate"], ["relative", "Relative to story"], ["unscheduled", "Unscheduled"]]) {
       const option = el("option", "", label);
       option.value = value;
-      option.selected = (event?.whenKind || "exact") === value;
+      option.selected = (event?.whenKind || suggestion?.whenKind || "exact") === value;
       whenKind.appendChild(option);
     }
     whenKindLabel.appendChild(whenKind);
-    const whenText = this.field("Timeline label", event?.whenText || (event ? formatDate(event.start, true) : ""));
-    const start = this.field("Start", event ? dateTimeLocal(event.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
-    const end = this.field("End", event ? dateTimeLocal(event.end) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
+    const whenText = this.field("Timeline label", event?.whenText || suggestion?.whenText || (event ? formatDate(event.start, true) : ""));
+    const start = this.field("Start", event ? dateTimeLocal(event.start) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
+    const end = this.field("End", event ? dateTimeLocal(event.end) : suggestion?.end ? dateTimeLocal(suggestion.end) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
     const exactTiming = el("div", "lp-settings-section");
     exactTiming.style.minWidth = "0";
     exactTiming.style.width = "100%";
@@ -4955,14 +5015,42 @@ ${body}`;
     syncTimingPrecision();
     const description = el("textarea", "lp-textarea");
     description.placeholder = "What happens?";
-    description.value = event?.description || "";
+    description.value = event?.description || suggestion?.description || "";
+    const selectedParticipantNames = new Set(event?.participantNames || suggestion?.participantNames || []);
+    const participants = el("section", "lp-card lp-settings-section");
+    participants.appendChild(el("div", "lp-eyebrow", "Participants"));
+    const picker = el("div", "lp-contact-checklist lp-participant-picker");
+    const candidateNames = [
+      this.state.pocketPersona.displayName,
+      ...listPocketActors(this.state).map((actor) => actor.name),
+      ...suggestion?.participantNames || [],
+      ...event?.participantNames || []
+    ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index);
+    for (const name of candidateNames) {
+      const row2 = el("label", "lp-contact-check");
+      const input = el("input");
+      input.type = "checkbox";
+      input.checked = [...selectedParticipantNames].some((entry) => normalizeActorName(entry) === normalizeActorName(name));
+      input.addEventListener("change", () => {
+        for (const existing of [...selectedParticipantNames]) {
+          if (normalizeActorName(existing) === normalizeActorName(name))
+            selectedParticipantNames.delete(existing);
+        }
+        if (input.checked)
+          selectedParticipantNames.add(name);
+      });
+      const known = normalizeActorName(name) === normalizeActorName(this.state.pocketPersona.displayName) || listPocketActors(this.state).some((actor) => normalizeActorName(actor.name) === normalizeActorName(name));
+      row2.append(input, el("span", "lp-grow", name), el("span", "lp-copy", known ? "Known actor" : "Name-only · profile not required"));
+      picker.appendChild(row2);
+    }
+    participants.appendChild(picker);
     const completed = el("input");
     completed.type = "checkbox";
     completed.checked = event?.completed || false;
     const completeRow = el("label", "lp-card lp-row-between");
     completeRow.append(el("span", "lp-title", "Completed"), completed);
-    content.append(title.label, lane.label, whenKindLabel, whenText.label, exactTiming, description, completeRow);
-    if (event?.kind === "phone-handoff" && event.source) {
+    content.append(title.label, lane.label, whenKindLabel, whenText.label, exactTiming, description, participants, completeRow);
+    if (event?.source) {
       const source = button("Open source conversation", "lp-button lp-button-quiet");
       source.addEventListener("click", () => this.openPocket({ app: "messages", conversationId: event.source.conversationId, messageId: event.source.messageId }));
       content.appendChild(source);
@@ -4979,8 +5067,13 @@ ${body}`;
         end: whenKind.value === "exact" ? Number.isNaN(endDate.getTime()) ? this.state.roleplayNow : endDate.toISOString() : event?.end || event?.start || this.state.roleplayNow,
         whenKind: whenKind.value,
         whenText: inputValue(whenText.input),
-        completed: completed.checked
+        completed: completed.checked,
+        participants: [...selectedParticipantNames],
+        sourceConversationId: event?.source?.conversationId || schedulerSeed?.conversationId,
+        sourceMessageId: event?.source?.messageId || schedulerSeed?.messageId,
+        sourceSuggestionId: event?.source?.suggestionId || schedulerSeed?.suggestion.id
       } });
+      this.pendingEventSuggestion = null;
       this.back();
     };
     if (event) {

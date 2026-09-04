@@ -12,6 +12,7 @@ import type {
   PocketOperationProgress,
   PocketContactSourceOption,
   PocketContactDraft,
+  PhoneEventSuggestion,
   PocketNpcBankEntry,
   PocketActivity,
   PocketRoute,
@@ -23,7 +24,7 @@ import type {
 } from '../types.js'
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
-import { conversationActorIds, resolvePocketActor } from '../domain/actors.js'
+import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
 import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
@@ -141,6 +142,7 @@ class PocketController {
   private selectedMessageId = ''
   private selectedNoteId = ''
   private selectedEventId = ''
+  private pendingEventSuggestion: { conversationId: string; messageId: string; suggestion: PhoneEventSuggestion } | null = null
   private selectedTrackerId = ''
   private selectedGalleryImageId = ''
   private selectedSettingsSection = ''
@@ -1449,6 +1451,8 @@ class PocketController {
       continueRelay: () => { this.send('lumiphone:continue_relay', { conversationId: this.selectedConversationId }) },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
+      scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
+      declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
       cancelReference: (referenceId) => this.send('lumiphone:cancel_reference', { referenceId }),
       rearmReference: (referenceId) => this.send('lumiphone:rearm_reference', { referenceId }),
@@ -1464,6 +1468,33 @@ class PocketController {
       },
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back(),
+    })
+  }
+
+  private scheduleEventSuggestion(conversationId: string, messageId: string): void {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId)
+    const message = conversation?.messages.find((entry) => entry.id === messageId)
+    const suggestion = message?.eventSuggestion
+    if (!conversation || !message || !suggestion || suggestion.status !== 'pending') return
+    this.pendingEventSuggestion = { conversationId, messageId, suggestion: structuredClone(suggestion) }
+    this.openPocket({ app: 'calendar', eventId: '__new__' })
+  }
+
+  private declineEventSuggestion(conversationId: string, messageId: string): void {
+    const conversation = this.state?.conversations.find((entry) => entry.id === conversationId)
+    const message = conversation?.messages.find((entry) => entry.id === messageId)
+    const suggestion = message?.eventSuggestion
+    if (!suggestion || suggestion.status !== 'pending') return
+    this.send('lumiphone:decline_event_suggestion', {
+      conversationId,
+      messageId,
+      suggestionId: suggestion.id,
+    })
+    requestAnimationFrame(() => {
+      const composer = this.screen.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(conversationId)}"]`)
+      composer?.focus({ preventScroll: false })
+      composer?.classList.add('lp-scheduler-composer-focus')
+      window.setTimeout(() => composer?.classList.remove('lp-scheduler-composer-focus'), 900)
     })
   }
 
@@ -2075,20 +2106,22 @@ class PocketController {
 
   private renderEventEditor(event: CalendarEvent | null): HTMLDivElement {
     const { page, content } = this.page(event ? 'Edit Event' : 'New Event', 'Roleplay timeline', { label: 'Save', callback: () => save() })
-    const title = this.field('Title', event?.title || '')
-    const lane = this.field('Timeline lane', event?.lane || 'Main timeline')
+    const schedulerSeed = !event ? this.pendingEventSuggestion : null
+    const suggestion = schedulerSeed?.suggestion || null
+    const title = this.field('Title', event?.title || suggestion?.title || '')
+    const lane = this.field('Timeline lane', event?.lane || (suggestion ? 'Plans' : 'Main timeline'))
     const whenKindLabel = el('label', 'lp-label', 'Time precision')
     const whenKind = el('select', 'lp-select')
     for (const [value, label] of [['exact', 'Exact date/time'], ['approximate', 'Approximate'], ['relative', 'Relative to story'], ['unscheduled', 'Unscheduled']] as const) {
       const option = el('option', '', label)
       option.value = value
-      option.selected = (event?.whenKind || 'exact') === value
+      option.selected = (event?.whenKind || suggestion?.whenKind || 'exact') === value
       whenKind.appendChild(option)
     }
     whenKindLabel.appendChild(whenKind)
-    const whenText = this.field('Timeline label', event?.whenText || (event ? formatDate(event.start, true) : ''))
-    const start = this.field('Start', event ? dateTimeLocal(event.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
-    const end = this.field('End', event ? dateTimeLocal(event.end) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
+    const whenText = this.field('Timeline label', event?.whenText || suggestion?.whenText || (event ? formatDate(event.start, true) : ''))
+    const start = this.field('Start', event ? dateTimeLocal(event.start) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
+    const end = this.field('End', event ? dateTimeLocal(event.end) : suggestion?.end ? dateTimeLocal(suggestion.end) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
     const exactTiming = el('div', 'lp-settings-section')
     exactTiming.style.minWidth = '0'
     exactTiming.style.width = '100%'
@@ -2103,14 +2136,43 @@ class PocketController {
     syncTimingPrecision()
     const description = el('textarea', 'lp-textarea')
     description.placeholder = 'What happens?'
-    description.value = event?.description || ''
+    description.value = event?.description || suggestion?.description || ''
+    const selectedParticipantNames = new Set<string>(event?.participantNames || suggestion?.participantNames || [])
+    const participants = el('section', 'lp-card lp-settings-section')
+    participants.appendChild(el('div', 'lp-eyebrow', 'Participants'))
+    const picker = el('div', 'lp-contact-checklist lp-participant-picker')
+    const candidateNames = [
+      this.state!.pocketPersona.displayName,
+      ...listPocketActors(this.state!).map((actor) => actor.name),
+      ...(suggestion?.participantNames || []),
+      ...(event?.participantNames || []),
+    ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index)
+
+    for (const name of candidateNames) {
+      const row = el('label', 'lp-contact-check')
+      const input = el('input')
+      input.type = 'checkbox'
+      input.checked = [...selectedParticipantNames].some((entry) => normalizeActorName(entry) === normalizeActorName(name))
+      input.addEventListener('change', () => {
+        for (const existing of [...selectedParticipantNames]) {
+          if (normalizeActorName(existing) === normalizeActorName(name)) selectedParticipantNames.delete(existing)
+        }
+        if (input.checked) selectedParticipantNames.add(name)
+      })
+      const known = normalizeActorName(name) === normalizeActorName(this.state!.pocketPersona.displayName)
+        || listPocketActors(this.state!).some((actor) => normalizeActorName(actor.name) === normalizeActorName(name))
+      row.append(input, el('span', 'lp-grow', name), el('span', 'lp-copy', known ? 'Known actor' : 'Name-only · profile not required'))
+      picker.appendChild(row)
+    }
+    participants.appendChild(picker)
+
     const completed = el('input')
     completed.type = 'checkbox'
     completed.checked = event?.completed || false
     const completeRow = el('label', 'lp-card lp-row-between')
     completeRow.append(el('span', 'lp-title', 'Completed'), completed)
-    content.append(title.label, lane.label, whenKindLabel, whenText.label, exactTiming, description, completeRow)
-    if (event?.kind === 'phone-handoff' && event.source) {
+    content.append(title.label, lane.label, whenKindLabel, whenText.label, exactTiming, description, participants, completeRow)
+    if (event?.source) {
       const source = button('Open source conversation', 'lp-button lp-button-quiet')
       source.addEventListener('click', () => this.openPocket({ app: 'messages', conversationId: event.source!.conversationId, messageId: event.source!.messageId }))
       content.appendChild(source)
@@ -2127,7 +2189,12 @@ class PocketController {
           ? (Number.isNaN(endDate.getTime()) ? this.state!.roleplayNow : endDate.toISOString())
           : event?.end || event?.start || this.state!.roleplayNow,
         whenKind: whenKind.value, whenText: inputValue(whenText.input), completed: completed.checked,
+        participants: [...selectedParticipantNames],
+        sourceConversationId: event?.source?.conversationId || schedulerSeed?.conversationId,
+        sourceMessageId: event?.source?.messageId || schedulerSeed?.messageId,
+        sourceSuggestionId: event?.source?.suggestionId || schedulerSeed?.suggestion.id,
       } })
+      this.pendingEventSuggestion = null
       this.back()
     }
     if (event) {

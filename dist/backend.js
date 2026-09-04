@@ -626,15 +626,74 @@ function legacyActionRoute(app, action) {
   return { app };
 }
 
+// src/domain/scheduler.ts
+function record3(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean2(value, max) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function names(value) {
+  if (!Array.isArray(value))
+    return [];
+  const result = [];
+  const seen = new Set;
+  for (const item of value) {
+    const name = clean2(item, 120).replace(/\s+/g, " ");
+    const key = name.toLocaleLowerCase();
+    if (!name || seen.has(key))
+      continue;
+    seen.add(key);
+    result.push(name);
+    if (result.length >= 16)
+      break;
+  }
+  return result;
+}
+function normalizeSuggestionWhenKind(value) {
+  return value === "exact" || value === "approximate" || value === "relative" || value === "unscheduled" ? value : "unscheduled";
+}
+function normalizeEventSuggestion(value, makeId) {
+  if (!record3(value) || value.kind !== undefined && value.kind !== "event")
+    return;
+  const title = clean2(value.title, 180);
+  if (!title)
+    return;
+  const status = value.status === "declined" || value.status === "scheduled" ? value.status : "pending";
+  const start = clean2(value.start, 80);
+  const end = clean2(value.end, 80);
+  return {
+    id: clean2(value.id, 180) || makeId("suggestion"),
+    kind: "event",
+    status,
+    title,
+    description: clean2(value.description, 1200),
+    whenKind: normalizeSuggestionWhenKind(value.whenKind),
+    whenText: clean2(value.whenText, 240),
+    start: Number.isFinite(Date.parse(start)) ? start : undefined,
+    end: Number.isFinite(Date.parse(end)) ? end : undefined,
+    participantNames: names(value.participantNames ?? value.participants),
+    scheduledEventId: clean2(value.scheduledEventId, 180) || undefined
+  };
+}
+function generatedEventSuggestion(value, makeId) {
+  const suggestion = normalizeEventSuggestion(value, makeId);
+  if (!suggestion)
+    return;
+  suggestion.status = "pending";
+  suggestion.scheduledEventId = undefined;
+  return suggestion;
+}
+
 // src/domain/contacts.ts
 var MAX_CONTACTS = 80;
 var MAX_CONVERSATIONS = 80;
 var MAX_MESSAGES = 240;
 var ACCENTS = ["#8b7dff", "#ef6f9a", "#55bfa3", "#e19a55", "#5e9ee6", "#b779dc", "#df6f64", "#86a94c"];
-function record3(value) {
+function record4(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean2(value, max) {
+function clean3(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function flag(value, fallback = false) {
@@ -645,15 +704,15 @@ function percentage(value, fallback) {
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
 }
 function normalizePhoneProfile(value) {
-  if (!record3(value))
+  if (!record4(value))
     return;
-  const personality = clean2(value.personality, 600);
-  const appearance = clean2(value.appearance, 360);
-  const textingStyle = clean2(value.textingStyle, 600);
+  const personality = clean3(value.personality, 600);
+  const appearance = clean3(value.appearance, 360);
+  const textingStyle = clean3(value.textingStyle, 600);
   return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
 }
 function timestamp(value, fallback) {
-  const candidate = clean2(value, 40);
+  const candidate = clean3(value, 40);
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
 }
 function stableContactAccent(seed) {
@@ -676,24 +735,24 @@ function contactAccent(contact) {
   return contact.colorMode === "source" && contact.sourceAccent ? contact.sourceAccent : contact.accent;
 }
 function normalizeSource(value, contactId, characterId, description) {
-  if (record3(value) && value.kind === "character") {
-    return { kind: "character", characterId: clean2(value.characterId, 180) || contactId };
+  if (record4(value) && value.kind === "character") {
+    return { kind: "character", characterId: clean3(value.characterId, 180) || contactId };
   }
-  if (record3(value) && value.kind === "council") {
+  if (record4(value) && value.kind === "council") {
     return {
       kind: "council",
-      memberId: clean2(value.memberId, 180),
-      itemId: clean2(value.itemId, 180)
+      memberId: clean3(value.memberId, 180),
+      itemId: clean3(value.itemId, 180)
     };
   }
-  if (record3(value) && value.kind === "npc") {
+  if (record4(value) && value.kind === "npc") {
     return {
       kind: "npc",
       origin: value.origin === "generated" || value.origin === "scene" || value.origin === "discovered" ? value.origin : "manual",
-      description: clean2(value.description, 600) || description,
-      sceneKey: clean2(value.sceneKey, 180) || undefined,
-      discoveredActorId: clean2(value.discoveredActorId, 180) || undefined,
-      bankId: clean2(value.bankId, 180) || undefined
+      description: clean3(value.description, 600) || description,
+      sceneKey: clean3(value.sceneKey, 180) || undefined,
+      discoveredActorId: clean3(value.discoveredActorId, 180) || undefined,
+      bankId: clean3(value.bankId, 180) || undefined
     };
   }
   if (contactId === characterId)
@@ -701,34 +760,34 @@ function normalizeSource(value, contactId, characterId, description) {
   return { kind: "npc", origin: "manual", description };
 }
 function normalizePocketContact(value, context) {
-  if (!record3(value))
+  if (!record4(value))
     return null;
-  const contactId = clean2(value.id, 180) || context.makeId("contact");
-  const name = clean2(value.name, 120);
+  const contactId = clean3(value.id, 180) || context.makeId("contact");
+  const name = clean3(value.name, 120);
   if (!name)
     return null;
-  const identityBrief = clean2(value.identityBrief, 1200) || clean2(value.description, 1200) || clean2(value.subtitle, 160);
+  const identityBrief = clean3(value.identityBrief, 1200) || clean3(value.description, 1200) || clean3(value.subtitle, 160);
   const description = identityBrief;
   const source = normalizeSource(value.source, contactId, context.characterId, description);
-  const presence = record3(value.presence) ? value.presence : {};
-  const contextPolicy = record3(value.contextPolicy) ? value.contextPolicy : {};
-  const generationPolicy = record3(value.generationPolicy) ? value.generationPolicy : {};
-  const messagingPolicy = record3(value.messagingPolicy) ? value.messagingPolicy : {};
-  const messagingStyle = record3(value.messagingStyle) ? value.messagingStyle : {};
+  const presence = record4(value.presence) ? value.presence : {};
+  const contextPolicy = record4(value.contextPolicy) ? value.contextPolicy : {};
+  const generationPolicy = record4(value.generationPolicy) ? value.generationPolicy : {};
+  const messagingPolicy = record4(value.messagingPolicy) ? value.messagingPolicy : {};
+  const messagingStyle = record4(value.messagingStyle) ? value.messagingStyle : {};
   const createdAt = timestamp(value.createdAt, context.now);
   return {
     id: contactId,
     name,
-    role: clean2(value.role, 120) || clean2(value.subtitle, 120) || (source.kind === "character" ? "Character" : source.kind === "council" ? "Council member" : "Pocket NPC"),
+    role: clean3(value.role, 120) || clean3(value.subtitle, 120) || (source.kind === "character" ? "Character" : source.kind === "council" ? "Council member" : "Pocket NPC"),
     description,
     identityBrief,
     phoneProfile: normalizePhoneProfile(value.phoneProfile),
-    sceneNote: clean2(value.sceneNote, 600),
-    avatarUrl: clean2(value.avatarUrl, 2000),
-    sourceAvatarUrl: clean2(value.sourceAvatarUrl, 2000) || clean2(value.avatarUrl, 2000),
-    avatarOverrideUrl: clean2(value.avatarOverrideUrl, 2000),
-    accent: /^#[0-9a-f]{6}$/i.test(clean2(value.accent, 20)) ? clean2(value.accent, 20) : stableContactAccent(contactId),
-    sourceAccent: /^#[0-9a-f]{6}$/i.test(clean2(value.sourceAccent, 20)) ? clean2(value.sourceAccent, 20) : "",
+    sceneNote: clean3(value.sceneNote, 600),
+    avatarUrl: clean3(value.avatarUrl, 2000),
+    sourceAvatarUrl: clean3(value.sourceAvatarUrl, 2000) || clean3(value.avatarUrl, 2000),
+    avatarOverrideUrl: clean3(value.avatarOverrideUrl, 2000),
+    accent: /^#[0-9a-f]{6}$/i.test(clean3(value.accent, 20)) ? clean3(value.accent, 20) : stableContactAccent(contactId),
+    sourceAccent: /^#[0-9a-f]{6}$/i.test(clean3(value.sourceAccent, 20)) ? clean3(value.sourceAccent, 20) : "",
     colorMode: value.colorMode === "source" ? "source" : "pocket",
     source,
     relationship: value.relationship === "close" ? "close" : "background",
@@ -753,46 +812,47 @@ function normalizePocketContact(value, context) {
   };
 }
 function normalizeMessage(value, fallbackContact, now, makeId) {
-  if (!record3(value))
+  if (!record4(value))
     return null;
-  const messageText = clean2(value.text, 12000);
+  const messageText = clean3(value.text, 12000);
   if (!messageText)
     return null;
-  const legacySender = clean2(value.sender, 20);
+  const legacySender = clean3(value.sender, 20);
   const sender = legacySender === "system" ? "system" : legacySender === "user" || legacySender === "persona" ? "persona" : "contact";
-  const senderContactId = sender === "contact" ? clean2(value.senderContactId, 180) || fallbackContact?.id : undefined;
-  const senderActorId = sender === "contact" ? clean2(value.senderActorId, 180) || senderContactId : undefined;
+  const senderContactId = sender === "contact" ? clean3(value.senderContactId, 180) || fallbackContact?.id : undefined;
+  const senderActorId = sender === "contact" ? clean3(value.senderActorId, 180) || senderContactId : undefined;
   const senderActorKind = sender === "contact" && value.senderActorKind === "discovered" ? "discovered" : sender === "contact" ? "contact" : undefined;
   const read = flag(value.read, sender !== "contact");
   const status = value.status === "pending" || value.status === "failed" || value.status === "sent" || value.status === "delivered" || value.status === "read" ? value.status : read ? "read" : "delivered";
-  const generation = record3(value.generation) ? value.generation : null;
-  const info = generation && record3(generation.info) ? generation.info : null;
-  const decision = info && record3(info.replyDecision) ? info.replyDecision : null;
-  const groupBatch = info && record3(info.groupBatch) ? info.groupBatch : null;
+  const generation = record4(value.generation) ? value.generation : null;
+  const info = generation && record4(generation.info) ? generation.info : null;
+  const decision = info && record4(info.replyDecision) ? info.replyDecision : null;
+  const groupBatch = info && record4(info.groupBatch) ? info.groupBatch : null;
   const count = (input) => Math.max(0, Math.round(Number(input) || 0));
   return {
-    id: clean2(value.id, 120) || makeId("msg"),
+    id: clean3(value.id, 120) || makeId("msg"),
     sender,
     senderActorId,
     senderActorKind,
     senderContactId,
-    senderName: clean2(value.senderName, 120) || (sender === "persona" ? "You" : sender === "system" ? "Pocket" : fallbackContact?.name || "Unknown contact"),
-    senderAccent: clean2(value.senderAccent, 40) || (sender === "contact" ? fallbackContact?.accent || stableContactAccent(senderContactId || "unknown") : ""),
+    senderName: clean3(value.senderName, 120) || (sender === "persona" ? "You" : sender === "system" ? "Pocket" : fallbackContact?.name || "Unknown contact"),
+    senderAccent: clean3(value.senderAccent, 40) || (sender === "contact" ? fallbackContact?.accent || stableContactAccent(senderContactId || "unknown") : ""),
     text: messageText,
     createdAt: timestamp(value.createdAt, now),
     read,
     status,
-    imageId: clean2(value.imageId, 160) || undefined,
-    imageUrl: clean2(value.imageUrl, 2000) || undefined,
-    generation: generation && clean2(generation.requestId, 180) ? {
-      requestId: clean2(generation.requestId, 180),
-      retryOf: clean2(generation.retryOf, 180) || undefined,
+    imageId: clean3(value.imageId, 160) || undefined,
+    imageUrl: clean3(value.imageUrl, 2000) || undefined,
+    eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
+    generation: generation && clean3(generation.requestId, 180) ? {
+      requestId: clean3(generation.requestId, 180),
+      retryOf: clean3(generation.retryOf, 180) || undefined,
       info: info ? {
-        speaker: clean2(info.speaker, 120),
-        source: clean2(info.source, 240),
-        sourceId: clean2(info.sourceId, 180),
+        speaker: clean3(info.speaker, 120),
+        source: clean3(info.source, 240),
+        sourceId: clean3(info.sourceId, 180),
         sourceResolution: info.sourceResolution === "resolved" || info.sourceResolution === "manual" ? info.sourceResolution : "snapshot",
-        activeCharacterId: clean2(info.activeCharacterId, 180),
+        activeCharacterId: clean3(info.activeCharacterId, 180),
         activeCharacterUsed: flag(info.activeCharacterUsed),
         identityChars: count(info.identityChars),
         sceneSnapshotStale: flag(info.sceneSnapshotStale, true),
@@ -804,10 +864,10 @@ function normalizeMessage(value, fallbackContact, now, makeId) {
         threadCount: count(info.threadCount),
         threadChars: count(info.threadChars),
         generationMode: info.generationMode === "sidecar" ? "sidecar" : "roleplay",
-        connectionName: clean2(info.connectionName, 180),
-        model: clean2(info.model, 500),
-        groupBatch: groupBatch && clean2(groupBatch.id, 180) ? {
-          id: clean2(groupBatch.id, 180),
+        connectionName: clean3(info.connectionName, 180),
+        model: clean3(info.model, 500),
+        groupBatch: groupBatch && clean3(groupBatch.id, 180) ? {
+          id: clean3(groupBatch.id, 180),
           position: Math.max(1, count(groupBatch.position)),
           size: Math.max(1, count(groupBatch.size)),
           eligibleCount: count(groupBatch.eligibleCount)
@@ -815,18 +875,18 @@ function normalizeMessage(value, fallbackContact, now, makeId) {
         replyDecision: decision ? {
           rawAction: decision.rawAction === "reply" || decision.rawAction === "pause" || decision.rawAction === "handoff" ? decision.rawAction : "none",
           normalizedAction: decision.normalizedAction === "reply" || decision.normalizedAction === "pause" || decision.normalizedAction === "handoff" ? decision.normalizedAction : "none",
-          reason: clean2(decision.reason, 80),
-          normalizationReason: clean2(decision.normalizationReason, 180)
+          reason: clean3(decision.reason, 80),
+          normalizationReason: clean3(decision.normalizationReason, 180)
         } : undefined
       } : undefined
     } : undefined
   };
 }
 function normalizeConversation(value, contacts, now, makeId) {
-  if (!record3(value))
+  if (!record4(value))
     return null;
-  const persistedContactIds = [...new Set((Array.isArray(value.participantContactIds) ? value.participantContactIds : []).map((entry) => clean2(entry, 180)).filter(Boolean))].slice(0, 16);
-  const participantActorIds = [...new Set((Array.isArray(value.participantActorIds) ? value.participantActorIds : persistedContactIds).map((entry) => clean2(entry, 180)).filter(Boolean))].slice(0, 16);
+  const persistedContactIds = [...new Set((Array.isArray(value.participantContactIds) ? value.participantContactIds : []).map((entry) => clean3(entry, 180)).filter(Boolean))].slice(0, 16);
+  const participantActorIds = [...new Set((Array.isArray(value.participantActorIds) ? value.participantActorIds : persistedContactIds).map((entry) => clean3(entry, 180)).filter(Boolean))].slice(0, 16);
   if (!participantActorIds.length)
     return null;
   const participantContactIds = [...new Set([
@@ -837,22 +897,22 @@ function normalizeConversation(value, contacts, now, makeId) {
   const messages = (Array.isArray(value.messages) ? value.messages : []).map((entry) => normalizeMessage(entry, fallback, now, makeId)).filter((entry) => Boolean(entry)).slice(-MAX_MESSAGES);
   const kind = value.kind === "group" || participantActorIds.length > 1 ? "group" : "direct";
   const createdAt = timestamp(value.createdAt, messages[0]?.createdAt || now);
-  const pauseValue = record3(value.pause) ? value.pause : null;
+  const pauseValue = record4(value.pause) ? value.pause : null;
   const pauseReasons = new Set(["ended", "busy", "away", "sleeping", "unknown"]);
   const legacyArriving = pauseValue?.reason === "arriving";
   const pauseReason = pauseReasons.has(pauseValue?.reason) ? pauseValue?.reason : null;
-  const availabilityValue = record3(value.availability) ? value.availability : null;
+  const availabilityValue = record4(value.availability) ? value.availability : null;
   const localReasons = new Set(["in_scene", "arrived", "took_action", "continued_in_person"]);
   const migratedLocalReason = availabilityValue?.reason === "arriving" ? "arrived" : localReasons.has(availabilityValue?.reason) ? availabilityValue?.reason : null;
   const resumePauseReason = pauseReasons.has(availabilityValue?.resumePauseReason) ? availabilityValue?.resumePauseReason : undefined;
   const availability = availabilityValue?.state === "local" && migratedLocalReason ? resumePauseReason ? { state: "local", reason: migratedLocalReason, resumePauseReason } : { state: "local", reason: migratedLocalReason } : availabilityValue?.state === "arriving" || legacyArriving ? { state: "arriving" } : availabilityValue?.state === "paused" && pauseReasons.has(availabilityValue.reason) ? { state: "paused", reason: availabilityValue.reason } : pauseReason ? { state: "paused", reason: pauseReason } : { state: "remote" };
-  const burstValue = record3(value.outgoingBurst) ? value.outgoingBurst : null;
-  const burstId = clean2(burstValue?.id, 180);
+  const burstValue = record4(value.outgoingBurst) ? value.outgoingBurst : null;
+  const burstId = clean3(burstValue?.id, 180);
   const rawTail = value.tailSnapshot && typeof value.tailSnapshot === "object" && !Array.isArray(value.tailSnapshot) ? value.tailSnapshot : value.snapshot && typeof value.snapshot === "object" && !Array.isArray(value.snapshot) ? value.snapshot : null;
   return {
-    id: clean2(value.id, 180) || makeId("conversation"),
+    id: clean3(value.id, 180) || makeId("conversation"),
     kind,
-    title: clean2(value.title, 120) || (kind === "direct" ? fallback?.name || messages.at(-1)?.senderName || "Conversation" : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group"),
+    title: clean3(value.title, 120) || (kind === "direct" ? fallback?.name || messages.at(-1)?.senderName || "Conversation" : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group"),
     participantActorIds,
     participantContactIds,
     messages,
@@ -864,25 +924,25 @@ function normalizeConversation(value, contacts, now, makeId) {
     } : undefined,
     availability,
     tailSnapshot: rawTail ? {
-      text: clean2(rawTail.text ?? rawTail.summary, 2400),
-      recentMessageIds: (Array.isArray(rawTail.recentMessageIds) ? rawTail.recentMessageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-8),
+      text: clean3(rawTail.text ?? rawTail.summary, 2400),
+      recentMessageIds: (Array.isArray(rawTail.recentMessageIds) ? rawTail.recentMessageIds : []).map((entry) => clean3(entry, 180)).filter(Boolean).slice(-8),
       updatedAt: timestamp(rawTail.updatedAt, now)
     } : undefined,
-    lastDecision: record3(value.lastDecision) ? {
+    lastDecision: record4(value.lastDecision) ? {
       rawAction: value.lastDecision.rawAction === "reply" || value.lastDecision.rawAction === "pause" || value.lastDecision.rawAction === "handoff" ? value.lastDecision.rawAction : "none",
       normalizedAction: value.lastDecision.normalizedAction === "reply" || value.lastDecision.normalizedAction === "pause" || value.lastDecision.normalizedAction === "handoff" ? value.lastDecision.normalizedAction : "none",
-      reason: clean2(value.lastDecision.reason, 80),
-      normalizationReason: clean2(value.lastDecision.normalizationReason, 180),
+      reason: clean3(value.lastDecision.reason, 80),
+      normalizationReason: clean3(value.lastDecision.normalizationReason, 180),
       contactInScene: flag(value.lastDecision.contactInScene),
       remoteEligible: flag(value.lastDecision.remoteEligible, true),
       explicitRemoteOverride: flag(value.lastDecision.explicitRemoteOverride),
       createdAt: timestamp(value.lastDecision.createdAt, now),
-      burstId: clean2(value.lastDecision.burstId, 180) || undefined,
-      relayId: clean2(value.lastDecision.relayId, 180) || undefined
+      burstId: clean3(value.lastDecision.burstId, 180) || undefined,
+      relayId: clean3(value.lastDecision.relayId, 180) || undefined
     } : undefined,
     outgoingBurst: burstId ? {
       id: burstId,
-      messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean2(entry, 180)).filter(Boolean).slice(-12),
+      messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean3(entry, 180)).filter(Boolean).slice(-12),
       open: flag(burstValue?.open, false),
       held: flag(burstValue?.held, false),
       finalized: flag(burstValue?.finalized, false),
@@ -948,13 +1008,13 @@ function normalizeContactCollections(value, context) {
   } else if (context.characterName && context.characterName !== "Character") {
     current.name = context.characterName;
   }
-  const legacy = Number(value.version || 0) < 3 || Array.isArray(value.contacts) && value.contacts.some((entry) => record3(entry) && Array.isArray(entry.messages));
+  const legacy = Number(value.version || 0) < 3 || Array.isArray(value.contacts) && value.contacts.some((entry) => record4(entry) && Array.isArray(entry.messages));
   const rawConversations = Array.isArray(value.conversations) ? [...value.conversations] : [];
   if (legacy && Array.isArray(value.contacts)) {
     for (const rawContact of value.contacts) {
-      if (!record3(rawContact))
+      if (!record4(rawContact))
         continue;
-      const contactId = clean2(rawContact.id, 180) || context.characterId;
+      const contactId = clean3(rawContact.id, 180) || context.characterId;
       const contact = contacts.find((entry) => entry.id === contactId);
       if (!contact)
         continue;
@@ -1000,10 +1060,10 @@ function normalizeContactCollections(value, context) {
 var NPC_BANK_VERSION = 1;
 var NPC_BANK_PATH = "device/npc-bank.json";
 var MAX_NPC_BANK_ENTRIES = 240;
-function record4(value) {
+function record5(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean3(value, max) {
+function clean4(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function percentage2(value, fallback) {
@@ -1011,59 +1071,59 @@ function percentage2(value, fallback) {
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
 }
 function phoneProfile(value) {
-  if (!record4(value))
+  if (!record5(value))
     return;
-  const personality = clean3(value.personality, 600);
-  const appearance = clean3(value.appearance, 360);
-  const textingStyle = clean3(value.textingStyle, 600);
+  const personality = clean4(value.personality, 600);
+  const appearance = clean4(value.appearance, 360);
+  const textingStyle = clean4(value.textingStyle, 600);
   return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
 }
 function timestamp2(value, fallback) {
-  const candidate = clean3(value, 40);
+  const candidate = clean4(value, 40);
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
 }
 function accent(value, fallback = "#8b7dff") {
-  const candidate = clean3(value, 20);
+  const candidate = clean4(value, 20);
   return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : fallback;
 }
 function normalizeNpcBankName(value) {
-  return clean3(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
+  return clean4(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
 }
 function emptyNpcBank(now = new Date().toISOString()) {
   return { version: NPC_BANK_VERSION, entries: [], updatedAt: now };
 }
 function isFutureNpcBank(value) {
-  return record4(value) && Number(value.version) > NPC_BANK_VERSION;
+  return record5(value) && Number(value.version) > NPC_BANK_VERSION;
 }
 function normalizeNpcBank(value, now = new Date().toISOString()) {
-  if (!record4(value) || isFutureNpcBank(value))
+  if (!record5(value) || isFutureNpcBank(value))
     return emptyNpcBank(now);
   const seen = new Set;
   const entries = (Array.isArray(value.entries) ? value.entries : []).slice(0, MAX_NPC_BANK_ENTRIES).flatMap((raw) => {
-    if (!record4(raw))
+    if (!record5(raw))
       return [];
-    const name = clean3(raw.name, 120).replace(/\s+/g, " ");
+    const name = clean4(raw.name, 120).replace(/\s+/g, " ");
     const normalizedName = normalizeNpcBankName(name);
-    const entryId = clean3(raw.id, 180);
+    const entryId = clean4(raw.id, 180);
     if (!name || !normalizedName || !entryId || seen.has(entryId))
       return [];
     seen.add(entryId);
-    const aliases = [...new Set((Array.isArray(raw.aliases) ? raw.aliases : []).map((item) => clean3(item, 120).replace(/\s+/g, " ")).filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24);
+    const aliases = [...new Set((Array.isArray(raw.aliases) ? raw.aliases : []).map((item) => clean4(item, 120).replace(/\s+/g, " ")).filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24);
     return [{
       id: entryId,
       name,
       normalizedName,
       aliases,
-      role: clean3(raw.role, 120) || "Pocket NPC",
-      identityBrief: clean3(raw.identityBrief ?? raw.description, 1200),
+      role: clean4(raw.role, 120) || "Pocket NPC",
+      identityBrief: clean4(raw.identityBrief ?? raw.description, 1200),
       phoneProfile: phoneProfile(raw.phoneProfile),
-      avatarUrl: clean3(raw.avatarUrl, 2000),
+      avatarUrl: clean4(raw.avatarUrl, 2000),
       accent: accent(raw.accent),
       messagingStyle: {
-        talkativeness: percentage2(record4(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
-        fragmentation: percentage2(record4(raw.messagingStyle) ? raw.messagingStyle.fragmentation : undefined, 35)
+        talkativeness: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
+        fragmentation: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.fragmentation : undefined, 35)
       },
-      tags: [...new Set((Array.isArray(raw.tags) ? raw.tags : []).map((item) => clean3(item, 80)).filter(Boolean))].slice(0, 24),
+      tags: [...new Set((Array.isArray(raw.tags) ? raw.tags : []).map((item) => clean4(item, 80)).filter(Boolean))].slice(0, 24),
       createdAt: timestamp2(raw.createdAt, now),
       updatedAt: timestamp2(raw.updatedAt, now)
     }];
@@ -1433,16 +1493,16 @@ function shouldTakeAmbientOpportunity(frequency, random = Math.random()) {
 
 // src/domain/actor-memory.ts
 var MAX_ACTOR_MEMORIES = 160;
-function clean4(value, max = 4000) {
+function clean5(value, max = 4000) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
-function record5(value) {
+function record6(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function stringList(value, max = 24) {
   if (!Array.isArray(value))
     return [];
-  return [...new Set(value.map((entry) => clean4(entry, 180)).filter(Boolean))].slice(0, max);
+  return [...new Set(value.map((entry) => clean5(entry, 180)).filter(Boolean))].slice(0, max);
 }
 function nameKey(value) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -1451,20 +1511,20 @@ function normalizeActorMemories(value) {
   if (!Array.isArray(value))
     return [];
   const rows = value.slice(-MAX_ACTOR_MEMORIES).flatMap((item) => {
-    if (!record5(item))
+    if (!record6(item))
       return [];
-    const id = clean4(item.id, 180);
-    const messageId = clean4(item.messageId, 180);
-    const conversationId = clean4(item.conversationId, 180);
-    const text2 = clean4(item.text, 700);
-    const speakerActorId = clean4(item.speakerActorId, 180);
-    const speakerName = clean4(item.speakerName, 120);
+    const id = clean5(item.id, 180);
+    const messageId = clean5(item.messageId, 180);
+    const conversationId = clean5(item.conversationId, 180);
+    const text2 = clean5(item.text, 700);
+    const speakerActorId = clean5(item.speakerActorId, 180);
+    const speakerName = clean5(item.speakerName, 120);
     if (!id || !messageId || !conversationId || !text2 || !speakerActorId || !speakerName)
       return [];
     return [{
       id,
       conversationId,
-      conversationTitle: clean4(item.conversationTitle, 120) || "Pocket conversation",
+      conversationTitle: clean5(item.conversationTitle, 120) || "Pocket conversation",
       conversationKind: item.conversationKind === "group" ? "group" : "direct",
       messageId,
       speakerActorId,
@@ -1472,7 +1532,7 @@ function normalizeActorMemories(value) {
       text: text2,
       knownByActorIds: stringList(item.knownByActorIds),
       knownByNames: stringList(item.knownByNames),
-      createdAt: clean4(item.createdAt, 80)
+      createdAt: clean5(item.createdAt, 80)
     }];
   });
   const byMessage = new Map;
@@ -1489,7 +1549,7 @@ function upsertActorMemory(current, entry) {
   return next.slice(-MAX_ACTOR_MEMORIES);
 }
 function removeActorMemoryByMessageId(current, messageId) {
-  const target = clean4(messageId, 180);
+  const target = clean5(messageId, 180);
   return target ? current.filter((item) => item.messageId !== target) : current;
 }
 function actorCanRecall(entry, actorIds, actorNames) {
@@ -1498,9 +1558,9 @@ function actorCanRecall(entry, actorIds, actorNames) {
   return entry.knownByNames.some((name) => actorNames.has(nameKey(name)));
 }
 function memoryRows(memories, options) {
-  const actorIds = new Set(options.actorIds.map((entry) => clean4(entry, 180)).filter(Boolean));
+  const actorIds = new Set(options.actorIds.map((entry) => clean5(entry, 180)).filter(Boolean));
   const actorNames = new Set(options.actorNames.map(nameKey).filter(Boolean));
-  const exclude = clean4(options.excludeConversationId, 180);
+  const exclude = clean5(options.excludeConversationId, 180);
   return memories.filter((entry) => (!exclude || entry.conversationId !== exclude) && actorCanRecall(entry, actorIds, actorNames)).slice(-(options.maxRows ?? 10));
 }
 function formatRows(rows, maxChars) {
@@ -1521,7 +1581,7 @@ function actorPhoneMemoryContext(memories, options) {
   if (!rows.length)
     return "";
   const body = formatRows(rows, Math.max(400, (options.maxChars ?? 2600) - 260));
-  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean4(options.actorName, 120) || "THIS SPEAKER"}
+  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean5(options.actorName, 120) || "THIS SPEAKER"}
 These are earlier Pocket messages this actor personally had access to in OTHER threads.
 They are memory, not current-thread messages. Do not pretend they happened in this thread.
 ${body}`.slice(0, options.maxChars ?? 2600);
@@ -1727,7 +1787,7 @@ async function parseWithTruncationRetry(content, retry) {
 
 // src/backend/roleplay-context.ts
 var BUDGETS = { actor: 1200, scene: 1800, thread: 6000, recent: 3200, story: 2400, total: 10500 };
-function clean5(value, max) {
+function clean6(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function messageIndex(message, fallback) {
@@ -1802,11 +1862,11 @@ function threadLine(state, conversation, message) {
   const persona = state.pocketPersona.displayName || "You";
   const sender = message.sender === "persona" ? persona : message.senderName || "Pocket";
   if (conversation.kind !== "group" || message.sender !== "contact")
-    return `${sender}: ${clean5(message.text, 520)}`;
+    return `${sender}: ${clean6(message.text, 520)}`;
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds]);
   const senderId = message.senderActorId || message.senderContactId || "";
   const former = Boolean(senderId && !currentIds.has(senderId));
-  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean5(message.text, 520)}`;
+  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean6(message.text, 520)}`;
 }
 function trimBlock(lines, budget) {
   return lines.filter(Boolean).join(`
@@ -1819,11 +1879,11 @@ async function assemblePocketContext(options) {
   const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : [];
   const authoritative = hostMessages.at(-1);
   const authoritativeLatest = authoritative ? {
-    id: clean5(authoritative.id, 180),
+    id: clean6(authoritative.id, 180),
     index: messageIndex(authoritative, hostMessages.length - 1),
-    excerpt: clean5(authoritative.content, 180)
+    excerpt: clean6(authoritative.content, 180)
   } : { id: "", index: -1, excerpt: "" };
-  const actorIdentity = clean5(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
+  const actorIdentity = clean6(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1400);
   const scene = trimBlock(sceneLines(state), BUDGETS.scene);
   const includePhoneThread = options.includePhoneThread !== false;
@@ -1833,16 +1893,16 @@ async function assemblePocketContext(options) {
   const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
-    const anchor = clean5(message.id, 180);
+    const anchor = clean6(message.id, 180);
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
-    return `${role}${source}: ${clean5(message.content, 520)}`;
+    return `${role}${source}: ${clean6(message.content, 520)}`;
   }).filter((line) => !line.endsWith(": "));
   const recent = trimBlock(recentLines, BUDGETS.recent);
   const includedMessage = selectedRecent.at(-1);
   const includedLatest = includedMessage ? {
-    id: clean5(includedMessage.id, 180),
+    id: clean6(includedMessage.id, 180),
     index: messageIndex(includedMessage, hostMessages.length - 1),
-    excerpt: clean5(includedMessage.content, 180)
+    excerpt: clean6(includedMessage.content, 180)
   } : { id: "", index: -1, excerpt: "" };
   const storySource = mode !== "off" && (mode === "story" || mode === "smart" || !includeRoleplayBackground) ? storyLines(state, contact) : [];
   const story = trimBlock(storySource, BUDGETS.story);
@@ -2426,13 +2486,16 @@ function normalizeState(value, chatId, characterId, characterName) {
       completed: item.kind === "phone-handoff" ? true : bool2(item.completed),
       createdBy,
       kind: item.kind === "phone-handoff" ? "phone-handoff" : "event",
-      actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 8),
+      actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 16),
+      participantActorIds: (Array.isArray(item.participantActorIds) ? item.participantActorIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 16),
+      participantNames: (Array.isArray(item.participantNames) ? item.participantNames : []).map((entry) => text2(entry, 120)).filter(Boolean).slice(0, 16),
       continuityKey: text2(item.continuityKey, 500) || undefined,
       source: isRecord(item.source) && item.source.app === "messages" ? {
         app: "messages",
         conversationId: text2(item.source.conversationId, 180),
-        relayId: text2(item.source.relayId, 180),
-        messageId: text2(item.source.messageId, 180) || undefined
+        relayId: text2(item.source.relayId, 180) || undefined,
+        messageId: text2(item.source.messageId, 180) || undefined,
+        suggestionId: text2(item.source.suggestionId, 180) || undefined
       } : undefined,
       channelTransition: isRecord(item.channelTransition) && item.channelTransition.to === "local" ? {
         from: item.channelTransition.from === "arriving" || item.channelTransition.from === "paused" ? item.channelTransition.from : "remote",
@@ -2667,6 +2730,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         id: id2,
         speakerId,
         text: body,
+        eventSuggestion: normalizeEventSuggestion(message.eventSuggestion, (prefix) => `${prefix}_${id2}`),
         state: messageState,
         deliveredMessageId: text2(message.deliveredMessageId, 180) || undefined,
         deliveredAt: text2(message.deliveredAt, 40) || undefined
@@ -2838,11 +2902,11 @@ function personaMemoryActorId(state) {
 }
 function conversationMemoryAudience(state, conversation) {
   const ids = [personaMemoryActorId(state), ...conversationActorIds(conversation)].filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
-  const names = [
+  const names2 = [
     state.pocketPersona.displayName,
     ...conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || "")
   ].map((entry) => text2(entry, 120)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
-  return { ids, names };
+  return { ids, names: names2 };
 }
 function rememberPhoneMessage(state, conversation, message) {
   if (message.sender === "system")
@@ -4039,8 +4103,8 @@ function narrativeSeedContext(seed, speakerName = "", participantNames = []) {
   ].filter((entry, index, all) => Boolean(entry) || index > 0 && index < all.length - 1).join(`
 `).slice(0, 2800);
 }
-function seedActorContactIds(state, names) {
-  const wanted = new Set(names.map(normalizeActorName).filter(Boolean));
+function seedActorContactIds(state, names2) {
+  const wanted = new Set(names2.map(normalizeActorName).filter(Boolean));
   return state.contacts.filter((contact) => wanted.has(normalizeActorName(contact.name))).map((contact) => contact.id).slice(0, 8);
 }
 function narrativeClockIso(state, clock) {
@@ -4098,6 +4162,39 @@ function applyNarrativeClock(state, clock) {
     changed = true;
   }
   return changed;
+}
+function resolveEventParticipants(state, rawNames) {
+  const names2 = (Array.isArray(rawNames) ? rawNames : []).map((entry) => text2(entry, 120).replace(/\s+/g, " ")).filter((entry, index, all) => Boolean(entry) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(entry)) === index).slice(0, 16);
+  const actorIds = [];
+  const contactIds = [];
+  const now = nowIso();
+  for (const name of names2) {
+    if (normalizeActorName(name) === normalizeActorName(state.pocketPersona.displayName)) {
+      const personaId = personaMemoryActorId(state);
+      if (!actorIds.includes(personaId))
+        actorIds.push(personaId);
+      continue;
+    }
+    const matches = matchingActorIds(state, name);
+    const actorId = matches[0] || ensureDiscoveredActor(state, {
+      name,
+      source: "messages",
+      now,
+      makeId: id
+    }).id;
+    if (!actorIds.includes(actorId))
+      actorIds.push(actorId);
+    const actor = resolvePocketActor(state, actorId);
+    if (actor?.contact && !contactIds.includes(actor.contact.id))
+      contactIds.push(actor.contact.id);
+  }
+  return { actorIds, contactIds, names: names2 };
+}
+function messageSuggestion(conversation, messageId) {
+  const message = conversation.messages.find((entry) => entry.id === messageId);
+  if (!message?.eventSuggestion)
+    return null;
+  return { message, suggestion: message.eventSuggestion };
 }
 function phoneMessageTimestamp(state) {
   const candidate = text2(state.roleplayNow, 80);
@@ -4433,10 +4530,13 @@ DM ROLE BINDING \u2014 AUTHORITATIVE:
 - Never reinterpret the user role as another actor.
 
 Return strict JSON only:
-{"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}
+{"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""},"suggestion":null}
 
 The recipient field MUST be exactly "${personaName}".
 after describes the channel immediately after this message.
+suggestion is null unless THIS message proposes, confirms, changes, or meaningfully references a concrete future plan that would make sense on Timeline.
+When present, suggestion MUST be {"kind":"event","title":"short event title","description":"why/what","whenKind":"exact|approximate|relative|unscheduled","whenText":"human story-time label","start":"optional ISO only when exact and confidently grounded","end":"optional ISO only when exact and confidently grounded","participants":["exact character names"]}.
+A participant name is valid even when Pocket has no Contact/profile for that person. Do not invent an event merely to make the conversation feel active.
 Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote.
 No narration, markdown, or custom UI copy.`
       },
@@ -4482,7 +4582,7 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
     const generationRequest = {
       type: "quiet",
       messages: generationMessages,
-      parameters: { temperature: 0.85, max_tokens: 500 },
+      parameters: { temperature: 0.85, max_tokens: 720 },
       userId
     };
     await savePromptDebug(generationTask, requestId, generationRequest, userId);
@@ -4516,6 +4616,7 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
       createdAt: phoneMessageTimestamp(state),
       read: visible,
       status: visible ? "read" : "delivered",
+      eventSuggestion: generatedEventSuggestion(generated.suggestion, id),
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined }
     };
     nextMessage.generation.info = {
@@ -4684,7 +4785,9 @@ ${pocketContactPhoneBrief(contact, profile) || "No profile; infer only from the 
     const parsed = await runStructuredGeneration("group-reply", requestId, {
       type: "quiet",
       messages: [
-        { role: "system", content: 'Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0\u20133 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
+        { role: "system", content: `Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text","suggestion":null}]}. Return 0\u20133 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble.
+Each row may include suggestion only when THAT speaker's message itself proposes, confirms, changes, or meaningfully references a concrete future plan. suggestion is null otherwise. When present use {"kind":"event","title":"short event title","description":"why/what","whenKind":"exact|approximate|relative|unscheduled","whenText":"human story-time label","start":"optional ISO only when exact and grounded","end":"optional ISO only when exact and grounded","participants":["exact character names"]}. Name-only participants are valid. Do not manufacture events from casual chatter.
+No narration, markdown, delay values, or hidden reasoning.` },
         { role: "user", content: `${assembled.text || "(no context)"}${groupContinuityText ? `
 
 STRUCTURED CONTINUITY \u2014 PUBLIC/SHARED FACTS ONLY
@@ -4702,7 +4805,7 @@ POCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || "You"}
 CURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(", ")}
 Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` }
       ],
-      parameters: { temperature: 0.82, max_tokens: 900 },
+      parameters: { temperature: 0.82, max_tokens: 1150 },
       userId
     }, userId);
     const generatedRows = (Array.isArray(parsed.messages) ? parsed.messages : []).slice(0, 4).flatMap((row) => {
@@ -4712,7 +4815,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
       const body = text2(row.text, 8000);
       if (!body || !eligible.some((actor) => actor.actorId === speakerId))
         return [];
-      return [{ id: id("group_slot"), speakerId, text: body, state: "queued" }];
+      return [{ id: id("group_slot"), speakerId, text: body, eventSuggestion: generatedEventSuggestion(row.suggestion, id), state: "queued" }];
     });
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
     const batchId = id("group_batch");
@@ -4789,6 +4892,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
           createdAt: phoneMessageTimestamp(latest),
           read: visible,
           status: visible ? "read" : "delivered",
+          eventSuggestion: latestSlot.eventSuggestion,
           generation: { requestId, info: {
             speaker: profile.name,
             source: profile.source,
@@ -4963,16 +5067,16 @@ function sceneKeyFor(name) {
 function actorName(value) {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
-function uniqueAliasMatch(candidate, names) {
+function uniqueAliasMatch(candidate, names2) {
   const normalized = actorName(candidate);
   if (!normalized)
     return null;
-  const exact = names.find((name) => actorName(name) === normalized);
+  const exact = names2.find((name) => actorName(name) === normalized);
   if (exact)
     return exact;
   if (normalized.includes(" "))
     return null;
-  const matches = names.filter((name) => actorName(name).split(" ").includes(normalized));
+  const matches = names2.filter((name) => actorName(name).split(" ").includes(normalized));
   return matches.length === 1 ? matches[0] : null;
 }
 async function syncSceneContacts(input, userId) {
@@ -5525,11 +5629,11 @@ async function applyAction(input, userId, source = "model") {
           conversation.title = title;
         conversation.updatedAt = changedAt;
       } else {
-        const names = participantActorIds2.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
+        const names2 = participantActorIds2.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
         conversation = {
           id: id("conversation"),
           kind: "group",
-          title: title || names.join(", ").slice(0, 120) || "Group",
+          title: title || names2.join(", ").slice(0, 120) || "Group",
           participantActorIds: participantActorIds2,
           participantContactIds,
           messages: [],
@@ -5729,6 +5833,10 @@ async function applyAction(input, userId, source = "model") {
       const existing = state.events.find((item) => item.id === eventId);
       const title = text2(payload.title, 180) || "Untitled event";
       const start = text2(payload.start, 80) || state.roleplayNow;
+      const participants = resolveEventParticipants(state, payload.participants ?? payload.participantNames);
+      const sourceConversationId = text2(payload.sourceConversationId, 180);
+      const sourceMessageId = text2(payload.sourceMessageId, 180);
+      const sourceSuggestionId = text2(payload.sourceSuggestionId, 180);
       const event = {
         id: existing?.id || id("evt"),
         title,
@@ -5740,12 +5848,29 @@ async function applyAction(input, userId, source = "model") {
         whenText: text2(payload.whenText, 240) || start,
         lane: text2(payload.lane, 80) || "Main timeline",
         completed: bool2(payload.completed, existing?.completed),
-        createdBy: source === "user" ? "user" : source === "tag" ? "character" : "model"
+        createdBy: source === "user" ? "user" : source === "tag" ? "character" : "model",
+        actorContactIds: participants.contactIds,
+        participantActorIds: participants.actorIds,
+        participantNames: participants.names,
+        source: sourceConversationId ? {
+          app: "messages",
+          conversationId: sourceConversationId,
+          messageId: sourceMessageId || undefined,
+          suggestionId: sourceSuggestionId || undefined
+        } : existing?.source
       };
       if (existing)
         Object.assign(existing, event);
       else
         state.events.push(event);
+      if (sourceConversationId && sourceMessageId && sourceSuggestionId) {
+        const sourceConversation = state.conversations.find((entry) => entry.id === sourceConversationId);
+        const sourceEntry = sourceConversation ? messageSuggestion(sourceConversation, sourceMessageId) : null;
+        if (sourceEntry && sourceEntry.suggestion.id === sourceSuggestionId) {
+          sourceEntry.suggestion.status = "scheduled";
+          sourceEntry.suggestion.scheduledEventId = event.id;
+        }
+      }
       state.events = state.events.slice(-MAX_EVENTS);
       const route = { app: "calendar", eventId: event.id };
       notification = source !== "user" ? addNotification(state, { app: "calendar", title: "Timeline updated", body: title, route, source: "model", severity: "important" }, userId) : null;
@@ -6532,6 +6657,23 @@ ${marker}`;
         job?.controller.abort();
         cameraJobs.delete(requestId);
         send({ type: "lumiphone:camera_cancelled", requestId }, userId);
+        break;
+      }
+      case "lumiphone:decline_event_suggestion": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          const conversationId = text2(payload.conversationId, 180);
+          const messageId = text2(payload.messageId, 180);
+          const suggestionId = text2(payload.suggestionId, 180);
+          const conversation = state.conversations.find((entry) => entry.id === conversationId);
+          const sourceEntry = conversation ? messageSuggestion(conversation, messageId) : null;
+          if (!sourceEntry || sourceEntry.suggestion.id !== suggestionId)
+            throw new Error("That event suggestion is no longer available.");
+          if (sourceEntry.suggestion.status === "pending")
+            sourceEntry.suggestion.status = "declined";
+          await saveState(state, userId);
+          await sendState(state, userId, "event_suggestion_declined");
+        });
         break;
       }
       case "lumiphone:mark_read": {

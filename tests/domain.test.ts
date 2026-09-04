@@ -9,6 +9,7 @@ import { ensureDirectActorConversation, ensureDiscoveredActor, promoteDiscovered
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
 import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, upsertActorMemory } from '../src/domain/actor-memory.js'
+import { generatedEventSuggestion, normalizeEventSuggestion } from '../src/domain/scheduler.js'
 import { contactFromNpcBank, findNpcBankMatch, normalizeNpcBank, upsertNpcBankFromContact } from '../src/domain/npc-bank.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
@@ -106,6 +107,40 @@ describe('conversation channel continuity', () => {
     expect(serialized).toContain('does not hand off the conversation')
     expect(serialized).toContain('Do not assume a scene actor')
     expect(serialized).toContain('=== END POCKET USER REFERENCE ===')
+  })
+})
+
+describe('message event suggestions', () => {
+  test('keeps name-only participants valid and preserves scheduling state', () => {
+    const suggestion = normalizeEventSuggestion({
+      id: 's1',
+      kind: 'event',
+      status: 'scheduled',
+      title: 'Dinner after work',
+      whenKind: 'relative',
+      whenText: 'In an hour',
+      participants: ['Mina Ashido', 'Yaoyorozu Momo', 'Mina Ashido'],
+      scheduledEventId: 'evt1',
+    }, (prefix) => `${prefix}-generated`)
+
+    expect(suggestion?.participantNames).toEqual(['Mina Ashido', 'Yaoyorozu Momo'])
+    expect(suggestion?.status).toBe('scheduled')
+    expect(suggestion?.scheduledEventId).toBe('evt1')
+  })
+
+  test('generated suggestions always start pending', () => {
+    const suggestion = generatedEventSuggestion({
+      id: 'model-id',
+      kind: 'event',
+      status: 'scheduled',
+      title: 'Gym tomorrow',
+      whenKind: 'approximate',
+      whenText: 'Tomorrow morning',
+      participants: ['Denki Kaminari', 'Katsuki Bakugo'],
+    }, (prefix) => `${prefix}-generated`)
+
+    expect(suggestion?.status).toBe('pending')
+    expect(suggestion?.scheduledEventId).toBeUndefined()
   })
 })
 

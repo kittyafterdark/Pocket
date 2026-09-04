@@ -2,6 +2,7 @@ import type {
   CalendarEvent,
   GalleryResult,
   PhoneCapabilities,
+  PhoneEventSuggestion,
   DevicePreferences,
   DiscoveredActor,
   PhoneMessage,
@@ -40,6 +41,7 @@ import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConver
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
 import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, removeActorMemoryByMessageId, upsertActorMemory } from './domain/actor-memory.js'
+import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/scheduler.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
@@ -248,10 +250,12 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       whenText: text(item.whenText, 240) || text(item.start, 80) || 'Unscheduled',
       lane: text(item.lane, 80) || 'Main timeline', completed: item.kind === 'phone-handoff' ? true : bool(item.completed), createdBy,
       kind: item.kind === 'phone-handoff' ? 'phone-handoff' : 'event',
-      actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 8),
+      actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 16),
+      participantActorIds: (Array.isArray(item.participantActorIds) ? item.participantActorIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 16),
+      participantNames: (Array.isArray(item.participantNames) ? item.participantNames : []).map((entry) => text(entry, 120)).filter(Boolean).slice(0, 16),
       continuityKey: text(item.continuityKey, 500) || undefined,
       source: isRecord(item.source) && item.source.app === 'messages' ? {
-        app: 'messages' as const, conversationId: text(item.source.conversationId, 180), relayId: text(item.source.relayId, 180), messageId: text(item.source.messageId, 180) || undefined,
+        app: 'messages' as const, conversationId: text(item.source.conversationId, 180), relayId: text(item.source.relayId, 180) || undefined, messageId: text(item.source.messageId, 180) || undefined, suggestionId: text(item.source.suggestionId, 180) || undefined,
       } : undefined,
       channelTransition: isRecord(item.channelTransition) && item.channelTransition.to === 'local' ? {
         from: item.channelTransition.from === 'arriving' || item.channelTransition.from === 'paused' ? item.channelTransition.from : 'remote',
@@ -451,6 +455,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       const messageState: 'queued' | 'delivered' | 'cancelled' = message.state === 'delivered' || message.state === 'cancelled' ? message.state : 'queued'
       return [{
         id, speakerId, text: body,
+        eventSuggestion: normalizeEventSuggestion(message.eventSuggestion, (prefix) => `${prefix}_${id}`),
         state: messageState,
         deliveredMessageId: text(message.deliveredMessageId, 180) || undefined,
         deliveredAt: text(message.deliveredAt, 40) || undefined,
@@ -1864,6 +1869,51 @@ function applyNarrativeClock(state: PhoneState, clock: NarrativeSeedClock): bool
   return changed
 }
 
+function resolveEventParticipants(
+  state: PhoneState,
+  rawNames: unknown,
+): { actorIds: string[]; contactIds: string[]; names: string[] } {
+  const names = (Array.isArray(rawNames) ? rawNames : [])
+    .map((entry) => text(entry, 120).replace(/\s+/g, ' '))
+    .filter((entry, index, all) => Boolean(entry) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(entry)) === index)
+    .slice(0, 16)
+  const actorIds: string[] = []
+  const contactIds: string[] = []
+  const now = nowIso()
+
+  for (const name of names) {
+    if (normalizeActorName(name) === normalizeActorName(state.pocketPersona.displayName)) {
+      const personaId = personaMemoryActorId(state)
+      if (!actorIds.includes(personaId)) actorIds.push(personaId)
+      continue
+    }
+
+    const matches = matchingActorIds(state, name)
+    const actorId = matches[0] || ensureDiscoveredActor(state, {
+      name,
+      source: 'messages',
+      now,
+      makeId: id,
+    }).id
+
+    if (!actorIds.includes(actorId)) actorIds.push(actorId)
+    const actor = resolvePocketActor(state, actorId)
+    if (actor?.contact && !contactIds.includes(actor.contact.id)) contactIds.push(actor.contact.id)
+  }
+
+  return { actorIds, contactIds, names }
+}
+
+function messageSuggestion(
+  conversation: PocketConversation,
+  messageId: string,
+): { message: PhoneMessage; suggestion: NonNullable<PhoneMessage['eventSuggestion']> } | null {
+  const message = conversation.messages.find((entry) => entry.id === messageId)
+  if (!message?.eventSuggestion) return null
+  return { message, suggestion: message.eventSuggestion }
+}
+
+
 function phoneMessageTimestamp(state: PhoneState): string {
   const candidate = text(state.roleplayNow, 80)
   return Number.isFinite(Date.parse(candidate)) ? candidate : nowIso()
@@ -2221,10 +2271,13 @@ DM ROLE BINDING — AUTHORITATIVE:
 - Never reinterpret the user role as another actor.
 
 Return strict JSON only:
-{"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}
+{"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""},"suggestion":null}
 
 The recipient field MUST be exactly "${personaName}".
 after describes the channel immediately after this message.
+suggestion is null unless THIS message proposes, confirms, changes, or meaningfully references a concrete future plan that would make sense on Timeline.
+When present, suggestion MUST be {"kind":"event","title":"short event title","description":"why/what","whenKind":"exact|approximate|relative|unscheduled","whenText":"human story-time label","start":"optional ISO only when exact and confidently grounded","end":"optional ISO only when exact and confidently grounded","participants":["exact character names"]}.
+A participant name is valid even when Pocket has no Contact/profile for that person. Do not invent an event merely to make the conversation feel active.
 Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote.
 No narration, markdown, or custom UI copy.`,
           },
@@ -2258,7 +2311,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const generationRequest: AnyRecord = {
       type: 'quiet',
       messages: generationMessages,
-      parameters: { temperature: 0.85, max_tokens: 500 },
+      parameters: { temperature: 0.85, max_tokens: 720 },
       userId,
     }
     // Capture the exact direct-message request immediately before dispatch.
@@ -2287,6 +2340,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const nextMessage: PhoneMessage = {
       id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
       text: reply, createdAt: phoneMessageTimestamp(state), read: visible, status: visible ? 'read' : 'delivered',
+      eventSuggestion: generatedEventSuggestion(generated.suggestion, id),
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined },
     }
     nextMessage.generation!.info = {
@@ -2441,17 +2495,19 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
     const parsed = await runStructuredGeneration('group-reply', requestId, {
       type: 'quiet',
       messages: [
-        { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
+        { role: 'system', content: `Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text","suggestion":null}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble.
+Each row may include suggestion only when THAT speaker's message itself proposes, confirms, changes, or meaningfully references a concrete future plan. suggestion is null otherwise. When present use {"kind":"event","title":"short event title","description":"why/what","whenKind":"exact|approximate|relative|unscheduled","whenText":"human story-time label","start":"optional ISO only when exact and grounded","end":"optional ISO only when exact and grounded","participants":["exact character names"]}. Name-only participants are valid. Do not manufacture events from casual chatter.
+No narration, markdown, delay values, or hidden reasoning.` },
         { role: 'user', content: `${assembled.text || '(no context)'}${groupContinuityText ? `\n\nSTRUCTURED CONTINUITY — PUBLIC/SHARED FACTS ONLY\n${groupContinuityText}` : ''}${groupMemoryText ? `\n\n${groupMemoryText}` : ''}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.\n\nFINAL GENERATION LOCK\nPOCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || 'You'}\nCURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(', ')}\nOnly the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` },
       ],
-      parameters: { temperature: .82, max_tokens: 900 }, userId,
+      parameters: { temperature: .82, max_tokens: 1_150 }, userId,
     }, userId)
     const generatedRows = (Array.isArray(parsed.messages) ? parsed.messages : []).slice(0, 4).flatMap((row) => {
       if (!isRecord(row)) return []
       const speakerId = text(row.speakerId, 180)
       const body = text(row.text, 8_000)
       if (!body || !eligible.some((actor) => actor.actorId === speakerId)) return []
-      return [{ id: id('group_slot'), speakerId, text: body, state: 'queued' as const }]
+      return [{ id: id('group_slot'), speakerId, text: body, eventSuggestion: generatedEventSuggestion(row.suggestion, id), state: 'queued' as const }]
     })
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
     const batchId = id('group_batch')
@@ -2506,6 +2562,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         const message: PhoneMessage = {
           id: id('msg'), sender: 'contact', senderActorId: speaker.actorId, senderActorKind: speaker.kind, senderContactId: speaker.contact?.id, senderName: speaker.name, senderAccent: speaker.accent,
           text: latestSlot.text, createdAt: phoneMessageTimestamp(latest), read: visible, status: visible ? 'read' : 'delivered',
+          eventSuggestion: latestSlot.eventSuggestion,
           generation: { requestId, info: {
             speaker: profile.name, source: profile.source,
             sourceId: speakerContact.source.kind === 'character' ? speakerContact.source.characterId : speakerContact.source.kind === 'council' ? speakerContact.source.memberId || speakerContact.source.itemId : speaker.actorId,
@@ -3281,6 +3338,10 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       const existing = state.events.find((item) => item.id === eventId)
       const title = text(payload.title, 180) || 'Untitled event'
       const start = text(payload.start, 80) || state.roleplayNow
+      const participants = resolveEventParticipants(state, payload.participants ?? payload.participantNames)
+      const sourceConversationId = text(payload.sourceConversationId, 180)
+      const sourceMessageId = text(payload.sourceMessageId, 180)
+      const sourceSuggestionId = text(payload.sourceSuggestionId, 180)
       const event: CalendarEvent = {
         id: existing?.id || id('evt'), title, description: text(payload.description ?? payload.text, 8_000),
         start, end: text(payload.end, 80) || start, color: text(payload.color, 40) || preferences.colors.accent,
@@ -3288,9 +3349,26 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         whenText: text(payload.whenText, 240) || start,
         lane: text(payload.lane, 80) || 'Main timeline', completed: bool(payload.completed, existing?.completed),
         createdBy: source === 'user' ? 'user' : source === 'tag' ? 'character' : 'model',
+        actorContactIds: participants.contactIds,
+        participantActorIds: participants.actorIds,
+        participantNames: participants.names,
+        source: sourceConversationId ? {
+          app: 'messages',
+          conversationId: sourceConversationId,
+          messageId: sourceMessageId || undefined,
+          suggestionId: sourceSuggestionId || undefined,
+        } : existing?.source,
       }
       if (existing) Object.assign(existing, event)
       else state.events.push(event)
+      if (sourceConversationId && sourceMessageId && sourceSuggestionId) {
+        const sourceConversation = state.conversations.find((entry) => entry.id === sourceConversationId)
+        const sourceEntry = sourceConversation ? messageSuggestion(sourceConversation, sourceMessageId) : null
+        if (sourceEntry && sourceEntry.suggestion.id === sourceSuggestionId) {
+          sourceEntry.suggestion.status = 'scheduled'
+          sourceEntry.suggestion.scheduledEventId = event.id
+        }
+      }
       state.events = state.events.slice(-MAX_EVENTS)
       const route: PocketRoute = { app: 'calendar', eventId: event.id }
       notification = source !== 'user' ? addNotification(state, { app: 'calendar', title: 'Timeline updated', body: title, route, source: 'model', severity: 'important' }, userId) : null
@@ -3978,6 +4056,21 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         job?.controller.abort()
         cameraJobs.delete(requestId)
         send({ type: 'lumiphone:camera_cancelled', requestId }, userId)
+        break
+      }
+      case 'lumiphone:decline_event_suggestion': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const conversationId = text(payload.conversationId, 180)
+          const messageId = text(payload.messageId, 180)
+          const suggestionId = text(payload.suggestionId, 180)
+          const conversation = state.conversations.find((entry) => entry.id === conversationId)
+          const sourceEntry = conversation ? messageSuggestion(conversation, messageId) : null
+          if (!sourceEntry || sourceEntry.suggestion.id !== suggestionId) throw new Error('That event suggestion is no longer available.')
+          if (sourceEntry.suggestion.status === 'pending') sourceEntry.suggestion.status = 'declined'
+          await saveState(state, userId)
+          await sendState(state, userId, 'event_suggestion_declined')
+        })
         break
       }
       case 'lumiphone:mark_read': {

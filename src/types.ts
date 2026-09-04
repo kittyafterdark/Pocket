@@ -229,6 +229,20 @@ export interface DevicePreferences {
   manualVisualProfile: ManualVisualProfile
 }
 
+export interface PhoneEventSuggestion {
+  id: string
+  kind: 'event'
+  status: 'pending' | 'declined' | 'scheduled'
+  title: string
+  description: string
+  whenKind: 'exact' | 'approximate' | 'relative' | 'unscheduled'
+  whenText: string
+  start?: string
+  end?: string
+  /** Names are valid even when no Contact/profile exists yet. */
+  participantNames: string[]
+  scheduledEventId?: string
+}
 export interface PhoneMessage {
   id: string
   sender: 'persona' | 'contact' | 'system'
@@ -246,6 +260,7 @@ export interface PhoneMessage {
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
   imageId?: string
   imageUrl?: string
+  eventSuggestion?: PhoneEventSuggestion
   generation?: {
     requestId: string
     retryOf?: string
@@ -418,6 +433,7 @@ export interface PendingGroupBatchMessage {
   id: string
   speakerId: string
   text: string
+  eventSuggestion?: PhoneEventSuggestion
   state: 'queued' | 'delivered' | 'cancelled'
   deliveredMessageId?: string
   deliveredAt?: string
@@ -502,9 +518,13 @@ export interface CalendarEvent {
   createdBy: 'user' | 'character' | 'model'
   kind?: 'event' | 'phone-handoff'
   actorContactIds?: string[]
+  /** Generic actor membership. May include discovered/name-only actors and the Pocket Persona. */
+  participantActorIds?: string[]
+  /** Human-readable fallback retained even when a participant has no profile. */
+  participantNames?: string[]
   /** Stable semantic identity for world-seeded Timeline rows across reseeds/promotions. */
   continuityKey?: string
-  source?: { app: 'messages'; conversationId: string; relayId: string; messageId?: string }
+  source?: { app: 'messages'; conversationId: string; relayId?: string; messageId?: string; suggestionId?: string }
   channelTransition?: { from: 'remote' | 'arriving' | 'paused'; to: 'local'; reason: ConversationLocalReason }
 }
 
