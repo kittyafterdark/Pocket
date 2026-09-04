@@ -809,6 +809,10 @@ class PocketController {
       ], { duration: 420, easing: 'ease-out' })
       return
     }
+    if (payload.type === 'lumiphone:debug_prompt') {
+      this.showOutgoingPromptResult(payload)
+      return
+    }
     if (payload.type === 'lumiphone:activity' && payload.activity) {
       this.queueActivityReceipt(payload.activity as PocketActivity)
       return
@@ -1414,6 +1418,7 @@ class PocketController {
       cancelReference: (referenceId) => this.send('lumiphone:cancel_reference', { referenceId }),
       rearmReference: (referenceId) => this.send('lumiphone:rearm_reference', { referenceId }),
       showConversationGenerationInfo: (conversationId) => this.showConversationGenerationInfo(conversationId),
+      showOutgoingPrompt: (conversationId) => this.showOutgoingPrompt(conversationId),
       shouldFocusHandoff: (relayId) => {
         if (this.focusedHandoffRelays.has(relayId)) return false
         const relay = this.state?.relays.find((entry) => entry.id === relayId)
@@ -1511,6 +1516,83 @@ class PocketController {
     content.appendChild(attach)
     modal.root.appendChild(content)
     update()
+  }
+
+  private showOutgoingPrompt(conversationId: string): void {
+    this.send('lumiphone:get_debug_prompt', { conversationId })
+  }
+  private showOutgoingPromptResult(payload: BackendPayload): void {
+    const modal = this.ctx.ui.showModal({ title: 'Outgoing prompt', width: 680, maxHeight: 760 })
+    const content = el('div', 'lp-settings-section')
+    const debug = payload.debug && typeof payload.debug === 'object' ? payload.debug as BackendPayload : null
+
+    if (!debug) {
+      content.appendChild(el('p', 'lp-copy', payload.promptRequestId
+        ? `No captured prompt exists for request ${String(payload.promptRequestId)}. Generate a new Pocket reply after installing this debug build.`
+        : 'This conversation has no generated Pocket reply to inspect yet.'))
+      modal.root.appendChild(content)
+      return
+    }
+
+    for (const [label, value] of [
+      ['Task', String(debug.task || 'unknown')],
+      ['Request', String(debug.requestId || payload.promptRequestId || 'unknown')],
+      ['Captured', String(debug.capturedAt || 'unknown')],
+      ['Message', String(payload.messageId || 'unknown')],
+    ]) {
+      const row = el('div', 'lp-row-between')
+      row.append(el('strong', '', label), el('span', 'lp-copy', value))
+      content.appendChild(row)
+    }
+
+    const messages = Array.isArray(debug.messages) ? debug.messages : []
+    const fullPrompt = messages.map((message: any, index: number) => {
+      const role = String(message?.role || 'unknown')
+      const body = String(message?.content || '')
+      return `[${index + 1}] ${role.toUpperCase()}\n${body}`
+    }).join('\n\n' + '─'.repeat(48) + '\n\n')
+
+    const copy = button('Copy full prompt', 'lp-button lp-button-quiet')
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(fullPrompt)
+        copy.textContent = '✓ Copied'
+        window.setTimeout(() => { copy.textContent = 'Copy full prompt' }, 1_400)
+      } catch {
+        this.showFeedback('Could not copy the prompt automatically.')
+      }
+    })
+    content.appendChild(copy)
+
+    if (!messages.length) {
+      content.appendChild(el('p', 'lp-copy', 'The captured request contained no message array.'))
+    } else {
+      messages.forEach((message: any, index: number) => {
+        const block = el('details', 'lp-channel-diagnostic')
+        if (index === 0) block.open = true
+        block.appendChild(el('summary', '', `[${index + 1}] ${String(message?.role || 'unknown').toUpperCase()}`))
+        const pre = el('pre', 'lp-code-block', String(message?.content || ''))
+        pre.style.whiteSpace = 'pre-wrap'
+        pre.style.overflowWrap = 'anywhere'
+        block.appendChild(pre)
+        content.appendChild(block)
+      })
+    }
+
+    const requestDetails = el('details', 'lp-channel-diagnostic')
+    requestDetails.appendChild(el('summary', '', 'Parameters / raw debug metadata'))
+    const raw = {
+      type: debug.type || '',
+      parameters: debug.parameters || {},
+      reasoning: debug.reasoning || undefined,
+    }
+    const pre = el('pre', 'lp-code-block', JSON.stringify(raw, null, 2))
+    pre.style.whiteSpace = 'pre-wrap'
+    pre.style.overflowWrap = 'anywhere'
+    requestDetails.appendChild(pre)
+    content.appendChild(requestDetails)
+
+    modal.root.appendChild(content)
   }
 
   private showConversationGenerationInfo(conversationId: string): void {

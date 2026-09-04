@@ -883,12 +883,80 @@ async function resolveContactProfile(contact: PocketContact, userId?: string): P
   }
 }
 
+interface PocketPromptDebugMessage {
+  role: string
+  content: string
+}
+interface PocketPromptDebugRecord {
+  version: 1
+  task: string
+  requestId: string
+  capturedAt: string
+  type: string
+  messages: PocketPromptDebugMessage[]
+  parameters: AnyRecord
+  reasoning?: AnyRecord
+}
+
+function promptDebugPath(requestId: string): string {
+  return `debug/prompts/${safeSegment(requestId)}.json`
+}
+function promptDebugSnapshot(task: PocketGenerationRun['task'], requestId: string, request: AnyRecord): PocketPromptDebugRecord {
+  const messages = (Array.isArray(request.messages) ? request.messages : []).flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const role = text(entry.role, 40)
+    const content = typeof entry.content === 'string' ? entry.content : ''
+    if (!role && !content) return []
+    return [{ role: role || 'unknown', content }]
+  })
+  return {
+    version: 1,
+    task,
+    requestId,
+    capturedAt: nowIso(),
+    type: text(request.type, 80),
+    messages,
+    parameters: isRecord(request.parameters) ? request.parameters : {},
+    reasoning: isRecord(request.reasoning) ? request.reasoning : undefined,
+  }
+}
+async function savePromptDebug(task: PocketGenerationRun['task'], requestId: string, request: AnyRecord, userId?: string): Promise<void> {
+  try {
+    await spindle.userStorage.setJson(
+      promptDebugPath(requestId),
+      promptDebugSnapshot(task, requestId, request),
+      { indent: 2, userId },
+    )
+  } catch (error) {
+    spindle.log.warn(`Pocket could not persist outgoing-prompt debug for ${requestId}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+async function loadPromptDebug(requestId: string, userId?: string): Promise<PocketPromptDebugRecord | null> {
+  if (!requestId) return null
+  const raw = await spindle.userStorage.getJson<unknown>(promptDebugPath(requestId), { fallback: null, userId })
+  if (!isRecord(raw) || raw.version !== 1) return null
+  return {
+    version: 1,
+    task: text(raw.task, 120),
+    requestId: text(raw.requestId, 180) || requestId,
+    capturedAt: text(raw.capturedAt, 80),
+    type: text(raw.type, 80),
+    messages: (Array.isArray(raw.messages) ? raw.messages : []).flatMap((entry) => {
+      if (!isRecord(entry)) return []
+      return [{ role: text(entry.role, 40) || 'unknown', content: typeof entry.content === 'string' ? entry.content : '' }]
+    }),
+    parameters: isRecord(raw.parameters) ? raw.parameters : {},
+    reasoning: isRecord(raw.reasoning) ? raw.reasoning : undefined,
+  }
+}
+
 async function runStructuredGeneration(
   task: PocketGenerationRun['task'],
   requestId: string,
   request: AnyRecord,
   userId?: string,
 ): Promise<AnyRecord> {
+  await savePromptDebug(task, requestId, request, userId)
   const first: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId)
   return parseWithTruncationRetry(first.content, async () => {
     const parameters = isRecord(request.parameters) ? request.parameters : {}
@@ -2979,6 +3047,25 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
   try {
     const context = await resolveContext(payload, userId)
     switch (payload.type) {
+      case 'lumiphone:get_debug_prompt': {
+        const state = await loadState(context.chatId, context.characterId, userId)
+        const conversationId = text(payload.conversationId, 180)
+        const conversation = state.conversations.find((entry) => entry.id === conversationId)
+        if (!conversation) throw new Error('That conversation is no longer available.')
+        const generated = [...conversation.messages].reverse().find((message) => Boolean(message.generation?.requestId))
+        const promptRequestId = generated?.generation?.requestId || ''
+        const debug = await loadPromptDebug(promptRequestId, userId)
+        send({
+          type: 'lumiphone:debug_prompt',
+          requestId,
+          conversationId,
+          messageId: generated?.id || '',
+          generatedAt: generated?.createdAt || '',
+          promptRequestId,
+          debug,
+        }, userId)
+        break
+      }
       case 'lumiphone:get_state': {
         const state = await loadState(context.chatId, context.characterId, userId)
         await sendState(state, userId, 'load')

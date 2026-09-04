@@ -35,6 +35,7 @@ export interface MessagesViewHost {
   cancelReference(referenceId: string): void
   rearmReference(referenceId: string): void
   showConversationGenerationInfo(conversationId: string): void
+  showOutgoingPrompt(conversationId: string): void
   shouldFocusHandoff(relayId: string): boolean
   showGenerationInfo(message: PhoneMessage): void
   back(): void
@@ -354,6 +355,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   menuSheet.appendChild(referenceAction)
   menuSheet.appendChild(menuAction('View Timeline', () => host.openTimeline('')))
   menuSheet.appendChild(menuAction('Generation info', () => host.showConversationGenerationInfo(conversation.id)))
+  menuSheet.appendChild(menuAction('Outgoing prompt', () => host.showOutgoingPrompt(conversation.id)))
   menu.append(menuToggle, menuSheet)
   nav.append(back, title, menu)
   page.appendChild(nav)
