@@ -94,6 +94,7 @@ export async function assemblePocketContext(options: {
   preferences: DevicePreferences
   actorIdentity?: string
   getMessages?: () => Promise<HostMessage[]>
+  includePhoneThread?: boolean
 }): Promise<{ text: string; diagnostics: PocketContextDiagnostics }> {
   const { state, contact, conversation, preferences } = options
   const mode = preferences.roleplayContextMode
@@ -105,12 +106,17 @@ export async function assemblePocketContext(options: {
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
   const scene = trimBlock(sceneLines(state), BUDGETS.scene)
-  const threadLines = conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message))
+  const includePhoneThread = options.includePhoneThread !== false
+  const threadLines = includePhoneThread ? conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message)) : []
   const thread = trimBlock(threadLines, BUDGETS.thread)
   const wantsRecent = mode === 'recent' || (mode === 'smart' && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote)))
   const selectedRecent = mode !== 'off' && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : []
   const recentLines = selectedRecent.map((message, index) => {
-    const role = message.role === 'user' ? 'User' : message.role === 'assistant' ? 'Character' : 'System'
+    const role = message.role === 'user'
+      ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || 'You'})`
+      : message.role === 'assistant'
+        ? `Active RP Character (${state.characterName || 'Character'})`
+        : 'System'
     const anchor = clean(message.id, 180)
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : ''
     return `${role}${source}: ${clean(message.content, 520)}`
@@ -125,7 +131,7 @@ export async function assemblePocketContext(options: {
   const parts = [
     actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '',
     scene ? `SCENE SNAPSHOT${state.sceneSnapshot?.stale ? ' (STALE)' : ''}\n${scene}` : '',
-    recent ? `RECENT ROLEPLAY\n${recent}` : '',
+    recent ? `RECENT ROLEPLAY BACKGROUND — NOT PHONE CHANNEL\n${recent}` : '',
     story ? `STORY CONTEXT\n${story}` : '',
     thread ? `PHONE THREAD\n${thread}` : '',
   ].filter(Boolean)

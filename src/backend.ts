@@ -505,6 +505,44 @@ async function resolveActivePocketPersona(userId?: string): Promise<ChatPocketPe
   }
 }
 
+function pocketPersonaCollidesWithActor(state: PhoneState, persona: ChatPocketPersona): boolean {
+  const candidate = normalizeActorName(persona.displayName)
+  if (!candidate) return false
+  if (normalizeActorName(state.characterName) === candidate) return true
+  if (state.contacts.some((entry) => normalizeActorName(entry.name) === candidate)) return true
+  if (state.discoveredActors.some((entry) => normalizeActorName(entry.displayName) === candidate)) return true
+  return false
+}
+async function resolveGenerationPocketPersona(state: PhoneState, userId?: string): Promise<ChatPocketPersona> {
+  const configured = state.pocketPersona
+  if (configured.source === 'lumiverse') return configured
+  if (!pocketPersonaCollidesWithActor(state, configured) || !spindle.permissions.has('personas')) return configured
+
+  const hostPersona = await resolveActivePocketPersona(userId)
+  if (!hostPersona || pocketPersonaCollidesWithActor(state, hostPersona)) return configured
+
+  spindle.log.warn(`Pocket Persona "${configured.displayName}" collides with a roleplay actor; using active Lumiverse Persona "${hostPersona.displayName}" for this phone generation.`)
+  return hostPersona
+}
+function directGenerationHistory(conversation: PocketConversation, actorId: string, contactId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+
+  for (const message of conversation.messages.slice(-20)) {
+    const body = text(message.text, 8_000)
+    if (!body) continue
+
+    if (message.sender === 'persona') {
+      history.push({ role: 'user', content: body })
+      continue
+    }
+
+    const senderId = message.senderActorId || message.senderContactId || ''
+    if (senderId && senderId !== actorId && senderId !== contactId) continue
+    history.push({ role: 'assistant', content: body })
+  }
+
+  return history
+}
 async function loadState(chatId: string, characterId: string, userId?: string): Promise<PhoneState> {
   const characterPresentation = await characterPresentationFor(characterId, userId)
   const characterName = characterPresentation.name
@@ -1315,6 +1353,8 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
   await withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
+    const generationPersona = await resolveGenerationPocketPersona(state, userId)
+    const generationState: PhoneState = generationPersona === state.pocketPersona ? state : { ...state, pocketPersona: generationPersona }
     const conversation = resolveConversation(state, input)
     const participantActors = conversationActorIds(conversation)
       .map((actorId) => resolvePocketActor(state, actorId))
@@ -1351,19 +1391,67 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const knownIdentity = contact.identityBrief || profile.description || [profile.role, profile.personality, profile.behavior].filter(Boolean).join('. ')
     const compactIdentity = `Relationship importance: ${actor.relationship}. ${knownIdentity || 'No full profile is registered; use only the name and current phone exchange.'}`.slice(0, 1_200)
     const assembled = await assemblePocketContext({
-      state, contact, conversation: contextConversation, preferences,
+      state: generationState, contact, conversation: contextConversation, preferences,
       actorIdentity: compactIdentity,
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
+      includePhoneThread: conversation.kind !== 'direct',
     })
     const instruction = text(input.instruction, 2_000) || 'Reply naturally to the latest message.'
     const generationTask = replaceIndex >= 0 ? 'message-retry' : 'message-reply'
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
+    const personaName = generationPersona.displayName?.trim() || 'You'
+    const generationMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = conversation.kind === 'direct'
+      ? [
+          {
+            role: 'system',
+            content: `You are ${profile.name} writing a private phone DM to ${personaName}.
+
+DM ROLE BINDING — AUTHORITATIVE:
+- assistant role = ${profile.name}, the contact who writes the generated phone message.
+- user role = ${personaName}, the Pocket Persona / phone owner / recipient.
+- The active RP character (${generationState.characterName}) is background roleplay context, NOT the user role and NOT the DM recipient unless they literally are the Pocket Persona.
+- Names appearing inside old messages or RP background are text content, not routing metadata.
+- A historical generated message may contain a mistaken addressee; do not inherit that mistake.
+- Never reinterpret the user role as another actor.
+
+Return strict JSON only:
+{"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}
+
+The recipient field MUST be exactly "${personaName}".
+after describes the channel immediately after this message.
+Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote.
+No narration, markdown, or custom UI copy.`,
+          },
+          {
+            role: 'system',
+            content: `POCKET BACKGROUND — REFERENCE ONLY, NOT CHAT-ROLE ROUTING
+${assembled.text || '(no additional background)'}`,
+          },
+          ...directGenerationHistory(contextConversation, actor.actorId, contact.id),
+          {
+            role: 'user',
+            content: `[POCKET CONTROL — NOT AN IN-WORLD MESSAGE]
+The user role is still ${personaName}.
+Generate the next assistant-role phone text from ${profile.name} TO ${personaName}.
+DIRECTION: ${instruction}
+FINAL GENERATION LOCK: recipient=${personaName}; speaker=${profile.name}.`,
+          },
+        ]
+      : [
+          {
+            role: 'system',
+            content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. The FINAL CHANNEL LOCK in the bounded context is authoritative. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message.
+Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy.`,
+          },
+          {
+            role: 'user',
+            content: `${assembled.text || '(no context)'}\n\nDIRECTION\n${instruction}\n\nFINAL GENERATION LOCK\nSPEAKER / CONTACT: ${profile.name}\nRECIPIENT / POCKET PERSONA: ${personaName}\nGenerate ${profile.name}'s phone text TO the Pocket Persona named above. Other actors may be discussed, but they are not the recipient of this DM.`,
+          },
+        ]
+
     const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
       type: 'quiet',
-      messages: [
-        { role: 'system', content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. The CURRENT PHONE CHANNEL block below is authoritative: it defines who ${profile.name} is texting. Never infer a different recipient from scene/story/recent-roleplay context, another phone thread, or an actor merely mentioned in message text. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message. Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy. The compact identity and bounded context below are authoritative.` },
-        { role: 'user', content: `${assembled.text || '(no context)'}\n\nDIRECTION\n${instruction}\n\nFINAL GENERATION LOCK\nSPEAKER / CONTACT: ${profile.name}\nRECIPIENT / POCKET PERSONA: ${state.pocketPersona.displayName?.trim() || 'You'}\nGenerate ${profile.name}'s phone text TO the Pocket Persona named above. Other actors may be discussed, but they are not the recipient of this DM.` },
-      ],
+      messages: generationMessages,
       parameters: { temperature: 0.85, max_tokens: 500 },
       userId,
     }, userId)
@@ -1372,6 +1460,12 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     catch { generated = { message: response.content, after: { state: 'remote' } } }
     const reply = text(generated.message, 8_000)
     if (!reply) throw new Error('The character did not return a phone message.')
+    if (conversation.kind === 'direct') {
+      const declaredRecipient = text(generated.recipient, 120)
+      if (declaredRecipient && normalizeActorName(declaredRecipient) !== normalizeActorName(personaName)) {
+        throw new Error(`Pocket refused a misrouted DM: model declared recipient "${declaredRecipient}" instead of "${personaName}". Retry the message.`)
+      }
+    }
     const route: PocketRoute = { app: 'messages', conversationId: conversation.id }
     const visible = notificationDestinationVisible(state, route, userId)
     const nextMessage: PhoneMessage = {
