@@ -15,6 +15,13 @@ function percentage(value: unknown, fallback: number): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback
 }
+function phoneProfile(value: unknown): PocketNpcBankEntry['phoneProfile'] {
+  if (!record(value)) return undefined
+  const personality = clean(value.personality, 600)
+  const appearance = clean(value.appearance, 360)
+  const textingStyle = clean(value.textingStyle, 600)
+  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined
+}
 function timestamp(value: unknown, fallback: string): string {
   const candidate = clean(value, 40)
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback
@@ -56,6 +63,7 @@ export function normalizeNpcBank(value: unknown, now = new Date().toISOString())
       aliases,
       role: clean(raw.role, 120) || 'Pocket NPC',
       identityBrief: clean(raw.identityBrief ?? raw.description, 1_200),
+      phoneProfile: phoneProfile(raw.phoneProfile),
       avatarUrl: clean(raw.avatarUrl, 2_000),
       accent: accent(raw.accent),
       messagingStyle: {
@@ -103,6 +111,7 @@ export function upsertNpcBankFromContact(
     aliases,
     role: contact.role || 'Pocket NPC',
     identityBrief: contact.identityBrief || contact.description || '',
+    phoneProfile: contact.phoneProfile ? { ...contact.phoneProfile } : undefined,
     avatarUrl: contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl || '',
     accent: accent(contact.accent),
     messagingStyle: {
@@ -125,6 +134,7 @@ export function contactFromNpcBank(entry: PocketNpcBankEntry, now: string, makeI
     role: entry.role || 'Pocket NPC',
     description: entry.identityBrief,
     identityBrief: entry.identityBrief,
+    phoneProfile: entry.phoneProfile ? { ...entry.phoneProfile } : undefined,
     sceneNote: '',
     avatarUrl: entry.avatarUrl,
     sourceAvatarUrl: entry.avatarUrl,
@@ -150,6 +160,7 @@ export function applyNpcBankProfile(contact: PocketContact, entry: PocketNpcBank
   contact.role = entry.role || contact.role
   contact.description = entry.identityBrief
   contact.identityBrief = entry.identityBrief
+  contact.phoneProfile = entry.phoneProfile ? { ...entry.phoneProfile } : contact.phoneProfile
   contact.avatarUrl = entry.avatarUrl
   contact.sourceAvatarUrl = entry.avatarUrl
   contact.accent = entry.accent

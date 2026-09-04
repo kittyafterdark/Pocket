@@ -644,6 +644,14 @@ function percentage(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
 }
+function normalizePhoneProfile(value) {
+  if (!record3(value))
+    return;
+  const personality = clean2(value.personality, 600);
+  const appearance = clean2(value.appearance, 360);
+  const textingStyle = clean2(value.textingStyle, 600);
+  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
+}
 function timestamp(value, fallback) {
   const candidate = clean2(value, 40);
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
@@ -714,6 +722,7 @@ function normalizePocketContact(value, context) {
     role: clean2(value.role, 120) || clean2(value.subtitle, 120) || (source.kind === "character" ? "Character" : source.kind === "council" ? "Council member" : "Pocket NPC"),
     description,
     identityBrief,
+    phoneProfile: normalizePhoneProfile(value.phoneProfile),
     sceneNote: clean2(value.sceneNote, 600),
     avatarUrl: clean2(value.avatarUrl, 2000),
     sourceAvatarUrl: clean2(value.sourceAvatarUrl, 2000) || clean2(value.avatarUrl, 2000),
@@ -1001,6 +1010,14 @@ function percentage2(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
 }
+function phoneProfile(value) {
+  if (!record4(value))
+    return;
+  const personality = clean3(value.personality, 600);
+  const appearance = clean3(value.appearance, 360);
+  const textingStyle = clean3(value.textingStyle, 600);
+  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
+}
 function timestamp2(value, fallback) {
   const candidate = clean3(value, 40);
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
@@ -1039,6 +1056,7 @@ function normalizeNpcBank(value, now = new Date().toISOString()) {
       aliases,
       role: clean3(raw.role, 120) || "Pocket NPC",
       identityBrief: clean3(raw.identityBrief ?? raw.description, 1200),
+      phoneProfile: phoneProfile(raw.phoneProfile),
       avatarUrl: clean3(raw.avatarUrl, 2000),
       accent: accent(raw.accent),
       messagingStyle: {
@@ -1081,6 +1099,7 @@ function upsertNpcBankFromContact(bank, contact, now, makeId) {
     aliases,
     role: contact.role || "Pocket NPC",
     identityBrief: contact.identityBrief || contact.description || "",
+    phoneProfile: contact.phoneProfile ? { ...contact.phoneProfile } : undefined,
     avatarUrl: contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl || "",
     accent: accent(contact.accent),
     messagingStyle: {
@@ -1102,6 +1121,7 @@ function contactFromNpcBank(entry, now, makeId) {
     role: entry.role || "Pocket NPC",
     description: entry.identityBrief,
     identityBrief: entry.identityBrief,
+    phoneProfile: entry.phoneProfile ? { ...entry.phoneProfile } : undefined,
     sceneNote: "",
     avatarUrl: entry.avatarUrl,
     sourceAvatarUrl: entry.avatarUrl,
@@ -1127,6 +1147,7 @@ function applyNpcBankProfile(contact, entry, now) {
   contact.role = entry.role || contact.role;
   contact.description = entry.identityBrief;
   contact.identityBrief = entry.identityBrief;
+  contact.phoneProfile = entry.phoneProfile ? { ...entry.phoneProfile } : contact.phoneProfile;
   contact.avatarUrl = entry.avatarUrl;
   contact.sourceAvatarUrl = entry.avatarUrl;
   contact.accent = entry.accent;
@@ -3000,6 +3021,31 @@ async function listContactSources(state, userId) {
   } catch {}
   return options;
 }
+function generatedPhoneProfile(value) {
+  if (!isRecord(value))
+    return;
+  const personality = text2(value.personality, 600);
+  const appearance = text2(value.appearance, 360);
+  const textingStyle = text2(value.textingStyle, 600);
+  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
+}
+function pocketContactPhoneBrief(contact, fallback) {
+  const phone = contact.phoneProfile;
+  const lines = [
+    contact.identityBrief ? `Compact profile: ${text2(contact.identityBrief, 520)}` : "",
+    phone?.personality ? `Personality: ${text2(phone.personality, 420)}` : "",
+    phone?.appearance ? `Minimal appearance: ${text2(phone.appearance, 220)}` : "",
+    phone?.textingStyle ? `Texting style: ${text2(phone.textingStyle, 420)}` : ""
+  ].filter(Boolean);
+  if (lines.length)
+    return lines.join(`
+`).slice(0, 1200);
+  return [
+    fallback?.description,
+    fallback?.personality,
+    fallback?.behavior
+  ].filter(Boolean).join(". ").slice(0, 900);
+}
 async function resolveContactProfile(contact, userId) {
   if (contact.source.kind === "character") {
     if (!spindle.permissions.has("characters"))
@@ -4159,8 +4205,9 @@ async function generateMessage(input, userId) {
     const replaceMessageId = text2(input.replaceMessageId, 180);
     const replaceIndex = replaceMessageId ? conversation.messages.findIndex((message) => message.id === replaceMessageId && message.sender === "contact") : -1;
     const contextConversation = replaceIndex >= 0 ? { ...conversation, messages: conversation.messages.slice(0, replaceIndex) } : conversation;
-    const knownIdentity = contact.identityBrief || profile.description || [profile.role, profile.personality, profile.behavior].filter(Boolean).join(". ");
-    const compactIdentity = `Relationship importance: ${actor.relationship}. ${knownIdentity || "No full profile is registered; use only the name and current phone exchange."}`.slice(0, 1200);
+    const knownIdentity = pocketContactPhoneBrief(contact, profile);
+    const compactIdentity = `Relationship importance: ${actor.relationship}.
+${knownIdentity || "No full profile is registered; use only the name and current phone exchange."}`.slice(0, 1400);
     const assembled = await assemblePocketContext({
       state: generationState,
       contact,
@@ -4427,13 +4474,15 @@ async function generateGroupBatch(input, userId) {
       contact: primary.contact,
       conversation,
       preferences,
-      actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship}) \u2014 ${contact.identityBrief || profile.description || "No profile; infer only from the live exchange."}`.slice(0, 700)).join(`
-`).slice(0, 1200),
+      actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship})
+${pocketContactPhoneBrief(contact, profile) || "No profile; infer only from the live exchange."}`.slice(0, 900)).join(`
+
+`).slice(0, 3600),
       getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined,
       includeRoleplayBackground: false
     });
     const groupContinuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(groupContinuitySeed, "", profiles.map(({ actor }) => actor.name));
-    const roster = profiles.map(({ actor, contact }) => [
+    const roster = profiles.map(({ actor, contact, profile }) => [
       `id=${actor.actorId}`,
       `name=${actor.name}`,
       `role=${contact.role}`,
@@ -4441,7 +4490,7 @@ async function generateGroupBatch(input, userId) {
       `profile=${actor.kind === "discovered" ? "minimal-discovered-actor" : "contact"}`,
       `talkativeness=${contact.messagingStyle.talkativeness}/100`,
       `fragmentation=${contact.messagingStyle.fragmentation}/100`,
-      `identity=${(contact.identityBrief || contact.description).slice(0, 600)}`
+      `identity=${pocketContactPhoneBrief(contact, profile).replace(/\n/g, " \xB7 ").slice(0, 900)}`
     ].join(" | ")).join(`
 `).slice(0, 5000);
     const parsed = await runStructuredGeneration("group-reply", requestId, {
@@ -4632,10 +4681,10 @@ async function generateNpcContact(input, userId) {
   const request = {
     type: "quiet",
     messages: [
-      { role: "system", content: 'Create one compact roleplay phone contact draft from the user description. Return strict JSON only: {"name":"","role":"","identityBrief":"","talkativeness":50,"fragmentation":35}. No markdown. identityBrief contains only stable facts useful across scenes: role, general personality, enduring relationship, distinctive behavior. Infer talkativeness and fragmentation from 0 to 100; these are editable messaging tendencies, never guarantees. Do not invent unsupported backstory. Name and role max 120 characters; identityBrief max 900.' },
+      { role: "system", content: 'Create one compact PHONE-SPECIFIC roleplay contact draft from the user description. Return strict JSON only: {"name":"","role":"","identityBrief":"","phoneProfile":{"personality":"","appearance":"","textingStyle":""},"talkativeness":50,"fragmentation":35}. No markdown. identityBrief is a concise stable identity/relationship summary. phoneProfile.personality contains stable social/temperamental traits useful in conversation; appearance contains only 1-3 recognizable details useful for occasional texting references; textingStyle contains casing, punctuation, slang/register, dialect/AAVE only when actually established, emoji/kaomoji habits, abbreviations, fragmentation, and other stable texting quirks. Infer only from supplied evidence; do not stereotype demographics or invent unsupported quirks. Infer talkativeness and fragmentation from 0 to 100 as editable tendencies, never guarantees. Name/role max 120; identityBrief max 500; personality/textingStyle max 420; appearance max 240.' },
       { role: "user", content: prompt }
     ],
-    parameters: { temperature: 0.55, max_tokens: 350 },
+    parameters: { temperature: 0.45, max_tokens: 650 },
     userId
   };
   const parsed = await runStructuredGeneration("npc-contact", requestId, request, userId);
@@ -4648,6 +4697,7 @@ async function generateNpcContact(input, userId) {
     name,
     role: text2(parsed.role, 120) || "Pocket NPC",
     identityBrief,
+    phoneProfile: generatedPhoneProfile(parsed.phoneProfile),
     accent: stableContactAccent(name),
     messagingStyle: {
       talkativeness: Math.max(0, Math.min(100, Math.round(numberValue(parsed.talkativeness, 50)))),
@@ -4678,7 +4728,7 @@ async function refreshCompactContactProfile(input, userId) {
   const parsed = await runStructuredGeneration("profile-refresh", requestId, {
     type: "quiet",
     messages: [
-      { role: "system", content: 'Condense the authoritative actor profile into stable phone-contact facts. Return strict JSON only: {"identityBrief":""}. Include stable role, personality, relationship, and distinctive behavior when supported. Exclude temporary scene state and do not invent facts. Maximum 900 characters.' },
+      { role: "system", content: 'Condense the authoritative actor evidence into a PHONE-SPECIFIC contact profile. Return strict JSON only: {"identityBrief":"","phoneProfile":{"personality":"","appearance":"","textingStyle":""}}. identityBrief is a concise stable identity/relationship summary, max 500 chars. personality contains stable social/temperamental traits useful in conversation, max 420. appearance contains only 1-3 recognizable details useful for occasional texting references, max 240. textingStyle contains casing, punctuation, slang/register, dialect/AAVE only when actually established, emoji/kaomoji habits, abbreviations, fragmentation, message length, and other stable texting quirks, max 420. Exclude temporary scene state. Infer only from evidence, never stereotype demographics, and leave unsupported quirks blank.' },
       { role: "user", content: discoveredSource ? `Name: ${profile.name}
 Known phone messages:
 ${phoneEvidence || "(none)"}
@@ -4690,12 +4740,13 @@ Description: ${profile.description}
 Personality: ${profile.personality}
 Behavior: ${profile.behavior}` }
     ],
-    parameters: { temperature: 0.15, max_tokens: 320 },
+    parameters: { temperature: 0.12, max_tokens: 650 },
     userId
   }, userId);
-  const identityBrief = text2(parsed.identityBrief, 900);
-  if (!identityBrief)
-    throw new Error("Profile refresh returned no stable identity brief.");
+  const identityBrief = text2(parsed.identityBrief, 500);
+  const phoneProfile2 = generatedPhoneProfile(parsed.phoneProfile);
+  if (!identityBrief && !phoneProfile2)
+    throw new Error("Profile refresh returned no usable phone profile.");
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     const latest = await loadState(context.chatId, context.characterId, userId);
     const target = latest.contacts.find((entry) => entry.id === contact.id);
@@ -4703,8 +4754,12 @@ Behavior: ${profile.behavior}` }
       throw new Error("That contact no longer exists.");
     target.name = profile.name;
     target.role = profile.role || target.role;
-    target.identityBrief = identityBrief;
-    target.description = identityBrief;
+    if (identityBrief) {
+      target.identityBrief = identityBrief;
+      target.description = identityBrief;
+    }
+    if (phoneProfile2)
+      target.phoneProfile = phoneProfile2;
     target.updatedAt = nowIso();
     await saveState(latest, userId);
     await sendState(latest, userId, "contact_profile");

@@ -2168,6 +2168,7 @@ function draftPayload(draft) {
     role: draft.role,
     identityBrief: draft.identityBrief,
     description: draft.identityBrief,
+    phoneProfile: draft.phoneProfile,
     accent: draft.accent,
     colorMode: "pocket",
     messagingStyle: draft.messagingStyle,
@@ -2188,9 +2189,22 @@ function contactEditor(host, contact, draft = null) {
   role.placeholder = "Role";
   role.value = contact?.role || draft?.role || "";
   const description = el("textarea", "lp-textarea");
-  description.placeholder = "Stable identity brief — role, personality, relationship, enduring traits";
-  description.maxLength = 1200;
+  description.placeholder = "Compact profile — stable identity, role, relationship";
+  description.maxLength = 500;
   description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || "";
+  const phoneProfile = contact?.phoneProfile || draft?.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
+  const personality = el("textarea", "lp-textarea");
+  personality.placeholder = "Personality — stable traits that shape conversation";
+  personality.maxLength = 600;
+  personality.value = phoneProfile.personality;
+  const appearance2 = el("textarea", "lp-textarea");
+  appearance2.placeholder = "Minimal appearance — only a few recognizable details";
+  appearance2.maxLength = 360;
+  appearance2.value = phoneProfile.appearance;
+  const textingStyle = el("textarea", "lp-textarea");
+  textingStyle.placeholder = "Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, fragmentation…";
+  textingStyle.maxLength = 600;
+  textingStyle.value = phoneProfile.textingStyle;
   const sceneNote = el("textarea", "lp-textarea");
   sceneNote.placeholder = "Current scene note — temporary state, objective, or reason they are here";
   sceneNote.maxLength = 600;
@@ -2293,6 +2307,11 @@ function contactEditor(host, contact, draft = null) {
       role: role.value.trim(),
       identityBrief: description.value.trim(),
       description: description.value.trim(),
+      phoneProfile: {
+        personality: personality.value.trim(),
+        appearance: appearance2.value.trim(),
+        textingStyle: textingStyle.value.trim()
+      },
       sceneNote: sceneNote.value.trim(),
       accent: accent.value,
       colorMode: colorMode.value,
@@ -2312,7 +2331,7 @@ function contactEditor(host, contact, draft = null) {
   };
   if (photoCard)
     content.appendChild(photoCard);
-  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Stable identity brief", description, "Role, personality, relationship, and enduring traits."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance2, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
@@ -2469,6 +2488,18 @@ function renderContactsView(host) {
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || "No compact identity brief.", prominent: true, centered: true }));
     if (contact.sceneNote)
       hero.append(el("p", "lp-scene-note", contact.sceneNote));
+    const phoneProfile = contact.phoneProfile;
+    if (phoneProfile && (phoneProfile.personality || phoneProfile.appearance || phoneProfile.textingStyle)) {
+      const profileCard = el("div", "lp-card lp-contact-phone-profile");
+      profileCard.appendChild(el("div", "lp-eyebrow", "Phone profile"));
+      if (phoneProfile.personality)
+        profileCard.appendChild(el("p", "lp-copy", `Personality: ${phoneProfile.personality}`));
+      if (phoneProfile.appearance)
+        profileCard.appendChild(el("p", "lp-copy", `Appearance: ${phoneProfile.appearance}`));
+      if (phoneProfile.textingStyle)
+        profileCard.appendChild(el("p", "lp-copy", `Texting: ${phoneProfile.textingStyle}`));
+      content2.appendChild(profileCard);
+    }
     const source = contact.source.kind === "character" ? "Linked Character" : contact.source.kind === "council" ? "Linked Council member" : `Pocket NPC · ${contact.source.origin}`;
     hero.append(el("span", "lp-eyebrow", `${source} · ${contact.relationship === "close" ? "Close connection" : "Background actor"}`));
     const presence = el("div", "lp-card");

@@ -39,7 +39,7 @@ function avatar(contact: PocketContact): HTMLDivElement {
 
 function draftPayload(draft: PocketContactDraft): Record<string, unknown> {
   return {
-    name: draft.name, role: draft.role, identityBrief: draft.identityBrief, description: draft.identityBrief,
+    name: draft.name, role: draft.role, identityBrief: draft.identityBrief, description: draft.identityBrief, phoneProfile: draft.phoneProfile,
     accent: draft.accent, colorMode: 'pocket', messagingStyle: draft.messagingStyle,
     source: { kind: 'npc', origin: 'generated', description: draft.identityBrief },
     presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
@@ -52,7 +52,11 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   const { page, content } = host.page(contact ? 'Contact Settings' : draft ? 'Edit Draft' : 'New Contact', contact?.source.kind || (draft ? 'Generated preview · unsaved' : 'Pocket NPC'), { label: 'Save', callback: () => saveContact() })
   const name = el('input', 'lp-input'); name.placeholder = 'Name'; name.value = contact?.name || draft?.name || ''
   const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = contact?.role || draft?.role || ''
-  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Stable identity brief — role, personality, relationship, enduring traits'; description.maxLength = 1_200; description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || ''
+  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Compact profile — stable identity, role, relationship'; description.maxLength = 500; description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || ''
+  const phoneProfile = contact?.phoneProfile || draft?.phoneProfile || { personality: '', appearance: '', textingStyle: '' }
+  const personality = el('textarea', 'lp-textarea'); personality.placeholder = 'Personality — stable traits that shape conversation'; personality.maxLength = 600; personality.value = phoneProfile.personality
+  const appearance = el('textarea', 'lp-textarea'); appearance.placeholder = 'Minimal appearance — only a few recognizable details'; appearance.maxLength = 360; appearance.value = phoneProfile.appearance
+  const textingStyle = el('textarea', 'lp-textarea'); textingStyle.placeholder = 'Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, fragmentation…'; textingStyle.maxLength = 600; textingStyle.value = phoneProfile.textingStyle
   const sceneNote = el('textarea', 'lp-textarea'); sceneNote.placeholder = 'Current scene note — temporary state, objective, or reason they are here'; sceneNote.maxLength = 600; sceneNote.value = contact?.sceneNote || ''
   const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || '') ? (contact?.accent || draft!.accent) : '#8b7dff'
   const colorRow = controlRow('Contact color', accent)
@@ -109,7 +113,12 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   saveContact = () => {
     if (!name.value.trim()) { host.showError('A contact needs a name.'); return }
     host.send('lumiphone:save_contact', { contact: {
-      id: contact?.id, name: name.value.trim(), role: role.value.trim(), identityBrief: description.value.trim(), description: description.value.trim(), sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
+      id: contact?.id, name: name.value.trim(), role: role.value.trim(), identityBrief: description.value.trim(), description: description.value.trim(),
+      phoneProfile: {
+        personality: personality.value.trim(),
+        appearance: appearance.value.trim(),
+        textingStyle: textingStyle.value.trim(),
+      }, sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
       relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
       contextPolicy: { pinned: pinned.checked },
@@ -127,7 +136,10 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   content.append(
     fieldBlock('Name', name),
     fieldBlock('Role', role),
-    fieldBlock('Stable identity brief', description, 'Role, personality, relationship, and enduring traits.'),
+    fieldBlock('Compact profile', description, 'Stable identity, role, and relationship summary.'),
+    fieldBlock('Personality', personality, 'Stable social and temperamental traits that shape conversation.'),
+    fieldBlock('Minimal appearance', appearance, 'Only recognizable details worth occasional reference in texts.'),
+    fieldBlock('Texting quirks', textingStyle, 'Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm.'),
     fieldBlock('Current scene note', sceneNote, 'Temporary state, objective, or reason they are here.'),
     colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow,
     sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow,
@@ -280,6 +292,15 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const hero = el('div', 'lp-card lp-contact-detail')
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || 'No compact identity brief.', prominent: true, centered: true }))
     if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
+    const phoneProfile = contact.phoneProfile
+    if (phoneProfile && (phoneProfile.personality || phoneProfile.appearance || phoneProfile.textingStyle)) {
+      const profileCard = el('div', 'lp-card lp-contact-phone-profile')
+      profileCard.appendChild(el('div', 'lp-eyebrow', 'Phone profile'))
+      if (phoneProfile.personality) profileCard.appendChild(el('p', 'lp-copy', `Personality: ${phoneProfile.personality}`))
+      if (phoneProfile.appearance) profileCard.appendChild(el('p', 'lp-copy', `Appearance: ${phoneProfile.appearance}`))
+      if (phoneProfile.textingStyle) profileCard.appendChild(el('p', 'lp-copy', `Texting: ${phoneProfile.textingStyle}`))
+      content.appendChild(profileCard)
+    }
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
     hero.append(el('span', 'lp-eyebrow', `${source} · ${contact.relationship === 'close' ? 'Close connection' : 'Background actor'}`))
     const presence = el('div', 'lp-card')

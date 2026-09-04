@@ -24,6 +24,13 @@ function percentage(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback
 }
 
+function normalizePhoneProfile(value: unknown): PocketContact['phoneProfile'] {
+  if (!record(value)) return undefined
+  const personality = clean(value.personality, 600)
+  const appearance = clean(value.appearance, 360)
+  const textingStyle = clean(value.textingStyle, 600)
+  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined
+}
 function timestamp(value: unknown, fallback: string): string {
   const candidate = clean(value, 40)
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback
@@ -99,6 +106,7 @@ export function normalizePocketContact(value: unknown, context: {
     role: clean(value.role, 120) || clean(value.subtitle, 120) || (source.kind === 'character' ? 'Character' : source.kind === 'council' ? 'Council member' : 'Pocket NPC'),
     description,
     identityBrief,
+    phoneProfile: normalizePhoneProfile(value.phoneProfile),
     sceneNote: clean(value.sceneNote, 600),
     avatarUrl: clean(value.avatarUrl, 2_000),
     sourceAvatarUrl: clean(value.sourceAvatarUrl, 2_000) || clean(value.avatarUrl, 2_000),

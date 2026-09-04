@@ -145,6 +145,11 @@ export interface SceneActorSnapshot {
   stale: boolean
 }
 
+export interface PocketPhoneProfile {
+  personality: string
+  appearance: string
+  textingStyle: string
+}
 export interface ChatPocketPersona {
   source: 'lumiverse' | 'manual' | 'generated'
   linkedPersonaId: string
@@ -153,11 +158,7 @@ export interface ChatPocketPersona {
   role: string
   identityBrief: string
   /** Compact Pocket-only profile optimized for phone conversation generation. */
-  phoneProfile?: {
-    personality: string
-    appearance: string
-    textingStyle: string
-  }
+  phoneProfile?: PocketPhoneProfile
   avatarUrl: string
   accent: string
   canAppear: boolean
@@ -341,6 +342,7 @@ export interface PocketNpcBankEntry {
   aliases: string[]
   role: string
   identityBrief: string
+  phoneProfile?: PocketPhoneProfile
   avatarUrl: string
   accent: string
   messagingStyle: PocketMessagingStyle
@@ -358,6 +360,7 @@ export interface PocketContactDraft {
   name: string
   role: string
   identityBrief: string
+  phoneProfile?: PocketPhoneProfile
   accent: string
   messagingStyle: PocketMessagingStyle
   sourceDescription: string
@@ -370,6 +373,7 @@ export interface PocketContact {
   description: string
   /** Stable compact identity used in generation. Linked actors refresh from their authoritative source. */
   identityBrief: string
+  phoneProfile?: PocketPhoneProfile
   /** Ephemeral scene-only note, maintained by Scene Sync. */
   sceneNote: string
   avatarUrl: string
