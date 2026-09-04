@@ -1616,6 +1616,58 @@ function sceneLines(state) {
     return `${contact?.name || actor.contactId}${actor.roleHint ? ` (${actor.roleHint})` : ""}${actor.sceneBrief ? ` \u2014 ${actor.sceneBrief}` : ""}`;
   });
 }
+function participantActorIds(conversation) {
+  return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds;
+}
+function actorDisplayName(state, actorId) {
+  const direct = state.contacts.find((entry) => entry.id === actorId);
+  if (direct)
+    return direct.name;
+  const discovered = state.discoveredActors?.find((entry) => entry.id === actorId);
+  if (!discovered)
+    return actorId;
+  const promoted = discovered.promotedContactId ? state.contacts.find((entry) => entry.id === discovered.promotedContactId) : undefined;
+  return promoted?.name || discovered.displayName;
+}
+function currentChannelLines(state, contact, conversation) {
+  const persona = state.pocketPersona.displayName?.trim() || "You";
+  const actorIds = participantActorIds(conversation);
+  const actorNames = actorIds.map((actorId) => actorDisplayName(state, actorId)).filter(Boolean);
+  if (conversation.kind === "direct") {
+    const other = actorNames[0] || contact.name || conversation.title || "the contact";
+    return [
+      "TYPE: DIRECT MESSAGE",
+      `PERSONA / PHONE OWNER / RECIPIENT: ${persona}`,
+      `CONTACT / GENERATED SPEAKER: ${contact.name}`,
+      `DM PARTICIPANTS: ${persona}, ${other}`,
+      `TARGET LOCK: ${contact.name} is writing this phone message TO ${persona}. ${persona} is the current interlocutor and recipient.`,
+      `This private DM belongs only to ${persona} and ${other}.`,
+      "The active roleplay character, scene focal actor, recently mentioned actor, or actor from another phone thread is NOT the recipient merely because they are salient.",
+      "Other actors may be discussed as third parties. Do not address them as though they can read this DM.",
+      `Never replace ${persona} as the recipient unless the channel itself changes.`
+    ];
+  }
+  return [
+    "TYPE: GROUP CHAT",
+    `PERSONA / PHONE OWNER: ${persona}`,
+    `CURRENT GROUP ACTORS: ${actorNames.join(", ") || "(none)"}`,
+    `CURRENT CHANNEL MEMBERS: ${[persona, ...actorNames].join(", ")}`,
+    "TARGET LOCK: generated group messages are visible only to the CURRENT CHANNEL MEMBERS listed above.",
+    "Messages from actors who have since left the group remain historical context only; they are not current participants, recipients, or eligible speakers.",
+    "A former/absent actor may be discussed as a third party, but must not be directly addressed as though they can read this group chat.",
+    "Actors mentioned only in scene, story, recent roleplay, another phone conversation, or message text do not become group members."
+  ];
+}
+function threadLine(state, conversation, message) {
+  const persona = state.pocketPersona.displayName || "You";
+  const sender = message.sender === "persona" ? persona : message.senderName || "Pocket";
+  if (conversation.kind !== "group" || message.sender !== "contact")
+    return `${sender}: ${clean4(message.text, 520)}`;
+  const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds]);
+  const senderId = message.senderActorId || message.senderContactId || "";
+  const former = Boolean(senderId && !currentIds.has(senderId));
+  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean4(message.text, 520)}`;
+}
 function trimBlock(lines, budget) {
   return lines.filter(Boolean).join(`
 `).slice(0, budget);
@@ -1623,7 +1675,8 @@ function trimBlock(lines, budget) {
 async function assemblePocketContext(options) {
   const { state, contact, conversation, preferences } = options;
   const mode = preferences.roleplayContextMode;
-  const hostMessages = options.getMessages ? await options.getMessages().catch(() => []) : [];
+  const includeRoleplayBackground = options.includeRoleplayBackground !== false;
+  const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : [];
   const authoritative = hostMessages.at(-1);
   const authoritativeLatest = authoritative ? {
     id: clean4(authoritative.id, 180),
@@ -1631,13 +1684,15 @@ async function assemblePocketContext(options) {
     excerpt: clean4(authoritative.content, 180)
   } : { id: "", index: -1, excerpt: "" };
   const actorIdentity = clean4(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
+  const channel = trimBlock(currentChannelLines(state, contact, conversation), 1400);
   const scene = trimBlock(sceneLines(state), BUDGETS.scene);
-  const threadLines = conversation.messages.slice(-20).map((message) => `${message.sender === "persona" ? state.pocketPersona.displayName || "You" : message.senderName || "Pocket"}: ${clean4(message.text, 520)}`);
+  const includePhoneThread = options.includePhoneThread !== false;
+  const threadLines = includePhoneThread ? conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message)) : [];
   const thread = trimBlock(threadLines, BUDGETS.thread);
-  const wantsRecent = mode === "recent" || mode === "smart" && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote));
+  const wantsRecent = includeRoleplayBackground && (mode === "recent" || mode === "smart" && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote)));
   const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
   const recentLines = selectedRecent.map((message, index) => {
-    const role = message.role === "user" ? "User" : message.role === "assistant" ? "Character" : "System";
+    const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
     const anchor = clean4(message.id, 180);
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
     return `${role}${source}: ${clean4(message.content, 520)}`;
@@ -1649,27 +1704,33 @@ async function assemblePocketContext(options) {
     index: messageIndex(includedMessage, hostMessages.length - 1),
     excerpt: clean4(includedMessage.content, 180)
   } : { id: "", index: -1, excerpt: "" };
-  const storySource = mode === "story" || mode === "smart" ? storyLines(state, contact) : [];
+  const storySource = mode !== "off" && (mode === "story" || mode === "smart" || !includeRoleplayBackground) ? storyLines(state, contact) : [];
   const story = trimBlock(storySource, BUDGETS.story);
   const parts = [
     actorIdentity ? `ACTOR IDENTITY
 ${actorIdentity}` : "",
     scene ? `SCENE SNAPSHOT${state.sceneSnapshot?.stale ? " (STALE)" : ""}
 ${scene}` : "",
-    recent ? `RECENT ROLEPLAY
+    recent ? `RECENT ROLEPLAY BACKGROUND \u2014 NOT PHONE CHANNEL
 ${recent}` : "",
     story ? `STORY CONTEXT
 ${story}` : "",
     thread ? `PHONE THREAD
 ${thread}` : ""
   ].filter(Boolean);
-  const finalText = (mode === "off" ? [actorIdentity ? `ACTOR IDENTITY
+  const bodyText = mode === "off" ? [actorIdentity ? `ACTOR IDENTITY
 ${actorIdentity}` : "", thread ? `PHONE THREAD
 ${thread}` : ""].filter(Boolean).join(`
 
 `) : parts.join(`
 
-`)).slice(0, BUDGETS.total);
+`);
+  const finalLock = channel ? `FINAL CHANNEL LOCK
+${channel}` : "";
+  const bodyBudget = Math.max(0, BUDGETS.total - finalLock.length - (finalLock ? 2 : 0));
+  const finalText = [bodyText.slice(0, bodyBudget), finalLock].filter(Boolean).join(`
+
+`);
   const latestMismatch = Boolean(authoritativeLatest.id && (!includedLatest.id || authoritativeLatest.id !== includedLatest.id));
   const freshnessWarning = mode === "story" || mode === "off" || !wantsRecent ? "" : latestMismatch ? "The latest committed roleplay message is not included in the selected recent-context window." : "";
   return {
@@ -2540,6 +2601,49 @@ async function resolveActivePocketPersona(userId) {
     return null;
   }
 }
+function pocketPersonaCollidesWithActor(state, persona) {
+  const candidate = normalizeActorName(persona.displayName);
+  if (!candidate)
+    return false;
+  if (normalizeActorName(state.characterName) === candidate)
+    return true;
+  if (state.contacts.some((entry) => normalizeActorName(entry.name) === candidate))
+    return true;
+  if (state.discoveredActors.some((entry) => normalizeActorName(entry.displayName) === candidate))
+    return true;
+  return false;
+}
+async function resolveGenerationPocketPersona(state, userId) {
+  const configured = state.pocketPersona;
+  if (configured.source === "lumiverse")
+    return configured;
+  if (!pocketPersonaCollidesWithActor(state, configured) || !spindle.permissions.has("personas"))
+    return configured;
+  const hostPersona = await resolveActivePocketPersona(userId);
+  if (!hostPersona || pocketPersonaCollidesWithActor(state, hostPersona))
+    return configured;
+  spindle.log.warn(`Pocket Persona "${configured.displayName}" collides with a roleplay actor; using active Lumiverse Persona "${hostPersona.displayName}" for this phone generation.`);
+  return hostPersona;
+}
+function directGenerationHistory(conversation, actorId, contactId, personaName, contactName) {
+  const history = [];
+  for (const message of conversation.messages.slice(-20)) {
+    const body = text2(message.text, 8000);
+    if (!body)
+      continue;
+    if (message.sender === "persona") {
+      history.push({ role: "user", content: `[DM TURN: ${personaName} \u2192 ${contactName}]
+${body}` });
+      continue;
+    }
+    const senderId = message.senderActorId || message.senderContactId || "";
+    if (senderId && senderId !== actorId && senderId !== contactId)
+      continue;
+    history.push({ role: "assistant", content: `[DM TURN: ${contactName} \u2192 ${personaName}]
+${body}` });
+  }
+  return history;
+}
 async function loadState(chatId, characterId, userId) {
   const characterPresentation = await characterPresentationFor(characterId, userId);
   const characterName = characterPresentation.name;
@@ -2903,7 +3007,60 @@ async function resolveContactProfile(contact, userId) {
     source: `npc:${contact.source.origin}`
   };
 }
+function promptDebugPath(requestId) {
+  return `debug/prompts/${safeSegment(requestId)}.json`;
+}
+function promptDebugSnapshot(task, requestId, request) {
+  const messages = (Array.isArray(request.messages) ? request.messages : []).flatMap((entry) => {
+    if (!isRecord(entry))
+      return [];
+    const role = text2(entry.role, 40);
+    const content = typeof entry.content === "string" ? entry.content : "";
+    if (!role && !content)
+      return [];
+    return [{ role: role || "unknown", content }];
+  });
+  return {
+    version: 1,
+    task,
+    requestId,
+    capturedAt: nowIso(),
+    type: text2(request.type, 80),
+    messages,
+    parameters: isRecord(request.parameters) ? request.parameters : {},
+    reasoning: isRecord(request.reasoning) ? request.reasoning : undefined
+  };
+}
+async function savePromptDebug(task, requestId, request, userId) {
+  try {
+    await spindle.userStorage.setJson(promptDebugPath(requestId), promptDebugSnapshot(task, requestId, request), { indent: 2, userId });
+  } catch (error) {
+    spindle.log.warn(`Pocket could not persist outgoing-prompt debug for ${requestId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+async function loadPromptDebug(requestId, userId) {
+  if (!requestId)
+    return null;
+  const raw = await spindle.userStorage.getJson(promptDebugPath(requestId), { fallback: null, userId });
+  if (!isRecord(raw) || raw.version !== 1)
+    return null;
+  return {
+    version: 1,
+    task: text2(raw.task, 120),
+    requestId: text2(raw.requestId, 180) || requestId,
+    capturedAt: text2(raw.capturedAt, 80),
+    type: text2(raw.type, 80),
+    messages: (Array.isArray(raw.messages) ? raw.messages : []).flatMap((entry) => {
+      if (!isRecord(entry))
+        return [];
+      return [{ role: text2(entry.role, 40) || "unknown", content: typeof entry.content === "string" ? entry.content : "" }];
+    }),
+    parameters: isRecord(raw.parameters) ? raw.parameters : {},
+    reasoning: isRecord(raw.reasoning) ? raw.reasoning : undefined
+  };
+}
 async function runStructuredGeneration(task, requestId, request, userId) {
+  await savePromptDebug(task, requestId, request, userId);
   const first = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId);
   return parseWithTruncationRetry(first.content, async () => {
     const parameters = isRecord(request.parameters) ? request.parameters : {};
@@ -3439,15 +3596,354 @@ async function cameraGenerate(input, userId) {
   send({ type: "lumiphone:camera_done", requestId, imageId, imageUrl, prompt: expanded, profile }, userId);
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source };
 }
+var POCKET_CONTINUITY_SEED_VERSION = 3;
+var narrativeSeedFlights = new Map;
+function continuitySeedPath(chatId, characterId) {
+  return `phones/${stateKey(chatId, characterId)}.continuity-seed.json`;
+}
+function seedStringList(value, max = 12) {
+  const values = (Array.isArray(value) ? value : []).map((entry) => text2(entry, 120)).filter(Boolean);
+  return values.filter((entry, index) => values.findIndex((other) => normalizeActorName(other) === normalizeActorName(entry)) === index).slice(0, max);
+}
+function seedVisibility(value) {
+  return value === "public" || value === "scene" ? value : "private";
+}
+function seedTtl(value) {
+  return value === "persistent" || value === "scene" ? value : "turn";
+}
+function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
+  const raw = isRecord(value) ? value : {};
+  const rawWorld = isRecord(raw.world) ? raw.world : {};
+  const rawWeather = isRecord(rawWorld.weather) ? rawWorld.weather : null;
+  const worldFacts = (Array.isArray(rawWorld.facts) ? rawWorld.facts : []).map((entry) => text2(entry, 360)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index).slice(0, 8);
+  const world = {
+    setting: text2(rawWorld.setting, 360),
+    facts: worldFacts,
+    weather: rawWeather ? {
+      condition: text2(rawWeather.condition, 120),
+      location: text2(rawWeather.location, 180),
+      details: text2(rawWeather.details, 360)
+    } : null
+  };
+  const facts = (Array.isArray(raw.facts) ? raw.facts : []).slice(0, 10).flatMap((entry) => {
+    if (!isRecord(entry))
+      return [];
+    const body = text2(entry.text ?? entry.fact, 360);
+    const actors2 = seedStringList(entry.actors);
+    if (!body || !actors2.length)
+      return [];
+    return [{
+      text: body,
+      visibility: seedVisibility(entry.visibility),
+      knownBy: seedStringList(entry.knownBy ?? entry.known_by),
+      actors: actors2,
+      ttl: seedTtl(entry.ttl)
+    }];
+  });
+  const rawActors = Array.isArray(raw.actors) ? raw.actors : Array.isArray(raw.actorUpdates) ? raw.actorUpdates : [];
+  const actors = rawActors.slice(0, 12).flatMap((entry) => {
+    if (!isRecord(entry))
+      return [];
+    const name = text2(entry.name, 120);
+    if (!name)
+      return [];
+    const status = entry.status === "available" || entry.status === "busy" || entry.status === "away" || entry.status === "asleep" || entry.status === "in_scene" ? entry.status : "unknown";
+    return [{
+      name,
+      status,
+      activity: text2(entry.activity, 260),
+      location: text2(entry.location, 180),
+      visibility: seedVisibility(entry.visibility),
+      knownBy: seedStringList(entry.knownBy ?? entry.known_by),
+      ttl: seedTtl(entry.ttl)
+    }];
+  });
+  const timeline = (Array.isArray(raw.timeline) ? raw.timeline : []).slice(0, 6).flatMap((entry) => {
+    if (!isRecord(entry))
+      return [];
+    const title = text2(entry.title ?? entry.event, 180);
+    if (!title)
+      return [];
+    const scope = entry.scope === "world" ? "world" : "actor";
+    const actors2 = seedStringList(entry.actors, 8);
+    if (scope === "actor" && !actors2.length)
+      return [];
+    const whenKind = entry.whenKind === "exact" || entry.whenKind === "approximate" || entry.whenKind === "relative" ? entry.whenKind : "unscheduled";
+    return [{
+      scope,
+      title,
+      description: text2(entry.description, 500),
+      whenText: text2(entry.whenText ?? entry.when, 180) || "Unscheduled",
+      whenKind,
+      actors: scope === "world" ? [] : actors2,
+      completed: entry.completed === true,
+      visibility: seedVisibility(entry.visibility),
+      knownBy: seedStringList(entry.knownBy ?? entry.known_by)
+    }];
+  });
+  return {
+    version: POCKET_CONTINUITY_SEED_VERSION,
+    sourceKey: text2(raw.sourceKey, 1600) || sourceKey,
+    sourceMessageIds: seedStringList(raw.sourceMessageIds, 8).length ? seedStringList(raw.sourceMessageIds, 8) : sourceMessageIds.slice(-8),
+    world,
+    facts,
+    actors,
+    timeline,
+    updatedAt: text2(raw.updatedAt, 40) || nowIso()
+  };
+}
+function mergeNarrativeSeed(previous, fresh) {
+  const factMap = new Map;
+  const actorMap = new Map;
+  for (const entry of (previous?.facts || []).filter((item) => item.ttl !== "turn"))
+    factMap.set(entry.text.toLocaleLowerCase(), entry);
+  for (const entry of fresh.facts)
+    factMap.set(entry.text.toLocaleLowerCase(), entry);
+  for (const entry of (previous?.actors || []).filter((item) => item.ttl !== "turn"))
+    actorMap.set(normalizeActorName(entry.name), entry);
+  for (const entry of fresh.actors)
+    actorMap.set(normalizeActorName(entry.name), entry);
+  const previousWorldFacts = previous?.world?.facts || [];
+  const worldFacts = [...previousWorldFacts, ...fresh.world.facts].filter((entry, index, all) => Boolean(entry) && all.findIndex((other) => other.toLocaleLowerCase() === entry.toLocaleLowerCase()) === index).slice(-10);
+  return {
+    ...fresh,
+    world: {
+      setting: fresh.world.setting || previous?.world?.setting || "",
+      facts: worldFacts,
+      weather: fresh.world.weather || previous?.world?.weather || null
+    },
+    facts: [...factMap.values()].slice(-12),
+    actors: [...actorMap.values()].slice(-16)
+  };
+}
+function narrativeSeedSourceKey(messages) {
+  return messages.map((message, index) => {
+    const idPart = text2(message?.id, 180) || `row-${index}`;
+    return `${idPart}:${String(message?.revision ?? "")}:${text2(message?.role, 20)}:${text2(message?.content, 180)}`;
+  }).join("|").slice(0, 1600);
+}
+function seedVisibleTo(entry, speakerName) {
+  if (entry.visibility === "public")
+    return true;
+  const speaker = normalizeActorName(speakerName);
+  return Boolean(speaker && entry.knownBy.some((name) => normalizeActorName(name) === speaker));
+}
+function narrativeSeedContext(seed, speakerName = "", participantNames = []) {
+  if (!seed)
+    return "";
+  const speaker = normalizeActorName(speakerName);
+  const participants = new Set(participantNames.map(normalizeActorName).filter(Boolean));
+  if (speaker)
+    participants.add(speaker);
+  const intersectsParticipants = (actors2) => actors2.some((name) => participants.has(normalizeActorName(name)));
+  const facts = seed.facts.filter((entry) => {
+    if (!intersectsParticipants(entry.actors))
+      return false;
+    return seedVisibleTo(entry, speakerName) || Boolean(speaker && entry.actors.some((name) => normalizeActorName(name) === speaker));
+  }).slice(-8);
+  const actors = seed.actors.filter((entry) => {
+    if (!participants.has(normalizeActorName(entry.name)))
+      return false;
+    return seedVisibleTo(entry, speakerName) || Boolean(speaker && normalizeActorName(entry.name) === speaker);
+  }).slice(-8);
+  const timeline = seed.timeline.filter((entry) => {
+    if (!seedVisibleTo(entry, speakerName))
+      return false;
+    return entry.scope === "world" || intersectsParticipants(entry.actors);
+  }).slice(-4);
+  const worldLines = [
+    seed.world.setting ? `Setting: ${seed.world.setting}` : "",
+    ...seed.world.facts.map((entry) => `World fact: ${entry}`),
+    seed.world.weather?.condition ? `Weather: ${seed.world.weather.condition}${seed.world.weather.location ? ` at ${seed.world.weather.location}` : ""}${seed.world.weather.details ? `; ${seed.world.weather.details}` : ""}` : ""
+  ].filter(Boolean);
+  return [
+    "WORLD STATE \u2014 SHARED SETTING, NOT ACTOR ROUTING",
+    ...worldLines,
+    "",
+    "CURRENT PHONE PARTICIPANTS ONLY: " + participantNames.filter(Boolean).join(", "),
+    "Actor-specific continuity about anyone outside this channel is intentionally omitted.",
+    ...facts.map((entry) => `Actor fact: ${entry.text}`),
+    ...actors.map((entry) => `Actor status: ${entry.name} \u2014 ${entry.status}${entry.activity ? `; ${entry.activity}` : ""}${entry.location ? `; at ${entry.location}` : ""}`),
+    ...timeline.map((entry) => `Timeline: ${entry.whenText} \u2014 ${entry.title}`)
+  ].filter((entry, index, all) => Boolean(entry) || index > 0 && index < all.length - 1).join(`
+`).slice(0, 2800);
+}
+function seedActorContactIds(state, names) {
+  const wanted = new Set(names.map(normalizeActorName).filter(Boolean));
+  return state.contacts.filter((contact) => wanted.has(normalizeActorName(contact.name))).map((contact) => contact.id).slice(0, 8);
+}
+function applyNarrativeSeedState(state, seed) {
+  let changed = false;
+  const weather = seed.world.weather;
+  if (weather) {
+    const nextCondition = weather.condition || state.weather.condition;
+    const nextLocation = weather.location || state.weather.location;
+    const nextDetails = weather.details || state.weather.details;
+    if (state.weather.condition !== nextCondition || state.weather.location !== nextLocation || state.weather.details !== nextDetails) {
+      state.weather.condition = nextCondition;
+      state.weather.location = nextLocation;
+      state.weather.details = nextDetails;
+      state.weather.updatedAt = seed.updatedAt;
+      changed = true;
+    }
+  }
+  for (const item of seed.timeline) {
+    const actorContactIds = item.scope === "actor" ? seedActorContactIds(state, item.actors) : [];
+    const existing = state.events.find((event) => event.lane === "Continuity" && event.title.trim().toLocaleLowerCase() === item.title.trim().toLocaleLowerCase() && event.whenText.trim().toLocaleLowerCase() === item.whenText.trim().toLocaleLowerCase());
+    if (existing) {
+      const nextDescription = item.description || existing.description;
+      const nextActors = actorContactIds.length ? actorContactIds : existing.actorContactIds;
+      if (existing.description !== nextDescription || JSON.stringify(existing.actorContactIds || []) !== JSON.stringify(nextActors || []) || existing.completed !== item.completed) {
+        existing.description = nextDescription;
+        existing.actorContactIds = nextActors;
+        existing.completed = item.completed;
+        changed = true;
+      }
+      continue;
+    }
+    const firstContact = actorContactIds.length ? state.contacts.find((contact) => contact.id === actorContactIds[0]) : undefined;
+    const start = state.roleplayNow || seed.updatedAt;
+    state.events.push({
+      id: id("evt"),
+      title: item.title,
+      description: item.description,
+      start,
+      end: start,
+      whenKind: item.whenKind,
+      whenText: item.whenText,
+      color: firstContact ? contactAccent(firstContact) : "#8b7dff",
+      lane: "Continuity",
+      completed: item.completed,
+      createdBy: "model",
+      actorContactIds
+    });
+    changed = true;
+  }
+  if (changed)
+    state.events = state.events.slice(-MAX_EVENTS);
+  return changed;
+}
+async function loadNarrativeSeed(chatId, characterId, userId) {
+  const raw = await spindle.userStorage.getJson(continuitySeedPath(chatId, characterId), { fallback: null, userId });
+  if (!isRecord(raw))
+    return null;
+  if (raw.version !== POCKET_CONTINUITY_SEED_VERSION) {
+    spindle.log.info(`Pocket continuity seed cache invalidated (stored v${String(raw.version ?? "legacy")} \u2192 world-seed v${POCKET_CONTINUITY_SEED_VERSION}).`);
+    return null;
+  }
+  return normalizeNarrativeSeed(raw);
+}
+async function refreshNarrativeSeed(chatId, characterId, userId) {
+  if (!chatId || chatId === "_lobby" || !spindle.permissions.has("generation") || !spindle.permissions.has("chat_mutation")) {
+    return loadNarrativeSeed(chatId, characterId, userId);
+  }
+  const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:continuity`;
+  const existingFlight = narrativeSeedFlights.get(flightKey);
+  if (existingFlight)
+    return existingFlight;
+  const flight = (async () => {
+    const hostMessages = await spindle.chat.getMessages(chatId).catch(() => []);
+    const sourceMessages = hostMessages.filter((message) => (message?.role === "user" || message?.role === "assistant") && text2(message?.content, 1)).slice(-4);
+    if (!sourceMessages.length)
+      return loadNarrativeSeed(chatId, characterId, userId);
+    const sourceKey = `v${POCKET_CONTINUITY_SEED_VERSION}:${narrativeSeedSourceKey(sourceMessages)}`;
+    const sourceMessageIds = sourceMessages.map((message) => text2(message?.id, 180)).filter(Boolean).slice(-8);
+    const previous = await loadNarrativeSeed(chatId, characterId, userId);
+    if (previous?.sourceKey === sourceKey)
+      return previous;
+    const state = await loadState(chatId, characterId, userId);
+    const knownActors = [
+      state.pocketPersona.displayName,
+      state.characterName,
+      ...state.contacts.map((contact) => contact.name)
+    ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index).slice(0, 40);
+    const recentNarrative = sourceMessages.map((message, index) => {
+      const role = message?.role === "assistant" ? "ASSISTANT NARRATIVE" : "USER NARRATIVE";
+      return `${role} [${index + 1}]: ${text2(message?.content, 1300)}`;
+    }).join(`
+
+`).slice(-5200);
+    const parsed = await runStructuredGeneration("continuity-seed", id("continuity_seed"), {
+      type: "quiet",
+      messages: [
+        {
+          role: "system",
+          content: `Extract a small structured RP WORLD STATE delta from recent fictional roleplay prose. This is NOT a phone conversation and nobody in the prose becomes a phone recipient.
+
+Return strict JSON only:
+{
+  "world":{
+    "setting":"short shared setting/location/era if explicitly established, else empty",
+    "facts":["genuinely actor-neutral shared world/group facts only"],
+    "weather":{"condition":"short condition","location":"where it applies","details":"short atmospheric detail"} | null
+  },
+  "facts":[{"text":"actor-specific factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["REQUIRED subject actor names"],"ttl":"turn|scene|persistent"}],
+  "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
+  "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}]
+}
+
+Rules:
+- Extract only facts supported by the supplied prose. Do not invent recipients, phone conversations, relationships, weather, or off-screen knowledge.
+- WORLD means genuinely shared setting state that is not primarily ABOUT one named actor. Examples: "The kingdom requires a seasonal tribute", "Class 1-A is holding a party tonight", "A storm is hitting the city".
+- A named actor doing/feeling/planning/having something is NEVER a world fact. Put it in facts/actors with that actor explicitly listed.
+- weather is null unless weather/atmosphere is actually established by the prose. Never invent temperature.
+- facts is actor-specific only. Every facts entry MUST have at least one subject in actors.
+- timeline scope=world only for group/world events. If an event concerns a named actor (Shoto's press conference, Bakugo's cooking shift, Mina's arrival), scope=actor and actors MUST identify them.
+- public means reasonably shared/cast-visible information. scene means explicitly witnessed; list witnesses in knownBy. private is the default for personal/internal information.
+- knownBy must be conservative. Never assume everyone knows a private fact.
+- Actor status is world/physical state only. busy does NOT mean unable to text.
+- Prefer 0\u20136 world facts, 0\u20136 actor facts, 0\u20138 actor updates, and 0\u20134 timeline rows.
+- Use exact names from KNOWN ACTORS when possible.`
+        },
+        {
+          role: "user",
+          content: `ROLEPLAY TIME: ${state.roleplayNow}
+KNOWN ACTORS:
+${knownActors.join(`
+`)}
+
+RECENT NARRATIVE:
+${recentNarrative}`
+        }
+      ],
+      parameters: { temperature: 0.08, max_tokens: 900 },
+      userId
+    }, userId);
+    const fresh = normalizeNarrativeSeed({ ...parsed, sourceKey, sourceMessageIds, updatedAt: nowIso() }, sourceKey, sourceMessageIds);
+    const seed = mergeNarrativeSeed(previous, fresh);
+    await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId });
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const latest = await loadState(chatId, characterId, userId);
+      if (!applyNarrativeSeedState(latest, seed))
+        return;
+      await saveState(latest, userId);
+      await sendState(latest, userId, "continuity_seed");
+    });
+    return seed;
+  })();
+  narrativeSeedFlights.set(flightKey, flight);
+  try {
+    return await flight;
+  } catch (error) {
+    spindle.log.warn(`Pocket continuity seed skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return loadNarrativeSeed(chatId, characterId, userId);
+  } finally {
+    if (narrativeSeedFlights.get(flightKey) === flight)
+      narrativeSeedFlights.delete(flightKey);
+  }
+}
 async function generateMessage(input, userId) {
   if (!spindle.permissions.has("generation"))
     throw new Error("Enable the Generation permission to create an in-phone reply.");
   const context = await resolveContext(input, userId);
   const requestId = text2(input.requestId, 180) || id("reply");
   const key = stateKey(context.chatId, context.characterId);
+  const continuitySeed = (await loadPreferences(userId)).roleplayContextMode === "off" ? null : await refreshNarrativeSeed(context.chatId, context.characterId, userId);
   await withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId);
     const preferences = await loadPreferences(userId);
+    const generationPersona = await resolveGenerationPocketPersona(state, userId);
+    const generationState = generationPersona === state.pocketPersona ? state : { ...state, pocketPersona: generationPersona };
     const conversation = resolveConversation(state, input);
     const participantActors = conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)).filter((entry) => Boolean(entry));
     const participants = participantActors.map((actor2) => ({ actor: actor2, contact: actorAsGenerationContact(actor2, nowIso()) }));
@@ -3492,28 +3988,94 @@ async function generateMessage(input, userId) {
     const knownIdentity = contact.identityBrief || profile.description || [profile.role, profile.personality, profile.behavior].filter(Boolean).join(". ");
     const compactIdentity = `Relationship importance: ${actor.relationship}. ${knownIdentity || "No full profile is registered; use only the name and current phone exchange."}`.slice(0, 1200);
     const assembled = await assemblePocketContext({
-      state,
+      state: generationState,
       contact,
       conversation: contextConversation,
       preferences,
       actorIdentity: compactIdentity,
-      getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined
+      getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined,
+      includePhoneThread: conversation.kind !== "direct",
+      includeRoleplayBackground: false
     });
     const instruction = text2(input.instruction, 2000) || "Reply naturally to the latest message.";
     const generationTask = replaceIndex >= 0 ? "message-retry" : "message-reply";
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
-    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
-      type: "quiet",
-      messages: [
-        { role: "system", content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message. Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy. The compact identity and bounded context below are authoritative.` },
-        { role: "user", content: `${assembled.text || "(no context)"}
+    const personaName = generationPersona.displayName?.trim() || "You";
+    const personaIdentity = text2(generationPersona.identityBrief, 900);
+    const continuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(continuitySeed, profile.name, [profile.name, personaName]);
+    const generationMessages = conversation.kind === "direct" ? [
+      {
+        role: "system",
+        content: `You are ${profile.name} writing a private phone DM to ${personaName}.
+
+IMMUTABLE DM OWNERSHIP:
+- This thread belongs to ${personaName} and ${profile.name}.
+- THIS THREAD IS NOT THE ACTIVE RP CHARACTER'S PHONE.
+- It was not rerouted, borrowed, swapped, or inherited from another actor.
+- If an older generated message implies a different owner/addressee, that older text is a continuity mistake. Correct it; do not rationalize it.
+${personaIdentity ? `- Pocket Persona identity: ${personaIdentity}
+` : ""}
+DM ROLE BINDING \u2014 AUTHORITATIVE:
+- assistant role = ${profile.name}, the contact who writes the generated phone message.
+- user role = ${personaName}, the Pocket Persona / phone owner / recipient.
+- The host roleplay's active character is not automatically the user role or DM recipient.
+- Raw host roleplay transcript is intentionally excluded from direct-message generation; cross-thread continuity must come from explicit Pocket state, not host-chat dialogue.
+- Names appearing inside old messages or RP background are text content, not routing metadata.
+- A historical generated message may contain a mistaken addressee; do not inherit that mistake.
+- Never reinterpret the user role as another actor.
+
+Return strict JSON only:
+{"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}
+
+The recipient field MUST be exactly "${personaName}".
+after describes the channel immediately after this message.
+Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote.
+No narration, markdown, or custom UI copy.`
+      },
+      {
+        role: "system",
+        content: `POCKET BACKGROUND \u2014 REFERENCE ONLY, NOT CHAT-ROLE ROUTING
+${assembled.text || "(no additional background)"}${continuityText ? `
+
+STRUCTURED CONTINUITY \u2014 NOT RAW NARRATIVE
+${continuityText}` : ""}`
+      },
+      ...directGenerationHistory(contextConversation, actor.actorId, contact.id, personaName, profile.name),
+      {
+        role: "user",
+        content: `[POCKET CONTROL \u2014 NOT AN IN-WORLD MESSAGE]
+The user role is still ${personaName}.
+Generate the next assistant-role phone text from ${profile.name} TO ${personaName}.
+DIRECTION: ${instruction}
+FINAL GENERATION LOCK: recipient=${personaName}; speaker=${profile.name}; thread_owner=${personaName}. This is ${personaName}'s phone conversation, not another actor's device.`
+      }
+    ] : [
+      {
+        role: "system",
+        content: `Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. The FINAL CHANNEL LOCK in the bounded context is authoritative. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message.
+Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy.`
+      },
+      {
+        role: "user",
+        content: `${assembled.text || "(no context)"}
 
 DIRECTION
-${instruction}` }
-      ],
+${instruction}
+
+FINAL GENERATION LOCK
+SPEAKER / CONTACT: ${profile.name}
+RECIPIENT / POCKET PERSONA: ${personaName}
+Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other actors may be discussed, but they are not the recipient of this DM.`
+      }
+    ];
+    const generationRequest = {
+      type: "quiet",
+      messages: generationMessages,
       parameters: { temperature: 0.85, max_tokens: 500 },
       userId
-    }, userId);
+    };
+    await savePromptDebug(generationTask, requestId, generationRequest, userId);
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, generationRequest, userId);
     let generated = {};
     try {
       generated = parseGeneratedObject(response.content);
@@ -3523,6 +4085,12 @@ ${instruction}` }
     const reply = text2(generated.message, 8000);
     if (!reply)
       throw new Error("The character did not return a phone message.");
+    if (conversation.kind === "direct") {
+      const declaredRecipient = text2(generated.recipient, 120);
+      if (declaredRecipient && normalizeActorName(declaredRecipient) !== normalizeActorName(personaName)) {
+        throw new Error(`Pocket refused a misrouted DM: model declared recipient "${declaredRecipient}" instead of "${personaName}". Retry the message.`);
+      }
+    }
     const route = { app: "messages", conversationId: conversation.id };
     const visible = notificationDestinationVisible(state, route, userId);
     const nextMessage = {
@@ -3648,6 +4216,7 @@ async function generateGroupBatch(input, userId) {
   groupBatchFlights.set(flightKey, flightToken);
   let progressOpen = false;
   try {
+    const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId);
     const state = await loadState(context.chatId, context.characterId, userId);
     const preferences = await loadPreferences(userId);
     const conversation = state.conversations.find((entry) => entry.id === conversationId && entry.kind === "group");
@@ -3676,8 +4245,10 @@ async function generateGroupBatch(input, userId) {
       preferences,
       actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship}) \u2014 ${contact.identityBrief || profile.description || "No profile; infer only from the live exchange."}`.slice(0, 700)).join(`
 `).slice(0, 1200),
-      getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined
+      getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(context.chatId) : undefined,
+      includeRoleplayBackground: false
     });
+    const groupContinuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(groupContinuitySeed, "", profiles.map(({ actor }) => actor.name));
     const roster = profiles.map(({ actor, contact }) => [
       `id=${actor.actorId}`,
       `name=${actor.name}`,
@@ -3692,13 +4263,21 @@ async function generateGroupBatch(input, userId) {
     const parsed = await runStructuredGeneration("group-reply", requestId, {
       type: "quiet",
       messages: [
-        { role: "system", content: 'Generate the next natural burst in a fictional private group chat. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0\u20133 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
-        { role: "user", content: `${assembled.text || "(no context)"}
+        { role: "system", content: 'Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0\u20133 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
+        { role: "user", content: `${assembled.text || "(no context)"}${groupContinuityText ? `
+
+STRUCTURED CONTINUITY \u2014 PUBLIC/SHARED FACTS ONLY
+${groupContinuityText}` : ""}
 
 ELIGIBLE GROUP PARTICIPANTS
 ${roster}
 
-Generate the next group-chat burst.` }
+Generate the next group-chat burst.
+
+FINAL GENERATION LOCK
+POCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || "You"}
+CURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(", ")}
+Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` }
       ],
       parameters: { temperature: 0.82, max_tokens: 900 },
       userId
@@ -3721,23 +4300,26 @@ Generate the next group-chat burst.` }
         return null;
       if (sourceBurstId && latestConversation.outgoingBurst?.id !== sourceBurstId)
         return null;
+      const currentActorIds = new Set(conversationActorIds(latestConversation));
+      const currentEligible = eligible.filter((entry) => currentActorIds.has(entry.actorId));
+      const queuedRows = generatedRows.filter((entry) => currentActorIds.has(entry.speakerId));
       const createdAt = nowIso();
       const next = {
         id: batchId,
         requestId,
         conversationId,
         sourceBurstId,
-        eligibleActorIds: eligible.map((entry) => entry.actorId),
-        eligibleContactIds: eligible.flatMap((entry) => entry.contact?.id || []),
-        messages: generatedRows,
-        status: generatedRows.length ? "queued" : "completed",
+        eligibleActorIds: currentEligible.map((entry) => entry.actorId),
+        eligibleContactIds: currentEligible.flatMap((entry) => entry.contact?.id || []),
+        messages: queuedRows,
+        status: queuedRows.length ? "queued" : "completed",
         createdAt,
         updatedAt: createdAt
       };
       latest.groupBatches.push(next);
       latest.groupBatches = latest.groupBatches.slice(-24);
       await saveState(latest, userId);
-      await sendState(latest, userId, generatedRows.length ? "group_batch_queued" : "group_batch_empty");
+      await sendState(latest, userId, queuedRows.length ? "group_batch_queued" : "group_batch_empty");
       return next;
     });
     if (!batch || !batch.messages.length)
@@ -3755,9 +4337,18 @@ Generate the next group-chat burst.` }
         const latest = await loadState(context.chatId, context.characterId, userId);
         const latestBatch = latest.groupBatches.find((entry) => entry.id === batch.id);
         const latestSlot = latestBatch?.messages.find((entry) => entry.id === slot.id);
-        const latestConversation = latest.conversations.find((entry) => entry.id === conversationId);
+        const latestConversation = latest.conversations.find((entry) => entry.id === conversationId && entry.kind === "group");
         if (!latestBatch || !latestSlot || !latestConversation || latestBatch.status === "cancelled" || latestSlot.state !== "queued")
           return null;
+        if (!conversationActorIds(latestConversation).includes(speaker.actorId)) {
+          latestSlot.state = "cancelled";
+          latestBatch.updatedAt = nowIso();
+          if (!latestBatch.messages.some((entry) => entry.state === "queued"))
+            latestBatch.status = "completed";
+          await saveState(latest, userId);
+          await sendState(latest, userId, "group_batch_membership_changed");
+          return { skipped: true };
+        }
         latestBatch.status = "delivering";
         const visible = notificationDestinationVisible(latest, { app: "messages", conversationId }, userId);
         const profileRow = profiles.find((entry) => entry.actor.actorId === speaker.actorId);
@@ -3817,6 +4408,8 @@ Generate the next group-chat burst.` }
       });
       if (!delivered)
         break;
+      if ("skipped" in delivered && delivered.skipped)
+        continue;
       if (delivered.notification)
         await maybePush(await loadState(context.chatId, context.characterId, userId), preferences, delivered.notification, userId);
       sendActivity(delivered.activity, userId);
@@ -4464,7 +5057,7 @@ async function applyAction(input, userId, source = "model") {
         conversation = matches[0];
       }
       const refs = Array.isArray(payload.participants) ? payload.participants.slice(0, 16) : [];
-      const participantActorIds = [];
+      const participantActorIds2 = [];
       for (const value of refs) {
         const ref = actorRefParts(value);
         let actor = resolveActorReference(state, value);
@@ -4486,28 +5079,28 @@ async function applyAction(input, userId, source = "model") {
           if (actor.discovered)
             actor.discovered.relationship = "close";
         }
-        if (!participantActorIds.includes(actor.actorId))
-          participantActorIds.push(actor.actorId);
+        if (!participantActorIds2.includes(actor.actorId))
+          participantActorIds2.push(actor.actorId);
       }
       if (!refs.length && conversation)
-        participantActorIds.push(...conversationActorIds(conversation));
-      if (participantActorIds.length < 2)
+        participantActorIds2.push(...conversationActorIds(conversation));
+      if (participantActorIds2.length < 2)
         throw new Error("A group conversation needs at least two explicit participants.");
-      const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+      const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
       const changedAt = nowIso();
       if (conversation) {
-        conversation.participantActorIds = participantActorIds;
+        conversation.participantActorIds = participantActorIds2;
         conversation.participantContactIds = participantContactIds;
         if (title)
           conversation.title = title;
         conversation.updatedAt = changedAt;
       } else {
-        const names = participantActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
+        const names = participantActorIds2.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
         conversation = {
           id: id("conversation"),
           kind: "group",
           title: title || names.join(", ").slice(0, 120) || "Group",
-          participantActorIds,
+          participantActorIds: participantActorIds2,
           participantContactIds,
           messages: [],
           unread: 0,
@@ -4834,6 +5427,26 @@ async function handleFrontend(payload, userId) {
   try {
     const context = await resolveContext(payload, userId);
     switch (payload.type) {
+      case "lumiphone:get_debug_prompt": {
+        const state = await loadState(context.chatId, context.characterId, userId);
+        const conversationId = text2(payload.conversationId, 180);
+        const conversation = state.conversations.find((entry) => entry.id === conversationId);
+        if (!conversation)
+          throw new Error("That conversation is no longer available.");
+        const generated = [...conversation.messages].reverse().find((message) => Boolean(message.generation?.requestId));
+        const promptRequestId = generated?.generation?.requestId || "";
+        const debug = await loadPromptDebug(promptRequestId, userId);
+        send({
+          type: "lumiphone:debug_prompt",
+          requestId,
+          conversationId,
+          messageId: generated?.id || "",
+          generatedAt: generated?.createdAt || "",
+          promptRequestId,
+          debug
+        }, userId);
+        break;
+      }
       case "lumiphone:get_state": {
         const state = await loadState(context.chatId, context.characterId, userId);
         await sendState(state, userId, "load");
@@ -5017,16 +5630,16 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:create_conversation": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
-          const participantActorIds = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
-          if (participantActorIds.length < 2)
+          const participantActorIds2 = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
+          if (participantActorIds2.length < 2)
             throw new Error("A group conversation needs at least two participants.");
-          const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+          const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
           const createdAt = nowIso();
           const conversation = {
             id: id("conversation"),
             kind: "group",
-            title: text2(payload.title, 120) || participantActorIds.map((entry) => resolvePocketActor(state, entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group",
-            participantActorIds,
+            title: text2(payload.title, 120) || participantActorIds2.map((entry) => resolvePocketActor(state, entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group",
+            participantActorIds: participantActorIds2,
             participantContactIds,
             messages: [],
             unread: 0,
@@ -5047,11 +5660,11 @@ async function handleFrontend(payload, userId) {
           const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
           if (!conversation || conversation.kind !== "group")
             throw new Error("That group conversation no longer exists.");
-          const participantActorIds = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversationActorIds(conversation)).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
-          if (participantActorIds.length < 2)
+          const participantActorIds2 = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversationActorIds(conversation)).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
+          if (participantActorIds2.length < 2)
             throw new Error("A group conversation needs at least two participants.");
-          const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
-          conversation.participantActorIds = participantActorIds;
+          const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+          conversation.participantActorIds = participantActorIds2;
           conversation.participantContactIds = participantContactIds;
           conversation.title = text2(payload.title, 120) || conversation.title;
           conversation.updatedAt = nowIso();
@@ -5883,6 +6496,7 @@ spindle.on("CHARACTER_MESSAGE_RENDERED", async (payload, userId) => {
   try {
     const chat = spindle.permissions.has("chats") ? await spindle.chats.get(chatId, userId) : null;
     const characterId = text2(chat?.character_id, 180) || "_none";
+    refreshNarrativeSeed(chatId, characterId, userId);
     considerAmbientMessage(chatId, characterId, "turn", userId);
   } catch {}
 });

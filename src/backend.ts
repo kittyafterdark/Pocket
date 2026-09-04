@@ -1951,12 +1951,22 @@ Use arriving while traveling toward the physical scene, local only when the mess
           },
         ]
 
-    const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, generationTask, requestId, {
+    const generationRequest: AnyRecord = {
       type: 'quiet',
       messages: generationMessages,
       parameters: { temperature: 0.85, max_tokens: 500 },
       userId,
-    }, userId)
+    }
+    // Capture the exact direct-message request immediately before dispatch.
+    // This is intentionally the same object passed into runPocketGeneration.
+    await savePromptDebug(generationTask, requestId, generationRequest, userId)
+    const response: any = await runPocketGeneration(
+      { spindle, loadPreferences, savePreferences, send },
+      generationTask,
+      requestId,
+      generationRequest,
+      userId,
+    )
     let generated: AnyRecord = {}
     try { generated = parseGeneratedObject(response.content) }
     catch { generated = { message: response.content, after: { state: 'remote' } } }

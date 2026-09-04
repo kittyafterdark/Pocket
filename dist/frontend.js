@@ -1901,6 +1901,7 @@ function renderMessagesView(host) {
   menuSheet.appendChild(referenceAction);
   menuSheet.appendChild(menuAction("View Timeline", () => host.openTimeline("")));
   menuSheet.appendChild(menuAction("Generation info", () => host.showConversationGenerationInfo(conversation.id)));
+  menuSheet.appendChild(menuAction("Outgoing prompt", () => host.showOutgoingPrompt(conversation.id)));
   menu.append(menuToggle, menuSheet);
   nav.append(back, title, menu);
   page.appendChild(nav);
@@ -2587,6 +2588,16 @@ class PocketRouteHistory {
       return this.current;
     if (!replace)
       this.entries.push(this.current);
+    this.current = route;
+    return route;
+  }
+  settle(routeInput) {
+    const route = normalizePocketRoute(routeInput);
+    if (sameRoute(route, this.current))
+      return this.current;
+    const parent = this.entries.at(-1);
+    if (parent && sameRoute(parent, route))
+      this.entries.pop();
     this.current = route;
     return route;
   }
@@ -3468,6 +3479,10 @@ class PocketController {
         ], { duration: 420, easing: "ease-out" });
       return;
     }
+    if (payload.type === "lumiphone:debug_prompt") {
+      this.showOutgoingPromptResult(payload);
+      return;
+    }
     if (payload.type === "lumiphone:activity" && payload.activity) {
       this.queueActivityReceipt(payload.activity);
       return;
@@ -3587,7 +3602,8 @@ class PocketController {
       this.contactSourcesRequested = false;
       this.npcDraft = null;
       this.previousNpcDraft = null;
-      this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" }, false);
+      const settled = this.router.settle({ app: "contacts", contactId: payload.contactId, view: "detail" });
+      this.openPocket(settled, false);
       return;
     }
     if (payload.type === "lumiphone:discovered_actor_promoted" && payload.contactId) {
@@ -4123,6 +4139,7 @@ class PocketController {
       cancelReference: (referenceId) => this.send("lumiphone:cancel_reference", { referenceId }),
       rearmReference: (referenceId) => this.send("lumiphone:rearm_reference", { referenceId }),
       showConversationGenerationInfo: (conversationId) => this.showConversationGenerationInfo(conversationId),
+      showOutgoingPrompt: (conversationId) => this.showOutgoingPrompt(conversationId),
       shouldFocusHandoff: (relayId) => {
         if (this.focusedHandoffRelays.has(relayId))
           return false;
@@ -4242,6 +4259,81 @@ class PocketController {
     content.appendChild(attach);
     modal.root.appendChild(content);
     update();
+  }
+  showOutgoingPrompt(conversationId) {
+    this.send("lumiphone:get_debug_prompt", { conversationId });
+  }
+  showOutgoingPromptResult(payload) {
+    const modal = this.ctx.ui.showModal({ title: "Outgoing prompt", width: 680, maxHeight: 760 });
+    const content = el("div", "lp-settings-section");
+    const debug = payload.debug && typeof payload.debug === "object" ? payload.debug : null;
+    if (!debug) {
+      content.appendChild(el("p", "lp-copy", payload.promptRequestId ? `No captured prompt exists for request ${String(payload.promptRequestId)}. Generate a new Pocket reply after installing this debug build.` : "This conversation has no generated Pocket reply to inspect yet."));
+      modal.root.appendChild(content);
+      return;
+    }
+    for (const [label, value] of [
+      ["Task", String(debug.task || "unknown")],
+      ["Request", String(debug.requestId || payload.promptRequestId || "unknown")],
+      ["Captured", String(debug.capturedAt || "unknown")],
+      ["Message", String(payload.messageId || "unknown")]
+    ]) {
+      const row2 = el("div", "lp-row-between");
+      row2.append(el("strong", "", label), el("span", "lp-copy", value));
+      content.appendChild(row2);
+    }
+    const messages2 = Array.isArray(debug.messages) ? debug.messages : [];
+    const fullPrompt = messages2.map((message, index) => {
+      const role = String(message?.role || "unknown");
+      const body = String(message?.content || "");
+      return `[${index + 1}] ${role.toUpperCase()}
+${body}`;
+    }).join(`
+
+` + "─".repeat(48) + `
+
+`);
+    const copy = button("Copy full prompt", "lp-button lp-button-quiet");
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(fullPrompt);
+        copy.textContent = "✓ Copied";
+        window.setTimeout(() => {
+          copy.textContent = "Copy full prompt";
+        }, 1400);
+      } catch {
+        this.showFeedback("Could not copy the prompt automatically.");
+      }
+    });
+    content.appendChild(copy);
+    if (!messages2.length) {
+      content.appendChild(el("p", "lp-copy", "The captured request contained no message array."));
+    } else {
+      messages2.forEach((message, index) => {
+        const block = el("details", "lp-channel-diagnostic");
+        if (index === 0)
+          block.open = true;
+        block.appendChild(el("summary", "", `[${index + 1}] ${String(message?.role || "unknown").toUpperCase()}`));
+        const pre2 = el("pre", "lp-code-block", String(message?.content || ""));
+        pre2.style.whiteSpace = "pre-wrap";
+        pre2.style.overflowWrap = "anywhere";
+        block.appendChild(pre2);
+        content.appendChild(block);
+      });
+    }
+    const requestDetails = el("details", "lp-channel-diagnostic");
+    requestDetails.appendChild(el("summary", "", "Parameters / raw debug metadata"));
+    const raw = {
+      type: debug.type || "",
+      parameters: debug.parameters || {},
+      reasoning: debug.reasoning || undefined
+    };
+    const pre = el("pre", "lp-code-block", JSON.stringify(raw, null, 2));
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.overflowWrap = "anywhere";
+    requestDetails.appendChild(pre);
+    content.appendChild(requestDetails);
+    modal.root.appendChild(content);
   }
   showConversationGenerationInfo(conversationId) {
     const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
