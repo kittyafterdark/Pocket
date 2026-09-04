@@ -8,6 +8,7 @@ import type {
   PhoneNote,
   PhoneNotification,
   PocketActivity,
+  PocketActorMemoryEntry,
   PocketRoute,
   PocketGenerationInfo,
   PocketGenerationRun,
@@ -38,6 +39,7 @@ import { applyNpcBankProfile, contactFromNpcBank, findNpcBankMatch, isFutureNpcB
 import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
+import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, removeActorMemoryByMessageId, upsertActorMemory } from './domain/actor-memory.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
@@ -199,6 +201,8 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     contacts: collections.contacts,
     discoveredActors: [],
     conversations: collections.conversations,
+    actorMemoryVersion: 1,
+    actorMemories: [],
     notes: [],
     events: [],
     relays: [],
@@ -219,6 +223,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
   if (Number(value.version) > STATE_VERSION) return fallback
   const collections = normalizeContactCollections(value, { characterId, characterName, now: nowIso(), makeId: id })
   const discoveredActors: DiscoveredActor[] = normalizeDiscoveredActors(value.discoveredActors, chatId, nowIso())
+  const actorMemories = normalizeActorMemories(value.actorMemories)
   const notes: PhoneNote[] = (Array.isArray(value.notes) ? value.notes : []).slice(0, MAX_NOTES).flatMap((item) => {
     if (!isRecord(item)) return []
     const body = text(item.body, 40_000)
@@ -485,6 +490,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     contacts: collections.contacts,
     discoveredActors,
     conversations: collections.conversations,
+    actorMemoryVersion: Math.max(0, Math.round(numberValue(value.actorMemoryVersion, 0))),
+    actorMemories,
     notes, events, relays, references, groupBatches, weather, trackers, notifications, activities, processedCommands,
     updatedAt: text(value.updatedAt, 40) || fallback.updatedAt,
   }
@@ -586,6 +593,60 @@ function directGenerationHistory(conversation: PocketConversation, actorId: stri
 
   return history
 }
+function personaMemoryActorId(state: PhoneState): string {
+  const linked = text(state.pocketPersona.linkedPersonaId, 180)
+  const name = normalizeActorName(state.pocketPersona.displayName).replace(/\s+/g, '_').slice(0, 120)
+  return `persona:${linked || name || 'owner'}`
+}
+
+function conversationMemoryAudience(
+  state: PhoneState,
+  conversation: PocketConversation,
+): { ids: string[]; names: string[] } {
+  const ids = [personaMemoryActorId(state), ...conversationActorIds(conversation)]
+    .filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
+  const names = [
+    state.pocketPersona.displayName,
+    ...conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || ''),
+  ].map((entry) => text(entry, 120)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
+  return { ids, names }
+}
+
+function rememberPhoneMessage(
+  state: PhoneState,
+  conversation: PocketConversation,
+  message: PhoneMessage,
+): void {
+  if (message.sender === 'system') return
+  const speakerActorId = message.sender === 'persona'
+    ? personaMemoryActorId(state)
+    : text(message.senderActorId || message.senderContactId, 180)
+  if (!speakerActorId) return
+  const audience = conversationMemoryAudience(state, conversation)
+  state.actorMemories = upsertActorMemory(state.actorMemories, {
+    id: `memory:${message.id}`,
+    conversationId: conversation.id,
+    conversationTitle: conversation.title,
+    conversationKind: conversation.kind,
+    messageId: message.id,
+    speakerActorId,
+    speakerName: message.sender === 'persona'
+      ? (state.pocketPersona.displayName || message.senderName || 'You')
+      : message.senderName,
+    text: message.text,
+    knownByActorIds: audience.ids,
+    knownByNames: audience.names,
+    createdAt: message.createdAt,
+  })
+}
+
+function backfillDirectPhoneMemories(state: PhoneState): void {
+  for (const conversation of state.conversations) {
+    if (conversation.kind !== 'direct') continue
+    for (const message of conversation.messages) rememberPhoneMessage(state, conversation, message)
+  }
+}
+
 async function loadState(chatId: string, characterId: string, userId?: string): Promise<PhoneState> {
   const characterPresentation = await characterPresentationFor(characterId, userId)
   const characterName = characterPresentation.name
@@ -597,6 +658,11 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
   const state = normalizeState(raw, chatId, characterId, characterName)
   await loadPreferences(userId, isRecord(raw) ? raw.settings : undefined)
   let stateChanged = Boolean(isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION))
+  if (state.actorMemoryVersion < 1) {
+    backfillDirectPhoneMemories(state)
+    state.actorMemoryVersion = 1
+    stateChanged = true
+  }
   state.trackers = state.trackers.map((tracker) => {
     const result = materializeTracker(tracker, state.roleplayNow)
     stateChanged ||= result.changed
@@ -2126,6 +2192,13 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const personaName = generationPersona.displayName?.trim() || 'You'
     const personaIdentity = pocketPersonaPhoneBrief(generationPersona)
     const continuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(continuitySeed, profile.name, [profile.name, personaName])
+    const actorMemoryText = actorPhoneMemoryContext(state.actorMemories, {
+      actorIds: [actor.actorId, contact.id],
+      actorNames: [actor.name, profile.name],
+      actorName: profile.name,
+      excludeConversationId: conversation.id,
+      maxChars: 2_600,
+    })
     const generationMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = conversation.kind === 'direct'
       ? [
           {
@@ -2157,8 +2230,7 @@ No narration, markdown, or custom UI copy.`,
           },
           {
             role: 'system',
-            content: `POCKET BACKGROUND — REFERENCE ONLY, NOT CHAT-ROLE ROUTING
-${assembled.text || '(no additional background)'}${continuityText ? `\n\nSTRUCTURED CONTINUITY — NOT RAW NARRATIVE\n${continuityText}` : ''}`,
+            content: `POCKET BACKGROUND — REFERENCE ONLY, NOT CHAT-ROLE ROUTING\n${assembled.text || '(no additional background)'}${continuityText ? `\n\nSTRUCTURED CONTINUITY — NOT RAW NARRATIVE\n${continuityText}` : ''}${actorMemoryText ? `\n\n${actorMemoryText}` : ''}`,
           },
           ...directGenerationHistory(contextConversation, actor.actorId, contact.id, personaName, profile.name),
           {
@@ -2238,9 +2310,14 @@ Use arriving while traveling toward the physical scene, local only when the mess
       model: preferences.sidecarModelOverride || generationInfo.effective?.model || '',
     }
     nextMessage.senderAccent = contactAccent(contact)
-    if (replaceIndex >= 0) conversation.messages.splice(replaceIndex, 1, nextMessage)
-    else conversation.messages.push(nextMessage)
+    if (replaceIndex >= 0) {
+      state.actorMemories = removeActorMemoryByMessageId(state.actorMemories, replaceMessageId)
+      conversation.messages.splice(replaceIndex, 1, nextMessage)
+    } else {
+      conversation.messages.push(nextMessage)
+    }
     conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
+    rememberPhoneMessage(state, conversation, nextMessage)
     if (!visible && replaceIndex < 0) conversation.unread += 1
     conversation.updatedAt = nowIso()
     const phoneMessageId = conversation.messages.at(-1)?.id
@@ -2341,6 +2418,16 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       includeRoleplayBackground: false,
     })
     const groupContinuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(groupContinuitySeed, '', profiles.map(({ actor }) => actor.name))
+    const groupMemoryText = groupActorPhoneMemoryContext(
+      state.actorMemories,
+      profiles.map(({ actor, contact }) => ({
+        actorIds: [actor.actorId, contact.id],
+        actorNames: [actor.name],
+        name: actor.name,
+      })),
+      conversation.id,
+      5_200,
+    )
     const roster = profiles.map(({ actor, contact, profile }) => [
       `id=${actor.actorId}`,
       `name=${actor.name}`,
@@ -2355,7 +2442,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       type: 'quiet',
       messages: [
         { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
-        { role: 'user', content: `${assembled.text || '(no context)'}${groupContinuityText ? `\n\nSTRUCTURED CONTINUITY — PUBLIC/SHARED FACTS ONLY\n${groupContinuityText}` : ''}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.\n\nFINAL GENERATION LOCK\nPOCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || 'You'}\nCURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(', ')}\nOnly the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` },
+        { role: 'user', content: `${assembled.text || '(no context)'}${groupContinuityText ? `\n\nSTRUCTURED CONTINUITY — PUBLIC/SHARED FACTS ONLY\n${groupContinuityText}` : ''}${groupMemoryText ? `\n\n${groupMemoryText}` : ''}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.\n\nFINAL GENERATION LOCK\nPOCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || 'You'}\nCURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(', ')}\nOnly the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` },
       ],
       parameters: { temperature: .82, max_tokens: 900 }, userId,
     }, userId)
@@ -2436,6 +2523,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         }
         latestConversation.messages.push(message)
         latestConversation.messages = latestConversation.messages.slice(-MAX_MESSAGES)
+        rememberPhoneMessage(latest, latestConversation, message)
         latestConversation.updatedAt = message.createdAt
         if (!visible) latestConversation.unread += 1
         latestSlot.state = 'delivered'

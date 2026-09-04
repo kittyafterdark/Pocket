@@ -8,6 +8,7 @@ import { ensureDirectConversation, normalizeContactCollections } from '../src/do
 import { ensureDirectActorConversation, ensureDiscoveredActor, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
+import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, upsertActorMemory } from '../src/domain/actor-memory.js'
 import { contactFromNpcBank, findNpcBankMatch, normalizeNpcBank, upsertNpcBankFromContact } from '../src/domain/npc-bank.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
@@ -108,6 +109,82 @@ describe('conversation channel continuity', () => {
   })
 })
 
+describe('actor phone memory', () => {
+  test('keeps DM knowledge with the actors who actually saw it', () => {
+    let memories = normalizeActorMemories([])
+    memories = upsertActorMemory(memories, {
+      id: 'memory-1',
+      conversationId: 'dm-mina',
+      conversationTitle: 'Mina Ashido',
+      conversationKind: 'direct',
+      messageId: 'message-1',
+      speakerActorId: 'mina',
+      speakerName: 'Mina Ashido',
+      text: "We're eating out; I'll add you to the list.",
+      knownByActorIds: ['mina', 'persona:kats'],
+      knownByNames: ['Mina Ashido', 'Katsuki Bakugo'],
+      createdAt: '2026-09-04T05:42:00.000Z',
+    })
+
+    expect(actorPhoneMemoryContext(memories, {
+      actorIds: ['mina'], actorNames: ['Mina Ashido'], actorName: 'Mina Ashido', excludeConversationId: 'gc-bakusquad',
+    })).toContain("I'll add you to the list")
+
+    expect(actorPhoneMemoryContext(memories, {
+      actorIds: ['denki'], actorNames: ['Denki Kaminari'], actorName: 'Denki Kaminari', excludeConversationId: 'gc-bakusquad',
+    })).toBe('')
+  })
+
+  test('excludes the current thread and partitions group memory by speaker', () => {
+    const memories = normalizeActorMemories([
+      {
+        id: 'm1', conversationId: 'dm-mina', conversationTitle: 'Mina Ashido', conversationKind: 'direct',
+        messageId: 'msg1', speakerActorId: 'mina', speakerName: 'Mina Ashido', text: 'Dinner after work.',
+        knownByActorIds: ['mina', 'persona:kats'], knownByNames: ['Mina Ashido', 'Katsuki Bakugo'], createdAt: '2026-09-04T05:42:00.000Z',
+      },
+      {
+        id: 'm2', conversationId: 'dm-denki', conversationTitle: 'Denki Kaminari', conversationKind: 'direct',
+        messageId: 'msg2', speakerActorId: 'denki', speakerName: 'Denki Kaminari', text: 'Gym tomorrow?',
+        knownByActorIds: ['denki', 'persona:kats'], knownByNames: ['Denki Kaminari', 'Katsuki Bakugo'], createdAt: '2026-09-04T05:43:00.000Z',
+      },
+      {
+        id: 'm3', conversationId: 'gc-bakusquad', conversationTitle: 'Bakusquad', conversationKind: 'group',
+        messageId: 'msg3', speakerActorId: 'mina', speakerName: 'Mina Ashido', text: 'Current GC line.',
+        knownByActorIds: ['mina', 'denki', 'persona:kats'], knownByNames: ['Mina Ashido', 'Denki Kaminari', 'Katsuki Bakugo'], createdAt: '2026-09-04T05:44:00.000Z',
+      },
+    ])
+
+    const grouped = groupActorPhoneMemoryContext(memories, [
+      { actorIds: ['mina'], actorNames: ['Mina Ashido'], name: 'Mina Ashido' },
+      { actorIds: ['denki'], actorNames: ['Denki Kaminari'], name: 'Denki Kaminari' },
+    ], 'gc-bakusquad')
+
+    expect(grouped).toContain('PRIVATE ACTOR PHONE MEMORY — KNOWLEDGE PARTITIONS')
+    expect(grouped).toContain('Mina Ashido')
+    expect(grouped).toContain('Dinner after work.')
+    expect(grouped).toContain('Denki Kaminari')
+    expect(grouped).toContain('Gym tomorrow?')
+    expect(grouped).not.toContain('Current GC line.')
+    expect(grouped).toContain('Each speaker may use ONLY the memory listed under their own name.')
+  })
+
+  test('deduplicates retried message ids during normalization', () => {
+    const memories = normalizeActorMemories([
+      {
+        id: 'old', conversationId: 'dm', conversationTitle: 'DM', conversationKind: 'direct',
+        messageId: 'same', speakerActorId: 'mina', speakerName: 'Mina', text: 'Old',
+        knownByActorIds: ['mina'], knownByNames: ['Mina'], createdAt: '2026-09-04T05:40:00.000Z',
+      },
+      {
+        id: 'new', conversationId: 'dm', conversationTitle: 'DM', conversationKind: 'direct',
+        messageId: 'same', speakerActorId: 'mina', speakerName: 'Mina', text: 'New',
+        knownByActorIds: ['mina'], knownByNames: ['Mina'], createdAt: '2026-09-04T05:41:00.000Z',
+      },
+    ])
+    expect(memories).toHaveLength(1)
+    expect(memories[0].text).toBe('New')
+  })
+})
 describe('Pocket image source resolution', () => {
   test('uses one resolver for gallery, uploaded assets, and cached URL images', async () => {
     const cache = new Map<string, unknown>()

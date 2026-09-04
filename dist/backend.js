@@ -1431,6 +1431,125 @@ function shouldTakeAmbientOpportunity(frequency, random = Math.random()) {
   return random < (frequency === "sparse" ? 0.18 : 0.42);
 }
 
+// src/domain/actor-memory.ts
+var MAX_ACTOR_MEMORIES = 160;
+function clean4(value, max = 4000) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function record5(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function stringList(value, max = 24) {
+  if (!Array.isArray(value))
+    return [];
+  return [...new Set(value.map((entry) => clean4(entry, 180)).filter(Boolean))].slice(0, max);
+}
+function nameKey(value) {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+function normalizeActorMemories(value) {
+  if (!Array.isArray(value))
+    return [];
+  const rows = value.slice(-MAX_ACTOR_MEMORIES).flatMap((item) => {
+    if (!record5(item))
+      return [];
+    const id = clean4(item.id, 180);
+    const messageId = clean4(item.messageId, 180);
+    const conversationId = clean4(item.conversationId, 180);
+    const text2 = clean4(item.text, 700);
+    const speakerActorId = clean4(item.speakerActorId, 180);
+    const speakerName = clean4(item.speakerName, 120);
+    if (!id || !messageId || !conversationId || !text2 || !speakerActorId || !speakerName)
+      return [];
+    return [{
+      id,
+      conversationId,
+      conversationTitle: clean4(item.conversationTitle, 120) || "Pocket conversation",
+      conversationKind: item.conversationKind === "group" ? "group" : "direct",
+      messageId,
+      speakerActorId,
+      speakerName,
+      text: text2,
+      knownByActorIds: stringList(item.knownByActorIds),
+      knownByNames: stringList(item.knownByNames),
+      createdAt: clean4(item.createdAt, 80)
+    }];
+  });
+  const byMessage = new Map;
+  for (const row of rows)
+    byMessage.set(row.messageId, row);
+  return [...byMessage.values()].slice(-MAX_ACTOR_MEMORIES);
+}
+function upsertActorMemory(current, entry) {
+  const normalized = normalizeActorMemories([entry])[0];
+  if (!normalized)
+    return current.slice(-MAX_ACTOR_MEMORIES);
+  const next = current.filter((item) => item.messageId !== normalized.messageId);
+  next.push(normalized);
+  return next.slice(-MAX_ACTOR_MEMORIES);
+}
+function removeActorMemoryByMessageId(current, messageId) {
+  const target = clean4(messageId, 180);
+  return target ? current.filter((item) => item.messageId !== target) : current;
+}
+function actorCanRecall(entry, actorIds, actorNames) {
+  if (entry.knownByActorIds.some((id) => actorIds.has(id)))
+    return true;
+  return entry.knownByNames.some((name) => actorNames.has(nameKey(name)));
+}
+function memoryRows(memories, options) {
+  const actorIds = new Set(options.actorIds.map((entry) => clean4(entry, 180)).filter(Boolean));
+  const actorNames = new Set(options.actorNames.map(nameKey).filter(Boolean));
+  const exclude = clean4(options.excludeConversationId, 180);
+  return memories.filter((entry) => (!exclude || entry.conversationId !== exclude) && actorCanRecall(entry, actorIds, actorNames)).slice(-(options.maxRows ?? 10));
+}
+function formatRows(rows, maxChars) {
+  const lines = rows.map((entry) => {
+    const channel = entry.conversationKind === "group" ? "GC" : "DM";
+    return `- [${channel}: ${entry.conversationTitle}] ${entry.speakerName}: ${entry.text}`;
+  });
+  return lines.join(`
+`).slice(0, maxChars);
+}
+function actorPhoneMemoryContext(memories, options) {
+  const rows = memoryRows(memories, {
+    actorIds: options.actorIds,
+    actorNames: options.actorNames,
+    excludeConversationId: options.excludeConversationId,
+    maxRows: 10
+  });
+  if (!rows.length)
+    return "";
+  const body = formatRows(rows, Math.max(400, (options.maxChars ?? 2600) - 260));
+  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean4(options.actorName, 120) || "THIS SPEAKER"}
+These are earlier Pocket messages this actor personally had access to in OTHER threads.
+They are memory, not current-thread messages. Do not pretend they happened in this thread.
+${body}`.slice(0, options.maxChars ?? 2600);
+}
+function groupActorPhoneMemoryContext(memories, actors, excludeConversationId, maxChars = 5200) {
+  const blocks = actors.flatMap((actor) => {
+    const rows = memoryRows(memories, {
+      actorIds: actor.actorIds,
+      actorNames: actor.actorNames,
+      excludeConversationId,
+      maxRows: 7
+    });
+    if (!rows.length)
+      return [];
+    return [`${actor.name}
+${formatRows(rows, 1300)}`];
+  });
+  if (!blocks.length)
+    return "";
+  return `PRIVATE ACTOR PHONE MEMORY \u2014 KNOWLEDGE PARTITIONS
+Each speaker may use ONLY the memory listed under their own name.
+Do not transfer a private fact from one actor's block to another actor unless the CURRENT group thread or shared world continuity independently establishes it.
+
+${blocks.join(`
+
+`)}`.slice(0, maxChars);
+}
+
 // src/backend/generation.ts
 var historyLocks = new Map;
 function compactError(error) {
@@ -1608,7 +1727,7 @@ async function parseWithTruncationRetry(content, retry) {
 
 // src/backend/roleplay-context.ts
 var BUDGETS = { actor: 1200, scene: 1800, thread: 6000, recent: 3200, story: 2400, total: 10500 };
-function clean4(value, max) {
+function clean5(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function messageIndex(message, fallback) {
@@ -1683,11 +1802,11 @@ function threadLine(state, conversation, message) {
   const persona = state.pocketPersona.displayName || "You";
   const sender = message.sender === "persona" ? persona : message.senderName || "Pocket";
   if (conversation.kind !== "group" || message.sender !== "contact")
-    return `${sender}: ${clean4(message.text, 520)}`;
+    return `${sender}: ${clean5(message.text, 520)}`;
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds]);
   const senderId = message.senderActorId || message.senderContactId || "";
   const former = Boolean(senderId && !currentIds.has(senderId));
-  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean4(message.text, 520)}`;
+  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean5(message.text, 520)}`;
 }
 function trimBlock(lines, budget) {
   return lines.filter(Boolean).join(`
@@ -1700,11 +1819,11 @@ async function assemblePocketContext(options) {
   const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : [];
   const authoritative = hostMessages.at(-1);
   const authoritativeLatest = authoritative ? {
-    id: clean4(authoritative.id, 180),
+    id: clean5(authoritative.id, 180),
     index: messageIndex(authoritative, hostMessages.length - 1),
-    excerpt: clean4(authoritative.content, 180)
+    excerpt: clean5(authoritative.content, 180)
   } : { id: "", index: -1, excerpt: "" };
-  const actorIdentity = clean4(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
+  const actorIdentity = clean5(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1400);
   const scene = trimBlock(sceneLines(state), BUDGETS.scene);
   const includePhoneThread = options.includePhoneThread !== false;
@@ -1714,16 +1833,16 @@ async function assemblePocketContext(options) {
   const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
-    const anchor = clean4(message.id, 180);
+    const anchor = clean5(message.id, 180);
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
-    return `${role}${source}: ${clean4(message.content, 520)}`;
+    return `${role}${source}: ${clean5(message.content, 520)}`;
   }).filter((line) => !line.endsWith(": "));
   const recent = trimBlock(recentLines, BUDGETS.recent);
   const includedMessage = selectedRecent.at(-1);
   const includedLatest = includedMessage ? {
-    id: clean4(includedMessage.id, 180),
+    id: clean5(includedMessage.id, 180),
     index: messageIndex(includedMessage, hostMessages.length - 1),
-    excerpt: clean4(includedMessage.content, 180)
+    excerpt: clean5(includedMessage.content, 180)
   } : { id: "", index: -1, excerpt: "" };
   const storySource = mode !== "off" && (mode === "story" || mode === "smart" || !includeRoleplayBackground) ? storyLines(state, contact) : [];
   const story = trimBlock(storySource, BUDGETS.story);
@@ -2247,6 +2366,8 @@ function defaultState(chatId, characterId, characterName = "Character") {
     contacts: collections.contacts,
     discoveredActors: [],
     conversations: collections.conversations,
+    actorMemoryVersion: 1,
+    actorMemories: [],
     notes: [],
     events: [],
     relays: [],
@@ -2268,6 +2389,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     return fallback;
   const collections = normalizeContactCollections(value, { characterId, characterName, now: nowIso(), makeId: id });
   const discoveredActors = normalizeDiscoveredActors(value.discoveredActors, chatId, nowIso());
+  const actorMemories = normalizeActorMemories(value.actorMemories);
   const notes = (Array.isArray(value.notes) ? value.notes : []).slice(0, MAX_NOTES).flatMap((item) => {
     if (!isRecord(item))
       return [];
@@ -2587,6 +2709,8 @@ function normalizeState(value, chatId, characterId, characterName) {
     contacts: collections.contacts,
     discoveredActors,
     conversations: collections.conversations,
+    actorMemoryVersion: Math.max(0, Math.round(numberValue(value.actorMemoryVersion, 0))),
+    actorMemories,
     notes,
     events,
     relays,
@@ -2707,6 +2831,48 @@ ${body}` });
   }
   return history;
 }
+function personaMemoryActorId(state) {
+  const linked = text2(state.pocketPersona.linkedPersonaId, 180);
+  const name = normalizeActorName(state.pocketPersona.displayName).replace(/\s+/g, "_").slice(0, 120);
+  return `persona:${linked || name || "owner"}`;
+}
+function conversationMemoryAudience(state, conversation) {
+  const ids = [personaMemoryActorId(state), ...conversationActorIds(conversation)].filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
+  const names = [
+    state.pocketPersona.displayName,
+    ...conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || "")
+  ].map((entry) => text2(entry, 120)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
+  return { ids, names };
+}
+function rememberPhoneMessage(state, conversation, message) {
+  if (message.sender === "system")
+    return;
+  const speakerActorId = message.sender === "persona" ? personaMemoryActorId(state) : text2(message.senderActorId || message.senderContactId, 180);
+  if (!speakerActorId)
+    return;
+  const audience = conversationMemoryAudience(state, conversation);
+  state.actorMemories = upsertActorMemory(state.actorMemories, {
+    id: `memory:${message.id}`,
+    conversationId: conversation.id,
+    conversationTitle: conversation.title,
+    conversationKind: conversation.kind,
+    messageId: message.id,
+    speakerActorId,
+    speakerName: message.sender === "persona" ? state.pocketPersona.displayName || message.senderName || "You" : message.senderName,
+    text: message.text,
+    knownByActorIds: audience.ids,
+    knownByNames: audience.names,
+    createdAt: message.createdAt
+  });
+}
+function backfillDirectPhoneMemories(state) {
+  for (const conversation of state.conversations) {
+    if (conversation.kind !== "direct")
+      continue;
+    for (const message of conversation.messages)
+      rememberPhoneMessage(state, conversation, message);
+  }
+}
 async function loadState(chatId, characterId, userId) {
   const characterPresentation = await characterPresentationFor(characterId, userId);
   const characterName = characterPresentation.name;
@@ -2719,6 +2885,11 @@ async function loadState(chatId, characterId, userId) {
   const state = normalizeState(raw, chatId, characterId, characterName);
   await loadPreferences(userId, isRecord(raw) ? raw.settings : undefined);
   let stateChanged = Boolean(isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION));
+  if (state.actorMemoryVersion < 1) {
+    backfillDirectPhoneMemories(state);
+    state.actorMemoryVersion = 1;
+    stateChanged = true;
+  }
   state.trackers = state.trackers.map((tracker) => {
     const result = materializeTracker(tracker, state.roleplayNow);
     stateChanged ||= result.changed;
@@ -4233,6 +4404,13 @@ ${knownIdentity || "No full profile is registered; use only the name and current
     const personaName = generationPersona.displayName?.trim() || "You";
     const personaIdentity = pocketPersonaPhoneBrief(generationPersona);
     const continuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(continuitySeed, profile.name, [profile.name, personaName]);
+    const actorMemoryText = actorPhoneMemoryContext(state.actorMemories, {
+      actorIds: [actor.actorId, contact.id],
+      actorNames: [actor.name, profile.name],
+      actorName: profile.name,
+      excludeConversationId: conversation.id,
+      maxChars: 2600
+    });
     const generationMessages = conversation.kind === "direct" ? [
       {
         role: "system",
@@ -4268,7 +4446,9 @@ No narration, markdown, or custom UI copy.`
 ${assembled.text || "(no additional background)"}${continuityText ? `
 
 STRUCTURED CONTINUITY \u2014 NOT RAW NARRATIVE
-${continuityText}` : ""}`
+${continuityText}` : ""}${actorMemoryText ? `
+
+${actorMemoryText}` : ""}`
       },
       ...directGenerationHistory(contextConversation, actor.actorId, contact.id, personaName, profile.name),
       {
@@ -4359,11 +4539,14 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
       model: preferences.sidecarModelOverride || generationInfo.effective?.model || ""
     };
     nextMessage.senderAccent = contactAccent(contact);
-    if (replaceIndex >= 0)
+    if (replaceIndex >= 0) {
+      state.actorMemories = removeActorMemoryByMessageId(state.actorMemories, replaceMessageId);
       conversation.messages.splice(replaceIndex, 1, nextMessage);
-    else
+    } else {
       conversation.messages.push(nextMessage);
+    }
     conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
+    rememberPhoneMessage(state, conversation, nextMessage);
     if (!visible && replaceIndex < 0)
       conversation.unread += 1;
     conversation.updatedAt = nowIso();
@@ -4482,6 +4665,11 @@ ${pocketContactPhoneBrief(contact, profile) || "No profile; infer only from the 
       includeRoleplayBackground: false
     });
     const groupContinuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(groupContinuitySeed, "", profiles.map(({ actor }) => actor.name));
+    const groupMemoryText = groupActorPhoneMemoryContext(state.actorMemories, profiles.map(({ actor, contact }) => ({
+      actorIds: [actor.actorId, contact.id],
+      actorNames: [actor.name],
+      name: actor.name
+    })), conversation.id, 5200);
     const roster = profiles.map(({ actor, contact, profile }) => [
       `id=${actor.actorId}`,
       `name=${actor.name}`,
@@ -4500,7 +4688,9 @@ ${pocketContactPhoneBrief(contact, profile) || "No profile; infer only from the 
         { role: "user", content: `${assembled.text || "(no context)"}${groupContinuityText ? `
 
 STRUCTURED CONTINUITY \u2014 PUBLIC/SHARED FACTS ONLY
-${groupContinuityText}` : ""}
+${groupContinuityText}` : ""}${groupMemoryText ? `
+
+${groupMemoryText}` : ""}
 
 ELIGIBLE GROUP PARTICIPANTS
 ${roster}
@@ -4623,6 +4813,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
         };
         latestConversation.messages.push(message);
         latestConversation.messages = latestConversation.messages.slice(-MAX_MESSAGES2);
+        rememberPhoneMessage(latest, latestConversation, message);
         latestConversation.updatedAt = message.createdAt;
         if (!visible)
           latestConversation.unread += 1;

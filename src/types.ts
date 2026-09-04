@@ -299,6 +299,21 @@ export interface PocketReplyDecision {
   relayId?: string
 }
 
+export interface PocketActorMemoryEntry {
+  id: string
+  conversationId: string
+  conversationTitle: string
+  conversationKind: 'direct' | 'group'
+  messageId: string
+  speakerActorId: string
+  speakerName: string
+  text: string
+  /** Snapshot of who could read this phone message when it happened. */
+  knownByActorIds: string[]
+  /** Name fallback keeps memory stable across discovered-actor promotion/renames. */
+  knownByNames: string[]
+  createdAt: string
+}
 export interface PocketConversationTailSnapshot {
   text: string
   recentMessageIds: string[]
@@ -724,6 +739,9 @@ export interface PhoneState {
   contacts: PocketContact[]
   discoveredActors: DiscoveredActor[]
   conversations: PocketConversation[]
+  /** RP-local phone knowledge. Stable profile lives elsewhere; these memories never cross RP state files. */
+  actorMemoryVersion: number
+  actorMemories: PocketActorMemoryEntry[]
   notes: PhoneNote[]
   events: CalendarEvent[]
   relays: PocketRelay[]
