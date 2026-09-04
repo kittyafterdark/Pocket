@@ -839,7 +839,7 @@ class PocketController {
       this.preferences.generationHistory = history.slice(-24)
       if (this.generation) this.generation.history = this.preferences.generationHistory
       if (this.currentApp === 'settings') this.updateSettingsDiagnostics()
-      if (this.setupModalOpen && this.setupModalBody) this.renderFirstChatSetupBody()
+      if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing) this.renderFirstChatSetupBody()
       return
     }
     if (payload.type === 'lumiphone:context_preview' && payload.diagnostics) {
@@ -871,10 +871,11 @@ class PocketController {
         message: payload.message || 'Working…',
       }
       this.operations.set(operation.requestId, operation)
-      if (this.currentApp === 'contacts' && !this.updateOperationProgress(operation)) this.render(false)
+      const progressUpdated = this.updateOperationProgress(operation)
+      if (this.currentApp === 'contacts' && !progressUpdated) this.render(false)
       if (operation.phase === 'complete') window.setTimeout(() => {
         this.operations.delete(operation.requestId)
-        if (this.currentApp === 'contacts') this.updateOperationProgress(null, operation.requestId)
+        this.updateOperationProgress(null, operation.requestId)
       }, 1_200)
       return
     }
@@ -942,6 +943,11 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:npc_bank_saved') {
       this.showFeedback(`${payload.name || 'NPC'} saved to NPC Bank.`)
+      return
+    }
+    if (payload.type === 'lumiphone:npc_bank_added' && payload.contactId) {
+      if (payload.openConfig) this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'config' }, false)
+      else this.showFeedback(`${payload.name || 'NPC'} added to this roleplay.`)
       return
     }
     if (payload.type === 'lumiphone:npc_bank_deleted') {
@@ -1028,7 +1034,8 @@ class PocketController {
 
   private updateOperationProgress(operation: PocketOperationProgress | null, requestId = operation?.requestId || ''): boolean {
     if (!requestId) return false
-    const node = this.screen.querySelector<HTMLElement>(`[data-operation-request="${CSS.escape(requestId)}"]`)
+    const selector = `[data-operation-request="${CSS.escape(requestId)}"]`
+    const node = this.screen.querySelector<HTMLElement>(selector) || this.setupModalBody?.querySelector<HTMLElement>(selector) || null
     if (!node) return false
     if (!operation) { node.remove(); return true }
     const label = node.querySelector<HTMLElement>('[data-operation-message]')
@@ -2022,9 +2029,19 @@ class PocketController {
     const setNow = button('Set roleplay now', 'lp-button')
     setNow.addEventListener('click', () => {
       const parsed = new Date(nowField.value)
-      if (!Number.isNaN(parsed.getTime())) this.send('lumiphone:save_roleplay_time', { roleplayNow: parsed.toISOString() })
+      if (!Number.isNaN(parsed.getTime())) this.send('lumiphone:save_roleplay_time', { roleplayNow: parsed.toISOString(), timezoneOffsetMinutes: new Date().getTimezoneOffset() })
     })
-    nowCard.append(el('div', 'lp-eyebrow', 'Roleplay clock'), nowField, setNow)
+    const clockSource = state.roleplayClockSource === 'manual' ? 'Manual'
+      : state.roleplayClockSource === 'narrative' ? 'Narrative'
+        : 'Legacy / fallback'
+    const clockPrecision = state.roleplayClockPrecision && state.roleplayClockPrecision !== 'unknown' ? ` · ${state.roleplayClockPrecision}` : ''
+    const clockLabel = state.roleplayClockLabel ? ` · ${state.roleplayClockLabel}` : ''
+    nowCard.append(
+      el('div', 'lp-eyebrow', 'Roleplay clock'),
+      nowField,
+      el('p', 'lp-copy', `${clockSource}${clockPrecision}${clockLabel}`),
+      setNow,
+    )
     content.appendChild(nowCard)
     const timeline = el('div', 'lp-timeline')
     const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
@@ -2062,6 +2079,16 @@ class PocketController {
     const whenText = this.field('Timeline label', event?.whenText || (event ? formatDate(event.start, true) : ''))
     const start = this.field('Start', event ? dateTimeLocal(event.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
     const end = this.field('End', event ? dateTimeLocal(event.end) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
+    const exactTiming = el('div', 'lp-fields')
+    exactTiming.append(start.label, end.label)
+    const syncTimingPrecision = () => {
+      exactTiming.hidden = whenKind.value !== 'exact'
+      whenText.input.placeholder = whenKind.value === 'approximate' ? 'Morning, late afternoon, around noon…'
+        : whenKind.value === 'relative' ? 'After the press conference, before patrol…'
+          : whenKind.value === 'unscheduled' ? 'No scheduled time' : 'Timeline label'
+    }
+    whenKind.addEventListener('change', syncTimingPrecision)
+    syncTimingPrecision()
     const description = el('textarea', 'lp-textarea')
     description.placeholder = 'What happens?'
     description.value = event?.description || ''
@@ -2070,7 +2097,7 @@ class PocketController {
     completed.checked = event?.completed || false
     const completeRow = el('label', 'lp-card lp-row-between')
     completeRow.append(el('span', 'lp-title', 'Completed'), completed)
-    content.append(title.label, lane.label, whenKindLabel, whenText.label, start.label, end.label, description, completeRow)
+    content.append(title.label, lane.label, whenKindLabel, whenText.label, exactTiming, description, completeRow)
     if (event?.kind === 'phone-handoff' && event.source) {
       const source = button('Open source conversation', 'lp-button lp-button-quiet')
       source.addEventListener('click', () => this.openPocket({ app: 'messages', conversationId: event.source!.conversationId, messageId: event.source!.messageId }))
@@ -2081,8 +2108,12 @@ class PocketController {
       const endDate = new Date(end.input.value)
       this.send('lumiphone:action', { action: 'event', payload: {
         id: event?.id, title: inputValue(title.input), lane: inputValue(lane.input), description: description.value,
-        start: Number.isNaN(startDate.getTime()) ? this.state!.roleplayNow : startDate.toISOString(),
-        end: Number.isNaN(endDate.getTime()) ? this.state!.roleplayNow : endDate.toISOString(),
+        start: whenKind.value === 'exact'
+          ? (Number.isNaN(startDate.getTime()) ? this.state!.roleplayNow : startDate.toISOString())
+          : event?.start || this.state!.roleplayNow,
+        end: whenKind.value === 'exact'
+          ? (Number.isNaN(endDate.getTime()) ? this.state!.roleplayNow : endDate.toISOString())
+          : event?.end || event?.start || this.state!.roleplayNow,
         whenKind: whenKind.value, whenText: inputValue(whenText.input), completed: completed.checked,
       } })
       this.back()
@@ -2130,10 +2161,11 @@ class PocketController {
       resolvedWallpapers: this.resolvedWallpapers,
       contextPreview: this.contextPreview,
       personaPreview: this.personaPreview,
+      operations: this.operations,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       update: (preferences, options) => this.updatePreferences(preferences, options),
       navigate: (section) => this.openPocket({ app: 'settings', section }),
-      send: (type, payload) => { this.send(type, payload) },
+      send: (type, payload) => this.send(type, payload),
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
@@ -2259,17 +2291,34 @@ class PocketController {
             : 'Seed a sanitized world snapshot from the current RP. Raw narrative is not used as phone history.'),
     )
     const worldActions = el('div', 'lp-row')
-    const seed = button(worldStatus === 'seeded' ? 'Reseed from RP' : 'Seed from current RP', 'lp-button')
-    seed.disabled = !this.caps?.generation
+    const worldOperation = [...this.operations.values()].find((entry) => entry.task === 'world-seed' && entry.phase !== 'complete' && entry.phase !== 'error')
+    const seed = button(worldOperation ? 'Seeding…' : worldStatus === 'seeded' ? 'Reseed from RP' : 'Seed from current RP', 'lp-button')
+    seed.disabled = !this.caps?.generation || Boolean(worldOperation)
     seed.addEventListener('click', () => {
       seed.disabled = true
       seed.textContent = 'Seeding…'
-      this.send('lumiphone:setup_world_seed')
+      const operationRequestId = this.send('lumiphone:setup_world_seed', { timezoneOffsetMinutes: new Date().getTimezoneOffset() })
+      const progress = el('div', 'lp-operation-progress')
+      progress.dataset.operationRequest = operationRequestId
+      progress.dataset.phase = 'generating'
+      progress.setAttribute('role', 'status')
+      const label = el('strong', '', 'Reading roleplay and seeding world…'); label.dataset.operationMessage = 'true'
+      progress.append(el('span', 'lp-indeterminate'), label)
+      world.appendChild(progress)
     })
     const skip = button('Skip', 'lp-button lp-button-quiet')
     skip.addEventListener('click', () => this.send('lumiphone:setup_world_skip'))
     worldActions.append(seed, skip)
     world.appendChild(worldActions)
+    if (worldOperation) {
+      const progress = el('div', 'lp-operation-progress')
+      progress.dataset.operationRequest = worldOperation.requestId
+      progress.dataset.phase = worldOperation.phase
+      progress.setAttribute('role', 'status')
+      const label = el('strong', '', worldOperation.message); label.dataset.operationMessage = 'true'
+      progress.append(el('span', 'lp-indeterminate'), label)
+      world.appendChild(progress)
+    }
 
     const start = button('Start Pocket', 'lp-button')
     start.disabled = !llmReady || !personaReady
@@ -2366,12 +2415,20 @@ class PocketController {
     )
 
     const actions = el('div', 'lp-row')
-    const enrich = button('Enrich with LLM', 'lp-button lp-button-quiet')
-    enrich.disabled = !this.caps?.generation
+    const personaOperation = [...this.operations.values()].find((entry) => entry.task === 'persona-profile' && entry.phase !== 'complete' && entry.phase !== 'error')
+    const enrich = button(personaOperation ? 'Enriching…' : 'Enrich with LLM', 'lp-button lp-button-quiet')
+    enrich.disabled = !this.caps?.generation || Boolean(personaOperation)
     enrich.addEventListener('click', () => {
       enrich.disabled = true
       enrich.textContent = 'Enriching…'
-      this.send('lumiphone:generate_pocket_persona')
+      const operationRequestId = this.send('lumiphone:generate_pocket_persona')
+      const progress = el('div', 'lp-operation-progress')
+      progress.dataset.operationRequest = operationRequestId
+      progress.dataset.phase = 'generating'
+      progress.setAttribute('role', 'status')
+      const label = el('strong', '', 'Enriching phone profile…'); label.dataset.operationMessage = 'true'
+      progress.append(el('span', 'lp-indeterminate'), label)
+      body.appendChild(progress)
     })
 
     const save = button('Save phone profile', 'lp-button')
@@ -2398,6 +2455,15 @@ class PocketController {
 
     actions.append(enrich, save)
     body.append(fields, actions)
+    if (personaOperation) {
+      const progress = el('div', 'lp-operation-progress')
+      progress.dataset.operationRequest = personaOperation.requestId
+      progress.dataset.phase = personaOperation.phase
+      progress.setAttribute('role', 'status')
+      const label = el('strong', '', personaOperation.message); label.dataset.operationMessage = 'true'
+      progress.append(el('span', 'lp-indeterminate'), label)
+      body.appendChild(progress)
+    }
 
     if (this.personaPreview) {
       body.insertBefore(

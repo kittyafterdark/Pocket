@@ -1,4 +1,4 @@
-import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
+import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
 import { button, el } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -19,10 +19,11 @@ export interface SettingsViewHost {
   resolvedWallpapers: PocketResolvedWallpapers
   contextPreview: PocketContextDiagnostics | null
   personaPreview: ChatPocketPersona | null
+  operations: Map<string, PocketOperationProgress>
   page(title: string, subtitle?: string, action?: PageAction): Page
   update(preferences: DevicePreferences, options?: { persist?: boolean; resize?: boolean }): void
   navigate(section: string): void
-  send(type: string, payload?: Record<string, unknown>): void
+  send(type: string, payload?: Record<string, unknown>): string
   requestPermissions(): void
   showError(message: string): void
   rerender(): void
@@ -168,7 +169,26 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   }
   source.addEventListener('change', syncDisabled); syncDisabled()
   const actions = el('div', 'lp-row')
-  const describe = button('Enrich with LLM', 'lp-button lp-button-quiet'); describe.disabled = !host.capabilities?.generation; describe.addEventListener('click', () => host.send('lumiphone:generate_pocket_persona'))
+  const personaOperation = [...host.operations.values()].find((entry) => entry.task === 'persona-profile' && entry.phase !== 'complete' && entry.phase !== 'error')
+  const describe = button(personaOperation ? 'Enriching…' : 'Enrich with LLM', 'lp-button lp-button-quiet')
+  describe.disabled = !host.capabilities?.generation || Boolean(personaOperation)
+  let personaProgress: HTMLDivElement | null = null
+  const mountPersonaProgress = (requestId: string, message = 'Enriching phone profile…') => {
+    personaProgress?.remove()
+    personaProgress = el('div', 'lp-operation-progress')
+    personaProgress.dataset.operationRequest = requestId
+    personaProgress.dataset.phase = 'generating'
+    personaProgress.setAttribute('role', 'status')
+    const label = el('strong', '', message); label.dataset.operationMessage = 'true'
+    personaProgress.append(el('span', 'lp-indeterminate'), label)
+    identity.appendChild(personaProgress)
+  }
+  describe.addEventListener('click', () => {
+    describe.disabled = true
+    describe.textContent = 'Enriching…'
+    const requestId = host.send('lumiphone:generate_pocket_persona')
+    mountPersonaProgress(requestId)
+  })
   const save = button('Save profile', 'lp-button'); save.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', {
     followLumiverse: source.value === 'lumiverse',
     persona: {
@@ -186,6 +206,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
     },
   }))
   actions.append(describe, save); identity.append(source, fields, actions)
+  if (personaOperation) mountPersonaProgress(personaOperation.requestId, personaOperation.message)
   if (host.personaPreview) {
     const preview = el('section', 'lp-card lp-settings-section'); preview.dataset.pocketPersonaPreview = 'true'
     const generatedPhone = host.personaPreview.phoneProfile || { personality: '', appearance: '', textingStyle: '' }

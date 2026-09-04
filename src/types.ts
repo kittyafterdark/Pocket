@@ -186,7 +186,7 @@ export interface PocketContextDiagnostics {
 }
 
 export interface PocketOperationProgress {
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'world-seed' | 'persona-profile'
   requestId: string
   phase: 'request' | 'generating' | 'parsing' | 'saving' | 'complete' | 'error'
   message: string
@@ -700,6 +700,12 @@ export interface PhoneState {
   characterId: string
   characterName: string
   roleplayNow: string
+  /** Provenance for the in-world clock. Wall clock is never authoritative RP time. */
+  roleplayClockSource?: 'manual' | 'narrative' | 'legacy'
+  roleplayClockPrecision?: 'exact' | 'approximate' | 'relative' | 'unknown'
+  roleplayClockLabel?: string
+  /** Browser getTimezoneOffset(), persisted so backend can interpret narrative local times. */
+  roleplayTimezoneOffsetMinutes?: number
   sceneSnapshot: SceneActorSnapshot | null
   pocketPersona: ChatPocketPersona
   setup: {

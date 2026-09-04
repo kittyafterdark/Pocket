@@ -153,8 +153,8 @@ function importView(host: ContactsViewHost): HTMLDivElement {
     'lp-card lp-contact-import',
   )
   const description = el('textarea', 'lp-textarea'); description.placeholder = 'Describe someone; Pocket will generate one compact contact profile.'; description.maxLength = 2_000
-  const generate = button('Generate NPC')
   const npcOperation = [...host.operations.values()].find((entry) => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
+  const generate = button(npcOperation ? 'Generating…' : 'Generate NPC')
   generate.disabled = !host.capabilities?.generation || Boolean(npcOperation)
   generate.addEventListener('click', () => {
     if (!description.value.trim()) { host.showError('Describe the NPC first.'); return }
@@ -205,26 +205,30 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
       const row = el('div', 'lp-card lp-list-row')
-      const identity = identityBlock({
-        name: entry.name,
-        meta: entry.role || 'Pocket NPC',
-        description: entry.identityBrief,
-      })
+      const identity = identityBlock({ name: entry.name, meta: entry.role || 'Pocket NPC' })
       const linked = host.state.contacts.find((contact) => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
       const actions = actionGroup()
-      if (linked) actions.appendChild(statusBadge('Added', 'accent'))
-      else {
-        const add = button('Add to this RP', 'lp-button lp-button-quiet')
-        add.addEventListener('click', () => host.send('lumiphone:npc_bank_add', { bankId: entry.id }))
-        actions.appendChild(add)
-      }
-      const forget = button('Forget', 'lp-button lp-button-quiet')
+
+      const edit = button('Edit', 'lp-button lp-button-quiet')
+      edit.addEventListener('click', () => {
+        if (linked) host.select(linked.id, 'config')
+        else host.send('lumiphone:npc_bank_add', { bankId: entry.id, openConfig: true })
+      })
+
+      const add = button(linked ? 'Added' : 'Add', 'lp-button lp-button-quiet')
+      add.disabled = Boolean(linked)
+      add.addEventListener('click', () => {
+        if (!linked) host.send('lumiphone:npc_bank_add', { bankId: entry.id })
+      })
+
+      const forget = button('Forget', 'lp-button lp-button-danger')
       forget.addEventListener('click', () => {
         if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
           host.send('lumiphone:npc_bank_delete', { bankId: entry.id })
         }
       })
-      actions.appendChild(forget)
+
+      actions.append(edit, add, forget)
       row.append(identity, actions)
       bankBody.appendChild(row)
     }
@@ -291,7 +295,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     }
     if (contact.source.kind !== 'npc' || contact.source.origin === 'discovered') {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === 'profile-refresh' && entry.phase !== 'complete' && entry.phase !== 'error')
-      const refresh = button(contact.source.kind === 'npc' ? 'Describe from RP ✦' : 'Refresh compact profile ✦', 'lp-button lp-button-quiet')
+      const refresh = button(profileOperation ? (contact.source.kind === 'npc' ? 'Describing…' : 'Refreshing…') : (contact.source.kind === 'npc' ? 'Describe from RP ✦' : 'Refresh compact profile ✦'), 'lp-button lp-button-quiet')
       refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation)
       refresh.addEventListener('click', () => host.send('lumiphone:refresh_contact_profile', { contactId: contact.id }))
       content.appendChild(refresh)

@@ -742,9 +742,27 @@ function persona(host) {
   source.addEventListener("change", syncDisabled);
   syncDisabled();
   const actions = el("div", "lp-row");
-  const describe = button("Enrich with LLM", "lp-button lp-button-quiet");
-  describe.disabled = !host.capabilities?.generation;
-  describe.addEventListener("click", () => host.send("lumiphone:generate_pocket_persona"));
+  const personaOperation = [...host.operations.values()].find((entry) => entry.task === "persona-profile" && entry.phase !== "complete" && entry.phase !== "error");
+  const describe = button(personaOperation ? "Enriching…" : "Enrich with LLM", "lp-button lp-button-quiet");
+  describe.disabled = !host.capabilities?.generation || Boolean(personaOperation);
+  let personaProgress = null;
+  const mountPersonaProgress = (requestId2, message = "Enriching phone profile…") => {
+    personaProgress?.remove();
+    personaProgress = el("div", "lp-operation-progress");
+    personaProgress.dataset.operationRequest = requestId2;
+    personaProgress.dataset.phase = "generating";
+    personaProgress.setAttribute("role", "status");
+    const label = el("strong", "", message);
+    label.dataset.operationMessage = "true";
+    personaProgress.append(el("span", "lp-indeterminate"), label);
+    identity.appendChild(personaProgress);
+  };
+  describe.addEventListener("click", () => {
+    describe.disabled = true;
+    describe.textContent = "Enriching…";
+    const requestId2 = host.send("lumiphone:generate_pocket_persona");
+    mountPersonaProgress(requestId2);
+  });
   const save = button("Save profile", "lp-button");
   save.addEventListener("click", () => host.send("lumiphone:save_pocket_persona", {
     followLumiverse: source.value === "lumiverse",
@@ -764,6 +782,8 @@ function persona(host) {
   }));
   actions.append(describe, save);
   identity.append(source, fields, actions);
+  if (personaOperation)
+    mountPersonaProgress(personaOperation.requestId, personaOperation.message);
   if (host.personaPreview) {
     const preview = el("section", "lp-card lp-settings-section");
     preview.dataset.pocketPersonaPreview = "true";
@@ -2314,8 +2334,8 @@ function importView(host) {
   const description = el("textarea", "lp-textarea");
   description.placeholder = "Describe someone; Pocket will generate one compact contact profile.";
   description.maxLength = 2000;
-  const generate = button("Generate NPC");
   const npcOperation = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && entry.phase !== "complete" && entry.phase !== "error");
+  const generate = button(npcOperation ? "Generating…" : "Generate NPC");
   generate.disabled = !host.capabilities?.generation || Boolean(npcOperation);
   generate.addEventListener("click", () => {
     if (!description.value.trim()) {
@@ -2367,27 +2387,29 @@ function importView(host) {
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
       const row2 = el("div", "lp-card lp-list-row");
-      const identity = identityBlock({
-        name: entry.name,
-        meta: entry.role || "Pocket NPC",
-        description: entry.identityBrief
-      });
+      const identity = identityBlock({ name: entry.name, meta: entry.role || "Pocket NPC" });
       const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
       const actions = actionGroup();
-      if (linked)
-        actions.appendChild(statusBadge("Added", "accent"));
-      else {
-        const add = button("Add to this RP", "lp-button lp-button-quiet");
-        add.addEventListener("click", () => host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
-        actions.appendChild(add);
-      }
-      const forget = button("Forget", "lp-button lp-button-quiet");
+      const edit = button("Edit", "lp-button lp-button-quiet");
+      edit.addEventListener("click", () => {
+        if (linked)
+          host.select(linked.id, "config");
+        else
+          host.send("lumiphone:npc_bank_add", { bankId: entry.id, openConfig: true });
+      });
+      const add = button(linked ? "Added" : "Add", "lp-button lp-button-quiet");
+      add.disabled = Boolean(linked);
+      add.addEventListener("click", () => {
+        if (!linked)
+          host.send("lumiphone:npc_bank_add", { bankId: entry.id });
+      });
+      const forget = button("Forget", "lp-button lp-button-danger");
       forget.addEventListener("click", () => {
         if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
           host.send("lumiphone:npc_bank_delete", { bankId: entry.id });
         }
       });
-      actions.appendChild(forget);
+      actions.append(edit, add, forget);
       row2.append(identity, actions);
       bankBody.appendChild(row2);
     }
@@ -2454,7 +2476,7 @@ function renderContactsView(host) {
     }
     if (contact.source.kind !== "npc" || contact.source.origin === "discovered") {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === "profile-refresh" && entry.phase !== "complete" && entry.phase !== "error");
-      const refresh = button(contact.source.kind === "npc" ? "Describe from RP ✦" : "Refresh compact profile ✦", "lp-button lp-button-quiet");
+      const refresh = button(profileOperation ? contact.source.kind === "npc" ? "Describing…" : "Refreshing…" : contact.source.kind === "npc" ? "Describe from RP ✦" : "Refresh compact profile ✦", "lp-button lp-button-quiet");
       refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation);
       refresh.addEventListener("click", () => host.send("lumiphone:refresh_contact_profile", { contactId: contact.id }));
       content2.appendChild(refresh);
@@ -3528,7 +3550,7 @@ class PocketController {
         this.generation.history = this.preferences.generationHistory;
       if (this.currentApp === "settings")
         this.updateSettingsDiagnostics();
-      if (this.setupModalOpen && this.setupModalBody)
+      if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing)
         this.renderFirstChatSetupBody();
       return;
     }
@@ -3566,13 +3588,13 @@ class PocketController {
         message: payload.message || "Working…"
       };
       this.operations.set(operation.requestId, operation);
-      if (this.currentApp === "contacts" && !this.updateOperationProgress(operation))
+      const progressUpdated = this.updateOperationProgress(operation);
+      if (this.currentApp === "contacts" && !progressUpdated)
         this.render(false);
       if (operation.phase === "complete")
         window.setTimeout(() => {
           this.operations.delete(operation.requestId);
-          if (this.currentApp === "contacts")
-            this.updateOperationProgress(null, operation.requestId);
+          this.updateOperationProgress(null, operation.requestId);
         }, 1200);
       return;
     }
@@ -3649,6 +3671,13 @@ class PocketController {
     }
     if (payload.type === "lumiphone:npc_bank_saved") {
       this.showFeedback(`${payload.name || "NPC"} saved to NPC Bank.`);
+      return;
+    }
+    if (payload.type === "lumiphone:npc_bank_added" && payload.contactId) {
+      if (payload.openConfig)
+        this.openPocket({ app: "contacts", contactId: payload.contactId, view: "config" }, false);
+      else
+        this.showFeedback(`${payload.name || "NPC"} added to this roleplay.`);
       return;
     }
     if (payload.type === "lumiphone:npc_bank_deleted") {
@@ -3756,7 +3785,8 @@ class PocketController {
   updateOperationProgress(operation, requestId2 = operation?.requestId || "") {
     if (!requestId2)
       return false;
-    const node = this.screen.querySelector(`[data-operation-request="${CSS.escape(requestId2)}"]`);
+    const selector = `[data-operation-request="${CSS.escape(requestId2)}"]`;
+    const node = this.screen.querySelector(selector) || this.setupModalBody?.querySelector(selector) || null;
     if (!node)
       return false;
     if (!operation) {
@@ -4820,9 +4850,12 @@ ${body}`;
     setNow.addEventListener("click", () => {
       const parsed = new Date(nowField.value);
       if (!Number.isNaN(parsed.getTime()))
-        this.send("lumiphone:save_roleplay_time", { roleplayNow: parsed.toISOString() });
+        this.send("lumiphone:save_roleplay_time", { roleplayNow: parsed.toISOString(), timezoneOffsetMinutes: new Date().getTimezoneOffset() });
     });
-    nowCard.append(el("div", "lp-eyebrow", "Roleplay clock"), nowField, setNow);
+    const clockSource = state.roleplayClockSource === "manual" ? "Manual" : state.roleplayClockSource === "narrative" ? "Narrative" : "Legacy / fallback";
+    const clockPrecision = state.roleplayClockPrecision && state.roleplayClockPrecision !== "unknown" ? ` · ${state.roleplayClockPrecision}` : "";
+    const clockLabel = state.roleplayClockLabel ? ` · ${state.roleplayClockLabel}` : "";
+    nowCard.append(el("div", "lp-eyebrow", "Roleplay clock"), nowField, el("p", "lp-copy", `${clockSource}${clockPrecision}${clockLabel}`), setNow);
     content.appendChild(nowCard);
     const timeline = el("div", "lp-timeline");
     const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
@@ -4861,6 +4894,14 @@ ${body}`;
     const whenText = this.field("Timeline label", event?.whenText || (event ? formatDate(event.start, true) : ""));
     const start = this.field("Start", event ? dateTimeLocal(event.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
     const end = this.field("End", event ? dateTimeLocal(event.end) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
+    const exactTiming = el("div", "lp-fields");
+    exactTiming.append(start.label, end.label);
+    const syncTimingPrecision = () => {
+      exactTiming.hidden = whenKind.value !== "exact";
+      whenText.input.placeholder = whenKind.value === "approximate" ? "Morning, late afternoon, around noon…" : whenKind.value === "relative" ? "After the press conference, before patrol…" : whenKind.value === "unscheduled" ? "No scheduled time" : "Timeline label";
+    };
+    whenKind.addEventListener("change", syncTimingPrecision);
+    syncTimingPrecision();
     const description = el("textarea", "lp-textarea");
     description.placeholder = "What happens?";
     description.value = event?.description || "";
@@ -4869,7 +4910,7 @@ ${body}`;
     completed.checked = event?.completed || false;
     const completeRow = el("label", "lp-card lp-row-between");
     completeRow.append(el("span", "lp-title", "Completed"), completed);
-    content.append(title.label, lane.label, whenKindLabel, whenText.label, start.label, end.label, description, completeRow);
+    content.append(title.label, lane.label, whenKindLabel, whenText.label, exactTiming, description, completeRow);
     if (event?.kind === "phone-handoff" && event.source) {
       const source = button("Open source conversation", "lp-button lp-button-quiet");
       source.addEventListener("click", () => this.openPocket({ app: "messages", conversationId: event.source.conversationId, messageId: event.source.messageId }));
@@ -4883,8 +4924,8 @@ ${body}`;
         title: inputValue(title.input),
         lane: inputValue(lane.input),
         description: description.value,
-        start: Number.isNaN(startDate.getTime()) ? this.state.roleplayNow : startDate.toISOString(),
-        end: Number.isNaN(endDate.getTime()) ? this.state.roleplayNow : endDate.toISOString(),
+        start: whenKind.value === "exact" ? Number.isNaN(startDate.getTime()) ? this.state.roleplayNow : startDate.toISOString() : event?.start || this.state.roleplayNow,
+        end: whenKind.value === "exact" ? Number.isNaN(endDate.getTime()) ? this.state.roleplayNow : endDate.toISOString() : event?.end || event?.start || this.state.roleplayNow,
         whenKind: whenKind.value,
         whenText: inputValue(whenText.input),
         completed: completed.checked
@@ -4940,12 +4981,11 @@ ${body}`;
       resolvedWallpapers: this.resolvedWallpapers,
       contextPreview: this.contextPreview,
       personaPreview: this.personaPreview,
+      operations: this.operations,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       update: (preferences, options) => this.updatePreferences(preferences, options),
       navigate: (section) => this.openPocket({ app: "settings", section }),
-      send: (type, payload) => {
-        this.send(type, payload);
-      },
+      send: (type, payload) => this.send(type, payload),
       requestPermissions: () => {
         this.requestPermissions();
       },
@@ -5045,17 +5085,36 @@ ${body}`;
     const world = el("section", "lp-card lp-settings-section");
     world.append(el("div", "lp-eyebrow", worldStatus === "seeded" ? "✓ WORLD · OPTIONAL" : worldStatus === "skipped" ? "— WORLD · OPTIONAL" : "○ WORLD · OPTIONAL"), el("strong", "", worldStatus === "seeded" ? "Seeded from this roleplay" : worldStatus === "skipped" ? "Skipped" : "No world baseline yet"), el("p", "lp-copy", worldStatus === "seeded" ? goal ? `Timeline goal: ${goal.title}` : "Weather and Timeline were seeded; no clear current goal was found." : worldStatus === "skipped" ? "Pocket will start without situational first-turn hooks. You can add world state later." : "Seed a sanitized world snapshot from the current RP. Raw narrative is not used as phone history."));
     const worldActions = el("div", "lp-row");
-    const seed = button(worldStatus === "seeded" ? "Reseed from RP" : "Seed from current RP", "lp-button");
-    seed.disabled = !this.caps?.generation;
+    const worldOperation = [...this.operations.values()].find((entry) => entry.task === "world-seed" && entry.phase !== "complete" && entry.phase !== "error");
+    const seed = button(worldOperation ? "Seeding…" : worldStatus === "seeded" ? "Reseed from RP" : "Seed from current RP", "lp-button");
+    seed.disabled = !this.caps?.generation || Boolean(worldOperation);
     seed.addEventListener("click", () => {
       seed.disabled = true;
       seed.textContent = "Seeding…";
-      this.send("lumiphone:setup_world_seed");
+      const operationRequestId = this.send("lumiphone:setup_world_seed", { timezoneOffsetMinutes: new Date().getTimezoneOffset() });
+      const progress = el("div", "lp-operation-progress");
+      progress.dataset.operationRequest = operationRequestId;
+      progress.dataset.phase = "generating";
+      progress.setAttribute("role", "status");
+      const label = el("strong", "", "Reading roleplay and seeding world…");
+      label.dataset.operationMessage = "true";
+      progress.append(el("span", "lp-indeterminate"), label);
+      world.appendChild(progress);
     });
     const skip = button("Skip", "lp-button lp-button-quiet");
     skip.addEventListener("click", () => this.send("lumiphone:setup_world_skip"));
     worldActions.append(seed, skip);
     world.appendChild(worldActions);
+    if (worldOperation) {
+      const progress = el("div", "lp-operation-progress");
+      progress.dataset.operationRequest = worldOperation.requestId;
+      progress.dataset.phase = worldOperation.phase;
+      progress.setAttribute("role", "status");
+      const label = el("strong", "", worldOperation.message);
+      label.dataset.operationMessage = "true";
+      progress.append(el("span", "lp-indeterminate"), label);
+      world.appendChild(progress);
+    }
     const start = button("Start Pocket", "lp-button");
     start.disabled = !llmReady || !personaReady;
     start.title = !llmReady ? "Pocket needs a working LLM first." : !personaReady ? "Choose the phone owner first." : "";
@@ -5122,12 +5181,21 @@ ${body}`;
     const fields = el("section", "lp-card lp-settings-section");
     fields.append(source, name, pronouns, role, el("div", "lp-label", "Personality"), personality, el("div", "lp-label", "Minimal appearance"), appearance2, el("div", "lp-label", "Texting quirks"), textingStyle);
     const actions = el("div", "lp-row");
-    const enrich = button("Enrich with LLM", "lp-button lp-button-quiet");
-    enrich.disabled = !this.caps?.generation;
+    const personaOperation = [...this.operations.values()].find((entry) => entry.task === "persona-profile" && entry.phase !== "complete" && entry.phase !== "error");
+    const enrich = button(personaOperation ? "Enriching…" : "Enrich with LLM", "lp-button lp-button-quiet");
+    enrich.disabled = !this.caps?.generation || Boolean(personaOperation);
     enrich.addEventListener("click", () => {
       enrich.disabled = true;
       enrich.textContent = "Enriching…";
-      this.send("lumiphone:generate_pocket_persona");
+      const operationRequestId = this.send("lumiphone:generate_pocket_persona");
+      const progress = el("div", "lp-operation-progress");
+      progress.dataset.operationRequest = operationRequestId;
+      progress.dataset.phase = "generating";
+      progress.setAttribute("role", "status");
+      const label = el("strong", "", "Enriching phone profile…");
+      label.dataset.operationMessage = "true";
+      progress.append(el("span", "lp-indeterminate"), label);
+      body.appendChild(progress);
     });
     const save = button("Save phone profile", "lp-button");
     save.addEventListener("click", () => {
@@ -5152,6 +5220,16 @@ ${body}`;
     });
     actions.append(enrich, save);
     body.append(fields, actions);
+    if (personaOperation) {
+      const progress = el("div", "lp-operation-progress");
+      progress.dataset.operationRequest = personaOperation.requestId;
+      progress.dataset.phase = personaOperation.phase;
+      progress.setAttribute("role", "status");
+      const label = el("strong", "", personaOperation.message);
+      label.dataset.operationMessage = "true";
+      progress.append(el("span", "lp-indeterminate"), label);
+      body.appendChild(progress);
+    }
     if (this.personaPreview) {
       body.insertBefore(el("p", "lp-copy", "✓ LLM enrichment loaded into the fields above. Review it, then save."), actions);
     }

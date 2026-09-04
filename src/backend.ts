@@ -466,6 +466,10 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     characterId,
     characterName: characterName || text(value.characterName, 120) || fallback.characterName,
     roleplayNow: text(value.roleplayNow, 80) || fallback.roleplayNow,
+    roleplayClockSource: value.roleplayClockSource === 'manual' || value.roleplayClockSource === 'narrative' ? value.roleplayClockSource : 'legacy',
+    roleplayClockPrecision: value.roleplayClockPrecision === 'exact' || value.roleplayClockPrecision === 'approximate' || value.roleplayClockPrecision === 'relative' ? value.roleplayClockPrecision : 'unknown',
+    roleplayClockLabel: text(value.roleplayClockLabel, 160),
+    roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
     setup: {
@@ -1463,10 +1467,18 @@ interface NarrativeSeedWeather {
   location: string
   details: string
 }
+interface NarrativeSeedClock {
+  date: string
+  time: string
+  dayPart: string
+  precision: 'exact' | 'approximate' | 'relative' | 'unknown'
+  label: string
+}
 interface NarrativeSeedWorld {
   setting: string
   facts: string[]
   weather: NarrativeSeedWeather | null
+  clock: NarrativeSeedClock
 }
 interface NarrativeSeedFact {
   text: string
@@ -1496,7 +1508,7 @@ interface NarrativeSeedTimeline {
   knownBy: string[]
 }
 interface NarrativeSeedSnapshot {
-  version: 3
+  version: 4
   sourceKey: string
   sourceMessageIds: string[]
   world: NarrativeSeedWorld
@@ -1506,7 +1518,7 @@ interface NarrativeSeedSnapshot {
   updatedAt: string
 }
 
-const POCKET_CONTINUITY_SEED_VERSION = 3 as const
+const POCKET_CONTINUITY_SEED_VERSION = 4 as const
 const narrativeSeedFlights = new Map<string, Promise<NarrativeSeedSnapshot | null>>()
 
 function continuitySeedPath(chatId: string, characterId: string): string {
@@ -1526,6 +1538,7 @@ function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds
   const raw = isRecord(value) ? value : {}
   const rawWorld = isRecord(raw.world) ? raw.world : {}
   const rawWeather = isRecord(rawWorld.weather) ? rawWorld.weather : null
+  const rawClock = isRecord(rawWorld.clock) ? rawWorld.clock : {}
   const worldFacts = (Array.isArray(rawWorld.facts) ? rawWorld.facts : [])
     .map((entry) => text(entry, 360))
     .filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
@@ -1541,6 +1554,14 @@ function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds
           details: text(rawWeather.details, 360),
         }
       : null,
+    clock: {
+      date: /^\d{4}-\d{2}-\d{2}$/.test(text(rawClock.date, 20)) ? text(rawClock.date, 20) : '',
+      time: /^\d{2}:\d{2}$/.test(text(rawClock.time, 10)) ? text(rawClock.time, 10) : '',
+      dayPart: text(rawClock.dayPart, 80),
+      precision: rawClock.precision === 'exact' || rawClock.precision === 'approximate' || rawClock.precision === 'relative'
+        ? rawClock.precision : 'unknown',
+      label: text(rawClock.label, 160),
+    },
   }
 
   const facts: NarrativeSeedFact[] = (Array.isArray(raw.facts) ? raw.facts : []).slice(0, 10).flatMap((entry) => {
@@ -1632,6 +1653,9 @@ function mergeNarrativeSeed(previous: NarrativeSeedSnapshot | null, fresh: Narra
       setting: fresh.world.setting || previous?.world?.setting || '',
       facts: worldFacts,
       weather: fresh.world.weather || previous?.world?.weather || null,
+      clock: (fresh.world.clock.time || fresh.world.clock.dayPart || fresh.world.clock.label)
+        ? fresh.world.clock
+        : previous?.world?.clock || fresh.world.clock,
     },
     facts: [...factMap.values()].slice(-12),
     actors: [...actorMap.values()].slice(-16),
@@ -1677,6 +1701,9 @@ function narrativeSeedContext(seed: NarrativeSeedSnapshot | null, speakerName = 
 
   const worldLines = [
     seed.world.setting ? `Setting: ${seed.world.setting}` : '',
+    seed.world.clock.label || seed.world.clock.time || seed.world.clock.dayPart
+      ? `Narrative time: ${seed.world.clock.label || [seed.world.clock.date, seed.world.clock.time, seed.world.clock.dayPart].filter(Boolean).join(' ')} (${seed.world.clock.precision})`
+      : '',
     ...seed.world.facts.map((entry) => `World fact: ${entry}`),
     seed.world.weather?.condition
       ? `Weather: ${seed.world.weather.condition}${seed.world.weather.location ? ` at ${seed.world.weather.location}` : ''}${seed.world.weather.details ? `; ${seed.world.weather.details}` : ''}`
@@ -1698,8 +1725,53 @@ function seedActorContactIds(state: PhoneState, names: string[]): string[] {
   const wanted = new Set(names.map(normalizeActorName).filter(Boolean))
   return state.contacts.filter((contact) => wanted.has(normalizeActorName(contact.name))).map((contact) => contact.id).slice(0, 8)
 }
-function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
+function narrativeClockIso(state: PhoneState, clock: NarrativeSeedClock): string | null {
+  if (clock.precision !== 'exact' || !/^\d{2}:\d{2}$/.test(clock.time)) return null
+  const timezoneOffset = Number(state.roleplayTimezoneOffsetMinutes)
+  if (!Number.isFinite(timezoneOffset)) return null
+  const [hour, minute] = clock.time.split(':').map(Number)
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
+
+  let year: number
+  let month: number
+  let day: number
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clock.date)) {
+    ;[year, month, day] = clock.date.split('-').map(Number)
+  } else {
+    const current = new Date(state.roleplayNow)
+    if (Number.isNaN(current.getTime())) return null
+    const local = new Date(current.getTime() - timezoneOffset * 60_000)
+    year = local.getUTCFullYear()
+    month = local.getUTCMonth() + 1
+    day = local.getUTCDate()
+  }
+  const utcMs = Date.UTC(year, month - 1, day, hour, minute) + timezoneOffset * 60_000
+  const result = new Date(utcMs)
+  return Number.isNaN(result.getTime()) ? null : result.toISOString()
+}
+
+function applyNarrativeClock(state: PhoneState, clock: NarrativeSeedClock): boolean {
+  if (state.roleplayClockSource === 'manual') return false
+  const hasEvidence = Boolean(clock.time || clock.dayPart || clock.label)
+  if (!hasEvidence) return false
+
   let changed = false
+  const nextExact = narrativeClockIso(state, clock)
+  if (nextExact && nextExact !== state.roleplayNow) {
+    state.trackers = state.trackers.map((tracker) => materializeTracker(tracker, nextExact).tracker)
+    state.roleplayNow = nextExact
+    changed = true
+  }
+  const nextPrecision = clock.precision
+  const nextLabel = clock.label || [clock.date, clock.time, clock.dayPart].filter(Boolean).join(' ')
+  if (state.roleplayClockSource !== 'narrative') { state.roleplayClockSource = 'narrative'; changed = true }
+  if (state.roleplayClockPrecision !== nextPrecision) { state.roleplayClockPrecision = nextPrecision; changed = true }
+  if (state.roleplayClockLabel !== nextLabel) { state.roleplayClockLabel = nextLabel; changed = true }
+  return changed
+}
+
+function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
+  let changed = applyNarrativeClock(state, seed.world.clock)
 
   const weather = seed.world.weather
   if (weather) {
@@ -1858,6 +1930,7 @@ Return strict JSON only:
 {
   "world":{
     "setting":"short shared setting/location/era if explicitly established, else empty",
+    "clock":{"date":"YYYY-MM-DD only if narratively established, else empty","time":"HH:MM 24-hour only if an explicit narrative clock time is established, else empty","dayPart":"morning|afternoon|evening|night|etc if established","precision":"exact|approximate|relative|unknown","label":"human-readable narrative time such as 05:42 AM or early morning"},
     "facts":["genuinely actor-neutral shared world/group facts only"],
     "weather":{"condition":"short condition","location":"where it applies","details":"short atmospheric detail"} | null
   },
@@ -1871,6 +1944,9 @@ Rules:
 - WORLD means genuinely shared setting state that is not primarily ABOUT one named actor. Examples: "The kingdom requires a seasonal tribute", "Class 1-A is holding a party tonight", "A storm is hitting the city".
 - A named actor doing/feeling/planning/having something is NEVER a world fact. Put it in facts/actors with that actor explicitly listed.
 - weather is null unless weather/atmosphere is actually established by the prose. Never invent temperature.
+- world.clock comes ONLY from temporal evidence inside RECENT NARRATIVE. Never copy the computer/session/Pocket clock into it.
+- If prose explicitly says "Sent 05:42am", "at 11", or another clock time that clearly anchors the current scene, normalize it to HH:MM and use precision=exact. If only "morning", "later that afternoon", "after patrol", etc. is known, use approximate/relative and DO NOT invent an exact time.
+- date stays empty unless the narrative itself establishes a calendar date. An explicit time without a date is valid.
 - facts is actor-specific only. Every facts entry MUST have at least one subject in actors.
 - timeline scope=world only for group/world events. If an event concerns a named actor (Shoto's press conference, Bakugo's cooking shift, Mina's arrival), scope=actor and actors MUST identify them.
 - public means reasonably shared/cast-visible information. scene means explicitly witnessed; list witnesses in knownBy. private is the default for personal/internal information.
@@ -1881,15 +1957,14 @@ Rules:
         },
         {
           role: 'user',
-          content: `ROLEPLAY TIME: ${state.roleplayNow}
-KNOWN ACTORS:
+          content: `KNOWN ACTORS:
 ${knownActors.join('\n')}
 
 RECENT NARRATIVE:
 ${recentNarrative}`,
         },
       ],
-      parameters: { temperature: 0.08, max_tokens: 900 },
+      parameters: { temperature: 0.08, max_tokens: 1_000 },
       userId,
     }, userId)
 
@@ -3281,7 +3356,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           else contact = upsertContact(state, contactFromNpcBank(bankEntry, nowIso(), id), false)
           await saveState(state, userId)
           await sendState(state, userId, 'npc_bank')
-          send({ type: 'lumiphone:contact_created', requestId, contactId: contact.id }, userId)
+          send({ type: 'lumiphone:npc_bank_added', requestId, contactId: contact.id, bankId, name: contact.name, openConfig: bool(payload.openConfig) }, userId)
         })
         break
       }
@@ -3406,8 +3481,19 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:setup_world_seed': {
         if (!spindle.permissions.has('generation')) throw new Error('Enable Generation before seeding Pocket world state.')
+        send({ type: 'lumiphone:operation_progress', task: 'world-seed', requestId, phase: 'generating', message: 'Reading roleplay and seeding world…' }, userId)
+        try {
+          const timezoneOffsetMinutes = Number(payload.timezoneOffsetMinutes)
+          if (Number.isFinite(timezoneOffsetMinutes)) {
+            await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+              const state = await loadState(context.chatId, context.characterId, userId)
+              state.roleplayTimezoneOffsetMinutes = Math.max(-840, Math.min(840, timezoneOffsetMinutes))
+              await saveState(state, userId)
+            })
+          }
         const seed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
         if (!seed) throw new Error('Pocket could not find committed roleplay text to seed the world yet.')
+        send({ type: 'lumiphone:operation_progress', task: 'world-seed', requestId, phase: 'saving', message: 'Saving world, Weather, and Timeline…' }, userId)
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
           state.setup.worldStatus = 'seeded'
@@ -3423,6 +3509,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           worldFacts: seed.world.facts.length,
           timelineItems: seed.timeline.length,
         }, userId)
+        send({ type: 'lumiphone:operation_progress', task: 'world-seed', requestId, phase: 'complete', message: 'World seed ready' }, userId)
+        } catch (error) {
+          send({ type: 'lumiphone:operation_progress', task: 'world-seed', requestId, phase: 'error', message: error instanceof Error ? error.message : 'World seed failed' }, userId)
+          throw error
+        }
         break
       }
       case 'lumiphone:setup_world_skip': {
@@ -3458,6 +3549,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:generate_pocket_persona': {
         if (!spindle.permissions.has('generation')) throw new Error('Enable Generation to describe the Pocket Persona from roleplay.')
+        send({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId, phase: 'generating', message: 'Enriching phone profile…' }, userId)
+        try {
         const state = await loadState(context.chatId, context.characterId, userId)
         const messages = spindle.permissions.has('chat_mutation') ? await spindle.chat.getMessages(context.chatId) : []
         const response = await runStructuredGeneration('persona-profile', requestId || id('persona'), {
@@ -3470,6 +3563,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         }, userId)
         const preview = normalizePocketPersona({ ...state.pocketPersona, ...response, source: 'generated', linkedPersonaId: '', updatedAt: nowIso() }, state.pocketPersona)
         send({ type: 'lumiphone:pocket_persona_preview', requestId, persona: preview }, userId)
+        send({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId, phase: 'complete', message: 'Phone profile ready' }, userId)
+        } catch (error) {
+          send({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId, phase: 'error', message: error instanceof Error ? error.message : 'Persona enrichment failed' }, userId)
+          throw error
+        }
         break
       }
       case 'lumiphone:preview_context': {
@@ -3494,6 +3592,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const nextRoleplayNow = text(payload.roleplayNow, 80) || state.roleplayNow
           state.trackers = state.trackers.map((tracker) => materializeTracker(tracker, nextRoleplayNow).tracker)
           state.roleplayNow = nextRoleplayNow
+          state.roleplayClockSource = 'manual'
+          state.roleplayClockPrecision = 'exact'
+          state.roleplayClockLabel = 'Manual roleplay time'
+          const timezoneOffsetMinutes = Number(payload.timezoneOffsetMinutes)
+          if (Number.isFinite(timezoneOffsetMinutes)) state.roleplayTimezoneOffsetMinutes = Math.max(-840, Math.min(840, timezoneOffsetMinutes))
           await saveState(state, userId)
           await sendState(state, userId, 'calendar')
           void considerAmbientMessage(context.chatId, context.characterId, 'roleplay-time', userId)
