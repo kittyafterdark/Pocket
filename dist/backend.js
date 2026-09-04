@@ -2284,6 +2284,7 @@ function normalizeState(value, chatId, characterId, characterName) {
       createdBy,
       kind: item.kind === "phone-handoff" ? "phone-handoff" : "event",
       actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 8),
+      continuityKey: text2(item.continuityKey, 500) || undefined,
       source: isRecord(item.source) && item.source.app === "messages" ? {
         app: "messages",
         conversationId: text2(item.source.conversationId, 180),
@@ -3881,6 +3882,21 @@ function applyNarrativeClock(state, clock) {
   }
   return changed;
 }
+function phoneMessageTimestamp(state) {
+  const candidate = text2(state.roleplayNow, 80);
+  return Number.isFinite(Date.parse(candidate)) ? candidate : nowIso();
+}
+function continuityEventKey(item) {
+  const subject = item.scope === "actor" ? item.actors.map(normalizeActorName).filter(Boolean).sort().join("|") : "world";
+  return [
+    item.scope,
+    normalizeActorName(item.title),
+    subject
+  ].join(":").slice(0, 500);
+}
+function seededEventLane(event) {
+  return event.createdBy === "model" && (event.lane === "Continuity" || event.lane === "Current goal");
+}
 function applyNarrativeSeedState(state, seed) {
   let changed = applyNarrativeClock(state, seed.world.clock);
   const weather = seed.world.weather;
@@ -3898,16 +3914,22 @@ function applyNarrativeSeedState(state, seed) {
   }
   for (const item of seed.timeline) {
     const actorContactIds = item.scope === "actor" ? seedActorContactIds(state, item.actors) : [];
-    const existing = state.events.find((event) => event.lane === "Continuity" && event.title.trim().toLocaleLowerCase() === item.title.trim().toLocaleLowerCase() && event.whenText.trim().toLocaleLowerCase() === item.whenText.trim().toLocaleLowerCase());
+    const continuityKey = continuityEventKey(item);
+    const normalizedTitle = normalizeActorName(item.title);
+    const candidates = state.events.filter((event) => event.continuityKey === continuityKey || !event.continuityKey && seededEventLane(event) && normalizeActorName(event.title) === normalizedTitle);
+    const existing = candidates.find((event) => event.lane === "Current goal") || candidates[0];
     if (existing) {
-      const nextDescription = item.description || existing.description;
-      const nextActors = actorContactIds.length ? actorContactIds : existing.actorContactIds;
-      if (existing.description !== nextDescription || JSON.stringify(existing.actorContactIds || []) !== JSON.stringify(nextActors || []) || existing.completed !== item.completed) {
-        existing.description = nextDescription;
-        existing.actorContactIds = nextActors;
-        existing.completed = item.completed;
-        changed = true;
-      }
+      existing.continuityKey = continuityKey;
+      existing.title = item.title;
+      existing.description = item.description || existing.description;
+      existing.whenKind = item.whenKind;
+      existing.whenText = item.whenText;
+      existing.actorContactIds = actorContactIds.length ? actorContactIds : existing.actorContactIds;
+      existing.completed = item.completed;
+      const duplicateIds = new Set(candidates.filter((event) => event.id !== existing.id).map((event) => event.id));
+      if (duplicateIds.size)
+        state.events = state.events.filter((event) => !duplicateIds.has(event.id));
+      changed = true;
       continue;
     }
     const firstContact = actorContactIds.length ? state.contacts.find((contact) => contact.id === actorContactIds[0]) : undefined;
@@ -3924,7 +3946,8 @@ function applyNarrativeSeedState(state, seed) {
       lane: "Continuity",
       completed: item.completed,
       createdBy: "model",
-      actorContactIds
+      actorContactIds,
+      continuityKey
     });
     changed = true;
   }
@@ -3942,8 +3965,10 @@ function applySetupCurrentGoal(state, seed) {
   const candidate = actorGoal || worldGoal;
   if (!candidate)
     return false;
-  const matchingEvent = state.events.find((event) => event.title.trim().toLocaleLowerCase() === candidate.title.trim().toLocaleLowerCase() && event.whenText.trim().toLocaleLowerCase() === candidate.whenText.trim().toLocaleLowerCase());
+  const candidateKey = continuityEventKey(candidate);
+  const matchingEvent = state.events.find((event) => event.continuityKey === candidateKey || !event.continuityKey && seededEventLane(event) && normalizeActorName(event.title) === normalizeActorName(candidate.title));
   if (matchingEvent) {
+    matchingEvent.continuityKey = candidateKey;
     matchingEvent.lane = "Current goal";
     matchingEvent.completed = false;
     return true;
@@ -3963,7 +3988,8 @@ function applySetupCurrentGoal(state, seed) {
     lane: "Current goal",
     completed: false,
     createdBy: "model",
-    actorContactIds
+    actorContactIds,
+    continuityKey: candidateKey
   });
   state.events = state.events.slice(-MAX_EVENTS);
   return true;
@@ -4260,7 +4286,7 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
       senderName: actor.name,
       senderAccent: actor.accent,
       text: reply,
-      createdAt: nowIso(),
+      createdAt: phoneMessageTimestamp(state),
       read: visible,
       status: visible ? "read" : "delivered",
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined }
@@ -4521,7 +4547,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
           senderName: speaker.name,
           senderAccent: speaker.accent,
           text: latestSlot.text,
-          createdAt: nowIso(),
+          createdAt: phoneMessageTimestamp(latest),
           read: visible,
           status: visible ? "read" : "delivered",
           generation: { requestId, info: {
@@ -5333,7 +5359,7 @@ async function applyAction(input, userId, source = "model") {
         senderName: sender === "persona" ? "You" : sender === "system" ? "Pocket" : senderActor.name,
         senderAccent: sender === "contact" ? senderActor.accent : "",
         text: messageText,
-        createdAt: nowIso(),
+        createdAt: phoneMessageTimestamp(state),
         read: sender !== "contact",
         status: sender === "persona" ? "sent" : sender === "system" ? "read" : "delivered"
       };

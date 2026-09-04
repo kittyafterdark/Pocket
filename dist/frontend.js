@@ -2386,10 +2386,17 @@ function importView(host) {
     bankBody.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row2 = el("div", "lp-card lp-list-row");
+      const row2 = el("div", "lp-card");
+      row2.style.display = "grid";
+      row2.style.gap = "10px";
+      row2.style.minWidth = "0";
       const identity = identityBlock({ name: entry.name, meta: entry.role || "Pocket NPC" });
       const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
       const actions = actionGroup();
+      actions.style.display = "grid";
+      actions.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
+      actions.style.width = "100%";
+      actions.style.minWidth = "0";
       const edit = button("Edit", "lp-button lp-button-quiet");
       edit.addEventListener("click", () => {
         if (linked)
@@ -2409,6 +2416,10 @@ function importView(host) {
           host.send("lumiphone:npc_bank_delete", { bankId: entry.id });
         }
       });
+      for (const action of [edit, add, forget]) {
+        action.style.width = "100%";
+        action.style.minWidth = "0";
+      }
       actions.append(edit, add, forget);
       row2.append(identity, actions);
       bankBody.appendChild(row2);
@@ -3591,11 +3602,18 @@ class PocketController {
       const progressUpdated = this.updateOperationProgress(operation);
       if (this.currentApp === "contacts" && !progressUpdated)
         this.render(false);
-      if (operation.phase === "complete")
+      if (operation.phase === "complete" || operation.phase === "error")
         window.setTimeout(() => {
           this.operations.delete(operation.requestId);
           this.updateOperationProgress(null, operation.requestId);
-        }, 1200);
+          if (this.currentApp === "contacts")
+            this.render(false);
+          else if (this.currentApp === "settings" && operation.task === "persona-profile")
+            this.render(false);
+          if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing) {
+            this.renderFirstChatSetupBody();
+          }
+        }, operation.phase === "error" ? 1800 : 700);
       return;
     }
     if (payload.type === "lumiphone:capabilities") {
@@ -4894,10 +4912,12 @@ ${body}`;
     const whenText = this.field("Timeline label", event?.whenText || (event ? formatDate(event.start, true) : ""));
     const start = this.field("Start", event ? dateTimeLocal(event.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
     const end = this.field("End", event ? dateTimeLocal(event.end) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
-    const exactTiming = el("div", "lp-fields");
+    const exactTiming = el("div", "lp-settings-section");
+    exactTiming.style.minWidth = "0";
+    exactTiming.style.width = "100%";
     exactTiming.append(start.label, end.label);
     const syncTimingPrecision = () => {
-      exactTiming.hidden = whenKind.value !== "exact";
+      exactTiming.style.display = whenKind.value === "exact" ? "grid" : "none";
       whenText.input.placeholder = whenKind.value === "approximate" ? "Morning, late afternoon, around noon…" : whenKind.value === "relative" ? "After the press conference, before patrol…" : whenKind.value === "unscheduled" ? "No scheduled time" : "Timeline label";
     };
     whenKind.addEventListener("change", syncTimingPrecision);

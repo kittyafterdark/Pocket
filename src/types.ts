@@ -483,6 +483,8 @@ export interface CalendarEvent {
   createdBy: 'user' | 'character' | 'model'
   kind?: 'event' | 'phone-handoff'
   actorContactIds?: string[]
+  /** Stable semantic identity for world-seeded Timeline rows across reseeds/promotions. */
+  continuityKey?: string
   source?: { app: 'messages'; conversationId: string; relayId: string; messageId?: string }
   channelTransition?: { from: 'remote' | 'arriving' | 'paused'; to: 'local'; reason: ConversationLocalReason }
 }

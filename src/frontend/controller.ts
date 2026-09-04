@@ -873,10 +873,20 @@ class PocketController {
       this.operations.set(operation.requestId, operation)
       const progressUpdated = this.updateOperationProgress(operation)
       if (this.currentApp === 'contacts' && !progressUpdated) this.render(false)
-      if (operation.phase === 'complete') window.setTimeout(() => {
+      if (operation.phase === 'complete' || operation.phase === 'error') window.setTimeout(() => {
         this.operations.delete(operation.requestId)
         this.updateOperationProgress(null, operation.requestId)
-      }, 1_200)
+
+        // Contacts generation/profile buttons derive their idle state from
+        // this.operations, so redraw after cleanup. Setup World is safe to redraw
+        // unless the inline Persona editor is currently preserving unsaved fields.
+        if (this.currentApp === 'contacts') this.render(false)
+        else if (this.currentApp === 'settings' && operation.task === 'persona-profile') this.render(false)
+
+        if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing) {
+          this.renderFirstChatSetupBody()
+        }
+      }, operation.phase === 'error' ? 1_800 : 700)
       return
     }
     if (payload.type === 'lumiphone:capabilities') {
@@ -2079,10 +2089,12 @@ class PocketController {
     const whenText = this.field('Timeline label', event?.whenText || (event ? formatDate(event.start, true) : ''))
     const start = this.field('Start', event ? dateTimeLocal(event.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
     const end = this.field('End', event ? dateTimeLocal(event.end) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
-    const exactTiming = el('div', 'lp-fields')
+    const exactTiming = el('div', 'lp-settings-section')
+    exactTiming.style.minWidth = '0'
+    exactTiming.style.width = '100%'
     exactTiming.append(start.label, end.label)
     const syncTimingPrecision = () => {
-      exactTiming.hidden = whenKind.value !== 'exact'
+      exactTiming.style.display = whenKind.value === 'exact' ? 'grid' : 'none'
       whenText.input.placeholder = whenKind.value === 'approximate' ? 'Morning, late afternoon, around noon…'
         : whenKind.value === 'relative' ? 'After the press conference, before patrol…'
           : whenKind.value === 'unscheduled' ? 'No scheduled time' : 'Timeline label'

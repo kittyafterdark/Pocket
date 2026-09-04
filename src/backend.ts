@@ -244,6 +244,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       lane: text(item.lane, 80) || 'Main timeline', completed: item.kind === 'phone-handoff' ? true : bool(item.completed), createdBy,
       kind: item.kind === 'phone-handoff' ? 'phone-handoff' : 'event',
       actorContactIds: (Array.isArray(item.actorContactIds) ? item.actorContactIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 8),
+      continuityKey: text(item.continuityKey, 500) || undefined,
       source: isRecord(item.source) && item.source.app === 'messages' ? {
         app: 'messages' as const, conversationId: text(item.source.conversationId, 180), relayId: text(item.source.relayId, 180), messageId: text(item.source.messageId, 180) || undefined,
       } : undefined,
@@ -1770,6 +1771,26 @@ function applyNarrativeClock(state: PhoneState, clock: NarrativeSeedClock): bool
   return changed
 }
 
+function phoneMessageTimestamp(state: PhoneState): string {
+  const candidate = text(state.roleplayNow, 80)
+  return Number.isFinite(Date.parse(candidate)) ? candidate : nowIso()
+}
+
+function continuityEventKey(item: NarrativeSeedTimeline): string {
+  const subject = item.scope === 'actor'
+    ? item.actors.map(normalizeActorName).filter(Boolean).sort().join('|')
+    : 'world'
+  return [
+    item.scope,
+    normalizeActorName(item.title),
+    subject,
+  ].join(':').slice(0, 500)
+}
+
+function seededEventLane(event: CalendarEvent): boolean {
+  return event.createdBy === 'model' && (event.lane === 'Continuity' || event.lane === 'Current goal')
+}
+
 function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
   let changed = applyNarrativeClock(state, seed.world.clock)
 
@@ -1789,25 +1810,31 @@ function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot)
 
   for (const item of seed.timeline) {
     const actorContactIds = item.scope === 'actor' ? seedActorContactIds(state, item.actors) : []
-    const existing = state.events.find((event) =>
-      event.lane === 'Continuity'
-      && event.title.trim().toLocaleLowerCase() === item.title.trim().toLocaleLowerCase()
-      && event.whenText.trim().toLocaleLowerCase() === item.whenText.trim().toLocaleLowerCase()
+    const continuityKey = continuityEventKey(item)
+    const normalizedTitle = normalizeActorName(item.title)
+
+    // New rows use continuityKey. For pre-v6.12 rows, migrate only model-created
+    // Continuity/Current-goal rows with the same title. This intentionally ignores
+    // whenText because "Today" vs "Later today" is wording drift, not a new event.
+    const candidates = state.events.filter((event) =>
+      event.continuityKey === continuityKey
+      || (!event.continuityKey && seededEventLane(event) && normalizeActorName(event.title) === normalizedTitle)
     )
+    const existing = candidates.find((event) => event.lane === 'Current goal') || candidates[0]
 
     if (existing) {
-      const nextDescription = item.description || existing.description
-      const nextActors = actorContactIds.length ? actorContactIds : existing.actorContactIds
-      if (
-        existing.description !== nextDescription
-        || JSON.stringify(existing.actorContactIds || []) !== JSON.stringify(nextActors || [])
-        || existing.completed !== item.completed
-      ) {
-        existing.description = nextDescription
-        existing.actorContactIds = nextActors
-        existing.completed = item.completed
-        changed = true
-      }
+      existing.continuityKey = continuityKey
+      existing.title = item.title
+      existing.description = item.description || existing.description
+      existing.whenKind = item.whenKind
+      existing.whenText = item.whenText
+      existing.actorContactIds = actorContactIds.length ? actorContactIds : existing.actorContactIds
+      existing.completed = item.completed
+
+      // Collapse only duplicate model-seeded siblings for this current seed item.
+      const duplicateIds = new Set(candidates.filter((event) => event.id !== existing.id).map((event) => event.id))
+      if (duplicateIds.size) state.events = state.events.filter((event) => !duplicateIds.has(event.id))
+      changed = true
       continue
     }
 
@@ -1826,10 +1853,10 @@ function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot)
       completed: item.completed,
       createdBy: 'model',
       actorContactIds,
+      continuityKey,
     })
     changed = true
   }
-
   if (changed) state.events = state.events.slice(-MAX_EVENTS)
   return changed
 }
@@ -1846,11 +1873,13 @@ function applySetupCurrentGoal(state: PhoneState, seed: NarrativeSeedSnapshot): 
   const candidate = actorGoal || worldGoal
   if (!candidate) return false
 
+  const candidateKey = continuityEventKey(candidate)
   const matchingEvent = state.events.find((event) =>
-    event.title.trim().toLocaleLowerCase() === candidate.title.trim().toLocaleLowerCase()
-    && event.whenText.trim().toLocaleLowerCase() === candidate.whenText.trim().toLocaleLowerCase()
+    event.continuityKey === candidateKey
+    || (!event.continuityKey && seededEventLane(event) && normalizeActorName(event.title) === normalizeActorName(candidate.title))
   )
   if (matchingEvent) {
+    matchingEvent.continuityKey = candidateKey
     matchingEvent.lane = 'Current goal'
     matchingEvent.completed = false
     return true
@@ -1872,6 +1901,7 @@ function applySetupCurrentGoal(state: PhoneState, seed: NarrativeSeedSnapshot): 
     completed: false,
     createdBy: 'model',
     actorContactIds,
+    continuityKey: candidateKey,
   })
   state.events = state.events.slice(-MAX_EVENTS)
   return true
@@ -2157,7 +2187,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const visible = notificationDestinationVisible(state, route, userId)
     const nextMessage: PhoneMessage = {
       id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
-      text: reply, createdAt: nowIso(), read: visible, status: visible ? 'read' : 'delivered',
+      text: reply, createdAt: phoneMessageTimestamp(state), read: visible, status: visible ? 'read' : 'delivered',
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined },
     }
     nextMessage.generation!.info = {
@@ -2361,7 +2391,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
         const speakerContact = profileRow.contact
         const message: PhoneMessage = {
           id: id('msg'), sender: 'contact', senderActorId: speaker.actorId, senderActorKind: speaker.kind, senderContactId: speaker.contact?.id, senderName: speaker.name, senderAccent: speaker.accent,
-          text: latestSlot.text, createdAt: nowIso(), read: visible, status: visible ? 'read' : 'delivered',
+          text: latestSlot.text, createdAt: phoneMessageTimestamp(latest), read: visible, status: visible ? 'read' : 'delivered',
           generation: { requestId, info: {
             speaker: profile.name, source: profile.source,
             sourceId: speakerContact.source.kind === 'character' ? speakerContact.source.characterId : speakerContact.source.kind === 'council' ? speakerContact.source.memberId || speakerContact.source.itemId : speaker.actorId,
@@ -3024,7 +3054,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       const message: PhoneMessage = {
         id: id('msg'), sender, senderActorId, senderActorKind: sender === 'contact' ? senderActor!.kind : undefined,
         senderContactId: senderContact?.id, senderName: sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : senderActor!.name,
-        senderAccent: sender === 'contact' ? senderActor!.accent : '', text: messageText, createdAt: nowIso(), read: sender !== 'contact',
+        senderAccent: sender === 'contact' ? senderActor!.accent : '', text: messageText, createdAt: phoneMessageTimestamp(state), read: sender !== 'contact',
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : 'delivered',
       }
       conversation.messages.push(message)

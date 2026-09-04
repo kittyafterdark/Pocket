@@ -204,10 +204,17 @@ function importView(host: ContactsViewHost): HTMLDivElement {
     bankBody.appendChild(el('div', 'lp-card lp-copy', 'No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”.'))
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row = el('div', 'lp-card lp-list-row')
+      const row = el('div', 'lp-card')
+      row.style.display = 'grid'
+      row.style.gap = '10px'
+      row.style.minWidth = '0'
       const identity = identityBlock({ name: entry.name, meta: entry.role || 'Pocket NPC' })
       const linked = host.state.contacts.find((contact) => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
       const actions = actionGroup()
+      actions.style.display = 'grid'
+      actions.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))'
+      actions.style.width = '100%'
+      actions.style.minWidth = '0'
 
       const edit = button('Edit', 'lp-button lp-button-quiet')
       edit.addEventListener('click', () => {
@@ -228,6 +235,10 @@ function importView(host: ContactsViewHost): HTMLDivElement {
         }
       })
 
+      for (const action of [edit, add, forget]) {
+        action.style.width = '100%'
+        action.style.minWidth = '0'
+      }
       actions.append(edit, add, forget)
       row.append(identity, actions)
       bankBody.appendChild(row)
