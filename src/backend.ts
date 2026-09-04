@@ -524,7 +524,7 @@ async function resolveGenerationPocketPersona(state: PhoneState, userId?: string
   spindle.log.warn(`Pocket Persona "${configured.displayName}" collides with a roleplay actor; using active Lumiverse Persona "${hostPersona.displayName}" for this phone generation.`)
   return hostPersona
 }
-function directGenerationHistory(conversation: PocketConversation, actorId: string, contactId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
+function directGenerationHistory(conversation: PocketConversation, actorId: string, contactId: string, personaName: string, contactName: string): Array<{ role: 'user' | 'assistant'; content: string }> {
   const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
 
   for (const message of conversation.messages.slice(-20)) {
@@ -532,13 +532,13 @@ function directGenerationHistory(conversation: PocketConversation, actorId: stri
     if (!body) continue
 
     if (message.sender === 'persona') {
-      history.push({ role: 'user', content: body })
+      history.push({ role: 'user', content: `[DM TURN: ${personaName} → ${contactName}]\n${body}` })
       continue
     }
 
     const senderId = message.senderActorId || message.senderContactId || ''
     if (senderId && senderId !== actorId && senderId !== contactId) continue
-    history.push({ role: 'assistant', content: body })
+    history.push({ role: 'assistant', content: `[DM TURN: ${contactName} → ${personaName}]\n${body}` })
   }
 
   return history
@@ -1395,21 +1395,30 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
       actorIdentity: compactIdentity,
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
       includePhoneThread: conversation.kind !== 'direct',
+      includeRoleplayBackground: conversation.kind !== 'direct',
     })
     const instruction = text(input.instruction, 2_000) || 'Reply naturally to the latest message.'
     const generationTask = replaceIndex >= 0 ? 'message-retry' : 'message-reply'
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
     const personaName = generationPersona.displayName?.trim() || 'You'
+    const personaIdentity = text(generationPersona.identityBrief, 900)
     const generationMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = conversation.kind === 'direct'
       ? [
           {
             role: 'system',
             content: `You are ${profile.name} writing a private phone DM to ${personaName}.
 
+IMMUTABLE DM OWNERSHIP:
+- This thread belongs to ${personaName} and ${profile.name}.
+- THIS THREAD IS NOT THE ACTIVE RP CHARACTER'S PHONE.
+- It was not rerouted, borrowed, swapped, or inherited from another actor.
+- If an older generated message implies a different owner/addressee, that older text is a continuity mistake. Correct it; do not rationalize it.
+${personaIdentity ? `- Pocket Persona identity: ${personaIdentity}\n` : ''}
 DM ROLE BINDING — AUTHORITATIVE:
 - assistant role = ${profile.name}, the contact who writes the generated phone message.
 - user role = ${personaName}, the Pocket Persona / phone owner / recipient.
-- The active RP character (${generationState.characterName}) is background roleplay context, NOT the user role and NOT the DM recipient unless they literally are the Pocket Persona.
+- The host roleplay's active character is not automatically the user role or DM recipient.
+- Raw host roleplay transcript is intentionally excluded from direct-message generation; cross-thread continuity must come from explicit Pocket state, not host-chat dialogue.
 - Names appearing inside old messages or RP background are text content, not routing metadata.
 - A historical generated message may contain a mistaken addressee; do not inherit that mistake.
 - Never reinterpret the user role as another actor.
@@ -1427,14 +1436,14 @@ No narration, markdown, or custom UI copy.`,
             content: `POCKET BACKGROUND — REFERENCE ONLY, NOT CHAT-ROLE ROUTING
 ${assembled.text || '(no additional background)'}`,
           },
-          ...directGenerationHistory(contextConversation, actor.actorId, contact.id),
+          ...directGenerationHistory(contextConversation, actor.actorId, contact.id, personaName, profile.name),
           {
             role: 'user',
             content: `[POCKET CONTROL — NOT AN IN-WORLD MESSAGE]
 The user role is still ${personaName}.
 Generate the next assistant-role phone text from ${profile.name} TO ${personaName}.
 DIRECTION: ${instruction}
-FINAL GENERATION LOCK: recipient=${personaName}; speaker=${profile.name}.`,
+FINAL GENERATION LOCK: recipient=${personaName}; speaker=${profile.name}; thread_owner=${personaName}. This is ${personaName}'s phone conversation, not another actor's device.`,
           },
         ]
       : [

@@ -95,21 +95,23 @@ export async function assemblePocketContext(options: {
   actorIdentity?: string
   getMessages?: () => Promise<HostMessage[]>
   includePhoneThread?: boolean
+  includeRoleplayBackground?: boolean
 }): Promise<{ text: string; diagnostics: PocketContextDiagnostics }> {
   const { state, contact, conversation, preferences } = options
   const mode = preferences.roleplayContextMode
-  const hostMessages = options.getMessages ? await options.getMessages().catch(() => []) : []
+  const includeRoleplayBackground = options.includeRoleplayBackground !== false
+  const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : []
   const authoritative = hostMessages.at(-1)
   const authoritativeLatest = authoritative ? {
     id: clean(authoritative.id, 180), index: messageIndex(authoritative, hostMessages.length - 1), excerpt: clean(authoritative.content, 180),
   } : { id: '', index: -1, excerpt: '' }
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
-  const scene = trimBlock(sceneLines(state), BUDGETS.scene)
+  const scene = includeRoleplayBackground ? trimBlock(sceneLines(state), BUDGETS.scene) : ''
   const includePhoneThread = options.includePhoneThread !== false
   const threadLines = includePhoneThread ? conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message)) : []
   const thread = trimBlock(threadLines, BUDGETS.thread)
-  const wantsRecent = mode === 'recent' || (mode === 'smart' && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote)))
+  const wantsRecent = includeRoleplayBackground && (mode === 'recent' || (mode === 'smart' && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote))))
   const selectedRecent = mode !== 'off' && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : []
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === 'user'
@@ -126,7 +128,7 @@ export async function assemblePocketContext(options: {
   const includedLatest = includedMessage ? {
     id: clean(includedMessage.id, 180), index: messageIndex(includedMessage, hostMessages.length - 1), excerpt: clean(includedMessage.content, 180),
   } : { id: '', index: -1, excerpt: '' }
-  const storySource = mode === 'story' || mode === 'smart' ? storyLines(state, contact) : []
+  const storySource = includeRoleplayBackground && (mode === 'story' || mode === 'smart') ? storyLines(state, contact) : []
   const story = trimBlock(storySource, BUDGETS.story)
   const parts = [
     actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '',
