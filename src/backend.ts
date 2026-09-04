@@ -1480,21 +1480,44 @@ function seedVisibleTo(entry: { visibility: NarrativeSeedVisibility; knownBy: st
   const speaker = normalizeActorName(speakerName)
   return Boolean(speaker && entry.knownBy.some((name) => normalizeActorName(name) === speaker))
 }
-function narrativeSeedContext(seed: NarrativeSeedSnapshot | null, speakerName = ''): string {
+function narrativeSeedContext(seed: NarrativeSeedSnapshot | null, speakerName = '', participantNames: string[] = []): string {
   if (!seed) return ''
+
   const speaker = normalizeActorName(speakerName)
-  const facts = seed.facts.filter((entry) =>
-    seedVisibleTo(entry, speakerName) || Boolean(speaker && entry.actors.some((name) => normalizeActorName(name) === speaker))
-  ).slice(-8)
-  const actors = seed.actors.filter((entry) =>
-    seedVisibleTo(entry, speakerName) || Boolean(speaker && normalizeActorName(entry.name) === speaker)
-  ).slice(-8)
-  const timeline = seed.timeline.filter((entry) => seedVisibleTo(entry, speakerName)).slice(-4)
-  return [
+  const participants = new Set(participantNames.map(normalizeActorName).filter(Boolean))
+  if (speaker) participants.add(speaker)
+
+  const actorRelevant = (actors: string[]): boolean => {
+    // actors: [] is reserved by the extractor for genuinely actor-neutral/world facts.
+    if (!actors.length) return true
+    return actors.some((name) => participants.has(normalizeActorName(name)))
+  }
+
+  const facts = seed.facts.filter((entry) => {
+    const visible = seedVisibleTo(entry, speakerName)
+      || Boolean(speaker && entry.actors.some((name) => normalizeActorName(name) === speaker))
+    return visible && actorRelevant(entry.actors)
+  }).slice(-8)
+
+  const actors = seed.actors.filter((entry) => {
+    const subjectIsParticipant = participants.has(normalizeActorName(entry.name))
+    if (!subjectIsParticipant) return false
+    return seedVisibleTo(entry, speakerName)
+      || Boolean(speaker && normalizeActorName(entry.name) === speaker)
+  }).slice(-8)
+
+  const timeline = seed.timeline.filter((entry) =>
+    seedVisibleTo(entry, speakerName) && actorRelevant(entry.actors)
+  ).slice(-4)
+
+  const lines = [
+    'CURRENT PHONE PARTICIPANTS ONLY: ' + participantNames.filter(Boolean).join(', '),
+    'Actor-specific continuity about anyone outside this channel is intentionally omitted.',
     ...facts.map((entry) => `Fact: ${entry.text}`),
     ...actors.map((entry) => `Actor status: ${entry.name} — ${entry.status}${entry.activity ? `; ${entry.activity}` : ''}${entry.location ? `; at ${entry.location}` : ''}`),
     ...timeline.map((entry) => `Timeline: ${entry.whenText} — ${entry.title}`),
-  ].join('\n').slice(0, 2_400)
+  ]
+  return lines.join('\n').slice(0, 2_400)
 }
 function seedActorContactIds(state: PhoneState, names: string[]): string[] {
   const wanted = new Set(names.map(normalizeActorName).filter(Boolean))
@@ -1601,6 +1624,8 @@ Rules:
 - knownBy must be conservative. Never assume everyone knows a private fact.
 - Actor status describes world/physical state only. busy does NOT mean unable to text.
 - Timeline contains only appointments, plans, deadlines, arrivals/departures, scheduled beats, or major current events.
+- CRITICAL ACTOR SCOPING: whenever a fact or timeline item is about, performed by, scheduled for, or otherwise specifically concerns a named actor, list that actor in its actors array.
+- Use actors: [] ONLY for genuinely actor-neutral world/group facts. "Shoto has a patrol", "Bakugo is cooking", and "Mina is arriving" MUST NOT have an empty actors array.
 - Prefer 0–6 facts, 0–8 actor updates, and 0–4 timeline rows.
 - Use exact names from KNOWN ACTORS when possible.`,
         },
@@ -1703,7 +1728,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
     const personaName = generationPersona.displayName?.trim() || 'You'
     const personaIdentity = text(generationPersona.identityBrief, 900)
-    const continuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(continuitySeed, profile.name)
+    const continuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(continuitySeed, profile.name, [profile.name, personaName])
     const generationMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = conversation.kind === 'direct'
       ? [
           {
@@ -1907,7 +1932,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
       includeRoleplayBackground: false,
     })
-    const groupContinuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(groupContinuitySeed)
+    const groupContinuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(groupContinuitySeed, '', profiles.map(({ actor }) => actor.name))
     const roster = profiles.map(({ actor, contact }) => [
       `id=${actor.actorId}`,
       `name=${actor.name}`,
