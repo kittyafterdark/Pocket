@@ -107,7 +107,8 @@ export async function assemblePocketContext(options: {
   } : { id: '', index: -1, excerpt: '' }
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
-  const scene = includeRoleplayBackground ? trimBlock(sceneLines(state), BUDGETS.scene) : ''
+  // Structured Pocket state remains usable even when raw host narrative is isolated.
+  const scene = trimBlock(sceneLines(state), BUDGETS.scene)
   const includePhoneThread = options.includePhoneThread !== false
   const threadLines = includePhoneThread ? conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message)) : []
   const thread = trimBlock(threadLines, BUDGETS.thread)
@@ -128,7 +129,7 @@ export async function assemblePocketContext(options: {
   const includedLatest = includedMessage ? {
     id: clean(includedMessage.id, 180), index: messageIndex(includedMessage, hostMessages.length - 1), excerpt: clean(includedMessage.content, 180),
   } : { id: '', index: -1, excerpt: '' }
-  const storySource = includeRoleplayBackground && (mode === 'story' || mode === 'smart') ? storyLines(state, contact) : []
+  const storySource = mode !== 'off' && (mode === 'story' || mode === 'smart' || !includeRoleplayBackground) ? storyLines(state, contact) : []
   const story = trimBlock(storySource, BUDGETS.story)
   const parts = [
     actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '',

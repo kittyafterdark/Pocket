@@ -1345,11 +1345,312 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source }
 }
 
+type NarrativeSeedVisibility = 'public' | 'scene' | 'private'
+type NarrativeSeedTtl = 'turn' | 'scene' | 'persistent'
+type NarrativeActorStatus = 'available' | 'busy' | 'away' | 'asleep' | 'in_scene' | 'unknown'
+
+interface NarrativeSeedFact {
+  text: string
+  visibility: NarrativeSeedVisibility
+  knownBy: string[]
+  actors: string[]
+  ttl: NarrativeSeedTtl
+}
+interface NarrativeSeedActor {
+  name: string
+  status: NarrativeActorStatus
+  activity: string
+  location: string
+  visibility: NarrativeSeedVisibility
+  knownBy: string[]
+  ttl: NarrativeSeedTtl
+}
+interface NarrativeSeedTimeline {
+  title: string
+  description: string
+  whenText: string
+  whenKind: 'exact' | 'approximate' | 'relative' | 'unscheduled'
+  actors: string[]
+  completed: boolean
+  visibility: NarrativeSeedVisibility
+  knownBy: string[]
+}
+interface NarrativeSeedSnapshot {
+  version: 1
+  sourceKey: string
+  sourceMessageIds: string[]
+  facts: NarrativeSeedFact[]
+  actors: NarrativeSeedActor[]
+  timeline: NarrativeSeedTimeline[]
+  updatedAt: string
+}
+
+const POCKET_CONTINUITY_SEED_VERSION = 1 as const
+const narrativeSeedFlights = new Map<string, Promise<NarrativeSeedSnapshot | null>>()
+
+function continuitySeedPath(chatId: string, characterId: string): string {
+  return `phones/${stateKey(chatId, characterId)}.continuity-seed.json`
+}
+function seedStringList(value: unknown, max = 12): string[] {
+  const values = (Array.isArray(value) ? value : []).map((entry) => text(entry, 120)).filter(Boolean)
+  return values.filter((entry, index) => values.findIndex((other) => normalizeActorName(other) === normalizeActorName(entry)) === index).slice(0, max)
+}
+function seedVisibility(value: unknown): NarrativeSeedVisibility {
+  return value === 'public' || value === 'scene' ? value : 'private'
+}
+function seedTtl(value: unknown): NarrativeSeedTtl {
+  return value === 'persistent' || value === 'scene' ? value : 'turn'
+}
+function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds: string[] = []): NarrativeSeedSnapshot {
+  const raw = isRecord(value) ? value : {}
+  const facts: NarrativeSeedFact[] = (Array.isArray(raw.facts) ? raw.facts : []).slice(0, 10).flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const body = text(entry.text ?? entry.fact, 360)
+    if (!body) return []
+    return [{
+      text: body,
+      visibility: seedVisibility(entry.visibility),
+      knownBy: seedStringList(entry.knownBy ?? entry.known_by),
+      actors: seedStringList(entry.actors),
+      ttl: seedTtl(entry.ttl),
+    }]
+  })
+  const rawActors = Array.isArray(raw.actors) ? raw.actors : Array.isArray(raw.actorUpdates) ? raw.actorUpdates : []
+  const actors: NarrativeSeedActor[] = rawActors.slice(0, 12).flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const name = text(entry.name, 120)
+    if (!name) return []
+    const status: NarrativeActorStatus =
+      entry.status === 'available' || entry.status === 'busy' || entry.status === 'away' || entry.status === 'asleep' || entry.status === 'in_scene'
+        ? entry.status : 'unknown'
+    return [{
+      name,
+      status,
+      activity: text(entry.activity, 260),
+      location: text(entry.location, 180),
+      visibility: seedVisibility(entry.visibility),
+      knownBy: seedStringList(entry.knownBy ?? entry.known_by),
+      ttl: seedTtl(entry.ttl),
+    }]
+  })
+  const timeline: NarrativeSeedTimeline[] = (Array.isArray(raw.timeline) ? raw.timeline : []).slice(0, 6).flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const title = text(entry.title ?? entry.event, 180)
+    if (!title) return []
+    const whenKind: NarrativeSeedTimeline['whenKind'] =
+      entry.whenKind === 'exact' || entry.whenKind === 'approximate' || entry.whenKind === 'relative' ? entry.whenKind : 'unscheduled'
+    return [{
+      title,
+      description: text(entry.description, 500),
+      whenText: text(entry.whenText ?? entry.when, 180) || 'Unscheduled',
+      whenKind,
+      actors: seedStringList(entry.actors, 8),
+      completed: entry.completed === true,
+      visibility: seedVisibility(entry.visibility),
+      knownBy: seedStringList(entry.knownBy ?? entry.known_by),
+    }]
+  })
+  return {
+    version: POCKET_CONTINUITY_SEED_VERSION,
+    sourceKey: text(raw.sourceKey, 1_600) || sourceKey,
+    sourceMessageIds: seedStringList(raw.sourceMessageIds, 8).length ? seedStringList(raw.sourceMessageIds, 8) : sourceMessageIds.slice(-8),
+    facts,
+    actors,
+    timeline,
+    updatedAt: text(raw.updatedAt, 40) || nowIso(),
+  }
+}
+function mergeNarrativeSeed(previous: NarrativeSeedSnapshot | null, fresh: NarrativeSeedSnapshot): NarrativeSeedSnapshot {
+  const factMap = new Map<string, NarrativeSeedFact>()
+  const actorMap = new Map<string, NarrativeSeedActor>()
+  for (const entry of (previous?.facts || []).filter((item) => item.ttl !== 'turn')) factMap.set(entry.text.toLocaleLowerCase(), entry)
+  for (const entry of fresh.facts) factMap.set(entry.text.toLocaleLowerCase(), entry)
+  for (const entry of (previous?.actors || []).filter((item) => item.ttl !== 'turn')) actorMap.set(normalizeActorName(entry.name), entry)
+  for (const entry of fresh.actors) actorMap.set(normalizeActorName(entry.name), entry)
+  return { ...fresh, facts: [...factMap.values()].slice(-12), actors: [...actorMap.values()].slice(-16) }
+}
+function narrativeSeedSourceKey(messages: any[]): string {
+  return messages.map((message, index) => {
+    const idPart = text(message?.id, 180) || `row-${index}`
+    return `${idPart}:${String(message?.revision ?? '')}:${text(message?.role, 20)}:${text(message?.content, 180)}`
+  }).join('|').slice(0, 1_600)
+}
+function seedVisibleTo(entry: { visibility: NarrativeSeedVisibility; knownBy: string[] }, speakerName: string): boolean {
+  if (entry.visibility === 'public') return true
+  const speaker = normalizeActorName(speakerName)
+  return Boolean(speaker && entry.knownBy.some((name) => normalizeActorName(name) === speaker))
+}
+function narrativeSeedContext(seed: NarrativeSeedSnapshot | null, speakerName = ''): string {
+  if (!seed) return ''
+  const speaker = normalizeActorName(speakerName)
+  const facts = seed.facts.filter((entry) =>
+    seedVisibleTo(entry, speakerName) || Boolean(speaker && entry.actors.some((name) => normalizeActorName(name) === speaker))
+  ).slice(-8)
+  const actors = seed.actors.filter((entry) =>
+    seedVisibleTo(entry, speakerName) || Boolean(speaker && normalizeActorName(entry.name) === speaker)
+  ).slice(-8)
+  const timeline = seed.timeline.filter((entry) => seedVisibleTo(entry, speakerName)).slice(-4)
+  return [
+    ...facts.map((entry) => `Fact: ${entry.text}`),
+    ...actors.map((entry) => `Actor status: ${entry.name} — ${entry.status}${entry.activity ? `; ${entry.activity}` : ''}${entry.location ? `; at ${entry.location}` : ''}`),
+    ...timeline.map((entry) => `Timeline: ${entry.whenText} — ${entry.title}`),
+  ].join('\n').slice(0, 2_400)
+}
+function seedActorContactIds(state: PhoneState, names: string[]): string[] {
+  const wanted = new Set(names.map(normalizeActorName).filter(Boolean))
+  return state.contacts.filter((contact) => wanted.has(normalizeActorName(contact.name))).map((contact) => contact.id).slice(0, 8)
+}
+function applyNarrativeSeedTimeline(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
+  let changed = false
+  for (const item of seed.timeline) {
+    const actorContactIds = seedActorContactIds(state, item.actors)
+    const existing = state.events.find((event) =>
+      event.lane === 'Continuity'
+      && event.title.trim().toLocaleLowerCase() === item.title.trim().toLocaleLowerCase()
+      && event.whenText.trim().toLocaleLowerCase() === item.whenText.trim().toLocaleLowerCase()
+    )
+    if (existing) {
+      const nextDescription = item.description || existing.description
+      const nextActors = actorContactIds.length ? actorContactIds : existing.actorContactIds
+      if (existing.description !== nextDescription || JSON.stringify(existing.actorContactIds || []) !== JSON.stringify(nextActors || []) || existing.completed !== item.completed) {
+        existing.description = nextDescription
+        existing.actorContactIds = nextActors
+        existing.completed = item.completed
+        changed = true
+      }
+      continue
+    }
+    const firstContact = actorContactIds.length ? state.contacts.find((contact) => contact.id === actorContactIds[0]) : undefined
+    const start = state.roleplayNow || seed.updatedAt
+    state.events.push({
+      id: id('evt'),
+      title: item.title,
+      description: item.description,
+      start,
+      end: start,
+      whenKind: item.whenKind,
+      whenText: item.whenText,
+      color: firstContact ? contactAccent(firstContact) : '#8b7dff',
+      lane: 'Continuity',
+      completed: item.completed,
+      createdBy: 'model',
+      actorContactIds,
+    })
+    changed = true
+  }
+  if (changed) state.events = state.events.slice(-MAX_EVENTS)
+  return changed
+}
+async function loadNarrativeSeed(chatId: string, characterId: string, userId?: string): Promise<NarrativeSeedSnapshot | null> {
+  const raw = await spindle.userStorage.getJson<unknown>(continuitySeedPath(chatId, characterId), { fallback: null, userId })
+  return isRecord(raw) ? normalizeNarrativeSeed(raw) : null
+}
+async function refreshNarrativeSeed(chatId: string, characterId: string, userId?: string): Promise<NarrativeSeedSnapshot | null> {
+  if (!chatId || chatId === '_lobby' || !spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) {
+    return loadNarrativeSeed(chatId, characterId, userId)
+  }
+
+  const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:continuity`
+  const existingFlight = narrativeSeedFlights.get(flightKey)
+  if (existingFlight) return existingFlight
+
+  const flight = (async () => {
+    const hostMessages: any[] = await spindle.chat.getMessages(chatId).catch(() => [])
+    const sourceMessages = hostMessages
+      .filter((message) => (message?.role === 'user' || message?.role === 'assistant') && text(message?.content, 1))
+      .slice(-4)
+    if (!sourceMessages.length) return loadNarrativeSeed(chatId, characterId, userId)
+
+    const sourceKey = narrativeSeedSourceKey(sourceMessages)
+    const sourceMessageIds = sourceMessages.map((message) => text(message?.id, 180)).filter(Boolean).slice(-8)
+    const previous = await loadNarrativeSeed(chatId, characterId, userId)
+    if (previous?.sourceKey === sourceKey) return previous
+
+    const state = await loadState(chatId, characterId, userId)
+    const knownActors = [
+      state.pocketPersona.displayName,
+      state.characterName,
+      ...state.contacts.map((contact) => contact.name),
+    ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index).slice(0, 40)
+
+    const recentNarrative = sourceMessages.map((message, index) => {
+      const role = message?.role === 'assistant' ? 'ASSISTANT NARRATIVE' : 'USER NARRATIVE'
+      return `${role} [${index + 1}]: ${text(message?.content, 1_300)}`
+    }).join('\n\n').slice(-5_200)
+
+    const parsed = await runStructuredGeneration('continuity-seed', id('continuity_seed'), {
+      type: 'quiet',
+      messages: [
+        {
+          role: 'system',
+          content: `Extract a small structured continuity delta from recent fictional roleplay prose. This is NOT a phone conversation and nobody in the prose becomes a phone recipient.
+
+Return strict JSON only:
+{
+  "facts":[{"text":"short factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["exact actor names"],"ttl":"turn|scene|persistent"}],
+  "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
+  "timeline":[{"title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["exact actor names"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}]
+}
+
+Rules:
+- Extract only facts supported by the supplied prose.
+- Do not invent recipients, phone conversations, relationships, or off-screen knowledge.
+- public = reasonably shared/cast-visible information such as an announced group event, public schedule, or common plan.
+- scene = information available to explicitly present witnesses; list those witnesses in knownBy.
+- private is the default for personal/internal/private information.
+- knownBy must be conservative. Never assume everyone knows a private fact.
+- Actor status describes world/physical state only. busy does NOT mean unable to text.
+- Timeline contains only appointments, plans, deadlines, arrivals/departures, scheduled beats, or major current events.
+- Prefer 0–6 facts, 0–8 actor updates, and 0–4 timeline rows.
+- Use exact names from KNOWN ACTORS when possible.`,
+        },
+        {
+          role: 'user',
+          content: `ROLEPLAY TIME: ${state.roleplayNow}
+KNOWN ACTORS:
+${knownActors.join('\n')}
+
+RECENT NARRATIVE:
+${recentNarrative}`,
+        },
+      ],
+      parameters: { temperature: 0.08, max_tokens: 900 },
+      userId,
+    }, userId)
+
+    const fresh = normalizeNarrativeSeed({ ...parsed, sourceKey, sourceMessageIds, updatedAt: nowIso() }, sourceKey, sourceMessageIds)
+    const seed = mergeNarrativeSeed(previous, fresh)
+    await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
+
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const latest = await loadState(chatId, characterId, userId)
+      if (!applyNarrativeSeedTimeline(latest, seed)) return
+      await saveState(latest, userId)
+      await sendState(latest, userId, 'continuity_seed')
+    })
+
+    return seed
+  })()
+
+  narrativeSeedFlights.set(flightKey, flight)
+  try {
+    return await flight
+  } catch (error) {
+    spindle.log.warn(`Pocket continuity seed skipped: ${error instanceof Error ? error.message : String(error)}`)
+    return loadNarrativeSeed(chatId, characterId, userId)
+  } finally {
+    if (narrativeSeedFlights.get(flightKey) === flight) narrativeSeedFlights.delete(flightKey)
+  }
+}
+
 async function generateMessage(input: AnyRecord, userId?: string): Promise<void> {
   if (!spindle.permissions.has('generation')) throw new Error('Enable the Generation permission to create an in-phone reply.')
   const context = await resolveContext(input, userId)
   const requestId = text(input.requestId, 180) || id('reply')
   const key = stateKey(context.chatId, context.characterId)
+  const continuitySeed = (await loadPreferences(userId)).roleplayContextMode === 'off'
+    ? null
+    : await refreshNarrativeSeed(context.chatId, context.characterId, userId)
   await withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
@@ -1395,13 +1696,14 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
       actorIdentity: compactIdentity,
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
       includePhoneThread: conversation.kind !== 'direct',
-      includeRoleplayBackground: conversation.kind !== 'direct',
+      includeRoleplayBackground: false,
     })
     const instruction = text(input.instruction, 2_000) || 'Reply naturally to the latest message.'
     const generationTask = replaceIndex >= 0 ? 'message-retry' : 'message-reply'
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
     const personaName = generationPersona.displayName?.trim() || 'You'
     const personaIdentity = text(generationPersona.identityBrief, 900)
+    const continuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(continuitySeed, profile.name)
     const generationMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = conversation.kind === 'direct'
       ? [
           {
@@ -1434,7 +1736,7 @@ No narration, markdown, or custom UI copy.`,
           {
             role: 'system',
             content: `POCKET BACKGROUND — REFERENCE ONLY, NOT CHAT-ROLE ROUTING
-${assembled.text || '(no additional background)'}`,
+${assembled.text || '(no additional background)'}${continuityText ? `\n\nSTRUCTURED CONTINUITY — NOT RAW NARRATIVE\n${continuityText}` : ''}`,
           },
           ...directGenerationHistory(contextConversation, actor.actorId, contact.id, personaName, profile.name),
           {
@@ -1575,6 +1877,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
   groupBatchFlights.set(flightKey, flightToken)
   let progressOpen = false
   try {
+    const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
     const conversation = state.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
@@ -1602,7 +1905,9 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       state, contact: primary.contact, conversation, preferences,
       actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship}) — ${contact.identityBrief || profile.description || 'No profile; infer only from the live exchange.'}`.slice(0, 700)).join('\n').slice(0, 1_200),
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
+      includeRoleplayBackground: false,
     })
+    const groupContinuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(groupContinuitySeed)
     const roster = profiles.map(({ actor, contact }) => [
       `id=${actor.actorId}`,
       `name=${actor.name}`,
@@ -1617,7 +1922,7 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       type: 'quiet',
       messages: [
         { role: 'system', content: 'Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text"}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble. No narration, markdown, delay values, or hidden reasoning.' },
-        { role: 'user', content: `${assembled.text || '(no context)'}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.\n\nFINAL GENERATION LOCK\nPOCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || 'You'}\nCURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(', ')}\nOnly the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` },
+        { role: 'user', content: `${assembled.text || '(no context)'}${groupContinuityText ? `\n\nSTRUCTURED CONTINUITY — PUBLIC/SHARED FACTS ONLY\n${groupContinuityText}` : ''}\n\nELIGIBLE GROUP PARTICIPANTS\n${roster}\n\nGenerate the next group-chat burst.\n\nFINAL GENERATION LOCK\nPOCKET PERSONA / USER: ${state.pocketPersona.displayName?.trim() || 'You'}\nCURRENT GROUP ACTORS: ${profiles.map(({ actor }) => actor.name).join(', ')}\nOnly the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An absent/former actor may be discussed, but must not be directly addressed as though they are still in the group.` },
       ],
       parameters: { temperature: .82, max_tokens: 900 }, userId,
     }, userId)
@@ -3519,6 +3824,7 @@ spindle.on('CHARACTER_MESSAGE_RENDERED', async (payload: any, userId?: string) =
   try {
     const chat = spindle.permissions.has('chats') ? await (spindle.chats.get as any)(chatId, userId) : null
     const characterId = text(chat?.character_id, 180) || '_none'
+    void refreshNarrativeSeed(chatId, characterId, userId)
     void considerAmbientMessage(chatId, characterId, 'turn', userId)
   } catch { /* ambient opportunities are optional */ }
 })

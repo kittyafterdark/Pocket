@@ -100,7 +100,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'scene-planner' | 'connection-test'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'scene-planner' | 'connection-test'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
