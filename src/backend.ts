@@ -165,7 +165,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     roleplayNow: createdAt,
     sceneSnapshot: null,
     pocketPersona: defaultPocketPersona(createdAt),
-    setup: { initialized: false, dismissed: false },
+    setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: 'unconfigured' },
     contacts: collections.contacts,
     discoveredActors: [],
     conversations: collections.conversations,
@@ -438,7 +438,15 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayNow: text(value.roleplayNow, 80) || fallback.roleplayNow,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
-    setup: { initialized: bool(setupValue.initialized, hadPocketData), dismissed: bool(setupValue.dismissed) },
+    setup: {
+      initialized: bool(setupValue.initialized, hadPocketData),
+      dismissed: bool(setupValue.dismissed),
+      personaConfigured: bool(setupValue.personaConfigured, bool(setupValue.initialized, hadPocketData)),
+      worldStatus: setupValue.worldStatus === 'seeded' || setupValue.worldStatus === 'skipped'
+        ? setupValue.worldStatus
+        : bool(setupValue.initialized, hadPocketData) ? 'skipped' : 'unconfigured',
+      worldSeededAt: text(setupValue.worldSeededAt, 80) || undefined,
+    },
     contacts: collections.contacts,
     discoveredActors,
     conversations: collections.conversations,
@@ -1721,6 +1729,50 @@ function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot)
   if (changed) state.events = state.events.slice(-MAX_EVENTS)
   return changed
 }
+function applySetupCurrentGoal(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
+  const activeGoal = state.events.find((event) => event.lane === 'Current goal' && !event.completed)
+  if (activeGoal) return false
+
+  const persona = normalizeActorName(state.pocketPersona.displayName)
+  const actorGoal = seed.timeline.find((item) =>
+    item.scope === 'actor'
+    && item.actors.some((name) => normalizeActorName(name) === persona)
+  )
+  const worldGoal = seed.timeline.find((item) => item.scope === 'world')
+  const candidate = actorGoal || worldGoal
+  if (!candidate) return false
+
+  const matchingEvent = state.events.find((event) =>
+    event.title.trim().toLocaleLowerCase() === candidate.title.trim().toLocaleLowerCase()
+    && event.whenText.trim().toLocaleLowerCase() === candidate.whenText.trim().toLocaleLowerCase()
+  )
+  if (matchingEvent) {
+    matchingEvent.lane = 'Current goal'
+    matchingEvent.completed = false
+    return true
+  }
+
+  const actorContactIds = candidate.scope === 'actor' ? seedActorContactIds(state, candidate.actors) : []
+  const firstContact = actorContactIds.length ? state.contacts.find((contact) => contact.id === actorContactIds[0]) : undefined
+  const start = state.roleplayNow || seed.updatedAt
+  state.events.push({
+    id: id('evt'),
+    title: candidate.title,
+    description: candidate.description,
+    start,
+    end: start,
+    whenKind: candidate.whenKind,
+    whenText: candidate.whenText,
+    color: firstContact ? contactAccent(firstContact) : '#8b7dff',
+    lane: 'Current goal',
+    completed: false,
+    createdBy: 'model',
+    actorContactIds,
+  })
+  state.events = state.events.slice(-MAX_EVENTS)
+  return true
+}
+
 async function loadNarrativeSeed(chatId: string, characterId: string, userId?: string): Promise<NarrativeSeedSnapshot | null> {
   const raw = await spindle.userStorage.getJson<unknown>(continuitySeedPath(chatId, characterId), { fallback: null, userId })
   if (!isRecord(raw)) return null
@@ -1889,7 +1941,22 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
       includePhoneThread: conversation.kind !== 'direct',
       includeRoleplayBackground: false,
     })
-    const instruction = text(input.instruction, 2_000) || 'Reply naturally to the latest message.'
+    const requestedInstruction = text(input.instruction, 2_000)
+    const hasPhoneHistory = contextConversation.messages.length > 0
+    const defaultReplyInstruction = 'Reply naturally to the latest phone message.'
+    const firstDmInstruction = [
+      'Start a new DM naturally. There is no prior phone message in this thread.',
+      'Do not imply or answer an unseen prior message, shared plan, appointment, event, or conversation unless it appears in the structured Pocket continuity above.',
+      requestedInstruction && !/^reply naturally to the latest (?:phone )?message\.?$/i.test(requestedInstruction)
+        ? `Additional direction: ${requestedInstruction}`
+        : '',
+    ].filter(Boolean).join(' ')
+    const instruction = conversation.kind === 'direct' && !hasPhoneHistory
+      ? firstDmInstruction
+      : requestedInstruction || defaultReplyInstruction
+    const directThreadState = hasPhoneHistory
+      ? `EXISTING THREAD — ${contextConversation.messages.length} prior phone message(s).`
+      : 'EMPTY THREAD — no prior phone messages exist. This generated message starts the conversation.'
     const generationTask = replaceIndex >= 0 ? 'message-retry' : 'message-reply'
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
     const personaName = generationPersona.displayName?.trim() || 'You'
@@ -1935,6 +2002,7 @@ ${assembled.text || '(no additional background)'}${continuityText ? `\n\nSTRUCTU
             content: `[POCKET CONTROL — NOT AN IN-WORLD MESSAGE]
 The user role is still ${personaName}.
 Generate the next assistant-role phone text from ${profile.name} TO ${personaName}.
+THREAD STATE: ${directThreadState}
 DIRECTION: ${instruction}
 FINAL GENERATION LOCK: recipient=${personaName}; speaker=${profile.name}; thread_owner=${personaName}. This is ${personaName}'s phone conversation, not another actor's device.`,
           },
@@ -3295,10 +3363,53 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           }
           next.updatedAt = nowIso()
           state.pocketPersona = next
-          state.setup.initialized = true
+          state.setup.personaConfigured = true
           await saveState(state, userId)
           await sendState(state, userId, 'pocket_persona')
           send({ type: 'lumiphone:pocket_persona_saved', requestId }, userId)
+        })
+        break
+      }
+      case 'lumiphone:setup_world_seed': {
+        if (!spindle.permissions.has('generation')) throw new Error('Enable Generation before seeding Pocket world state.')
+        const seed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
+        if (!seed) throw new Error('Pocket could not find committed roleplay text to seed the world yet.')
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          state.setup.worldStatus = 'seeded'
+          state.setup.worldSeededAt = nowIso()
+          applySetupCurrentGoal(state, seed)
+          await saveState(state, userId)
+          await sendState(state, userId, 'setup_world')
+        })
+        send({
+          type: 'lumiphone:setup_world_done',
+          requestId,
+          setting: seed.world.setting,
+          worldFacts: seed.world.facts.length,
+          timelineItems: seed.timeline.length,
+        }, userId)
+        break
+      }
+      case 'lumiphone:setup_world_skip': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          state.setup.worldStatus = 'skipped'
+          state.setup.worldSeededAt = undefined
+          await saveState(state, userId)
+          await sendState(state, userId, 'setup_world')
+        })
+        break
+      }
+      case 'lumiphone:finish_setup': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          if (!state.setup.personaConfigured) throw new Error('Choose the Pocket Persona before finishing setup.')
+          if (state.setup.worldStatus !== 'seeded' && state.setup.worldStatus !== 'skipped') state.setup.worldStatus = 'skipped'
+          state.setup.initialized = true
+          state.setup.dismissed = false
+          await saveState(state, userId)
+          await sendState(state, userId, 'setup_complete')
         })
         break
       }

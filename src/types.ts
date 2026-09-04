@@ -696,7 +696,13 @@ export interface PhoneState {
   roleplayNow: string
   sceneSnapshot: SceneActorSnapshot | null
   pocketPersona: ChatPocketPersona
-  setup: { initialized: boolean; dismissed: boolean }
+  setup: {
+    initialized: boolean
+    dismissed: boolean
+    personaConfigured?: boolean
+    worldStatus?: 'unconfigured' | 'seeded' | 'skipped'
+    worldSeededAt?: string
+  }
   contacts: PocketContact[]
   discoveredActors: DiscoveredActor[]
   conversations: PocketConversation[]

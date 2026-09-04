@@ -2793,6 +2793,8 @@ class PocketController {
   notificationIsland;
   customStyle;
   setupModalOpen = false;
+  setupModalBody = null;
+  setupModalDismiss = null;
   composerReferencePill = null;
   composerSyncFrame = 0;
   lastComposerReferenceId = "";
@@ -3453,6 +3455,12 @@ class PocketController {
         this.resolvedWallpapers = payload.resolvedWallpapers;
       if ("activePersona" in payload)
         this.activePersona = payload.activePersona || null;
+      if (this.setupModalOpen && this.setupModalBody) {
+        if (this.state.setup.initialized)
+          this.setupModalDismiss?.();
+        else
+          this.renderFirstChatSetupBody();
+      }
       for (const activity of this.state.activities || [])
         this.queueActivityReceipt(activity);
       this.applyAppearance();
@@ -3461,7 +3469,7 @@ class PocketController {
       this.announceView();
       if (payload.open)
         this.open();
-      if (payload.reason === "chat_switched" && !this.state.setup.initialized && !this.state.setup.dismissed)
+      if ((payload.reason === "chat_switched" || payload.reason === "pocket_persona" || payload.reason === "setup_world") && !this.state.setup.initialized && !this.state.setup.dismissed && !this.setupModalOpen)
         this.showFirstChatSetup();
       const pending = this.pendingRoute;
       this.pendingRoute = null;
@@ -3499,6 +3507,8 @@ class PocketController {
         this.generation.history = this.preferences.generationHistory;
       if (this.currentApp === "settings")
         this.updateSettingsDiagnostics();
+      if (this.setupModalOpen && this.setupModalBody)
+        this.renderFirstChatSetupBody();
       return;
     }
     if (payload.type === "lumiphone:context_preview" && payload.diagnostics) {
@@ -4931,32 +4941,105 @@ ${body}`;
     });
   }
   showFirstChatSetup() {
-    if (this.setupModalOpen || !this.state)
+    if (this.setupModalOpen || !this.state || this.state.setup.initialized || this.state.setup.dismissed)
       return;
     this.setupModalOpen = true;
-    const modal = this.ctx.ui.showModal({ title: "Set up Pocket for this roleplay", width: 430, maxHeight: 560 });
-    const copy = el("div", "lp-settings-section");
-    copy.append(el("p", "lp-copy", "Pocket keeps its Persona, scene snapshot, contacts, and phone memory scoped to this chat. Choose how this phone should represent you."));
-    const follow = button(`Follow ${this.activePersona?.name || "Lumiverse Persona"}`, "lp-button");
-    follow.addEventListener("click", () => {
-      this.send("lumiphone:save_pocket_persona", { followLumiverse: true, persona: this.state.pocketPersona });
-      modal.dismiss();
+    const modal = this.ctx.ui.showModal({ title: "Set up Pocket", width: 500, maxHeight: 680 });
+    const body = el("div", "lp-settings-section");
+    this.setupModalBody = body;
+    this.setupModalDismiss = () => modal.dismiss();
+    modal.root.appendChild(body);
+    this.renderFirstChatSetupBody();
+    modal.onDismiss(() => {
+      this.setupModalOpen = false;
+      this.setupModalBody = null;
+      this.setupModalDismiss = null;
     });
-    const customize = button("Customize Pocket profile", "lp-button lp-button-quiet");
+  }
+  renderFirstChatSetupBody() {
+    const body = this.setupModalBody;
+    const state = this.state;
+    if (!body || !state)
+      return;
+    body.replaceChildren();
+    body.appendChild(el("p", "lp-copy", "Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline."));
+    const effective = this.generation?.effective;
+    const latestTest = [...this.generation?.history || this.preferences.generationHistory || []].reverse().find((entry) => entry.task === "connection-test");
+    const llmReady = Boolean(this.caps?.generation && effective?.configured);
+    const llm = el("section", "lp-card lp-settings-section");
+    llm.append(el("div", "lp-eyebrow", llmReady ? "✓ LLM" : "○ LLM"), el("strong", "", effective?.name || "No effective connection"), el("p", "lp-copy", effective ? `${effective.provider} · ${effective.model || "model not set"}` : "Pocket needs a usable Lumiverse text-generation connection."));
+    if (latestTest) {
+      llm.appendChild(el("p", "lp-copy", latestTest.status === "started" ? "● Testing…" : latestTest.status === "completed" ? `✓ Test passed · ${latestTest.latencyMs ?? 0} ms` : `Test failed · ${latestTest.error || "Unknown provider error"}`));
+    }
+    const llmActions = el("div", "lp-row");
+    const test = button("Test LLM", "lp-button lp-button-quiet");
+    test.disabled = !this.caps?.generation || latestTest?.status === "started";
+    test.addEventListener("click", () => {
+      test.disabled = true;
+      test.textContent = "Testing…";
+      this.send("lumiphone:test_generation", {
+        generationMode: this.preferences.generationMode,
+        sidecarConnectionId: this.preferences.sidecarConnectionId,
+        sidecarModelOverride: this.preferences.sidecarModelOverride
+      });
+    });
+    const configureLlm = button("Generation settings", "lp-button lp-button-quiet");
+    configureLlm.addEventListener("click", () => {
+      this.setupModalDismiss?.();
+      this.openPocket({ app: "settings", section: "generation" });
+    });
+    llmActions.append(test, configureLlm);
+    llm.appendChild(llmActions);
+    const personaReady = Boolean(state.setup.personaConfigured);
+    const persona2 = el("section", "lp-card lp-settings-section");
+    persona2.append(el("div", "lp-eyebrow", personaReady ? "✓ PERSONA" : "○ PERSONA"), el("strong", "", personaReady ? state.pocketPersona.displayName : this.activePersona?.name || "Choose the phone owner"), el("p", "lp-copy", personaReady ? "This character owns Pocket and is the recipient role for private DMs." : "Choose who Pocket follows as the phone owner."));
+    const personaActions = el("div", "lp-row");
+    if (this.activePersona) {
+      const follow = button(`Follow ${this.activePersona.name}`, "lp-button");
+      follow.addEventListener("click", () => {
+        follow.disabled = true;
+        follow.textContent = "Saving…";
+        this.send("lumiphone:save_pocket_persona", { followLumiverse: true, persona: state.pocketPersona });
+      });
+      personaActions.appendChild(follow);
+    }
+    const customize = button("Customize", "lp-button lp-button-quiet");
     customize.addEventListener("click", () => {
+      this.setupModalDismiss?.();
       this.openPocket({ app: "settings", section: "persona" });
-      modal.dismiss();
+    });
+    personaActions.appendChild(customize);
+    persona2.appendChild(personaActions);
+    const worldStatus = state.setup.worldStatus || "unconfigured";
+    const goal = state.events.find((event) => event.lane === "Current goal" && !event.completed);
+    const world = el("section", "lp-card lp-settings-section");
+    world.append(el("div", "lp-eyebrow", worldStatus === "seeded" ? "✓ WORLD · OPTIONAL" : worldStatus === "skipped" ? "— WORLD · OPTIONAL" : "○ WORLD · OPTIONAL"), el("strong", "", worldStatus === "seeded" ? "Seeded from this roleplay" : worldStatus === "skipped" ? "Skipped" : "No world baseline yet"), el("p", "lp-copy", worldStatus === "seeded" ? goal ? `Timeline goal: ${goal.title}` : "Weather and Timeline were seeded; no clear current goal was found." : worldStatus === "skipped" ? "Pocket will start without situational first-turn hooks. You can add world state later." : "Seed a sanitized world snapshot from the current RP. Raw narrative is not used as phone history."));
+    const worldActions = el("div", "lp-row");
+    const seed = button(worldStatus === "seeded" ? "Reseed from RP" : "Seed from current RP", "lp-button");
+    seed.disabled = !this.caps?.generation;
+    seed.addEventListener("click", () => {
+      seed.disabled = true;
+      seed.textContent = "Seeding…";
+      this.send("lumiphone:setup_world_seed");
+    });
+    const skip = button("Skip", "lp-button lp-button-quiet");
+    skip.addEventListener("click", () => this.send("lumiphone:setup_world_skip"));
+    worldActions.append(seed, skip);
+    world.appendChild(worldActions);
+    const start = button("Start Pocket", "lp-button");
+    start.disabled = !llmReady || !personaReady;
+    start.title = !llmReady ? "Pocket needs a working LLM first." : !personaReady ? "Choose the phone owner first." : "";
+    start.addEventListener("click", () => {
+      start.disabled = true;
+      start.textContent = "Starting…";
+      this.send("lumiphone:finish_setup");
     });
     const later = button("Not now", "lp-button lp-button-quiet");
     later.addEventListener("click", () => {
       this.send("lumiphone:dismiss_setup");
-      modal.dismiss();
+      this.setupModalDismiss?.();
     });
-    copy.append(follow, customize, later);
-    modal.root.appendChild(copy);
-    modal.onDismiss(() => {
-      this.setupModalOpen = false;
-    });
+    body.append(llm, persona2, world, start, later);
   }
   field(labelText, value = "", type = "text") {
     const label = el("label", "lp-label", labelText);
