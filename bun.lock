@@ -1,0 +1,18 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "pocket-spindle-extension",
+      "devDependencies": {
+        "lumiverse-spindle-types": "^0.6.26",
+        "typescript": "^5.8.3",
+      },
+    },
+  },
+  "packages": {
+    "lumiverse-spindle-types": ["lumiverse-spindle-types@0.6.26", "", {}, "sha512-28v0AV3XW/rbcf/uGBNvKajiUK37kSI3gKPUd9ozYcsFtb1xGVb09OmUSy32vBz9OgLXWSHHTuG2VtE/bo5oqg=="],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+  }
+}
