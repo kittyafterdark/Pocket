@@ -138,14 +138,17 @@ export function normalizePocketContact(value: unknown, context: {
   }
 }
 
-function normalizeMessage(value: unknown, fallbackContact: PocketContact | undefined, now: string, makeId: (prefix: string) => string): PhoneMessage | null {
+function normalizeMessage(value: unknown, fallbackContact: PocketContact | undefined, now: string, makeId: (prefix: string) => string, personaActorId: string): PhoneMessage | null {
   if (!record(value)) return null
   const messageText = clean(value.text, 12_000)
   if (!messageText) return null
   const legacySender = clean(value.sender, 20)
   const sender = legacySender === 'system' ? 'system' : legacySender === 'user' || legacySender === 'persona' ? 'persona' : 'contact'
   const senderContactId = sender === 'contact' ? clean(value.senderContactId, 180) || fallbackContact?.id : undefined
-  const senderActorId = sender === 'contact' ? clean(value.senderActorId, 180) || senderContactId : undefined
+  const senderActorId = sender === 'persona' ? clean(value.senderActorId, 180) || personaActorId : sender === 'contact' ? clean(value.senderActorId, 180) || senderContactId : undefined
+  const recipientActorIds = [...new Set((Array.isArray(value.recipientActorIds) ? value.recipientActorIds : []).map((entry) => clean(entry, 180)).filter(Boolean))].slice(0, 16)
+  const readByActorIds = [...new Set((Array.isArray(value.readByActorIds) ? value.readByActorIds : []).map((entry) => clean(entry, 180)).filter(Boolean))].slice(0, 16)
+  if (senderActorId && !readByActorIds.includes(senderActorId)) readByActorIds.push(senderActorId)
   const senderActorKind = sender === 'contact' && value.senderActorKind === 'discovered' ? 'discovered' : sender === 'contact' ? 'contact' : undefined
   const read = flag(value.read, sender !== 'contact')
   const status = value.status === 'pending' || value.status === 'failed' || value.status === 'sent' || value.status === 'delivered' || value.status === 'read'
@@ -159,6 +162,8 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     id: clean(value.id, 120) || makeId('msg'),
     sender,
     senderActorId,
+    recipientActorIds,
+    readByActorIds,
     senderActorKind,
     senderContactId,
     senderName: clean(value.senderName, 120) || (sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : fallbackContact?.name || 'Unknown contact'),
@@ -198,7 +203,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
   }
 }
 
-function normalizeConversation(value: unknown, contacts: PocketContact[], now: string, makeId: (prefix: string) => string): PocketConversation | null {
+function normalizeConversation(value: unknown, contacts: PocketContact[], now: string, makeId: (prefix: string) => string, personaActorId: string): PocketConversation | null {
   if (!record(value)) return null
   const persistedContactIds = [...new Set((Array.isArray(value.participantContactIds) ? value.participantContactIds : [])
     .map((entry) => clean(entry, 180)).filter(Boolean))].slice(0, 16)
@@ -209,12 +214,21 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     ...persistedContactIds.filter((entry) => contacts.some((contact) => contact.id === entry)),
     ...participantActorIds.filter((entry) => contacts.some((contact) => contact.id === entry)),
   ])].slice(0, 16)
+  const includesPocketPersona = typeof value.includesPocketPersona === 'boolean' ? value.includesPocketPersona : true
   const fallback = contacts.find((contact) => contact.id === participantActorIds[0])
   const messages = (Array.isArray(value.messages) ? value.messages : [])
-    .map((entry) => normalizeMessage(entry, fallback, now, makeId))
+    .map((entry) => normalizeMessage(entry, fallback, now, makeId, personaActorId))
     .filter((entry): entry is PhoneMessage => Boolean(entry))
     .slice(-MAX_MESSAGES)
-  const kind = value.kind === 'group' || participantActorIds.length > 1 ? 'group' : 'direct'
+  const kind = value.kind === 'group' ? 'group' : value.kind === 'direct' ? 'direct' : participantActorIds.length > 1 ? 'group' : 'direct'
+  const communicationActorIds = [...(includesPocketPersona ? [personaActorId] : []), ...participantActorIds].filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
+  for (const message of messages) {
+    const senderActorId = message.senderActorId || message.senderContactId || (message.sender === 'persona' ? personaActorId : '')
+    if (!message.recipientActorIds?.length) message.recipientActorIds = communicationActorIds.filter((entry) => entry !== senderActorId)
+    if (!message.readByActorIds) message.readByActorIds = []
+    if (senderActorId && !message.readByActorIds.includes(senderActorId)) message.readByActorIds.push(senderActorId)
+    if (message.read && includesPocketPersona && !message.readByActorIds.includes(personaActorId)) message.readByActorIds.push(personaActorId)
+  }
   const createdAt = timestamp(value.createdAt, messages[0]?.createdAt || now)
   const pauseValue = record(value.pause) ? value.pause : null
   const pauseReasons = new Set<ConversationPauseReason>(['ended', 'busy', 'away', 'sleeping', 'unknown'])
@@ -243,9 +257,10 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     kind,
     title: clean(value.title, 120) || (kind === 'direct' ? fallback?.name || messages.at(-1)?.senderName || 'Conversation' : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group'),
     participantActorIds,
+    includesPocketPersona,
     participantContactIds,
     messages,
-    unread: Math.max(0, Math.min(999, Math.floor(Number(value.unread) || messages.filter((entry) => entry.sender === 'contact' && !entry.read).length))),
+    unread: includesPocketPersona ? Math.max(0, Math.min(999, messages.filter((entry) => entry.sender !== 'system' && entry.senderActorId !== personaActorId && !entry.readByActorIds?.includes(personaActorId)).length)) : 0,
     pause: pauseReason ? {
       reason: pauseReason,
       createdAt: timestamp(pauseValue?.createdAt, now),
@@ -307,11 +322,11 @@ function activeContact(context: { characterId: string; characterName: string; no
 }
 
 export function ensureDirectConversation(state: { contacts: PocketContact[]; conversations: PocketConversation[] }, contactId: string, now: string, makeId: (prefix: string) => string): PocketConversation {
-  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && (conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId)
+  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona !== false && (conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId)
   if (existing) return existing
   const contact = state.contacts.find((entry) => entry.id === contactId)
   const conversation: PocketConversation = {
-    id: makeId('conversation'), kind: 'direct', title: contact?.name || 'Conversation', participantActorIds: [contactId], participantContactIds: [contactId],
+    id: makeId('conversation'), kind: 'direct', title: contact?.name || 'Conversation', participantActorIds: [contactId], includesPocketPersona: true, participantContactIds: [contactId],
     messages: [], unread: 0, availability: { state: 'remote' }, createdAt: now, updatedAt: now,
   }
   state.conversations.push(conversation)
@@ -323,16 +338,25 @@ export function normalizeContactCollections(value: AnyRecord, context: {
   characterName: string
   now: string
   makeId: (prefix: string) => string
+  personaActorId?: string
 }): { contacts: PocketContact[]; conversations: PocketConversation[]; migrated: boolean } {
+  const personaActorId = context.personaActorId || `persona:${context.characterId || 'owner'}`
   const contacts = (Array.isArray(value.contacts) ? value.contacts : [])
     .map((entry) => normalizePocketContact(entry, context))
     .filter((entry): entry is PocketContact => Boolean(entry))
     .slice(0, MAX_CONTACTS)
+  const suppressedSourceKeys = new Set((Array.isArray(value.suppressedContactSourceKeys) ? value.suppressedContactSourceKeys : []).map((entry) => clean(entry, 240)).filter(Boolean))
+  const activeSourceKey = `character:${context.characterId}`
   let current = contacts.find((entry) => entry.source.kind === 'character' && entry.source.characterId === context.characterId)
-  if (!current) {
+  if (current && suppressedSourceKeys.has(activeSourceKey)) {
+    contacts.splice(contacts.indexOf(current), 1)
+    current = undefined
+  }
+  const canMaterializeActive = Boolean(context.characterId && context.characterId !== '_none' && !suppressedSourceKeys.has(activeSourceKey))
+  if (!current && canMaterializeActive) {
     current = activeContact(context)
     contacts.unshift(current)
-  } else if (context.characterName && context.characterName !== 'Character') {
+  } else if (current && context.characterName && context.characterName !== 'Character') {
     current.name = context.characterName
   }
 
@@ -349,6 +373,7 @@ export function normalizeContactCollections(value: AnyRecord, context: {
         kind: 'direct',
         title: contact.name,
         participantActorIds: [contact.id],
+        includesPocketPersona: true,
         participantContactIds: [contact.id],
         messages: Array.isArray(rawContact.messages) ? rawContact.messages : [],
         unread: rawContact.unread,
@@ -358,7 +383,7 @@ export function normalizeContactCollections(value: AnyRecord, context: {
     }
   }
   const normalized = rawConversations
-    .map((entry) => normalizeConversation(entry, contacts, context.now, context.makeId))
+    .map((entry) => normalizeConversation(entry, contacts, context.now, context.makeId, personaActorId))
     .filter((entry): entry is PocketConversation => Boolean(entry))
   const conversations: PocketConversation[] = []
   const directByContact = new Map<string, PocketConversation>()
@@ -367,10 +392,10 @@ export function normalizeContactCollections(value: AnyRecord, context: {
       conversations.push(conversation)
       continue
     }
-    const actorId = conversation.participantActorIds[0]
-    const duplicate = directByContact.get(actorId)
+    const directKey = `${conversation.includesPocketPersona ? 'persona' : 'external'}:${[...conversation.participantActorIds].sort().join('|')}`
+    const duplicate = directByContact.get(directKey)
     if (!duplicate) {
-      directByContact.set(actorId, conversation)
+      directByContact.set(directKey, conversation)
       conversations.push(conversation)
       continue
     }
@@ -380,6 +405,6 @@ export function normalizeContactCollections(value: AnyRecord, context: {
     duplicate.unread = Math.max(duplicate.unread, conversation.unread)
     duplicate.updatedAt = duplicate.messages.at(-1)?.createdAt || duplicate.updatedAt
   }
-  ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId)
+  if (current) ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId)
   return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy }
 }

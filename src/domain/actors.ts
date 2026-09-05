@@ -5,7 +5,7 @@ type ActorSource = DiscoveredActor['source']
 
 export interface PocketActorPresentation {
   actorId: string
-  kind: 'contact' | 'discovered'
+  kind: 'persona' | 'contact' | 'discovered'
   name: string
   role: string
   identityBrief: string
@@ -57,7 +57,17 @@ export function conversationActorIds(conversation: Pick<PocketConversation, 'par
   return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds
 }
 
-export function resolvePocketActor(state: Pick<PhoneState, 'contacts' | 'discoveredActors'>, actorId: string): PocketActorPresentation | null {
+export function resolvePocketActor(
+  state: Pick<PhoneState, 'contacts' | 'discoveredActors'> & Partial<Pick<PhoneState, 'pocketPersona' | 'pocketPersonaActorId'>>,
+  actorId: string,
+): PocketActorPresentation | null {
+  if (state.pocketPersona && state.pocketPersonaActorId && actorId === state.pocketPersonaActorId) {
+    return {
+      actorId, kind: 'persona', name: state.pocketPersona.displayName || 'You', role: state.pocketPersona.role || 'Persona',
+      identityBrief: state.pocketPersona.identityBrief || '', accent: state.pocketPersona.accent || '#8b7dff',
+      avatarUrl: state.pocketPersona.avatarUrl || '', relationship: 'close',
+    }
+  }
   const contact = state.contacts.find((entry) => entry.id === actorId)
   if (contact) return contactPresentation(contact, actorId)
   const discovered = state.discoveredActors.find((entry) => entry.id === actorId)
@@ -150,16 +160,52 @@ export function ensureDiscoveredActor(state: PhoneState, options: {
 }
 
 export function ensureDirectActorConversation(state: PhoneState, actorId: string, now: string, makeId: (prefix: string) => string): PocketConversation {
-  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversationActorIds(conversation)[0] === actorId)
+  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona !== false && conversationActorIds(conversation)[0] === actorId)
   if (existing) return existing
   const actor = resolvePocketActor(state, actorId)
-  if (!actor) throw new Error('Choose a valid actor before opening a conversation.')
+  if (!actor || actor.kind === 'persona') throw new Error('Choose a valid non-Persona actor before opening a conversation.')
   const participantContactIds = actor.contact ? [actor.contact.id] : []
   const conversation: PocketConversation = {
     id: makeId('conversation'),
     kind: 'direct',
     title: actor.name,
     participantActorIds: [actorId],
+    includesPocketPersona: true,
+    participantContactIds,
+    messages: [],
+    unread: 0,
+    availability: { state: 'remote' },
+    createdAt: now,
+    updatedAt: now,
+  }
+  state.conversations.push(conversation)
+  return conversation
+}
+
+export function ensureExternalDirectConversation(
+  state: PhoneState,
+  leftActorId: string,
+  rightActorId: string,
+  now: string,
+  makeId: (prefix: string) => string,
+): PocketConversation {
+  if (!leftActorId || !rightActorId || leftActorId === rightActorId) throw new Error('An external direct conversation needs two distinct actors.')
+  const wanted = [leftActorId, rightActorId].sort()
+  const existing = state.conversations.find((conversation) =>
+    conversation.kind === 'direct'
+    && conversation.includesPocketPersona === false
+    && [...conversationActorIds(conversation)].sort().join('\u0000') === wanted.join('\u0000')
+  )
+  if (existing) return existing
+  const actors = wanted.map((actorId) => resolvePocketActor(state, actorId))
+  if (actors.some((actor) => !actor || actor.kind === 'persona')) throw new Error('Choose two valid non-Persona actors before opening an external conversation.')
+  const participantContactIds = actors.flatMap((actor) => actor?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index)
+  const conversation: PocketConversation = {
+    id: makeId('conversation'),
+    kind: 'direct',
+    title: actors.map((actor) => actor!.name).join(' & ').slice(0, 120),
+    participantActorIds: wanted,
+    includesPocketPersona: false,
     participantContactIds,
     messages: [],
     unread: 0,

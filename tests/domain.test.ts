@@ -5,7 +5,7 @@ import { calculatePhoneSurface } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
-import { ensureDirectActorConversation, ensureDiscoveredActor, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
+import { ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
 import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, upsertActorMemory } from '../src/domain/actor-memory.js'
@@ -15,6 +15,7 @@ import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import { sanitizeNarrativeContent } from '../src/backend/narrative-content.js'
+import { conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../src/domain/device.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayIdFromMessages } from '../src/backend/continuity.js'
 import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
@@ -780,5 +781,59 @@ describe('NPC bank', () => {
     const restored = normalized.contacts.find((entry) => entry.id === 'contact-bank')
     expect(restored?.source.kind).toBe('npc')
     if (restored?.source.kind === 'npc') expect(restored.source.bankId).toBe('npcbank-maya')
+  })
+})
+
+
+describe('Pocket device projections', () => {
+  test('projects external direct messages only onto participating actor devices', () => {
+    const now = '2026-09-05T12:00:00.000Z'
+    const state = {
+      chatId: 'chat-a', characterId: 'char-a', pocketPersonaActorId: 'persona:kai',
+      pocketPersona: { displayName: 'Kai', role: 'Persona', identityBrief: '', accent: '#8b7dff', avatarUrl: '', linkedPersonaId: '' },
+      contacts: [],
+      discoveredActors: [
+        { id: 'actor-marcus', chatId: 'chat-a', displayName: 'Marcus', normalizedName: 'marcus', firstSeenAt: now, lastSeenAt: now, source: 'model-tool', relationship: 'background' },
+        { id: 'actor-tyler', chatId: 'chat-a', displayName: 'Tyler', normalizedName: 'tyler', firstSeenAt: now, lastSeenAt: now, source: 'model-tool', relationship: 'close' },
+      ],
+      conversations: [],
+    } as unknown as PhoneState
+    const conversation = ensureExternalDirectConversation(state, 'actor-marcus', 'actor-tyler', now, (prefix) => `${prefix}-external`)
+    conversation.messages.push({
+      id: 'm-external', sender: 'contact', senderActorId: 'actor-marcus', senderName: 'Marcus', senderAccent: '',
+      recipientActorIds: ['actor-tyler'], readByActorIds: ['actor-marcus'], text: 'Track him. Send the pin.', createdAt: now, read: false, status: 'delivered',
+    })
+
+    expect(conversation.includesPocketPersona).toBe(false)
+    expect(conversationVisibleOnDevice(state, conversation, 'persona:kai')).toBe(false)
+    expect(conversationVisibleOnDevice(state, conversation, 'actor-marcus')).toBe(true)
+    expect(conversationVisibleOnDevice(state, conversation, 'actor-tyler')).toBe(true)
+    expect(messageDirection(state, conversation, conversation.messages[0], 'persona:kai')).toBe('external')
+    expect(messageDirection(state, conversation, conversation.messages[0], 'actor-marcus')).toBe('outbound')
+    expect(messageDirection(state, conversation, conversation.messages[0], 'actor-tyler')).toBe('inbound')
+    expect(conversationUnreadForDevice(state, conversation, 'actor-marcus')).toBe(0)
+    expect(conversationUnreadForDevice(state, conversation, 'actor-tyler')).toBe(1)
+    conversation.messages[0].readByActorIds!.push('actor-tyler')
+    expect(conversationUnreadForDevice(state, conversation, 'actor-tyler')).toBe(0)
+  })
+
+  test('a suppressed linked character contact stays deleted until explicitly re-imported', () => {
+    const now = '2026-09-05T12:00:00.000Z'
+    const normalized = normalizeContactCollections({
+      suppressedContactSourceKeys: ['character:active'],
+      contacts: [{ id: 'active', name: 'Narrative Engine', source: { kind: 'character', characterId: 'active' } }],
+      conversations: [{ id: 'dm-active', kind: 'direct', title: 'Narrative Engine', includesPocketPersona: true, participantActorIds: ['active'], participantContactIds: ['active'], messages: [], unread: 0, createdAt: now, updatedAt: now }],
+    }, { characterId: 'active', characterName: 'Narrative Engine', now, makeId: (prefix) => `${prefix}-id`, personaActorId: 'persona:kai' })
+
+    expect(normalized.contacts.some((entry) => entry.source.kind === 'character' && entry.source.characterId === 'active')).toBe(false)
+    expect(normalized.contacts.some((entry) => entry.id === 'active')).toBe(false)
+  })
+
+  test('does not materialize a placeholder _none character contact', () => {
+    const normalized = normalizeContactCollections({}, {
+      characterId: '_none', characterName: 'Character', now: '2026-09-05T12:00:00.000Z', makeId: (prefix) => `${prefix}-id`, personaActorId: 'persona:kai',
+    })
+    expect(normalized.contacts).toHaveLength(0)
+    expect(normalized.conversations).toHaveLength(0)
   })
 })

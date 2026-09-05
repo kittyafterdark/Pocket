@@ -25,6 +25,7 @@ import type {
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
+import { conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
 import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
@@ -138,6 +139,9 @@ class PocketController {
   private npcDraft: PocketContactDraft | null = null
   private previousNpcDraft: PocketContactDraft | null = null
   private selectedConversationId = ''
+  private deviceOwnerActorId = ''
+  private syncIndicator: HTMLDivElement
+  private syncIndicatorTimer = 0
   private selectedConversationView: 'thread' | 'new-group' | 'group-detail' = 'thread'
   private selectedMessageId = ''
   private selectedNoteId = ''
@@ -221,13 +225,15 @@ class PocketController {
     this.screen = el('main', 'lumiphone-screen')
     this.alert = el('div', 'lp-alert')
     this.alert.hidden = true
+    this.syncIndicator = el('div', 'lumiphone-sync-indicator')
+    this.syncIndicator.hidden = true
     const homebar = el('div', 'lumiphone-homebar')
     const homeButton = button('')
     homeButton.setAttribute('aria-label', 'Home or dismiss phone')
     homebar.appendChild(homeButton)
     this.customStyle = document.createElement('style')
     this.customStyle.dataset.pocketCustomCss = 'true'
-    this.shell.append(status, this.screen, homebar, this.alert, this.customStyle)
+    this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle)
     this.launcher.addEventListener('pointerdown', (event) => { this.launcherPointer = { x: event.clientX, y: event.clientY } })
     this.launcher.addEventListener('pointermove', (event) => {
       if (!this.launcherPointer) return
@@ -257,6 +263,7 @@ class PocketController {
     window.clearTimeout(this.alertTimer)
     window.clearInterval(this.receiptSweepTimer)
     window.clearTimeout(this.notificationTimer)
+    window.clearTimeout(this.syncIndicatorTimer)
     window.clearTimeout(this.settingsSaveTimer)
     for (const cleanup of this.cleanups.splice(0)) {
       try { cleanup() } catch { /* best effort */ }
@@ -271,10 +278,7 @@ class PocketController {
   }
 
   private installHostIntegrations(): void {
-    this.cleanups.push(this.drawer.onActivate(() => {
-      if (this.widget) this.open()
-      else this.mountPhoneInDrawer()
-    }))
+    this.cleanups.push(this.drawer.onActivate(() => this.renderDrawerLanding()))
     const action = this.ctx.ui.registerInputBarAction({
       id: 'open-lumiphone',
       label: 'Open Pocket',
@@ -397,19 +401,62 @@ class PocketController {
   private renderDrawerLanding(): void {
     this.drawer.root.replaceChildren()
     const outer = el('div', 'lumiphone-drawer')
-    const card = el('div', 'lumiphone-drawer-card')
+    const card = el('div', 'lumiphone-drawer-card lumiphone-device-card')
     const logo = el('div', 'lumiphone-drawer-icon')
     logo.innerHTML = PHONE_ICON
-    const title = el('h2', 'lumiphone-drawer-title', 'Pocket')
-    const copy = el('p', 'lumiphone-drawer-copy', 'A persistent phone for each chat and character—messages, photos, journals, roleplay weather, timeline events, and live trackers in one place.')
+    const title = el('h2', 'lumiphone-drawer-title', 'Pocket devices')
+    const copy = el('p', 'lumiphone-drawer-copy', 'Choose whose Pocket you are inspecting. This changes only the phone viewport; the roleplay Persona stays the same.')
+    card.append(logo, title, copy)
+
+    if (this.state) {
+      const personaId = pocketPersonaActorId(this.state)
+      const ids = [personaId]
+      for (const conversation of this.state.conversations) {
+        for (const actorId of conversationDeviceActorIds(this.state, conversation)) if (!ids.includes(actorId)) ids.push(actorId)
+      }
+      const selected = this.currentDeviceOwnerActorId() || personaId
+      const list = el('div', 'lumiphone-device-list')
+      for (const actorId of ids) {
+        const actor = resolvePocketActor(this.state, actorId)
+        if (!actor) continue
+        const row = button('', 'lumiphone-device-row')
+        row.dataset.selected = String(actorId === selected)
+        const identity = el('span', 'lumiphone-device-identity')
+        identity.append(el('strong', '', actor.name), el('span', '', actorId === personaId ? 'Roleplay Persona' : actor.role || 'Pocket actor'))
+        const meta = el('span', 'lumiphone-device-meta')
+        if (actorId === personaId) meta.appendChild(el('span', 'lumiphone-device-rp', 'RP'))
+        const messageUnread = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state!, conversation, actorId), 0)
+        const notificationUnread = this.state.notifications.filter((entry) => !entry.read && !entry.dismissedAt && notificationBelongsToDevice(this.state!, actorId, entry.deviceOwnerActorId)).length
+        const unread = Math.max(messageUnread, notificationUnread)
+        if (unread) meta.appendChild(el('span', 'lumiphone-device-unread', unread > 99 ? '99+' : String(unread)))
+        row.append(identity, meta)
+        row.addEventListener('click', () => {
+          this.deviceOwnerActorId = actorId
+          this.selectedConversationId = ''
+          this.selectedMessageId = ''
+          this.currentApp = 'home'
+          this.router.reset({ app: 'home' })
+          this.updateBadge()
+          this.renderDrawerLanding()
+          this.announceView()
+          if (this.widget) this.open()
+          else this.mountPhoneInDrawer()
+        })
+        list.appendChild(row)
+      }
+      card.appendChild(list)
+    } else {
+      card.appendChild(el('p', 'lumiphone-drawer-copy', 'Pocket is still loading this chat.'))
+    }
+
     const actions = el('div', 'lumiphone-drawer-actions')
-    const open = button('Open phone', 'lumiphone-drawer-button')
+    const open = button('Open selected phone', 'lumiphone-drawer-button')
     open.dataset.primary = 'true'
     open.addEventListener('click', () => this.open())
     const permission = button('Manage access', 'lumiphone-drawer-button')
     permission.addEventListener('click', () => this.requestPermissions())
     actions.append(open, permission)
-    card.append(logo, title, copy, actions)
+    card.appendChild(actions)
     outer.appendChild(card)
     this.drawer.root.appendChild(outer)
   }
@@ -576,10 +623,15 @@ class PocketController {
     }
   }
 
+  private currentDeviceOwnerActorId(): string {
+    if (!this.state) return this.deviceOwnerActorId
+    return this.deviceOwnerActorId || pocketPersonaActorId(this.state)
+  }
+
   private send(type: string, payload: Record<string, unknown> = {}): string {
     const context = this.activeContext()
     const id = String(payload.requestId || requestId())
-    this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, ...payload })
+    this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId(), ...payload })
     return id
   }
 
@@ -785,6 +837,9 @@ class PocketController {
       if (active.characterId && payload.state.characterId !== active.characterId) return
       const previousUnread = this.unreadCount()
       this.state = payload.state as PhoneState
+      const personaDeviceId = pocketPersonaActorId(this.state)
+      const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state!, conversation))])
+      if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId)) this.deviceOwnerActorId = personaDeviceId
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries as PocketNpcBankEntry[] : []
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
@@ -805,6 +860,7 @@ class PocketController {
       this.applyAppearance()
       this.syncComposerReferencePill()
       this.updateBadge()
+      this.renderDrawerLanding()
       this.announceView()
       if (payload.open) this.open()
       if (
@@ -821,6 +877,29 @@ class PocketController {
       if (this.unreadCount() > previousUnread && !this.expanded) this.launcher.animate([
         { transform: 'scale(1)' }, { transform: 'scale(1.13) rotate(-4deg)' }, { transform: 'scale(1)' },
       ], { duration: 420, easing: 'ease-out' })
+      return
+    }
+    if (payload.type === 'lumiphone:reconciliation_status') {
+      if (!this.preferences.showReconciliationStatus) return
+      window.clearTimeout(this.syncIndicatorTimer)
+      const status = String(payload.status || '')
+      this.syncIndicator.dataset.status = status
+      if (status === 'working') {
+        this.syncIndicator.textContent = 'Pocket · Reconciling world…'
+        this.syncIndicator.hidden = false
+        this.launcher.dataset.sync = 'working'
+      } else if (status === 'complete') {
+        const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean).join(', ') : ''
+        this.syncIndicator.textContent = `Pocket · Synced${domains ? ` · ${domains}` : ''}`
+        this.syncIndicator.hidden = false
+        this.launcher.dataset.sync = 'complete'
+        this.syncIndicatorTimer = window.setTimeout(() => { this.syncIndicator.hidden = true; delete this.launcher.dataset.sync }, 1800)
+      } else {
+        this.syncIndicator.textContent = `Pocket · Sync issue${payload.error ? ` · ${String(payload.error).slice(0, 120)}` : ''}`
+        this.syncIndicator.hidden = false
+        this.launcher.dataset.sync = 'error'
+        this.syncIndicatorTimer = window.setTimeout(() => { this.syncIndicator.hidden = true; delete this.launcher.dataset.sync }, 5000)
+      }
       return
     }
     if (payload.type === 'lumiphone:debug_prompt') {
@@ -1029,8 +1108,9 @@ class PocketController {
 
   private unreadCount(): number {
     if (!this.state) return 0
-    const notifications = this.state.notifications.filter((item) => !item.read && !item.dismissedAt).length
-    const messages = this.state.conversations.reduce((sum, conversation) => sum + conversation.unread, 0)
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state)
+    const notifications = this.state.notifications.filter((item) => !item.read && !item.dismissedAt && notificationBelongsToDevice(this.state!, owner, item.deviceOwnerActorId)).length
+    const messages = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state!, conversation, owner), 0)
     return Math.min(999, Math.max(notifications, messages))
   }
 
@@ -1039,7 +1119,8 @@ class PocketController {
     this.launcherBadge.hidden = unread === 0
     this.launcherBadge.textContent = unread > 99 ? '99+' : String(unread)
     this.drawer.setBadge(unread ? (unread > 99 ? '99+' : String(unread)) : null)
-    const notificationUnread = this.state?.notifications.filter((entry) => !entry.read && !entry.dismissedAt).length || 0
+    const owner = this.state ? this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state) : ''
+    const notificationUnread = this.state?.notifications.filter((entry) => !entry.read && !entry.dismissedAt && notificationBelongsToDevice(this.state!, owner, entry.deviceOwnerActorId)).length || 0
     this.notificationIsland.dataset.unread = String(notificationUnread > 0)
     this.notificationIsland.setAttribute('aria-label', notificationUnread ? `Open Notification Center, ${notificationUnread} unread` : 'Open Notification Center')
   }
@@ -1107,6 +1188,7 @@ class PocketController {
   }
 
   private showIncomingNotification(notification: PhoneNotification): void {
+    if (this.state && !notificationBelongsToDevice(this.state, this.currentDeviceOwnerActorId(), notification.deviceOwnerActorId)) return
     if (!this.expanded) {
       this.launcher.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.12)' }, { transform: 'scale(1)' }], { duration: 360 })
       return
@@ -1234,8 +1316,9 @@ class PocketController {
     if (this.currentApp === 'settings' && route.app !== 'settings') this.settingsDraft = null
     this.currentApp = route.app
     if (route.app === 'messages') {
-      const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId) : null)
-        || (route.contactId ? this.state.conversations.find((entry) => entry.kind === 'direct' && conversationActorIds(entry)[0] === route.contactId) : null)
+      const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state)
+      const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId && conversationVisibleOnDevice(this.state!, entry, owner)) : null)
+        || (route.contactId ? this.state.conversations.find((entry) => entry.kind === 'direct' && conversationVisibleOnDevice(this.state!, entry, owner) && conversationActorIds(entry).includes(route.contactId!)) : null)
       this.selectedConversationId = conversation?.id || ''
       this.selectedConversationView = route.view || 'thread'
       this.selectedMessageId = conversation && route.messageId && conversation.messages.some((entry) => entry.id === route.messageId) ? route.messageId : ''
@@ -1382,7 +1465,8 @@ class PocketController {
     const grid = el('div', 'lp-app-grid')
     for (const meta of APP_META.filter((entry) => !entry.dock)) grid.appendChild(this.appIcon(meta))
     const activity = el('div', 'lp-home-activity')
-    const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read).slice(0, 3)
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(state)
+    const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read && notificationBelongsToDevice(state, owner, entry.deviceOwnerActorId)).slice(0, 3)
     for (const item of recentNotifications) {
       const receipt = button('', 'lp-home-activity-item')
       receipt.append(el('strong', '', item.title), el('span', '', item.body || item.app), el('span', 'lp-home-activity-arrow', '›'))
@@ -1411,9 +1495,10 @@ class PocketController {
     node.type = 'button'
     const box = el('span', `lp-app-icon-box lp-icon-${meta.icon}`)
     box.appendChild(icon(meta.icon))
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     const unread = meta.app === 'messages'
-      ? this.state!.conversations.reduce((sum, conversation) => sum + conversation.unread, 0)
-      : this.state!.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app).length
+      ? this.state!.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state!, conversation, owner), 0)
+      : this.state!.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state!, owner, item.deviceOwnerActorId)).length
     if (unread) box.appendChild(el('span', 'lp-app-dot', unread > 99 ? '99+' : String(unread)))
     node.append(box, el('span', 'lp-app-label', meta.label))
     node.addEventListener('click', () => this.openApp(meta.app))
@@ -1421,8 +1506,10 @@ class PocketController {
   }
 
   private renderMessages(): HTMLDivElement {
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     return renderMessagesView({
       state: this.state!, selectedConversationId: this.selectedConversationId,
+      deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
@@ -2220,7 +2307,7 @@ class PocketController {
 
   private renderNotifications(): HTMLDivElement {
     return renderNotificationsView({
-      notifications: this.state!.notifications,
+      notifications: this.state!.notifications.filter((entry) => notificationBelongsToDevice(this.state!, this.currentDeviceOwnerActorId(), entry.deviceOwnerActorId)),
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       navigate: (route) => this.openPocket(route),
       send: (type, payload) => { this.send(type, payload) },

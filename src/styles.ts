@@ -386,6 +386,22 @@ export const PHONE_STYLES = `
   .lumiphone-drawer-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
   .lumiphone-drawer-button { appearance:none; min-height:36px; padding:8px 13px; border:1px solid var(--lumiverse-border,rgba(127,127,127,.3)); border-radius:11px; background:var(--lumiverse-fill,rgba(127,127,127,.14)); color:inherit; font:inherit; font-size:11px; font-weight:720; cursor:pointer; }
   .lumiphone-drawer-button[data-primary="true"] { border-color:transparent; background:var(--lumiverse-primary,#7866e8); color:white; }
+  .lumiphone-device-card { align-content:start; }
+  .lumiphone-device-list { width:100%; display:grid; gap:7px; margin-top:4px; }
+  .lumiphone-device-row { appearance:none; width:100%; padding:10px 11px; border:1px solid var(--lumiverse-border,rgba(127,127,127,.28)); border-radius:13px; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; background:var(--lumiverse-fill,rgba(127,127,127,.08)); color:inherit; font:inherit; text-align:left; cursor:pointer; }
+  .lumiphone-device-row[data-selected="true"] { border-color:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 62%,transparent); background:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 12%,transparent); }
+  .lumiphone-device-identity { min-width:0; display:grid; gap:2px; }
+  .lumiphone-device-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+  .lumiphone-device-identity span { color:var(--lumiverse-text-muted,currentColor); font-size:10px; }
+  .lumiphone-device-meta { display:flex; align-items:center; gap:6px; }
+  .lumiphone-device-rp,.lumiphone-device-unread { min-width:24px; padding:3px 6px; border-radius:999px; background:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 18%,transparent); font-size:9px; font-weight:800; text-align:center; }
+  .lumiphone-device-unread { background:#d84f68; color:#fff; }
+
+  .lumiphone-sync-indicator { position:absolute; z-index:44; top:37px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); padding:5px 9px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .lumiphone-sync-indicator[hidden] { display:none; }
+  .lumiphone-sync-indicator[data-status="complete"] { color:var(--lp-text); }
+  .lumiphone-sync-indicator[data-status="error"] { border-color:color-mix(in srgb,#ff6a80 50%,var(--lp-border)); color:#ff9dac; }
+  .lumiphone-launcher[data-sync="working"] { box-shadow:0 0 0 4px color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 20%,transparent); }
 
   @media (max-width: 720px) {
     .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; }
@@ -410,21 +426,25 @@ export const PHONE_STYLES = `
   .lp-gallery-item[data-selected="true"] { outline:3px solid var(--lp-accent); outline-offset:2px; }
   .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
 
-  .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,420px); }
-  .pocket-receipt {
-    appearance:none; width:100%; min-height:48px; padding:8px 10px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 32%,transparent);
-    border-radius:13px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:9px;
-    background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,var(--lumiverse-primary,#8b7dff) 8%); color:var(--lumiverse-text,#f7f5ff);
-    font:inherit; text-align:left; cursor:pointer; box-shadow:0 8px 22px rgba(0,0,0,.12); transition:transform .15s ease,border-color .15s ease;
-  }
-  .pocket-receipt:hover { transform:translateY(-1px); border-color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 68%,transparent); }
-  .pocket-receipt:focus-visible { outline:3px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 55%,white); outline-offset:2px; }
-  .pocket-receipt-kind { padding:4px 7px; border-radius:8px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 18%,transparent); font-size:10px; font-weight:800; }
-  .pocket-receipt-copy { min-width:0; display:grid; gap:1px; }
+  .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
+  .pocket-artifact-stack { display:grid; gap:5px; }
+  .pocket-inline-artifact { appearance:none; width:100%; min-height:58px; padding:9px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 42%,transparent); border-radius:15px; display:grid; gap:2px; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,var(--lumiverse-primary,#8b7dff) 10%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); }
+  button.pocket-inline-artifact { cursor:pointer; }
+  .pocket-inline-artifact[data-kind="sent"] { border-style:dashed; }
+  .pocket-inline-artifact[data-kind="observed"] { opacity:.9; }
+  .pocket-inline-artifact-kind { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 72%,white); font-size:9px; font-weight:850; letter-spacing:.035em; text-transform:uppercase; }
+  .pocket-inline-artifact strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; opacity:.82; font-size:11px; line-height:1.35; }
+  .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
+  button.pocket-receipt { cursor:pointer; }
+  button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }
+  button.pocket-receipt:focus-visible,.pocket-inline-artifact:focus-visible { outline:3px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 55%,white); outline-offset:2px; }
+  .pocket-receipt-kind { padding:2px 5px; border-radius:7px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 12%,transparent); font-size:8px; font-weight:800; }
+  .pocket-receipt-copy { min-width:0; display:flex; align-items:baseline; gap:6px; }
   .pocket-receipt-copy strong,.pocket-receipt-copy span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .pocket-receipt-copy strong { font-size:12px; }
-  .pocket-receipt-copy span { opacity:.68; font-size:10px; }
-  .pocket-receipt-arrow { font-size:22px; opacity:.7; }
+  .pocket-receipt-copy strong { font-size:9px; }
+  .pocket-receipt-copy span { opacity:.6; font-size:8px; }
+  .pocket-receipt-arrow { font-size:14px; opacity:.45; }
   .lp-tracker-filters { display:flex; gap:6px; overflow:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-tracker-card { display:grid; gap:9px; border-left:3px solid color-mix(in srgb,var(--lp-accent) 68%,transparent); }
   .lp-tracker-card[role="button"]:focus-visible { outline:3px solid color-mix(in srgb,var(--lp-accent) 52%,white); outline-offset:2px; }

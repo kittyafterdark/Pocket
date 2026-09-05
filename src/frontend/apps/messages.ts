@@ -1,5 +1,6 @@
 import type { PhoneMessage, PhoneState, PocketContextReference, PocketConversation, PocketRelay } from '../../types.js'
 import { conversationActorIds, listPocketActors, resolvePocketActor } from '../../domain/actors.js'
+import { counterpartActorIds, conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../../domain/device.js'
 import { button, el, formatTime, inputValue } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { fieldBlock, identityBlock, sectionBlock } from '../components/ui.js'
@@ -9,6 +10,8 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export interface MessagesViewHost {
   state: PhoneState
   selectedConversationId: string
+  deviceOwnerActorId: string
+  readOnlyDevice: boolean
   selectedMessageId: string
   selectedView: 'thread' | 'new-group' | 'group-detail'
   generationAvailable: boolean
@@ -58,12 +61,13 @@ const LOCAL_COPY = {
   continued_in_person: 'continued this in person.',
 } as const
 
-function conversationTitle(state: PhoneState, conversation: PocketConversation): string {
-  if (conversation.kind === 'group') return conversation.title || 'Group'
-  return resolvePocketActor(state, conversationActorIds(conversation)[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || 'Conversation'
+function conversationTitle(state: PhoneState, conversation: PocketConversation, deviceOwnerActorId: string): string {
+  return conversationTitleForDevice(state, conversation, deviceOwnerActorId)
 }
 
+
 function newConversationView(host: MessagesViewHost): HTMLDivElement {
+  if (host.readOnlyDevice) return host.empty('Inspection mode', 'Switch back to the roleplay Persona device to create or send conversations.')
   const { page, content } = host.page('New Message', 'Choose a contact or start a group')
 
   const { section: directSection, body: directBody } = sectionBlock(
@@ -104,6 +108,7 @@ function newConversationView(host: MessagesViewHost): HTMLDivElement {
 }
 
 function groupEditor(host: MessagesViewHost, conversation: PocketConversation | null): HTMLDivElement {
+  if (host.readOnlyDevice) return host.empty('Inspection mode', 'Switch back to the roleplay Persona device to modify group membership.')
   let saveGroup = () => {}
   const { page, content } = host.page(conversation ? 'Group Details' : 'New Group', 'Choose at least two contacts', { label: 'Save', callback: () => saveGroup() })
   const title = el('input', 'lp-input')
@@ -294,21 +299,21 @@ function referenceAttachment(host: MessagesViewHost, reference: PocketContextRef
 }
 
 export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
-  const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId) || null
+  const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId && conversationVisibleOnDevice(host.state, item, host.deviceOwnerActorId)) || null
   if (host.selectedView === 'new-group') return newConversationView(host)
   if (selectedConversation?.kind === 'group' && host.selectedView === 'group-detail') return groupEditor(host, selectedConversation)
 
   if (!selectedConversation) {
-    const conversations = [...host.state.conversations].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    const conversations = host.state.conversations.filter((conversation) => conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const { page, content } = host.page('Messages', `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`, {
-      label: 'New', callback: () => host.selectConversation('', 'new-group'), enabled: host.state.contacts.length > 0,
+      label: host.readOnlyDevice ? '' : 'New', callback: () => host.selectConversation('', 'new-group'), enabled: !host.readOnlyDevice && host.state.contacts.length > 0,
     })
     content.classList.add('lp-conversation-list')
     for (const conversation of conversations) {
       const row = el('div', 'lp-conversation-row')
       row.dataset.clickable = 'true'; row.tabIndex = 0; row.setAttribute('role', 'button')
-      const titleText = conversationTitle(host.state, conversation)
-      const members = conversationActorIds(conversation)
+      const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId)
+      const members = counterpartActorIds(host.state, conversation, host.deviceOwnerActorId)
       const avatar = el('div', 'lp-avatar', conversation.kind === 'group' ? String(members.length) : titleText.slice(0, 1).toUpperCase())
       const directActor = conversation.kind === 'direct' ? resolvePocketActor(host.state, members[0]) : null
       if (directActor?.avatarUrl) {
@@ -320,7 +325,8 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
         : 'Start a conversation'
       const identity = identityBlock({ name: titleText, meta: latest ? formatTime(latest.createdAt) : '', description })
       row.append(avatar, identity)
-      if (conversation.unread) row.appendChild(el('span', 'lp-unread', String(conversation.unread)))
+      const unread = conversationUnreadForDevice(host.state, conversation, host.deviceOwnerActorId)
+      if (unread) row.appendChild(el('span', 'lp-unread', String(unread)))
       const open = () => host.selectConversation(conversation.id)
       row.addEventListener('click', open)
       row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open() } })
@@ -331,14 +337,15 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   }
 
   const conversation = selectedConversation
-  const titleText = conversationTitle(host.state, conversation)
+  const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId)
   const page = el('div', 'lp-thread')
   const nav = el('header', 'lp-nav')
   const back = button('‹ Back', 'lp-nav-action')
   back.addEventListener('click', () => host.back())
   const title = el('div', 'lp-nav-title', titleText)
-  const memberActorIds = conversationActorIds(conversation)
-  title.appendChild(el('span', 'lp-nav-subtitle', conversation.kind === 'group' ? `${memberActorIds.length} participants` : 'Direct message'))
+  const memberActorIds = conversationDeviceActorIds(host.state, conversation)
+  const counterpartIds = counterpartActorIds(host.state, conversation, host.deviceOwnerActorId)
+  title.appendChild(el('span', 'lp-nav-subtitle', host.readOnlyDevice ? `${conversation.kind === 'group' ? memberActorIds.length : 2} participants · inspection mode` : conversation.kind === 'group' ? `${memberActorIds.length} participants` : 'Direct message'))
   const menu = el('details', 'lp-conversation-menu')
   const menuToggle = el('summary', 'lp-nav-action', '⋯')
   menuToggle.setAttribute('aria-label', 'Conversation menu')
@@ -350,10 +357,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   }
   menuSheet.appendChild(menuAction(conversation.kind === 'group' ? 'Participants' : 'Contact info', () => {
     if (conversation.kind === 'group') host.selectConversation(conversation.id, 'group-detail')
-    else host.openActor(memberActorIds[0])
+    else if (counterpartIds[0]) host.openActor(counterpartIds[0])
   }))
   const referenceAction = menuAction('Reference in roleplay', () => host.showReferenceSheet(conversation.id))
-  referenceAction.disabled = !conversation.messages.some((message) => message.sender !== 'system')
+  referenceAction.disabled = host.readOnlyDevice || !conversation.messages.some((message) => message.sender !== 'system')
   menuSheet.appendChild(referenceAction)
   menuSheet.appendChild(menuAction('View Timeline', () => host.openTimeline('')))
   menuSheet.appendChild(menuAction('Generation info', () => host.showConversationGenerationInfo(conversation.id)))
@@ -371,26 +378,27 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
 
   const busy = host.busyConversations.get(conversation.id)
   const replyBusy = Boolean(busy)
-  const directActor = conversation.kind === 'direct' ? resolvePocketActor(host.state, memberActorIds[0]) : null
+  const directActor = conversation.kind === 'direct' ? resolvePocketActor(host.state, counterpartIds[0] || '') : null
   const directContact = directActor?.contact || null
   const scenePresent = Boolean(directContact?.presence.inScene)
   const bubbles = el('div', 'lp-bubbles')
   bubbles.dataset.pocketThread = conversation.id
   bubbles.dataset.conversationKind = conversation.kind
-  const conversationRelays = host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== 'dismissed')
+  const conversationRelays = host.readOnlyDevice ? [] : host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== 'dismissed')
   const renderedRelayIds = new Set<string>()
   let priorGroupSpeakerId = ''
   for (const message of conversation.messages) {
     const bubble = el('div', 'lp-bubble')
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
-    bubble.dataset.sender = message.sender
-    const senderActor = message.sender === 'contact' ? resolvePocketActor(host.state, message.senderActorId || message.senderContactId || memberActorIds[0]) : null
+    const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId)
+    bubble.dataset.sender = direction === 'outbound' ? 'persona' : message.sender === 'system' ? 'system' : 'contact'
+    const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === 'contact' ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || '') : null
     const resolvedAccent = senderActor?.accent || message.senderAccent || directActor?.accent || ''
-    if (message.sender === 'contact') bubble.style.setProperty('--message-accent', resolvedAccent)
+    if (direction !== 'outbound') bubble.style.setProperty('--message-accent', resolvedAccent)
     const messageActorId = message.senderActorId || message.senderContactId || ''
-    const continuesRun = conversation.kind === 'group' && message.sender === 'contact' && priorGroupSpeakerId === messageActorId
-    if (conversation.kind === 'group' && message.sender === 'contact' && !continuesRun) {
+    const continuesRun = conversation.kind === 'group' && direction !== 'outbound' && priorGroupSpeakerId === messageActorId
+    if (conversation.kind === 'group' && direction !== 'outbound' && !continuesRun && senderActor) {
       const sender = button(senderActor?.name || message.senderName, 'lp-bubble-sender lp-actor-link')
       sender.addEventListener('click', () => { if (messageActorId) host.openActor(messageActorId) })
       bubble.appendChild(sender)
@@ -398,18 +406,21 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     bubble.append(document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
     if (message.generation) {
       const tools = el('span', 'lp-bubble-tools')
-      const retry = button('↻', 'lp-bubble-action')
-      retry.type = 'button'; retry.title = 'Retry'
-      retry.setAttribute('aria-label', `Retry message from ${message.senderName}`)
-      retry.addEventListener('click', () => host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: message.id }))
+      if (!host.readOnlyDevice) {
+        const retry = button('↻', 'lp-bubble-action')
+        retry.type = 'button'; retry.title = 'Retry'
+        retry.setAttribute('aria-label', `Retry message from ${message.senderName}`)
+        retry.addEventListener('click', () => host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: message.id }))
+        tools.appendChild(retry)
+      }
       const generationInfo = button('ⓘ', 'lp-bubble-action')
       generationInfo.type = 'button'; generationInfo.title = 'Generation info'
       generationInfo.setAttribute('aria-label', 'Generation info')
       generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
-      tools.append(retry, generationInfo)
+      tools.appendChild(generationInfo)
       bubble.appendChild(tools)
     }
-    if (message.eventSuggestion) {
+    if (message.eventSuggestion && !host.readOnlyDevice) {
       const suggestion = message.eventSuggestion
       const suggestionBox = el('div', 'lp-event-suggestion-actions')
       suggestionBox.style.display = 'flex'
@@ -436,7 +447,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
 
       bubble.appendChild(suggestionBox)
     }
-    if (conversation.kind === 'group' && message.sender === 'contact' && senderActor) {
+    if (conversation.kind === 'group' && direction !== 'outbound' && senderActor) {
       const row = el('div', 'lp-group-message')
       row.style.setProperty('--message-accent', resolvedAccent)
       row.dataset.continuation = String(continuesRun)
@@ -489,6 +500,12 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   }
   if (!conversation.messages.length) bubbles.appendChild(host.empty('Say hello', 'This thread is private to this Pocket roleplay state.'))
 
+  if (host.readOnlyDevice) {
+    const inspect = el('div', 'lp-conversation-status', `Viewing ${resolvePocketActor(host.state, host.deviceOwnerActorId)?.name || 'this actor'}'s Pocket · inspection mode`)
+    page.append(bubbles, inspect)
+    return page
+  }
+
   if (availability.state === 'local' && !host.manualOverride) {
     if (!conversationRelays.length) bubbles.appendChild(el('div', 'lp-conversation-status', `${directContact?.name || titleText} is currently with you.`))
     page.appendChild(bubbles)
@@ -522,7 +539,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
     speakerMenu.append(summary, sheet)
   } else speakerMenu.hidden = true
-  sparkle.addEventListener('click', () => host.generateReply(conversation.id, conversation.kind === 'group' ? selectedGroupSpeaker : memberActorIds[0]))
+  sparkle.addEventListener('click', () => host.generateReply(conversation.id, conversation.kind === 'group' ? selectedGroupSpeaker : counterpartIds[0]))
   const textarea = el('textarea', 'lp-textarea'); textarea.rows = 1; textarea.placeholder = 'Message…'; textarea.value = host.draft
   textarea.dataset.pocketComposer = conversation.id
   const resizeComposer = () => {

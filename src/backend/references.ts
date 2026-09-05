@@ -5,7 +5,8 @@ import type {
   PocketReferenceMessage,
   PocketReferenceScope,
 } from '../types.js'
-import { conversationActorIds, resolvePocketActor } from '../domain/actors.js'
+import { resolvePocketActor } from '../domain/actors.js'
+import { conversationDeviceActorIds } from '../domain/device.js'
 
 function compact(value: string, max: number): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, max)
@@ -40,7 +41,7 @@ export function createPocketReference(input: {
     text: compact(message.text, 420),
     createdAt: message.createdAt,
   }])
-  const participants = conversationActorIds(conversation).slice(0, 16).flatMap((actorId) => {
+  const participants = conversationDeviceActorIds(state, conversation).slice(0, 16).flatMap((actorId) => {
     const actor = resolvePocketActor(state, actorId)
     if (!actor) return []
     return [{

@@ -217,6 +217,8 @@ export interface DevicePreferences {
   replyCadence: ReplyCadence
   ambientMessaging: AmbientMessageFrequency
   roleplayContextMode: RoleplayContextMode
+  /** Cosmetic status only; reconciliation still runs when hidden. */
+  showReconciliationStatus: boolean
   recentRoleplayMessages: number
   notificationSounds: boolean
   notificationPreviews: boolean
@@ -243,11 +245,17 @@ export interface PhoneEventSuggestion {
   participantNames: string[]
   scheduledEventId?: string
 }
+export type PocketMessageDirection = 'outbound' | 'inbound' | 'external'
+
 export interface PhoneMessage {
   id: string
   sender: 'persona' | 'contact' | 'system'
-  /** Generic Pocket actor identity. Contact ids remain valid actor ids. */
+  /** Generic Pocket actor identity. Contact ids remain valid actor ids. Persona messages also carry the canonical Pocket Persona actor id. */
   senderActorId?: string
+  /** Canonical recipients in the communication graph. */
+  recipientActorIds?: string[]
+  /** Device owners that have opened/seen this message. Sender is always included. */
+  readByActorIds?: string[]
   senderActorKind?: 'contact' | 'discovered'
   /** Legacy/contact-specific identity retained for compatibility. */
   senderContactId?: string
@@ -458,8 +466,10 @@ export interface PocketConversation {
   id: string
   kind: 'direct' | 'group'
   title: string
-  /** Authoritative membership. Contact ids and discovered actor ids share this namespace. */
+  /** Non-Persona participants. Contact ids and discovered actor ids share this namespace. */
   participantActorIds: string[]
+  /** Whether the configured Pocket Persona is also a participant. Legacy conversations default true. */
+  includesPocketPersona: boolean
   /** Contact-only compatibility projection; never use it to infer all members. */
   participantContactIds: string[]
   messages: PhoneMessage[]
@@ -702,10 +712,22 @@ export interface PhoneNotification {
   read: boolean
   dismissedAt?: string
   source?: 'model' | 'automatic' | 'system'
+  /** Device owner this notification belongs to. Empty/missing means the Pocket Persona for legacy rows. */
+  deviceOwnerActorId?: string
   severity?: 'info' | 'important' | 'error'
   route?: PocketRoute
   /** Migrated on read; retained only for older backups. */
   action?: string
+}
+
+export type PocketActivityPresentationKind = 'sent' | 'received' | 'observed' | 'referenced' | 'generic'
+export interface PocketActivityPresentation {
+  kind: PocketActivityPresentationKind
+  senderActorId?: string
+  recipientActorIds?: string[]
+  senderName?: string
+  recipientNames?: string[]
+  conversationTitle?: string
 }
 
 export interface PocketActivity {
@@ -716,6 +738,7 @@ export interface PocketActivity {
   route: PocketRoute
   createdAt: string
   scope: { chatId: string; characterId: string }
+  presentation?: PocketActivityPresentation
   source?: {
     commandId?: string
     messageId?: string
@@ -746,7 +769,7 @@ export interface PocketStateReconciliation {
   domains: PocketReconciliationDomain[]
 }
 export interface PhoneState {
-  version: 10
+  version: 11
   chatId: string
   characterId: string
   characterName: string
@@ -762,6 +785,8 @@ export interface PhoneState {
   /** Provenance for the latest committed narrative reconciliation pass. */
   lastReconciliation?: PocketStateReconciliation
   sceneSnapshot: SceneActorSnapshot | null
+  /** Stable actor id for the configured Pocket Persona inside the communication graph. */
+  pocketPersonaActorId: string
   pocketPersona: ChatPocketPersona
   setup: {
     initialized: boolean
@@ -770,6 +795,8 @@ export interface PhoneState {
     worldStatus?: 'unconfigured' | 'seeded' | 'skipped'
     worldSeededAt?: string
   }
+  /** Linked source keys explicitly deleted by the user and therefore not auto-recreated. */
+  suppressedContactSourceKeys: string[]
   contacts: PocketContact[]
   discoveredActors: DiscoveredActor[]
   conversations: PocketConversation[]

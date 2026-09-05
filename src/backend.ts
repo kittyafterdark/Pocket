@@ -37,8 +37,9 @@ import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
 import { applyNpcBankProfile, contactFromNpcBank, findNpcBankMatch, isFutureNpcBank, normalizeNpcBank, normalizeNpcBankName, NPC_BANK_PATH, removeNpcBankEntry, upsertNpcBankFromContact } from './domain/npc-bank.js'
-import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
+import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
+import { conversationDeviceActorIds, conversationUnreadForDevice, messageDirection, notificationBelongsToDevice, pocketPersonaActorId } from './domain/device.js'
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
 import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, removeActorMemoryByMessageId, upsertActorMemory } from './domain/actor-memory.js'
 import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/scheduler.js'
@@ -54,7 +55,7 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 type AnyRecord = Record<string, unknown>
 
-const STATE_VERSION = 10 as const
+const STATE_VERSION = 11 as const
 const MAX_MESSAGES = 240
 const MAX_NOTIFICATIONS = 80
 const MAX_NOTES = 120
@@ -70,17 +71,17 @@ const replyDecisionFlights = new Set<string>()
 const replyBurstTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const relayFlights = new Set<string>()
 const groupBatchFlights = new Map<string, string>()
-interface PocketViewState { chatId: string; characterId: string; open: boolean; route: PocketRoute; updatedAt: number }
+interface PocketViewState { chatId: string; characterId: string; deviceOwnerActorId: string; open: boolean; route: PocketRoute; updatedAt: number }
 const frontendViews = new Map<string, PocketViewState>()
 
 const PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-world phone state.
 
-Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt.
+Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt. Pocket automatically renders successfully persisted phone actions in the roleplay UI. Do not repeat or shim a phone message in prose merely to make it visible. Normal prose may naturally describe using, reading, showing, or reacting to a phone when that action matters to the scene.
 
-When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Normal prose may narrate the physical act of using the phone; Pocket owns the persisted message payload.
+When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
 
-For a new direct message, use action="message" with payload containing channel="dm", speaker (or sender="persona" for the user's persona), target or conversationId, and text. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
+For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
 ONLY when no Pocket Action function/tool is present in the model's available tools, emit hidden machine data using one <lumi-phone> tag per distinct Pocket action (maximum 3):
 <lumi-phone action="message">{"channel":"dm","speaker":"Name","target":"Name","text":"message text"}</lumi-phone>
@@ -120,6 +121,10 @@ function safeSegment(value: string): string {
 
 function stateKey(chatId: string, characterId: string): string {
   return `${safeSegment(chatId || '_lobby')}__${safeSegment(characterId || '_none')}`
+}
+
+function canonicalPocketPersonaActorId(chatId: string, characterId: string): string {
+  return `persona:${safeSegment(chatId || '_lobby')}:${safeSegment(characterId || '_none')}`
 }
 
 function statePath(chatId: string, characterId: string): string {
@@ -192,7 +197,8 @@ function pocketPersonaPhoneBrief(persona: ChatPocketPersona): string {
 
 function defaultState(chatId: string, characterId: string, characterName = 'Character'): PhoneState {
   const createdAt = nowIso()
-  const collections = normalizeContactCollections({}, { characterId, characterName, now: createdAt, makeId: id })
+  const personaActorId = canonicalPocketPersonaActorId(chatId, characterId)
+  const collections = normalizeContactCollections({}, { characterId, characterName, now: createdAt, makeId: id, personaActorId })
   return {
     version: STATE_VERSION,
     chatId,
@@ -202,6 +208,8 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     stateRevision: 0,
     sceneSnapshot: null,
     pocketPersona: defaultPocketPersona(createdAt),
+    pocketPersonaActorId: personaActorId,
+    suppressedContactSourceKeys: [],
     setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: 'unconfigured' },
     contacts: collections.contacts,
     discoveredActors: [],
@@ -226,7 +234,10 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
   const fallback = defaultState(chatId, characterId, characterName)
   if (!isRecord(value)) return fallback
   if (Number(value.version) > STATE_VERSION) return fallback
-  const collections = normalizeContactCollections(value, { characterId, characterName, now: nowIso(), makeId: id })
+  const personaActorId = text(value.pocketPersonaActorId, 180) || canonicalPocketPersonaActorId(chatId, characterId)
+  const collections = normalizeContactCollections(value, { characterId, characterName, now: nowIso(), makeId: id, personaActorId })
+  const suppressedContactSourceKeys = (Array.isArray(value.suppressedContactSourceKeys) ? value.suppressedContactSourceKeys : [])
+    .map((entry) => text(entry, 240)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index).slice(-160)
   const discoveredActors: DiscoveredActor[] = normalizeDiscoveredActors(value.discoveredActors, chatId, nowIso())
   const actorMemories = normalizeActorMemories(value.actorMemories)
   const notes: PhoneNote[] = (Array.isArray(value.notes) ? value.notes : []).slice(0, MAX_NOTES).flatMap((item) => {
@@ -282,6 +293,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       read: bool(item.read), route: normalizePocketRoute(item.route, legacyActionRoute(app, text(item.action, 120))),
       dismissedAt: text(item.dismissedAt, 40) || undefined,
       source: item.source === 'automatic' || item.source === 'system' ? item.source : 'model',
+      deviceOwnerActorId: text(item.deviceOwnerActorId, 180) || undefined,
       severity: item.severity === 'important' || item.severity === 'error' ? item.severity : 'info',
       action: text(item.action, 120) || undefined,
     }]
@@ -291,10 +303,20 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     const title = text(item.title, 160)
     if (!title) return []
     const source = isRecord(item.source) ? item.source : {}
+    const presentation = isRecord(item.presentation) ? item.presentation : null
+    const presentationKind = presentation && (presentation.kind === 'sent' || presentation.kind === 'received' || presentation.kind === 'observed' || presentation.kind === 'referenced' || presentation.kind === 'generic') ? presentation.kind : undefined
     return [{
       id: text(item.id, 160) || id('act'),
       kind: item.kind === 'message' || item.kind === 'contact' || item.kind === 'tracker-change' || item.kind === 'timeline' || item.kind === 'note' || item.kind === 'image' || item.kind === 'weather' ? item.kind : 'system',
       title, summary: text(item.summary, 500) || undefined, route: normalizePocketRoute(item.route),
+      presentation: presentationKind ? {
+        kind: presentationKind,
+        senderActorId: text(presentation?.senderActorId, 180) || undefined,
+        recipientActorIds: (Array.isArray(presentation?.recipientActorIds) ? presentation.recipientActorIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 16),
+        senderName: text(presentation?.senderName, 120) || undefined,
+        recipientNames: (Array.isArray(presentation?.recipientNames) ? presentation.recipientNames : []).map((entry) => text(entry, 120)).filter(Boolean).slice(0, 16),
+        conversationTitle: text(presentation?.conversationTitle, 120) || undefined,
+      } : undefined,
       createdAt: text(item.createdAt, 40) || nowIso(), scope: { chatId, characterId },
       source: {
         commandId: text(source.commandId, 240) || undefined, messageId: text(source.messageId, 180) || undefined,
@@ -505,6 +527,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     lastReconciliation,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
+    pocketPersonaActorId: personaActorId,
+    suppressedContactSourceKeys,
     setup: {
       initialized: bool(setupValue.initialized, hadPocketData),
       dismissed: bool(setupValue.dismissed),
@@ -621,19 +645,19 @@ function directGenerationHistory(conversation: PocketConversation, actorId: stri
   return history
 }
 function personaMemoryActorId(state: PhoneState): string {
-  const linked = text(state.pocketPersona.linkedPersonaId, 180)
-  const name = normalizeActorName(state.pocketPersona.displayName).replace(/\s+/g, '_').slice(0, 120)
-  return `persona:${linked || name || 'owner'}`
+  return pocketPersonaActorId(state)
 }
 
 function conversationMemoryAudience(
   state: PhoneState,
   conversation: PocketConversation,
 ): { ids: string[]; names: string[] } {
-  const ids = [personaMemoryActorId(state), ...conversationActorIds(conversation)]
+  const personaIds = conversation.includesPocketPersona ? [personaMemoryActorId(state)] : []
+  const personaNames = conversation.includesPocketPersona ? [state.pocketPersona.displayName] : []
+  const ids = [...personaIds, ...conversationActorIds(conversation)]
     .filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
   const names = [
-    state.pocketPersona.displayName,
+    ...personaNames,
     ...conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || ''),
   ].map((entry) => text(entry, 120)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index)
   return { ids, names }
@@ -870,15 +894,22 @@ function currentView(userId?: string): PocketViewState | null {
   return view && Date.now() - view.updatedAt < 120_000 ? view : null
 }
 
-function notificationDestinationVisible(state: PhoneState, route: PocketRoute, userId?: string): boolean {
+function notificationDestinationVisible(state: PhoneState, route: PocketRoute, userId?: string, deviceOwnerActorId = pocketPersonaActorId(state)): boolean {
   const view = currentView(userId)
-  return Boolean(view && view.chatId === state.chatId && view.characterId === state.characterId && destinationIsVisible(view.open, view.route, route))
+  return Boolean(
+    view
+    && view.chatId === state.chatId
+    && view.characterId === state.characterId
+    && view.deviceOwnerActorId === deviceOwnerActorId
+    && destinationIsVisible(view.open, view.route, route)
+  )
 }
 
 function addNotification(state: PhoneState, notification: Omit<PhoneNotification, 'id' | 'createdAt' | 'read'>, userId?: string): PhoneNotification | null {
   const route = notification.route || { app: notification.app }
-  if (notificationDestinationVisible(state, route as PocketRoute, userId)) return null
-  const entry: PhoneNotification = { ...notification, id: id('ntf'), createdAt: nowIso(), read: false }
+  const deviceOwnerActorId = notification.deviceOwnerActorId || pocketPersonaActorId(state)
+  if (notificationDestinationVisible(state, route as PocketRoute, userId, deviceOwnerActorId)) return null
+  const entry: PhoneNotification = { ...notification, deviceOwnerActorId, id: id('ntf'), createdAt: nowIso(), read: false }
   state.notifications.unshift(entry)
   state.notifications = state.notifications.slice(0, MAX_NOTIFICATIONS)
   return entry
@@ -1158,7 +1189,7 @@ function upsertContact(state: PhoneState, contact: PocketContact, preserveCustom
 }
 
 function directConversationForContact(state: PhoneState, contactId: string): PocketConversation | undefined {
-  return state.conversations.find((entry) => entry.kind === 'direct' && resolvePocketActor(state, conversationActorIds(entry)[0])?.contact?.id === contactId)
+  return state.conversations.find((entry) => entry.kind === 'direct' && entry.includesPocketPersona !== false && resolvePocketActor(state, conversationActorIds(entry)[0])?.contact?.id === contactId)
 }
 
 function reconcileContactAvailability(state: PhoneState, contact: PocketContact): void {
@@ -1367,9 +1398,38 @@ function actorRefParts(value: unknown): { id: string; name: string; relationship
   }
 }
 
+function actorReferenceIsPocketPersona(state: PhoneState, value: unknown): boolean {
+  const ref = actorRefParts(value)
+  const personaId = pocketPersonaActorId(state)
+  if (ref.id && (ref.id === personaId || ref.id === text(state.pocketPersona.linkedPersonaId, 180))) return true
+  if (!ref.name) return false
+  return Boolean(uniqueAliasMatch(ref.name, [state.pocketPersona.displayName, 'You'].filter(Boolean)))
+}
+
+function ensureMessageActor(state: PhoneState, value: unknown, source: 'model' | 'user' | 'tag', relationship?: unknown): ReturnType<typeof resolvePocketActor> {
+  if (actorReferenceIsPocketPersona(state, value)) return resolvePocketActor(state, pocketPersonaActorId(state))
+  let actor = resolveActorReference(state, value)
+  const ref = actorRefParts(value)
+  if (!actor && ref.name) {
+    const discovered = ensureDiscoveredActor(state, {
+      name: ref.name,
+      source: source === 'model' ? 'model-tool' : 'messages',
+      relationship: ref.relationship === 'close' ? 'close' : relationshipValue(relationship),
+      now: nowIso(),
+      makeId: id,
+    })
+    actor = resolvePocketActor(state, discovered.id)
+  }
+  return actor
+}
+
 function resolveActorReference(state: PhoneState, value: unknown, allowedIds?: string[]): ReturnType<typeof resolvePocketActor> {
   const ref = actorRefParts(value)
   const allowed = allowedIds ? new Set(allowedIds) : null
+  if (actorReferenceIsPocketPersona(state, value)) {
+    const personaId = pocketPersonaActorId(state)
+    return allowed && !allowed.has(personaId) ? null : resolvePocketActor(state, personaId)
+  }
   if (ref.id) {
     if (allowed && !allowed.has(ref.id)) return null
     return resolvePocketActor(state, ref.id)
@@ -1906,7 +1966,8 @@ function narrativeClockIso(state: PhoneState, clock: NarrativeSeedClock): string
 }
 
 function applyNarrativeClock(state: PhoneState, clock: NarrativeSeedClock): boolean {
-  if (state.roleplayClockSource === 'manual') return false
+  const explicitExact = clock.precision === 'exact' && /^\d{2}:\d{2}$/.test(clock.time)
+  if (state.roleplayClockSource === 'manual' && !explicitExact) return false
   const hasEvidence = Boolean(clock.time || clock.dayPart || clock.label)
   if (!hasEvidence) return false
 
@@ -2510,7 +2571,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const route: PocketRoute = { app: 'messages', conversationId: conversation.id }
     const visible = notificationDestinationVisible(state, route, userId)
     const nextMessage: PhoneMessage = {
-      id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
+      id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind === 'contact' || actor.kind === 'discovered' ? actor.kind : undefined, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
       text: reply, createdAt: phoneMessageTimestamp(state), read: visible, status: visible ? 'read' : 'delivered',
       eventSuggestion: generatedEventSuggestion(generated.suggestion, id),
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined },
@@ -2732,7 +2793,7 @@ No narration, markdown, delay values, or hidden reasoning.` },
         const profile = profileRow.profile
         const speakerContact = profileRow.contact
         const message: PhoneMessage = {
-          id: id('msg'), sender: 'contact', senderActorId: speaker.actorId, senderActorKind: speaker.kind, senderContactId: speaker.contact?.id, senderName: speaker.name, senderAccent: speaker.accent,
+          id: id('msg'), sender: 'contact', senderActorId: speaker.actorId, senderActorKind: speaker.kind === 'contact' || speaker.kind === 'discovered' ? speaker.kind : undefined, senderContactId: speaker.contact?.id, senderName: speaker.name, senderAccent: speaker.accent,
           text: latestSlot.text, createdAt: phoneMessageTimestamp(latest), read: visible, status: visible ? 'read' : 'delivered',
           eventSuggestion: latestSlot.eventSuggestion,
           generation: { requestId, info: {
@@ -3313,7 +3374,12 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       }
       const refs = Array.isArray(payload.participants) ? payload.participants.slice(0, 16) : []
       const participantActorIds: string[] = []
+      let includesPocketPersona = conversation?.includesPocketPersona ?? (source === 'user')
       for (const value of refs) {
+        if (actorReferenceIsPocketPersona(state, value)) {
+          includesPocketPersona = true
+          continue
+        }
         const ref = actorRefParts(value)
         let actor = resolveActorReference(state, value)
         if (!actor && ref.name) {
@@ -3322,19 +3388,24 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           })
           actor = resolvePocketActor(state, discovered.id)
         }
-        if (!actor) throw new Error('Every group participant needs a valid id or name.')
+        if (!actor || actor.kind === 'persona') throw new Error('Every group participant needs a valid id or name.')
         if (ref.relationship === 'close') {
           if (actor.contact) actor.contact.relationship = 'close'
           if (actor.discovered) actor.discovered.relationship = 'close'
         }
         if (!participantActorIds.includes(actor.actorId)) participantActorIds.push(actor.actorId)
       }
-      if (!refs.length && conversation) participantActorIds.push(...conversationActorIds(conversation))
-      if (participantActorIds.length < 2) throw new Error('A group conversation needs at least two explicit participants.')
+      if (!refs.length && conversation) {
+        participantActorIds.push(...conversationActorIds(conversation))
+        includesPocketPersona = conversation.includesPocketPersona
+      }
+      const totalParticipants = participantActorIds.length + (includesPocketPersona ? 1 : 0)
+      if (totalParticipants < 2) throw new Error('A group conversation needs at least two explicit participants.')
       const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index)
       const changedAt = nowIso()
       if (conversation) {
         conversation.participantActorIds = participantActorIds
+        conversation.includesPocketPersona = includesPocketPersona
         conversation.participantContactIds = participantContactIds
         if (title) conversation.title = title
         conversation.updatedAt = changedAt
@@ -3342,73 +3413,99 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         const names = participantActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean)
         conversation = {
           id: id('conversation'), kind: 'group', title: title || names.join(', ').slice(0, 120) || 'Group',
-          participantActorIds, participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt: changedAt, updatedAt: changedAt,
+          participantActorIds, includesPocketPersona, participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt: changedAt, updatedAt: changedAt,
         }
         state.conversations.push(conversation)
       }
-      result = { ...result, conversationId: conversation.id, participantActorIds: [...conversation.participantActorIds] }
-      activity = addActivity(state, { kind: 'message', title: conversation.title, summary: `${conversation.participantActorIds.length} participants`, route: { app: 'messages', conversationId: conversation.id }, source: { conversationId: conversation.id } }, command)
+      result = { ...result, conversationId: conversation.id, participantActorIds: [...conversation.participantActorIds], includesPocketPersona: conversation.includesPocketPersona }
+      activity = addActivity(state, { kind: 'message', title: conversation.title, summary: `${totalParticipants} participants`, route: { app: 'messages', conversationId: conversation.id }, source: { conversationId: conversation.id } }, command)
     } else if (action === 'message') {
       const messageText = text(payload.text ?? payload.message ?? payload.content, 12_000)
       if (!messageText) throw new Error('A phone message needs text.')
-      const sender = source === 'user' || payload.sender === 'user' || payload.sender === 'persona' ? 'persona' : payload.sender === 'system' ? 'system' : 'contact'
-      const explicitConversationId = text(payload.conversationId ?? payload.conversation_id, 180)
-      const foundConversation = explicitConversationId ? state.conversations.find((entry) => entry.id === explicitConversationId) : undefined
-      const channel = text(payload.channel, 20).toLowerCase()
-      const groupMessage = channel === 'gc' || channel === 'group' || foundConversation?.kind === 'group' || Boolean(!explicitConversationId && text(payload.conversation ?? payload.conversationTitle ?? payload.conversation_title, 120))
       const rawSpeaker = payload.speaker ?? payload.speakerRef ?? payload.speaker_ref
         ?? (payload.sender !== 'user' && payload.sender !== 'persona' && payload.sender !== 'contact' && payload.sender !== 'system' ? payload.sender : undefined)
         ?? (text(payload.senderContactId ?? payload.sender_contact_id, 180) ? { contactId: payload.senderContactId ?? payload.sender_contact_id } : undefined)
         ?? (text(payload.contact_name ?? payload.contactName, 120) ? { contactId: payload.contact_id ?? payload.contactId, name: payload.contact_name ?? payload.contactName, relationship: payload.relationship } : undefined)
+      const speakerIsPersona = actorReferenceIsPocketPersona(state, rawSpeaker)
+      const sender = source === 'user' || payload.sender === 'user' || payload.sender === 'persona' || speakerIsPersona
+        ? 'persona'
+        : payload.sender === 'system' ? 'system' : 'contact'
+      const explicitConversationId = text(payload.conversationId ?? payload.conversation_id, 180)
+      const foundConversation = explicitConversationId ? state.conversations.find((entry) => entry.id === explicitConversationId) : undefined
+      const channel = text(payload.channel, 20).toLowerCase()
+      const groupMessage = channel === 'gc' || channel === 'group' || foundConversation?.kind === 'group' || Boolean(!explicitConversationId && text(payload.conversation ?? payload.conversationTitle ?? payload.conversation_title, 120))
       let conversation: PocketConversation
-      let senderActor: ReturnType<typeof resolvePocketActor> = null
+      let senderActor: ReturnType<typeof resolvePocketActor> = sender === 'persona' ? resolvePocketActor(state, pocketPersonaActorId(state)) : null
+
       if (groupMessage) {
         conversation = exactGroupConversation(state, payload)
-        if (sender === 'contact') {
-          senderActor = resolveActorReference(state, rawSpeaker, conversationActorIds(conversation))
-          if (!senderActor) throw new Error('The named sender is not a participant in this group. Change membership explicitly before they can speak.')
+        const allowed = conversationDeviceActorIds(state, conversation)
+        if (sender === 'persona') {
+          if (!conversation.includesPocketPersona) throw new Error('The Pocket Persona is not a member of this group. Change membership explicitly before they can speak.')
+        } else if (sender === 'contact') {
+          senderActor = resolveActorReference(state, rawSpeaker, allowed)
+          if (!senderActor || senderActor.kind === 'persona') throw new Error('The named sender is not a participant in this group. Change membership explicitly before they can speak.')
         }
       } else if (foundConversation) {
         conversation = foundConversation
         if (conversation.kind !== 'direct') throw new Error('Use channel "gc" for group messages.')
-        if (sender === 'contact') {
-          senderActor = rawSpeaker ? resolveActorReference(state, rawSpeaker, conversationActorIds(conversation)) : resolvePocketActor(state, conversationActorIds(conversation)[0])
-          if (!senderActor) throw new Error('The message sender must be the participant in this direct conversation.')
+        if (sender === 'persona') {
+          if (!conversation.includesPocketPersona) throw new Error('The Pocket Persona is not a participant in this direct conversation.')
+        } else if (sender === 'contact') {
+          senderActor = rawSpeaker
+            ? resolveActorReference(state, rawSpeaker, conversationActorIds(conversation))
+            : conversationActorIds(conversation).length === 1 ? resolvePocketActor(state, conversationActorIds(conversation)[0]) : null
+          if (!senderActor || senderActor.kind === 'persona') throw new Error('The message sender must be a participant in this direct conversation.')
         }
-      } else {
-        if (sender === 'contact') {
-          senderActor = resolveActorReference(state, rawSpeaker)
-          const ref = actorRefParts(rawSpeaker)
-          if (!senderActor && ref.name) {
-            const discovered = ensureDiscoveredActor(state, {
-              name: ref.name,
-              source: source === 'model' ? 'model-tool' : 'messages',
-              relationship: ref.relationship === 'close' ? 'close' : relationshipValue(payload.relationship ?? payload.close),
-              now: nowIso(),
-              makeId: id,
-            })
-            senderActor = resolvePocketActor(state, discovered.id)
-          }
-          if (!senderActor) throw new Error('A new direct-message sender needs a name; no full profile is required.')
+      } else if (sender === 'persona') {
+        const targetRef = payload.target ?? payload.contactId ?? payload.contact_id
+        const target = ensureMessageActor(state, targetRef, source, payload.relationship ?? payload.close)
+        if (!target || target.kind === 'persona') throw new Error('Choose a valid non-Persona direct-message target.')
+        conversation = ensureDirectActorConversation(state, target.actorId, nowIso(), id)
+      } else if (sender === 'contact') {
+        senderActor = ensureMessageActor(state, rawSpeaker, source, payload.relationship ?? payload.close)
+        if (!senderActor || senderActor.kind === 'persona') throw new Error('A new direct-message sender needs a name; no full profile is required.')
+        const targetRef = payload.target ?? payload.targetRef ?? payload.target_ref
+        if (!targetRef || actorReferenceIsPocketPersona(state, targetRef)) {
           conversation = ensureDirectActorConversation(state, senderActor.actorId, nowIso(), id)
         } else {
-          const target = resolveActorReference(state, payload.target ?? payload.contactId ?? payload.contact_id)
-            || resolvePocketActor(state, state.contacts.find((entry) => entry.source.kind === 'character' && entry.source.characterId === state.characterId)?.id || '')
-          if (!target) throw new Error('Choose a valid direct-message target.')
-          conversation = ensureDirectActorConversation(state, target.actorId, nowIso(), id)
+          const targetActor = ensureMessageActor(state, targetRef, source, payload.relationship ?? payload.close)
+          if (!targetActor || targetActor.kind === 'persona') throw new Error('Choose a valid direct-message target.')
+          if (targetActor.actorId === senderActor.actorId) throw new Error('A direct message needs two distinct participants.')
+          conversation = ensureExternalDirectConversation(state, senderActor.actorId, targetActor.actorId, nowIso(), id)
         }
+      } else {
+        const target = ensureMessageActor(state, payload.target ?? payload.contactId ?? payload.contact_id, source, payload.relationship ?? payload.close)
+        if (!target || target.kind === 'persona') throw new Error('Choose a valid direct-message target.')
+        conversation = ensureDirectActorConversation(state, target.actorId, nowIso(), id)
       }
-      const senderActorId = sender === 'contact' ? senderActor!.actorId : undefined
+
+      const personaActorId = pocketPersonaActorId(state)
+      const senderActorId = sender === 'persona' ? personaActorId : sender === 'contact' ? senderActor!.actorId : undefined
       const senderContact = sender === 'contact' ? senderActor!.contact : undefined
+      const communicationActors = conversationDeviceActorIds(state, conversation)
+      const recipientActorIds = senderActorId
+        ? communicationActors.filter((actorId) => actorId !== senderActorId)
+        : communicationActors
+      const readByActorIds = senderActorId ? [senderActorId] : []
+      const routeBase: PocketRoute = { app: 'messages', conversationId: conversation.id }
+      for (const ownerActorId of recipientActorIds) {
+        if (notificationDestinationVisible(state, routeBase, userId, ownerActorId) && !readByActorIds.includes(ownerActorId)) readByActorIds.push(ownerActorId)
+      }
+      const personaRead = readByActorIds.includes(personaActorId)
       const message: PhoneMessage = {
-        id: id('msg'), sender, senderActorId, senderActorKind: sender === 'contact' ? senderActor!.kind : undefined,
-        senderContactId: senderContact?.id, senderName: sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : senderActor!.name,
-        senderAccent: sender === 'contact' ? senderActor!.accent : '', text: messageText, createdAt: phoneMessageTimestamp(state), read: sender !== 'contact',
-        status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : 'delivered',
+        id: id('msg'), sender, senderActorId, recipientActorIds, readByActorIds,
+        senderActorKind: sender === 'contact' ? (senderActor!.kind === 'persona' ? undefined : senderActor!.kind) : undefined,
+        senderContactId: senderContact?.id,
+        senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
+        senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
+        text: messageText, createdAt: phoneMessageTimestamp(state), read: personaRead,
+        status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
       }
       conversation.messages.push(message)
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
       conversation.updatedAt = message.createdAt
+
       if (sender === 'persona' && source === 'user') {
         if (conversation.kind === 'group') {
           for (const batch of state.groupBatches.filter((entry) => entry.conversationId === conversation.id && (entry.status === 'queued' || entry.status === 'delivering'))) {
@@ -3424,18 +3521,40 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           ? { ...previousBurst, messageIds: [...previousBurst.messageIds, message.id].slice(-12), explicitRemoteOverride: previousBurst.explicitRemoteOverride || explicitRemoteOverride, updatedAt: message.createdAt }
           : { id: id('burst'), messageIds: [message.id], open: true, held: false, finalized: false, explicitRemoteOverride, updatedAt: message.createdAt }
       }
-      if (sender === 'contact') {
+      if (sender === 'contact' && conversation.includesPocketPersona && conversation.kind === 'direct') {
         conversation.pause = undefined
         if (senderContact?.presence.inScene) reconcileContactAvailability(state, senderContact)
         else conversation.availability = { state: 'remote' }
       }
-      const visible = sender === 'contact' && notificationDestinationVisible(state, { app: 'messages', conversationId: conversation.id }, userId)
-      if (sender === 'contact' && !visible) conversation.unread += 1
-      if (visible) { message.read = true; message.status = 'read' }
+
+      conversation.unread = conversationUnreadForDevice(state, conversation, personaActorId)
       const route: PocketRoute = { app: 'messages', conversationId: conversation.id, messageId: message.id }
-      notification = sender === 'contact' && preferences.notifyMessages ? addNotification(state, { app: 'messages', title: senderActor!.name, body: preferences.notificationPreviews ? messageText.slice(0, 220) : 'New message', route, source: source === 'user' ? 'system' : 'model', severity: 'important' }, userId) : null
-      result = { ...result, actorId: senderActorId, contactId: senderContact?.id, conversationId: conversation.id, messageId: message.id }
-      if (source !== 'user') activity = addActivity(state, { kind: 'message', title: sender === 'contact' ? senderActor!.name : conversation.title, summary: messageText.slice(0, 280), route, source: { messageId: text(input.messageId, 180) || undefined, contactId: senderContact?.id, conversationId: conversation.id } }, command)
+      if (sender !== 'system' && preferences.notifyMessages) {
+        for (const ownerActorId of recipientActorIds) {
+          if (readByActorIds.includes(ownerActorId)) continue
+          const ownerNotification = addNotification(state, {
+            app: 'messages',
+            title: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : senderActor!.name,
+            body: preferences.notificationPreviews ? messageText.slice(0, 220) : 'New message',
+            route, source: source === 'user' ? 'system' : 'model', severity: 'important', deviceOwnerActorId: ownerActorId,
+          }, userId)
+          if (ownerActorId === personaActorId) notification = ownerNotification
+        }
+      }
+      const direction = messageDirection(state, conversation, message, personaActorId)
+      const recipientNames = recipientActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === personaActorId ? state.pocketPersona.displayName : 'Unknown')).filter(Boolean)
+      result = { ...result, actorId: senderActorId, contactId: senderContact?.id, conversationId: conversation.id, messageId: message.id, direction }
+      if (source !== 'user') activity = addActivity(state, {
+        kind: 'message',
+        title: direction === 'outbound' ? 'Sent message' : direction === 'inbound' ? 'Received message' : 'Observed message',
+        summary: messageText.slice(0, 280), route,
+        presentation: {
+          kind: direction === 'outbound' ? 'sent' : direction === 'inbound' ? 'received' : 'observed',
+          senderActorId, recipientActorIds,
+          senderName: message.senderName, recipientNames, conversationTitle: conversation.title,
+        },
+        source: { messageId: text(input.messageId, 180) || undefined, contactId: senderContact?.id, conversationId: conversation.id },
+      }, command)
     } else if (action === 'contact') {
       const contactId = text(payload.contactId ?? payload.contact_id ?? payload.id, 180)
       let existing = state.contacts.find((entry) => entry.id === contactId)
@@ -3658,7 +3777,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:view_state': {
         frontendViews.set(viewKey(userId), {
-          chatId: context.chatId, characterId: context.characterId, open: bool(payload.open),
+          chatId: context.chatId, characterId: context.characterId, deviceOwnerActorId: text(payload.deviceOwnerActorId, 180) || pocketPersonaActorId(await loadState(context.chatId, context.characterId, userId)), open: bool(payload.open),
           route: normalizePocketRoute(payload.route), updatedAt: Date.now(),
         })
         break
@@ -3680,7 +3799,10 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
             const presentation = await characterPresentationFor(option.sourceId, userId)
             option = { ...option, avatarUrl: presentation.avatarUrl || option.avatarUrl, accent: presentation.accent || option.accent }
           }
-          const contact = upsertContact(state, contactFromSource(option))
+          const imported = contactFromSource(option)
+          const sourceKey = contactSourceKey(imported.source)
+          if (sourceKey) state.suppressedContactSourceKeys = state.suppressedContactSourceKeys.filter((entry) => entry !== sourceKey)
+          const contact = upsertContact(state, imported)
           const conversation = ensureDirectConversation(state, contact.id, nowIso(), id)
           const activity = addActivity(state, { kind: 'contact', title: `${contact.name} imported`, summary: contact.role, route: { app: 'contacts', contactId: contact.id, view: 'detail' }, source: { contactId: contact.id, conversationId: conversation.id } })
           await saveState(state, userId)
@@ -3824,7 +3946,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const createdAt = nowIso()
           const conversation: PocketConversation = {
             id: id('conversation'), kind: 'group', title: text(payload.title, 120) || participantActorIds.map((entry) => resolvePocketActor(state, entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group',
-            participantActorIds, participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt, updatedAt: createdAt,
+            participantActorIds, includesPocketPersona: true, participantContactIds, messages: [], unread: 0, availability: { state: 'remote' }, createdAt, updatedAt: createdAt,
           }
           state.conversations.push(conversation)
           await saveState(state, userId)
@@ -4248,20 +4370,28 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:mark_read': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
+          const ownerActorId = text(payload.deviceOwnerActorId, 180) || pocketPersonaActorId(state)
           const app = text(payload.app, 40)
           const notificationId = text(payload.notificationId, 180)
-          if (notificationId) markNotificationRead(state.notifications, notificationId)
+          if (notificationId) {
+            const target = state.notifications.find((entry) => entry.id === notificationId)
+            if (target && notificationBelongsToDevice(state, ownerActorId, target.deviceOwnerActorId)) markNotificationRead(state.notifications, notificationId)
+          }
           const conversationId = text(payload.conversationId, 180)
           const legacyContactId = text(payload.contactId, 180)
           const conversation = state.conversations.find((entry) => entry.id === conversationId) || directConversationForContact(state, legacyContactId)
-          if (conversation) {
-            conversation.unread = 0
-            conversation.messages.forEach((message) => { message.read = true; message.status = 'read' })
+          if (conversation && conversationDeviceActorIds(state, conversation).includes(ownerActorId)) {
+            for (const message of conversation.messages) {
+              if (!message.readByActorIds) message.readByActorIds = []
+              if (!message.readByActorIds.includes(ownerActorId)) message.readByActorIds.push(ownerActorId)
+              if (ownerActorId === pocketPersonaActorId(state)) { message.read = true; message.status = 'read' }
+            }
+            conversation.unread = conversationUnreadForDevice(state, conversation, pocketPersonaActorId(state))
             state.notifications.forEach((entry) => {
-              if (entry.route?.app === 'messages' && entry.route.conversationId === conversation.id) entry.read = true
+              if (notificationBelongsToDevice(state, ownerActorId, entry.deviceOwnerActorId) && entry.route?.app === 'messages' && entry.route.conversationId === conversation.id) entry.read = true
             })
           } else if (app && app !== 'messages') {
-            state.notifications.forEach((entry) => { if (entry.app === app) entry.read = true })
+            state.notifications.forEach((entry) => { if (notificationBelongsToDevice(state, ownerActorId, entry.deviceOwnerActorId) && entry.app === app) entry.read = true })
           }
           await saveState(state, userId)
           await sendState(state, userId, 'read')
@@ -4273,9 +4403,15 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:notifications_clear': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
-          if (payload.type === 'lumiphone:notification_dismiss') dismissNotification(state.notifications, text(payload.notificationId, 180), nowIso())
-          else if (payload.type === 'lumiphone:notification_mark_read') markNotificationRead(state.notifications, text(payload.notificationId, 180))
-          else clearNotifications(state.notifications, payload.mode === 'read' ? 'read' : 'all', nowIso())
+          const ownerActorId = text(payload.deviceOwnerActorId, 180) || pocketPersonaActorId(state)
+          const notificationId = text(payload.notificationId, 180)
+          const target = state.notifications.find((entry) => entry.id === notificationId)
+          if (payload.type === 'lumiphone:notification_dismiss' && target && notificationBelongsToDevice(state, ownerActorId, target.deviceOwnerActorId)) dismissNotification(state.notifications, notificationId, nowIso())
+          else if (payload.type === 'lumiphone:notification_mark_read' && target && notificationBelongsToDevice(state, ownerActorId, target.deviceOwnerActorId)) markNotificationRead(state.notifications, notificationId)
+          else if (payload.type === 'lumiphone:notifications_clear') {
+            const scoped = state.notifications.filter((entry) => notificationBelongsToDevice(state, ownerActorId, entry.deviceOwnerActorId))
+            clearNotifications(scoped, payload.mode === 'read' ? 'read' : 'all', nowIso())
+          }
           await saveState(state, userId)
           await sendState(state, userId, 'notifications')
         })
@@ -4290,6 +4426,14 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           if (kind === 'event') state.events = state.events.filter((entry) => entry.id !== targetId)
           if (kind === 'tracker') state.trackers = state.trackers.filter((entry) => entry.id !== targetId)
           if (kind === 'contact') {
+            const deleting = state.contacts.find((entry) => entry.id === targetId)
+            if (deleting) {
+              const sourceKey = contactSourceKey(deleting.source)
+              if (sourceKey && (deleting.source.kind === 'character' || deleting.source.kind === 'council') && !state.suppressedContactSourceKeys.includes(sourceKey)) {
+                state.suppressedContactSourceKeys.push(sourceKey)
+                state.suppressedContactSourceKeys = state.suppressedContactSourceKeys.slice(-160)
+              }
+            }
             state.contacts = state.contacts.filter((entry) => entry.id !== targetId)
             for (const actor of state.discoveredActors) if (actor.promotedContactId === targetId) actor.promotedContactId = undefined
             for (const conversation of state.conversations) conversation.participantContactIds = conversation.participantContactIds.filter((entry) => entry !== targetId)
@@ -4664,6 +4808,14 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
           reference.consumedAt = nowIso()
           reference.consumedMessageId = messageId
           reference.error = undefined
+          addActivity(state, {
+            kind: 'message',
+            title: 'Referenced chat',
+            summary: `${reference.conversationTitle} · ${reference.messages.length} message${reference.messages.length === 1 ? '' : 's'}`,
+            route: { app: 'messages', conversationId: reference.conversationId },
+            presentation: { kind: 'referenced', conversationTitle: reference.conversationTitle },
+            source: { messageId, conversationId: reference.conversationId },
+          })
         }
         changed = true
         spindle.log.info(`Pocket observed GENERATION_ENDED: reference=${reference.id} generation=${generationId || 'unknown'} status=${reference.status} message=${messageId || 'none'}`)
@@ -4680,7 +4832,19 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
       await sendState(state, userId, reason)
     })
     if (generationType === 'normal' && messageId && !payload?.error) {
-      await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId })
+      send({ type: 'lumiphone:reconciliation_status', status: 'working', generationId, messageId }, userId)
+      try {
+        await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId })
+        const reconciled = await loadState(chatId, characterId, userId)
+        send({
+          type: 'lumiphone:reconciliation_status', status: 'complete', generationId, messageId,
+          revision: reconciled.lastReconciliation?.revision || reconciled.stateRevision || 0,
+          domains: reconciled.lastReconciliation?.domains || [],
+        }, userId)
+      } catch (error) {
+        send({ type: 'lumiphone:reconciliation_status', status: 'error', generationId, messageId, error: error instanceof Error ? error.message : String(error) }, userId)
+        throw error
+      }
       void considerAmbientMessage(chatId, characterId, 'turn', userId)
     }
   } catch (error) {

@@ -19,10 +19,10 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', "action === 'conversation'"]) {
+for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
-for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView']) {
+for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
   assert.ok(`${frontendSource}\n${controllerSource}\n${surfaceSource}`.includes(token), `frontend contract missing ${token}`)
 }
 assert.ok(controllerSource.includes('oldThreadNearBottom') && controllerSource.includes('thread.scrollHeight'), 'thread rerenders must preserve/follow the GC scroll anchor intentionally')
@@ -151,7 +151,7 @@ const firstState = frontendMessages.find((message) => message.type === 'lumiphon
 assert.equal(firstState.state.chatId, 'chat-a')
 assert.equal(firstState.state.characterId, 'char-a')
 assert.equal(firstState.state.characterName, 'Alice')
-assert.equal(firstState.state.version, 10)
+assert.equal(firstState.state.version, 11)
 assert.deepEqual(firstState.state.discoveredActors, [])
 assert.deepEqual(firstState.state.references, [])
 assert.deepEqual(firstState.state.groupBatches, [])
@@ -492,6 +492,60 @@ await backendEvents.get('TOOL_INVOCATION')({
 lazyState = storage.get('phones/chat-a__char-a.json')
 assert.equal(lazyState.discoveredActors.filter((actor) => actor.displayName === 'Maya').length, 1, 'repeat names must reuse the same discovered actor')
 assert.equal(lazyState.conversations.find((conversation) => conversation.id === mayaDm.id).messages.length, 2)
+
+// Device projection: model-authored Persona names canonicalize to the Persona actor,
+// while NPC-to-NPC direct messages persist externally without leaking onto the Persona phone.
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'device-state', chatId: 'chat-device', characterId: 'char-a' }, 'user-a')
+await frontendHandler({
+  type: 'lumiphone:save_pocket_persona', requestId: 'device-persona', chatId: 'chat-device', characterId: 'char-a',
+  persona: { displayName: 'Kai', role: 'Persona', source: 'manual' },
+}, 'user-a')
+const personaSendResult = await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'device-kai-to-tyler', args: {
+    action: 'message', chat_id: 'chat-device', character_id: 'char-a',
+    payload: { channel: 'dm', speaker: 'Kai', target: 'Tyler', text: 'Bring him. Just you two.' },
+  },
+}, 'user-a')
+assert.equal(JSON.parse(personaSendResult).ok, true)
+let deviceState = storage.get('phones/chat-device__char-a.json')
+const devicePersonaId = deviceState.pocketPersonaActorId
+const tylerActor = deviceState.discoveredActors.find((actor) => actor.displayName === 'Tyler')
+assert.ok(tylerActor, 'Persona-authored direct-message targets may materialize as lightweight actors')
+const kaiTyler = deviceState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona && conversation.participantActorIds.includes(tylerActor.id))
+assert.ok(kaiTyler, 'Kai → Tyler must use a Persona-participating direct conversation')
+assert.equal(kaiTyler.messages.at(-1).sender, 'persona')
+assert.equal(kaiTyler.messages.at(-1).senderActorId, devicePersonaId, 'speaker matching the configured Pocket Persona must canonicalize to Persona identity')
+assert.deepEqual(kaiTyler.messages.at(-1).recipientActorIds, [tylerActor.id])
+assert.equal(kaiTyler.unread, 0, 'outbound Persona messages must never unread-notify their own device')
+assert.equal(deviceState.contacts.some((contact) => contact.name === 'Kai'), false, 'the configured Persona must never be materialized as a Contact')
+assert.equal(deviceState.notifications.some((entry) => entry.deviceOwnerActorId === devicePersonaId && entry.source === 'model' && entry.body.includes('Bring him')), false)
+assert.ok(deviceState.notifications.some((entry) => entry.deviceOwnerActorId === tylerActor.id && entry.body.includes('Bring him')), 'the recipient device should own the unread notification')
+assert.equal(deviceState.activities.at(-1).presentation.kind, 'sent')
+
+const externalResult = await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'device-marcus-to-tyler', args: {
+    action: 'message', chat_id: 'chat-device', character_id: 'char-a',
+    payload: { channel: 'dm', speaker: 'Marcus', target: 'Tyler', text: 'Track him. Send the pin.' },
+  },
+}, 'user-a')
+assert.equal(JSON.parse(externalResult).ok, true)
+deviceState = storage.get('phones/chat-device__char-a.json')
+const marcusActor = deviceState.discoveredActors.find((actor) => actor.displayName === 'Marcus')
+const externalDm = deviceState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona === false && conversation.participantActorIds.includes(marcusActor.id) && conversation.participantActorIds.includes(tylerActor.id))
+assert.ok(externalDm, 'NPC ↔ NPC communication must persist as an external direct conversation')
+assert.equal(externalDm.messages.at(-1).senderActorId, marcusActor.id)
+assert.deepEqual(externalDm.messages.at(-1).recipientActorIds, [tylerActor.id])
+assert.equal(deviceState.notifications.some((entry) => entry.deviceOwnerActorId === devicePersonaId && entry.body.includes('Track him')), false, 'external NPC traffic must not leak onto the Persona device')
+assert.ok(deviceState.notifications.some((entry) => entry.deviceOwnerActorId === tylerActor.id && entry.body.includes('Track him')))
+assert.equal(deviceState.activities.at(-1).presentation.kind, 'observed')
+
+// Character/council-backed contact deletion leaves a source tombstone so normalization cannot resurrect it.
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'delete-state', chatId: 'chat-delete', characterId: 'char-a' }, 'user-a')
+await frontendHandler({ type: 'lumiphone:delete', requestId: 'delete-character-contact', chatId: 'chat-delete', characterId: 'char-a', kind: 'contact', id: 'char-a' }, 'user-a')
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'delete-state-again', chatId: 'chat-delete', characterId: 'char-a' }, 'user-a')
+const deletedState = storage.get('phones/chat-delete__char-a.json')
+assert.equal(deletedState.contacts.some((contact) => contact.id === 'char-a'), false, 'deleted linked Character contact must stay deleted')
+assert.ok(deletedState.suppressedContactSourceKeys.includes('character:char-a'))
 
 const groupCreateTool = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'lazy-group-create', args: {
@@ -921,6 +975,33 @@ await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-reconcile', generati
 reconciliationAfter = storage.get(reconciliationStatePath)
 assert.equal(reconciliationAfter.stateRevision, 1)
 assert.equal(reconciliationAfter.trackers.find((tracker) => tracker.key === 'scene_tension').value, 15)
+spindle.generate.quiet = reconciliationQuiet
+spindle.chat.getMessages = reconciliationMessages
+
+// A manual setup clock is an anchor, not an immortal veto: newer explicit exact narrative time wins.
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'clock-state', chatId: 'chat-clock', characterId: 'char-a' }, 'user-a')
+const clockStatePath = 'phones/chat-clock__char-a.json'
+const manualClockState = storage.get(clockStatePath)
+manualClockState.roleplayNow = '2026-09-04T03:39:00.000Z'
+manualClockState.roleplayClockSource = 'manual'
+manualClockState.roleplayClockPrecision = 'exact'
+manualClockState.roleplayClockLabel = '03:39 AM'
+manualClockState.roleplayTimezoneOffsetMinutes = 0
+storage.set(clockStatePath, manualClockState)
+spindle.chat.getMessages = async () => [
+  { id: 'clock-user', revision: 1, role: 'user', content: "It's 6:30 AM now." },
+  { id: 'clock-assistant', revision: 1, role: 'assistant', content: 'The room is washed in early morning light.' },
+]
+spindle.generate.quiet = async () => ({ content: JSON.stringify({
+  world: { setting: '', clock: { date: '2026-09-04', time: '06:30', dayPart: 'morning', precision: 'exact', label: '6:30 AM' }, facts: [], weather: null },
+  facts: [], actors: [], timeline: [], trackerOps: [],
+}) })
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-clock', generationId: 'gen-clock', generationType: 'normal', messageId: 'clock-assistant' }, 'user-a')
+const exactClockState = storage.get(clockStatePath)
+assert.equal(exactClockState.roleplayClockSource, 'narrative')
+assert.equal(exactClockState.roleplayClockPrecision, 'exact')
+assert.equal(exactClockState.roleplayClockLabel, '6:30 AM')
+assert.match(exactClockState.roleplayNow, /T06:30:00\.000Z$/, 'explicit exact narrative time must supersede a stale manual setup clock')
 spindle.generate.quiet = reconciliationQuiet
 spindle.chat.getMessages = reconciliationMessages
 
