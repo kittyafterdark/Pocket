@@ -26,6 +26,12 @@ function serializeWithinBudget(value: Record<string, unknown>, budget = MODEL_CO
   return '{}'
 }
 
+function projectedRoleplayTime(state: PhoneState): string {
+  if (state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' && state.roleplayClockLabel) {
+    return state.roleplayClockLabel
+  }
+  return state.roleplayNow
+}
 export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BUDGET): string {
   const contacts: Array<Record<string, unknown>> = state.contacts
     .filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned || contact.relationship === 'close')
@@ -71,7 +77,13 @@ export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BU
     .slice(0, 8)
     .map((event) => `${event.whenText || event.start || 'Unscheduled'} — ${event.title.slice(0, 180)}`)
   return serializeWithinBudget({
-    roleplayNow: state.roleplayNow,
+    roleplayNow: projectedRoleplayTime(state),
+    roleplayClock: {
+      source: state.roleplayClockSource || 'legacy',
+      precision: state.roleplayClockPrecision || 'unknown',
+      label: state.roleplayClockLabel || '',
+    },
+    stateRevision: state.stateRevision || 0,
     weather: {
       location: state.weather.location.slice(0, 160), condition: state.weather.condition.slice(0, 120),
       temperature: state.weather.temperature, unit: state.weather.unit, details: state.weather.details.slice(0, 300),

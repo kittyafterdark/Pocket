@@ -1,4 +1,5 @@
 import type { DevicePreferences, PhoneState, PocketContact, PocketContextDiagnostics, PocketConversation } from '../types.js'
+import { sanitizeNarrativeContent } from './narrative-content.js'
 
 export type HostMessage = { id?: unknown; index_in_chat?: unknown; revision?: unknown; role?: unknown; content?: unknown }
 
@@ -6,6 +7,14 @@ const BUDGETS = { actor: 1_200, scene: 1_800, thread: 6_000, recent: 3_200, stor
 
 function clean(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : ''
+}
+function roleplayTimeLabel(state: PhoneState): string {
+  if (state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' && state.roleplayClockLabel) {
+    return `${state.roleplayClockLabel} (${state.roleplayClockPrecision || 'approximate'})`
+  }
+  return state.roleplayClockLabel && state.roleplayClockSource === 'narrative'
+    ? `${state.roleplayClockLabel} [${state.roleplayNow}]`
+    : state.roleplayNow
 }
 
 function messageIndex(message: HostMessage, fallback: number): number {
@@ -19,7 +28,7 @@ function storyLines(state: PhoneState, contact: PocketContact): string[] {
   const trackers = state.trackers.filter((tracker) => tracker.visibleToModel && (`${tracker.target.id} ${tracker.target.label}`.includes(contact.id) || `${tracker.target.label}`.toLocaleLowerCase().includes(name))).slice(0, 4)
   const notes = state.notes.filter((note) => note.pinned).slice(0, 2)
   return [
-    `Roleplay time: ${state.roleplayNow}`,
+    `Roleplay time: ${roleplayTimeLabel(state)}`,
     `Scene: ${state.weather.location}; ${state.weather.condition}.`,
     ...events.map((entry) => `Timeline: ${entry.whenText}: ${entry.title}`),
     ...trackers.map((entry) => `Tracker: ${entry.label}=${entry.kind === 'state' ? entry.state : entry.value}`),
@@ -103,7 +112,7 @@ export async function assemblePocketContext(options: {
   const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : []
   const authoritative = hostMessages.at(-1)
   const authoritativeLatest = authoritative ? {
-    id: clean(authoritative.id, 180), index: messageIndex(authoritative, hostMessages.length - 1), excerpt: clean(authoritative.content, 180),
+    id: clean(authoritative.id, 180), index: messageIndex(authoritative, hostMessages.length - 1), excerpt: sanitizeNarrativeContent(authoritative.content, 180),
   } : { id: '', index: -1, excerpt: '' }
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
@@ -122,12 +131,12 @@ export async function assemblePocketContext(options: {
         : 'System'
     const anchor = clean(message.id, 180)
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : ''
-    return `${role}${source}: ${clean(message.content, 520)}`
+    return `${role}${source}: ${sanitizeNarrativeContent(message.content, 520)}`
   }).filter((line) => !line.endsWith(': '))
   const recent = trimBlock(recentLines, BUDGETS.recent)
   const includedMessage = selectedRecent.at(-1)
   const includedLatest = includedMessage ? {
-    id: clean(includedMessage.id, 180), index: messageIndex(includedMessage, hostMessages.length - 1), excerpt: clean(includedMessage.content, 180),
+    id: clean(includedMessage.id, 180), index: messageIndex(includedMessage, hostMessages.length - 1), excerpt: sanitizeNarrativeContent(includedMessage.content, 180),
   } : { id: '', index: -1, excerpt: '' }
   const storySource = mode !== 'off' && (mode === 'story' || mode === 'smart' || !includeRoleplayBackground) ? storyLines(state, contact) : []
   const story = trimBlock(storySource, BUDGETS.story)

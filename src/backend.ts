@@ -45,6 +45,7 @@ import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/sch
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
+import { sanitizeNarrativeContent } from './backend/narrative-content.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
 import { assertPocketImageResolved, resolvePocketImageSource } from './backend/image-sources.js'
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
@@ -133,7 +134,7 @@ function defaultWeather(): RoleplayWeather {
     unit: 'C',
     high: 24,
     low: 16,
-    details: 'A quiet, clear day in the roleplay timeline.',
+    details: 'Quiet, clear conditions in the roleplay timeline.',
     updatedAt: nowIso(),
   }
 }
@@ -198,6 +199,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     characterId,
     characterName: characterName || 'Character',
     roleplayNow: createdAt,
+    stateRevision: 0,
     sceneSnapshot: null,
     pocketPersona: defaultPocketPersona(createdAt),
     setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: 'unconfigured' },
@@ -320,6 +322,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     details: text(weatherValue.details, 2_000) || fallback.weather.details,
     updatedAt: text(weatherValue.updatedAt, 40) || nowIso(),
   }
+  if (weather.details === 'A quiet, clear day in the roleplay timeline.') weather.details = 'Quiet, clear conditions in the roleplay timeline.'
   const snapshotValue = isRecord(value.sceneSnapshot) ? value.sceneSnapshot : null
   const sceneSnapshot: SceneActorSnapshot | null = snapshotValue ? {
     actors: (Array.isArray(snapshotValue.actors) ? snapshotValue.actors : []).slice(0, 8).flatMap((entry) => {
@@ -471,6 +474,22 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       error: text(item.error, 500) || undefined,
     }]
   })
+  const reconciliationValue = isRecord(value.lastReconciliation) ? value.lastReconciliation : {}
+  const reconciliationDomains = (Array.isArray(reconciliationValue.domains) ? reconciliationValue.domains : [])
+    .map((entry) => text(entry, 40))
+    .filter((entry) => entry === 'continuity' || entry === 'clock' || entry === 'weather' || entry === 'presence' || entry === 'timeline' || entry === 'trackers')
+    .slice(0, 6) as NonNullable<PhoneState['lastReconciliation']>['domains']
+  const lastReconciliation: PhoneState['lastReconciliation'] = text(reconciliationValue.sourceKey, 1_600)
+    ? {
+        revision: Math.max(0, Math.round(numberValue(reconciliationValue.revision, 0))),
+        sourceKey: text(reconciliationValue.sourceKey, 1_600),
+        sourceMessageIds: (Array.isArray(reconciliationValue.sourceMessageIds) ? reconciliationValue.sourceMessageIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(-8),
+        generationId: text(reconciliationValue.generationId, 180) || undefined,
+        messageId: text(reconciliationValue.messageId, 180) || undefined,
+        updatedAt: text(reconciliationValue.updatedAt, 40) || nowIso(),
+        domains: reconciliationDomains,
+      }
+    : undefined
   const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0 || relays.length > 0 || references.length > 0 || groupBatches.length > 0)
   return {
     version: STATE_VERSION,
@@ -482,6 +501,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayClockPrecision: value.roleplayClockPrecision === 'exact' || value.roleplayClockPrecision === 'approximate' || value.roleplayClockPrecision === 'relative' ? value.roleplayClockPrecision : 'unknown',
     roleplayClockLabel: text(value.roleplayClockLabel, 160),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
+    stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    lastReconciliation,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
     setup: {
@@ -670,7 +691,8 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
     stateChanged = true
   }
   state.trackers = state.trackers.map((tracker) => {
-    const result = materializeTracker(tracker, state.roleplayNow)
+    const trackerRoleplayNow = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? '' : state.roleplayNow
+    const result = materializeTracker(tracker, trackerRoleplayNow)
     stateChanged ||= result.changed
     return result.tracker
   })
@@ -1560,6 +1582,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
 type NarrativeSeedVisibility = 'public' | 'scene' | 'private'
 type NarrativeSeedTtl = 'turn' | 'scene' | 'persistent'
 type NarrativeActorStatus = 'available' | 'busy' | 'away' | 'asleep' | 'in_scene' | 'unknown'
+type NarrativeActorPresence = 'with_persona' | 'away' | 'unknown'
 type NarrativeTimelineScope = 'world' | 'actor'
 
 interface NarrativeSeedWeather {
@@ -1590,6 +1613,7 @@ interface NarrativeSeedFact {
 interface NarrativeSeedActor {
   name: string
   status: NarrativeActorStatus
+  presence: NarrativeActorPresence
   activity: string
   location: string
   visibility: NarrativeSeedVisibility
@@ -1617,6 +1641,13 @@ interface NarrativeSeedSnapshot {
   timeline: NarrativeSeedTimeline[]
   updatedAt: string
 }
+interface NarrativeTrackerDelta {
+  key: string
+  operation: 'set' | 'add' | 'subtract' | 'reset' | 'set_state'
+  amount?: number
+  state?: string
+  reason: string
+}
 
 const POCKET_CONTINUITY_SEED_VERSION = 4 as const
 const narrativeSeedFlights = new Map<string, Promise<NarrativeSeedSnapshot | null>>()
@@ -1633,6 +1664,27 @@ function seedVisibility(value: unknown): NarrativeSeedVisibility {
 }
 function seedTtl(value: unknown): NarrativeSeedTtl {
   return value === 'persistent' || value === 'scene' ? value : 'turn'
+}
+function normalizeNarrativeTrackerDeltas(value: unknown): NarrativeTrackerDelta[] {
+  const raw = isRecord(value) && Array.isArray(value.trackerOps) ? value.trackerOps : []
+  return raw.slice(0, 12).flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const key = trackerKey(entry.key, '')
+    const operation = entry.operation === 'set' || entry.operation === 'add' || entry.operation === 'subtract' || entry.operation === 'reset' || entry.operation === 'set_state'
+      ? entry.operation : ''
+    if (!key || !operation) return []
+    const amount = Number(entry.amount)
+    const state = text(entry.state, 80)
+    if ((operation === 'set' || operation === 'add' || operation === 'subtract') && !Number.isFinite(amount)) return []
+    if (operation === 'set_state' && !state) return []
+    return [{
+      key,
+      operation,
+      amount: Number.isFinite(amount) ? amount : undefined,
+      state: state || undefined,
+      reason: text(entry.reason, 300) || 'Narrative state reconciliation',
+    }]
+  })
 }
 function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds: string[] = []): NarrativeSeedSnapshot {
   const raw = isRecord(value) ? value : {}
@@ -1691,6 +1743,9 @@ function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds
     return [{
       name,
       status,
+      presence: entry.presence === 'with_persona' || entry.presence === 'away'
+        ? entry.presence
+        : status === 'in_scene' ? 'with_persona' : 'unknown',
       activity: text(entry.activity, 260),
       location: text(entry.location, 180),
       visibility: seedVisibility(entry.visibility),
@@ -1764,7 +1819,7 @@ function mergeNarrativeSeed(previous: NarrativeSeedSnapshot | null, fresh: Narra
 function narrativeSeedSourceKey(messages: any[]): string {
   return messages.map((message, index) => {
     const idPart = text(message?.id, 180) || `row-${index}`
-    return `${idPart}:${String(message?.revision ?? '')}:${text(message?.role, 20)}:${text(message?.content, 180)}`
+    return `${idPart}:${String(message?.revision ?? '')}:${text(message?.role, 20)}:${sanitizeNarrativeContent(message?.content, 180)}`
   }).join('|').slice(0, 1_600)
 }
 function seedVisibleTo(entry: { visibility: NarrativeSeedVisibility; knownBy: string[] }, speakerName: string): boolean {
@@ -1934,7 +1989,57 @@ function continuityEventKey(item: NarrativeSeedTimeline): string {
 function seededEventLane(event: CalendarEvent): boolean {
   return event.createdBy === 'model' && (event.lane === 'Continuity' || event.lane === 'Current goal')
 }
-
+function applyNarrativeActorPresence(state: PhoneState, actors: NarrativeSeedActor[], updatedAt: string): boolean {
+  let changed = false
+  for (const item of actors) {
+    if (item.presence === 'unknown') continue
+    const matchedContactIds = new Set<string>()
+    for (const actorId of matchingActorIds(state, item.name)) {
+      const contact = resolvePocketActor(state, actorId)?.contact
+      if (!contact || matchedContactIds.has(contact.id)) continue
+      matchedContactIds.add(contact.id)
+      const nextInScene = item.presence === 'with_persona'
+      if (contact.presence.inScene !== nextInScene) {
+        contact.presence.inScene = nextInScene
+        if (nextInScene) contact.presence.lastSceneAt = updatedAt
+        changed = true
+      }
+      const nextSceneNote = nextInScene ? [item.activity, item.location].filter(Boolean).join(' — ').slice(0, 600) : ''
+      if (contact.sceneNote !== nextSceneNote && (nextSceneNote || item.presence === 'away')) {
+        contact.sceneNote = nextSceneNote
+        changed = true
+      }
+      reconcileContactAvailability(state, contact)
+    }
+  }
+  return changed
+}
+function applyNarrativeTrackerDeltas(state: PhoneState, deltas: NarrativeTrackerDelta[], updatedAt: string): boolean {
+  let changed = false
+  for (const delta of deltas) {
+    const index = state.trackers.findIndex((tracker) => tracker.key === delta.key && tracker.allowModelWrite && tracker.updateMode === 'model')
+    if (index < 0) continue
+    const tracker = state.trackers[index]
+    try {
+      const next = applyTrackerOperation(tracker, {
+        operation: delta.operation,
+        amount: delta.amount,
+        state: delta.state,
+        reason: delta.reason,
+        source: 'model',
+        now: updatedAt,
+        roleplayNow: state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? undefined : state.roleplayNow,
+      })
+      if (next !== tracker) {
+        state.trackers[index] = next
+        changed = true
+      }
+    } catch (error) {
+      spindle.log.warn(`Pocket ignored invalid narrative tracker delta for ${delta.key}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  return changed
+}
 function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot): boolean {
   let changed = applyNarrativeClock(state, seed.world.clock)
 
@@ -2060,7 +2165,7 @@ async function loadNarrativeSeed(chatId: string, characterId: string, userId?: s
   }
   return normalizeNarrativeSeed(raw)
 }
-async function refreshNarrativeSeed(chatId: string, characterId: string, userId?: string): Promise<NarrativeSeedSnapshot | null> {
+async function refreshNarrativeSeed(chatId: string, characterId: string, userId?: string, options: { generationId?: string; messageId?: string } = {}): Promise<NarrativeSeedSnapshot | null> {
   if (!chatId || chatId === '_lobby' || !spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) {
     return loadNarrativeSeed(chatId, characterId, userId)
   }
@@ -2072,16 +2177,15 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
   const flight = (async () => {
     const hostMessages: any[] = await spindle.chat.getMessages(chatId).catch(() => [])
     const sourceMessages = hostMessages
-      .filter((message) => (message?.role === 'user' || message?.role === 'assistant') && text(message?.content, 1))
+      .filter((message) => (message?.role === 'user' || message?.role === 'assistant') && sanitizeNarrativeContent(message?.content, 1))
       .slice(-4)
     if (!sourceMessages.length) return loadNarrativeSeed(chatId, characterId, userId)
 
     const sourceKey = `v${POCKET_CONTINUITY_SEED_VERSION}:${narrativeSeedSourceKey(sourceMessages)}`
     const sourceMessageIds = sourceMessages.map((message) => text(message?.id, 180)).filter(Boolean).slice(-8)
     const previous = await loadNarrativeSeed(chatId, characterId, userId)
-    if (previous?.sourceKey === sourceKey) return previous
-
     const state = await loadState(chatId, characterId, userId)
+    if (previous?.sourceKey === sourceKey && state.lastReconciliation?.sourceKey === sourceKey) return previous
     const knownActors = [
       state.pocketPersona.displayName,
       state.characterName,
@@ -2090,9 +2194,42 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
 
     const recentNarrative = sourceMessages.map((message, index) => {
       const role = message?.role === 'assistant' ? 'ASSISTANT NARRATIVE' : 'USER NARRATIVE'
-      return `${role} [${index + 1}]: ${text(message?.content, 1_300)}`
+      return `${role} [${index + 1}]: ${sanitizeNarrativeContent(message?.content, 1_300)}`
     }).join('\n\n').slice(-5_200)
-
+    const modelWritableTrackers = state.trackers
+      .filter((tracker) => tracker.allowModelWrite && tracker.updateMode === 'model')
+      .slice(0, 12)
+      .map((tracker) => ({
+        key: tracker.key,
+        label: tracker.label,
+        kind: tracker.kind,
+        value: tracker.kind === 'state' ? tracker.state : tracker.value,
+        min: tracker.kind === 'state' ? undefined : tracker.min,
+        max: tracker.kind === 'state' ? undefined : tracker.max,
+        states: tracker.kind === 'state' ? tracker.states : undefined,
+        target: tracker.target.label || tracker.target.id || tracker.target.type,
+      }))
+    const currentStateAdvisory = {
+      clock: {
+        roleplayNow: state.roleplayNow,
+        source: state.roleplayClockSource || 'legacy',
+        precision: state.roleplayClockPrecision || 'unknown',
+        label: state.roleplayClockLabel || '',
+      },
+      weather: {
+        location: state.weather.location,
+        condition: state.weather.condition,
+        details: state.weather.details,
+      },
+      inSceneActors: state.contacts.filter((contact) => contact.presence.inScene).map((contact) => contact.name).slice(0, 16),
+      activeTimeline: state.events.filter((event) => seededEventLane(event) && !event.completed).slice(-8).map((event) => ({
+        title: event.title,
+        description: event.description,
+        whenText: event.whenText,
+        actorContactIds: event.actorContactIds,
+      })),
+      previousWorld: previous?.world || null,
+    }
     const parsed = await runStructuredGeneration('continuity-seed', id('continuity_seed'), {
       type: 'quiet',
       messages: [
@@ -2109,8 +2246,9 @@ Return strict JSON only:
     "weather":{"condition":"short condition","location":"where it applies","details":"short atmospheric detail"} | null
   },
   "facts":[{"text":"actor-specific factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["REQUIRED subject actor names"],"ttl":"turn|scene|persistent"}],
-  "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
-  "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}]
+  "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","presence":"with_persona|away|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
+  "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}],
+  "trackerOps":[{"key":"ONLY a key from MODEL-WRITABLE TRACKERS","operation":"set|add|subtract|reset|set_state","amount":0,"state":"state value for set_state","reason":"short evidence from recent narrative"}]
 }
 
 Rules:
@@ -2126,6 +2264,10 @@ Rules:
 - public means reasonably shared/cast-visible information. scene means explicitly witnessed; list witnesses in knownBy. private is the default for personal/internal information.
 - knownBy must be conservative. Never assume everyone knows a private fact.
 - Actor status is world/physical state only. busy does NOT mean unable to text.
+- actors[].presence is RELATIVE PHYSICAL CO-LOCATION with the Pocket Persona: with_persona only when recent prose supports that they are together; away only when recent prose supports separation; unknown when the latest prose does not establish it. Do not preserve a stale CURRENT POCKET STATE presence merely because it is already there.
+- CURRENT POCKET STATE is advisory and may be stale. It exists so you can emit corrections, not as evidence. RECENT NARRATIVE is authoritative when they conflict.
+- For an existing active Continuity/Current-goal timeline item that recent prose clearly resolves, emit the same beat with completed=true. Use whenText="Now" only when the latest supplied prose makes it explicitly current.
+- trackerOps is an EPHEMERAL delta list. Use ONLY keys listed under MODEL-WRITABLE TRACKERS and only when recent prose directly supports the change. Do not infer tracker changes from CURRENT POCKET STATE. Use [] when nothing changed.
 - Prefer 0–6 world facts, 0–6 actor facts, 0–8 actor updates, and 0–4 timeline rows.
 - Use exact names from KNOWN ACTORS when possible.`,
         },
@@ -2134,7 +2276,13 @@ Rules:
           content: `KNOWN ACTORS:
 ${knownActors.join('\n')}
 
-RECENT NARRATIVE:
+CURRENT POCKET STATE — ADVISORY / MAY BE STALE / NEVER EVIDENCE:
+${JSON.stringify(currentStateAdvisory)}
+
+MODEL-WRITABLE TRACKERS:
+${JSON.stringify(modelWritableTrackers)}
+
+RECENT NARRATIVE — AUTHORITATIVE:
 ${recentNarrative}`,
         },
       ],
@@ -2143,15 +2291,38 @@ ${recentNarrative}`,
     }, userId)
 
     const fresh = normalizeNarrativeSeed({ ...parsed, sourceKey, sourceMessageIds, updatedAt: nowIso() }, sourceKey, sourceMessageIds)
+    const trackerDeltas = normalizeNarrativeTrackerDeltas(parsed)
     const seed = mergeNarrativeSeed(previous, fresh)
-    await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
 
     await withStateLock(stateKey(chatId, characterId), async () => {
       const latest = await loadState(chatId, characterId, userId)
-      if (!applyNarrativeSeedState(latest, seed)) return
-      await saveState(latest, userId)
-      await sendState(latest, userId, 'continuity_seed')
+      const alreadyApplied = latest.lastReconciliation?.sourceKey === sourceKey
+      const continuityChanged = alreadyApplied ? false : applyNarrativeSeedState(latest, seed)
+      const presenceChanged = alreadyApplied ? false : applyNarrativeActorPresence(latest, fresh.actors, fresh.updatedAt)
+      const trackersChanged = alreadyApplied ? false : applyNarrativeTrackerDeltas(latest, trackerDeltas, fresh.updatedAt)
+      const domains = new Set<NonNullable<PhoneState['lastReconciliation']>['domains'][number]>(['continuity'])
+      if (fresh.world.clock.time || fresh.world.clock.dayPart || fresh.world.clock.label) domains.add('clock')
+      if (fresh.world.weather) domains.add('weather')
+      if (fresh.actors.some((actor) => actor.presence !== 'unknown') || presenceChanged) domains.add('presence')
+      if (seed.timeline.length) domains.add('timeline')
+      if (trackerDeltas.length || trackersChanged) domains.add('trackers')
+      if (!alreadyApplied) {
+        const nextRevision = Math.max(0, latest.stateRevision || 0) + 1
+        latest.stateRevision = nextRevision
+        latest.lastReconciliation = {
+          revision: nextRevision,
+          sourceKey,
+          sourceMessageIds,
+          generationId: text(options.generationId, 180) || undefined,
+          messageId: text(options.messageId, 180) || undefined,
+          updatedAt: fresh.updatedAt,
+          domains: [...domains],
+        }
+        await saveState(latest, userId)
+        await sendState(latest, userId, 'state_reconciled')
+      }
     })
+    await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
 
     return seed
   })()
@@ -2671,7 +2842,7 @@ async function refreshCompactContactProfile(input: AnyRecord, userId?: string): 
     ? state.conversations.flatMap((conversation) => conversation.messages.filter((message) => message.senderActorId === discoveredActorId || message.senderContactId === contact.id)).slice(-12).map((message) => `${message.senderName}: ${message.text.slice(0, 600)}`).join('\n')
     : ''
   const roleplayEvidence = discoveredSource && spindle.permissions.has('chat_mutation')
-    ? (await spindle.chat.getMessages(context.chatId)).slice(-18).map((message: any) => `${message.role}: ${text(message.content, 700)}`).join('\n').slice(-9_000)
+    ? (await spindle.chat.getMessages(context.chatId)).slice(-18).map((message: any) => `${message.role}: ${sanitizeNarrativeContent(message.content, 700)}`).join('\n').slice(-9_000)
     : ''
   send({ type: 'lumiphone:operation_progress', task: 'profile-refresh', requestId, phase: 'generating', message: 'Refreshing compact profile…' }, userId)
   const parsed = await runStructuredGeneration('profile-refresh', requestId, {
@@ -2731,7 +2902,7 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
   send({ type: 'lumiphone:operation_progress', task: 'scene-sync', requestId, phase: 'request', message: 'Reading current scene…' }, userId)
   const messages: any[] = await spindle.chat.getMessages(context.chatId)
   const authoritative = messages.at(-1)
-  const transcript = messages.slice(-24).map((message) => `${message.role}: ${text(message.content, 1_200)}`).join('\n').slice(-16_000)
+  const transcript = messages.slice(-24).map((message) => `${message.role}: ${sanitizeNarrativeContent(message.content, 1_200)}`).join('\n').slice(-16_000)
   const preflightState = await loadState(context.chatId, context.characterId, userId)
   const exclusions = [preflightState.characterName, preflightState.pocketPersona.displayName].filter(Boolean)
   send({ type: 'lumiphone:operation_progress', task: 'scene-sync', requestId, phase: 'generating', message: 'Finding scene contacts…' }, userId)
@@ -3786,7 +3957,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           type: 'quiet',
           messages: [
             { role: 'system', content: 'Create a compact PHONE-SPECIFIC Pocket Persona profile for text-message generation. Describe only the user/persona, never the primary host-RP character. Return strict JSON only: {"displayName":"","pronouns":"","role":"","identityBrief":"","phoneProfile":{"personality":"","appearance":"","textingStyle":""}}. personality: stable temperament/social traits that affect conversation, max 420 chars. appearance: only 1-3 recognizable physical/style details useful for occasional texting references, max 240 chars; no body dossier. textingStyle: casing, punctuation, slang/register, dialect or AAVE only when actually established, emoji vs kaomoji habits, message length/fragmentation, abbreviations, and other stable texting quirks, max 420 chars. identityBrief: a compact fallback identity/role summary, max 300 chars. Infer only from supplied evidence; do not stereotype from demographics and leave unsupported quirks blank. No markdown.' },
-            { role: 'user', content: `CURRENT POCKET PERSONA\nName: ${state.pocketPersona.displayName}\nRole: ${state.pocketPersona.role}\nSource description: ${text(state.pocketPersona.identityBrief, 1_500) || '(none)'}\n\nRECENT ROLEPLAY EVIDENCE\n${messages.slice(-18).map((message: any) => `${message.role}: ${text(message.content, 700)}`).join('\n').slice(-9_000) || '(none)'}` },
+            { role: 'user', content: `CURRENT POCKET PERSONA\nName: ${state.pocketPersona.displayName}\nRole: ${state.pocketPersona.role}\nSource description: ${text(state.pocketPersona.identityBrief, 1_500) || '(none)'}\n\nRECENT ROLEPLAY EVIDENCE\n${messages.slice(-18).map((message: any) => `${message.role}: ${sanitizeNarrativeContent(message.content, 700)}`).join('\n').slice(-9_000) || '(none)'}` },
           ],
           parameters: { temperature: 0.2, max_tokens: 360 }, userId,
         }, userId)
@@ -4421,10 +4592,10 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
   try {
     const chat: any = await spindle.chats.get(chatId, userId)
     const characterId = text(chat?.character_id, 180) || '_none'
+    const generationType = text(payload?.generationType ?? payload?.generation_type, 40)
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
       let changed = false
-      const generationType = text(payload?.generationType ?? payload?.generation_type, 40)
       const relay = generationId ? relayForGeneration(state, generationId) : undefined
       let reference = generationId ? referenceForGeneration(state, generationId) : undefined
       let endedBoundUserMessageId = ''
@@ -4508,8 +4679,12 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
           : 'scene_stale'
       await sendState(state, userId, reason)
     })
+    if (generationType === 'normal' && messageId && !payload?.error) {
+      await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId })
+      void considerAmbientMessage(chatId, characterId, 'turn', userId)
+    }
   } catch (error) {
-    spindle.log.warn(`Pocket could not mark the scene snapshot stale: ${error instanceof Error ? error.message : String(error)}`)
+    spindle.log.warn(`Pocket post-turn reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 })
 
@@ -4536,15 +4711,6 @@ spindle.on('GENERATION_STOPPED', async (payload: any, userId?: string) => {
   } catch { /* best-effort status update */ }
 })
 
-spindle.on('CHARACTER_MESSAGE_RENDERED', async (payload: any, userId?: string) => {
-  const chatId = text(payload?.chatId, 180)
-  if (!chatId) return
-  try {
-    const chat = spindle.permissions.has('chats') ? await (spindle.chats.get as any)(chatId, userId) : null
-    const characterId = text(chat?.character_id, 180) || '_none'
-    void refreshNarrativeSeed(chatId, characterId, userId)
-    void considerAmbientMessage(chatId, characterId, 'turn', userId)
-  } catch { /* ambient opportunities are optional */ }
-})
+
 
 spindle.log.info('Pocket backend loaded.')

@@ -854,6 +854,76 @@ mira = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => cont
 assert.equal(mira.presence.inScene, false, 'absent scene-derived contacts must be retained and marked away')
 spindle.generate.quiet = sceneQuiet
 
+// Successful committed normal turns own bounded world-state reconciliation.
+// Use an isolated chat so this contract cannot perturb the primary Pocket fixture.
+const reconciliationQuiet = spindle.generate.quiet
+const reconciliationMessages = spindle.chat.getMessages
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'reconcile-state', chatId: 'chat-reconcile', characterId: 'char-a' }, 'user-a')
+const reconciliationStatePath = 'phones/chat-reconcile__char-a.json'
+const reconciliationBefore = storage.get(reconciliationStatePath)
+reconciliationBefore.contacts.find((contact) => contact.name === 'Alice').presence.inScene = true
+reconciliationBefore.roleplayNow = '2026-09-04T21:39:03.137Z'
+reconciliationBefore.roleplayClockSource = 'narrative'
+reconciliationBefore.roleplayClockPrecision = 'approximate'
+reconciliationBefore.roleplayClockLabel = 'stale evening'
+reconciliationBefore.trackers.push({
+  id: 'reconcile-tracker', key: 'scene_tension', label: 'Scene Tension', kind: 'meter',
+  value: 10, initialValue: 10, min: 0, max: 100, updateMode: 'model', allowModelWrite: true, visibleToModel: true,
+})
+storage.set(reconciliationStatePath, reconciliationBefore)
+spindle.chat.getMessages = async () => [
+  { id: 'reconcile-user', revision: 1, role: 'user', content: 'It is around 3–4 AM. Alice is across town, away from me. The clear night is tenser now.' },
+  { id: 'reconcile-assistant', revision: 1, role: 'assistant', content: [
+    { type: 'reasoning', text: 'Do not leak this tool thought.' },
+    { type: 'text', text: 'Alice remains across town while the clear night continues.' },
+  ] },
+]
+spindle.generate.quiet = async (request) => {
+  const systemPrompt = String(request?.messages?.find((message) => message?.role === 'system')?.content || '')
+  const userPrompt = String(request?.messages?.find((message) => message?.role === 'user')?.content || '')
+  assert.match(systemPrompt, /RP WORLD STATE delta/)
+  assert.match(userPrompt, /CURRENT POCKET STATE — ADVISORY/)
+  assert.match(userPrompt, /RECENT NARRATIVE — AUTHORITATIVE/)
+  assert.doesNotMatch(userPrompt, /Do not leak this tool thought/)
+  return { content: JSON.stringify({
+    world: {
+      setting: '',
+      clock: { date: '', time: '', dayPart: 'night', precision: 'approximate', label: 'around 3–4 AM' },
+      facts: [],
+      weather: { condition: 'Clear', location: 'City', details: 'Clear night.' },
+    },
+    facts: [],
+    actors: [{ name: 'Alice', status: 'away', presence: 'away', activity: 'across town', location: 'across town', visibility: 'public', knownBy: [], ttl: 'turn' }],
+    timeline: [],
+    trackerOps: [{ key: 'scene_tension', operation: 'add', amount: 5, reason: 'The scene grew tenser.' }],
+  }) }
+}
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-reconcile', generationId: 'gen-reconcile', generationType: 'normal', messageId: 'reconcile-assistant' }, 'user-a')
+let reconciliationAfter = storage.get(reconciliationStatePath)
+assert.equal(reconciliationAfter.stateRevision, 1)
+assert.equal(reconciliationAfter.lastReconciliation.generationId, 'gen-reconcile')
+assert.equal(reconciliationAfter.lastReconciliation.messageId, 'reconcile-assistant')
+assert.ok(reconciliationAfter.lastReconciliation.domains.includes('clock'))
+assert.ok(reconciliationAfter.lastReconciliation.domains.includes('weather'))
+assert.ok(reconciliationAfter.lastReconciliation.domains.includes('presence'))
+assert.ok(reconciliationAfter.lastReconciliation.domains.includes('trackers'))
+assert.equal(reconciliationAfter.contacts.find((contact) => contact.name === 'Alice').presence.inScene, false)
+assert.equal(reconciliationAfter.roleplayClockPrecision, 'approximate')
+assert.equal(reconciliationAfter.roleplayClockLabel, 'around 3–4 AM')
+assert.equal(reconciliationAfter.roleplayNow, '2026-09-04T21:39:03.137Z', 'approximate reconciliation must not manufacture an exact ISO')
+assert.equal(reconciliationAfter.weather.details, 'Clear night.')
+assert.equal(reconciliationAfter.trackers.find((tracker) => tracker.key === 'scene_tension').value, 15)
+assert.equal(reconciliationAfter.trackers.find((tracker) => tracker.key === 'scene_tension').history.at(-1).source, 'model')
+assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:state' && message.reason === 'state_reconciled' && message.state?.chatId === 'chat-reconcile'))
+
+// Replaying the same host source is idempotent: no double tracker delta/revision bump.
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-reconcile', generationId: 'gen-reconcile-repeat', generationType: 'normal', messageId: 'reconcile-assistant' }, 'user-a')
+reconciliationAfter = storage.get(reconciliationStatePath)
+assert.equal(reconciliationAfter.stateRevision, 1)
+assert.equal(reconciliationAfter.trackers.find((tracker) => tracker.key === 'scene_tension').value, 15)
+spindle.generate.quiet = reconciliationQuiet
+spindle.chat.getMessages = reconciliationMessages
+
 await frontendHandler({
   type: 'lumiphone:test_generation', requestId: 'sidecar-test', chatId: 'chat-a', characterId: 'char-a',
   generationMode: 'sidecar', sidecarConnectionId: 'pocket-sidecar', sidecarModelOverride: 'discovered-model',

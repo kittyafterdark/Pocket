@@ -14,6 +14,7 @@ import { contactFromNpcBank, findNpcBankMatch, normalizeNpcBank, upsertNpcBankFr
 import { PocketRouteHistory } from '../src/frontend/router.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
+import { sanitizeNarrativeContent } from '../src/backend/narrative-content.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayIdFromMessages } from '../src/backend/continuity.js'
 import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
@@ -353,6 +354,63 @@ describe('roleplay context bridge', () => {
     expect(result.diagnostics.authoritativeLatest.id).toBe('KITCHEN-222')
     expect(result.diagnostics.includedLatest.id).toBe('KITCHEN-222')
     expect(result.diagnostics.freshnessWarning).toBe('')
+  })
+})
+
+describe('narrative reconciliation hygiene', () => {
+  test('drops structured and wrapped reasoning/tool scaffolding without classifying ordinary prose', () => {
+    expect(sanitizeNarrativeContent([
+      { type: 'reasoning', text: 'I should call the tool.' },
+      { type: 'text', text: 'Visible narrative.' },
+      { type: 'tool_result', content: 'hidden result' },
+    ])).toBe('Visible narrative.')
+    expect(sanitizeNarrativeContent('Before.\n<think>secret chain</think>\nAfter.')).toBe('Before.\n\nAfter.')
+    expect(sanitizeNarrativeContent('<lumi-phone action="message">{"text":"hidden"}</lumi-phone>Visible.')).toBe('Visible.')
+    expect(sanitizeNarrativeContent('I should call Marcus before sunrise.')).toBe('I should call Marcus before sunrise.')
+  })
+
+  test('projects approximate narrative time instead of a stale exact Pocket timestamp', () => {
+    const state = {
+      roleplayNow: '2026-09-04T21:39:03.137Z',
+      roleplayClockSource: 'narrative',
+      roleplayClockPrecision: 'approximate',
+      roleplayClockLabel: 'around 3–4 AM',
+      stateRevision: 7,
+      contacts: [],
+      discoveredActors: [],
+      trackers: [],
+      events: [],
+      notes: [],
+      weather: { location: 'Diner', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: 'Clear conditions.', updatedAt: '2026-09-05T04:00:00.000Z' },
+    } as unknown as PhoneState
+    const projected = JSON.parse(projectPhoneContext(state))
+    expect(projected.roleplayNow).toBe('around 3–4 AM')
+    expect(projected.roleplayClock).toEqual({ source: 'narrative', precision: 'approximate', label: 'around 3–4 AM' })
+    expect(projected.stateRevision).toBe(7)
+  })
+
+  test('sanitizes recent host RP before it enters phone-generation context', async () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'zephyr', name: 'Zephyr' }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
+    const contact = collections.contacts.find((entry) => entry.id === 'zephyr')!
+    const conversation = ensureDirectConversation(collections, contact.id, now, () => 'dm-zephyr')
+    const state = {
+      version: 10, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, sceneSnapshot: null,
+      pocketPersona: { source: 'manual', linkedPersonaId: '', displayName: 'You', pronouns: '', role: 'Persona', identityBrief: '', avatarUrl: '', accent: '#8b7dff', canAppear: false, updatedAt: now },
+      setup: { initialized: true, dismissed: false }, contacts: collections.contacts, discoveredActors: [], conversations: collections.conversations,
+      actorMemoryVersion: 1, actorMemories: [], notes: [], events: [], relays: [], references: [], groupBatches: [], trackers: [], notifications: [], activities: [], processedCommands: [],
+      updatedAt: now, weather: { location: 'Hall', condition: 'Clear', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now },
+    } as PhoneState
+    const result = await assemblePocketContext({
+      state, contact, conversation,
+      preferences: normalizePreferences({ roleplayContextMode: 'recent', recentRoleplayMessages: 2 }),
+      getMessages: async () => [
+        { id: 'reasoning-row', role: 'assistant', content: [{ type: 'reasoning', text: 'Call Pocket again.' }, { type: 'text', text: 'Kai slips out through the back door.' }] },
+      ],
+    })
+    expect(result.text).toContain('Kai slips out through the back door.')
+    expect(result.text).not.toContain('Call Pocket again.')
+    expect(result.diagnostics.authoritativeLatest.excerpt).toContain('Kai slips out')
   })
 })
 

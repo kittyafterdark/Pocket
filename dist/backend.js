@@ -512,6 +512,12 @@ function serializeWithinBudget(value, budget = MODEL_CONTEXT_BUDGET) {
     return fallback;
   return "{}";
 }
+function projectedRoleplayTime(state) {
+  if (state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" && state.roleplayClockLabel) {
+    return state.roleplayClockLabel;
+  }
+  return state.roleplayNow;
+}
 function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
   const contacts = state.contacts.filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned || contact.relationship === "close").slice(0, 12).map((contact) => ({
     id: contact.id.slice(0, 180),
@@ -547,7 +553,13 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
   });
   const upcoming = state.events.filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
   return serializeWithinBudget({
-    roleplayNow: state.roleplayNow,
+    roleplayNow: projectedRoleplayTime(state),
+    roleplayClock: {
+      source: state.roleplayClockSource || "legacy",
+      precision: state.roleplayClockPrecision || "unknown",
+      label: state.roleplayClockLabel || ""
+    },
+    stateRevision: state.stateRevision || 0,
     weather: {
       location: state.weather.location.slice(0, 160),
       condition: state.weather.condition.slice(0, 120),
@@ -1785,10 +1797,64 @@ async function parseWithTruncationRetry(content, retry) {
   }
 }
 
+// src/backend/narrative-content.ts
+var DROP_PART_TYPE = /(?:reason(?:ing)?|think(?:ing)?|analysis|tool[_-]?(?:use|call|result)|function[_-]?(?:call|result))/i;
+var WRAPPED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+var OPEN_ENDED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[^>]*>[\s\S]*$/gi;
+var FENCED_BLOCK = /```(?:think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[\s\S]*?```/gi;
+var POCKET_ACTION_BLOCK = /<lumi-phone\b[^>]*>[\s\S]*?<\/lumi-phone\s*>/gi;
+var POCKET_ACTION_SINGLE = /<lumi-phone\b[^>]*\/\s*>/gi;
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function visibleStructuredText(value) {
+  if (typeof value === "string")
+    return value;
+  if (Array.isArray(value))
+    return value.map(visibleStructuredText).filter(Boolean).join(`
+`);
+  if (!isRecord(value))
+    return "";
+  const type = typeof value.type === "string" ? value.type : "";
+  if (type && DROP_PART_TYPE.test(type))
+    return "";
+  if (typeof value.text === "string")
+    return value.text;
+  if (typeof value.content === "string" || Array.isArray(value.content) || isRecord(value.content)) {
+    return visibleStructuredText(value.content);
+  }
+  if (typeof value.value === "string" && (!type || /text|output/i.test(type)))
+    return value.value;
+  return "";
+}
+function stripMachineWrappers(value) {
+  let text2 = value;
+  for (let pass = 0;pass < 3; pass += 1) {
+    const next = text2.replace(FENCED_BLOCK, "").replace(WRAPPED_BLOCK, "").replace(POCKET_ACTION_BLOCK, "").replace(POCKET_ACTION_SINGLE, "");
+    if (next === text2)
+      break;
+    text2 = next;
+  }
+  return text2.replace(OPEN_ENDED_BLOCK, "").replace(/\n[ \t]+\n/g, `
+
+`).replace(/\n{3,}/g, `
+
+`).trim();
+}
+function sanitizeNarrativeContent(value, max = 4000) {
+  return stripMachineWrappers(visibleStructuredText(value)).slice(0, Math.max(0, max));
+}
+
 // src/backend/roleplay-context.ts
 var BUDGETS = { actor: 1200, scene: 1800, thread: 6000, recent: 3200, story: 2400, total: 10500 };
 function clean6(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function roleplayTimeLabel(state) {
+  if (state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" && state.roleplayClockLabel) {
+    return `${state.roleplayClockLabel} (${state.roleplayClockPrecision || "approximate"})`;
+  }
+  return state.roleplayClockLabel && state.roleplayClockSource === "narrative" ? `${state.roleplayClockLabel} [${state.roleplayNow}]` : state.roleplayNow;
 }
 function messageIndex(message, fallback) {
   const parsed = Number(message.index_in_chat);
@@ -1800,7 +1866,7 @@ function storyLines(state, contact) {
   const trackers = state.trackers.filter((tracker) => tracker.visibleToModel && (`${tracker.target.id} ${tracker.target.label}`.includes(contact.id) || `${tracker.target.label}`.toLocaleLowerCase().includes(name))).slice(0, 4);
   const notes = state.notes.filter((note) => note.pinned).slice(0, 2);
   return [
-    `Roleplay time: ${state.roleplayNow}`,
+    `Roleplay time: ${roleplayTimeLabel(state)}`,
     `Scene: ${state.weather.location}; ${state.weather.condition}.`,
     ...events.map((entry) => `Timeline: ${entry.whenText}: ${entry.title}`),
     ...trackers.map((entry) => `Tracker: ${entry.label}=${entry.kind === "state" ? entry.state : entry.value}`),
@@ -1881,7 +1947,7 @@ async function assemblePocketContext(options) {
   const authoritativeLatest = authoritative ? {
     id: clean6(authoritative.id, 180),
     index: messageIndex(authoritative, hostMessages.length - 1),
-    excerpt: clean6(authoritative.content, 180)
+    excerpt: sanitizeNarrativeContent(authoritative.content, 180)
   } : { id: "", index: -1, excerpt: "" };
   const actorIdentity = clean6(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1400);
@@ -1895,14 +1961,14 @@ async function assemblePocketContext(options) {
     const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
     const anchor = clean6(message.id, 180);
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
-    return `${role}${source}: ${clean6(message.content, 520)}`;
+    return `${role}${source}: ${sanitizeNarrativeContent(message.content, 520)}`;
   }).filter((line) => !line.endsWith(": "));
   const recent = trimBlock(recentLines, BUDGETS.recent);
   const includedMessage = selectedRecent.at(-1);
   const includedLatest = includedMessage ? {
     id: clean6(includedMessage.id, 180),
     index: messageIndex(includedMessage, hostMessages.length - 1),
-    excerpt: clean6(includedMessage.content, 180)
+    excerpt: sanitizeNarrativeContent(includedMessage.content, 180)
   } : { id: "", index: -1, excerpt: "" };
   const storySource = mode !== "off" && (mode === "story" || mode === "smart" || !includeRoleplayBackground) ? storyLines(state, contact) : [];
   const story = trimBlock(storySource, BUDGETS.story);
@@ -2348,7 +2414,7 @@ ONLY when no Pocket Action function/tool is present in the model's available too
 The tag is machine data and will be removed from the rendered roleplay. Do not explain it, quote it, wrap it in markdown, or imitate it elsewhere in the response. Other supported actions are conversation, contact, scene, note, event, weather, tracker, camera, notify, and open.
 
 Pocket messages, contacts, notes, calendar events, weather, trackers, and scene state persist separately for this chat and character.`;
-function isRecord(value) {
+function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function text2(value, max = 4000) {
@@ -2385,7 +2451,7 @@ function defaultWeather() {
     unit: "C",
     high: 24,
     low: 16,
-    details: "A quiet, clear day in the roleplay timeline.",
+    details: "Quiet, clear conditions in the roleplay timeline.",
     updatedAt: nowIso()
   };
 }
@@ -2405,9 +2471,9 @@ function defaultPocketPersona(createdAt = nowIso()) {
   };
 }
 function normalizePocketPersona(value, fallback = defaultPocketPersona()) {
-  const raw = isRecord(value) ? value : {};
+  const raw = isRecord2(value) ? value : {};
   const source = raw.source === "manual" || raw.source === "generated" ? raw.source : "lumiverse";
-  const rawPhoneProfile = isRecord(raw.phoneProfile) ? raw.phoneProfile : null;
+  const rawPhoneProfile = isRecord2(raw.phoneProfile) ? raw.phoneProfile : null;
   const fallbackPhoneProfile = fallback.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
   return {
     source,
@@ -2448,6 +2514,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
     characterId,
     characterName: characterName || "Character",
     roleplayNow: createdAt,
+    stateRevision: 0,
     sceneSnapshot: null,
     pocketPersona: defaultPocketPersona(createdAt),
     setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: "unconfigured" },
@@ -2471,7 +2538,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
 }
 function normalizeState(value, chatId, characterId, characterName) {
   const fallback = defaultState(chatId, characterId, characterName);
-  if (!isRecord(value))
+  if (!isRecord2(value))
     return fallback;
   if (Number(value.version) > STATE_VERSION)
     return fallback;
@@ -2479,7 +2546,7 @@ function normalizeState(value, chatId, characterId, characterName) {
   const discoveredActors = normalizeDiscoveredActors(value.discoveredActors, chatId, nowIso());
   const actorMemories = normalizeActorMemories(value.actorMemories);
   const notes = (Array.isArray(value.notes) ? value.notes : []).slice(0, MAX_NOTES).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const body = text2(item.body, 40000);
     const title = text2(item.title, 180) || body.slice(0, 36) || "Untitled note";
@@ -2495,7 +2562,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     }];
   });
   const events = (Array.isArray(value.events) ? value.events : []).slice(0, MAX_EVENTS).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const title = text2(item.title, 180);
     if (!title)
@@ -2518,14 +2585,14 @@ function normalizeState(value, chatId, characterId, characterName) {
       participantActorIds: (Array.isArray(item.participantActorIds) ? item.participantActorIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(0, 16),
       participantNames: (Array.isArray(item.participantNames) ? item.participantNames : []).map((entry) => text2(entry, 120)).filter(Boolean).slice(0, 16),
       continuityKey: text2(item.continuityKey, 500) || undefined,
-      source: isRecord(item.source) && item.source.app === "messages" ? {
+      source: isRecord2(item.source) && item.source.app === "messages" ? {
         app: "messages",
         conversationId: text2(item.source.conversationId, 180),
         relayId: text2(item.source.relayId, 180) || undefined,
         messageId: text2(item.source.messageId, 180) || undefined,
         suggestionId: text2(item.source.suggestionId, 180) || undefined
       } : undefined,
-      channelTransition: isRecord(item.channelTransition) && item.channelTransition.to === "local" ? {
+      channelTransition: isRecord2(item.channelTransition) && item.channelTransition.to === "local" ? {
         from: item.channelTransition.from === "arriving" || item.channelTransition.from === "paused" ? item.channelTransition.from : "remote",
         to: "local",
         reason: item.channelTransition.reason === "arrived" || item.channelTransition.reason === "took_action" || item.channelTransition.reason === "continued_in_person" ? item.channelTransition.reason : "in_scene"
@@ -2534,7 +2601,7 @@ function normalizeState(value, chatId, characterId, characterName) {
   });
   const trackers = (Array.isArray(value.trackers) ? value.trackers : []).slice(0, MAX_TRACKERS).map((item) => normalizeTracker(item, { roleplayNow: text2(value.roleplayNow, 80), characterId, characterName })).filter((item) => Boolean(item));
   const notifications = (Array.isArray(value.notifications) ? value.notifications : []).slice(0, MAX_NOTIFICATIONS).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const title = text2(item.title, 160);
     if (!title)
@@ -2555,12 +2622,12 @@ function normalizeState(value, chatId, characterId, characterName) {
     }];
   });
   const activities = (Array.isArray(value.activities) ? value.activities : []).slice(-MAX_ACTIVITIES).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const title = text2(item.title, 160);
     if (!title)
       return [];
-    const source = isRecord(item.source) ? item.source : {};
+    const source = isRecord2(item.source) ? item.source : {};
     return [{
       id: text2(item.id, 160) || id("act"),
       kind: item.kind === "message" || item.kind === "contact" || item.kind === "tracker-change" || item.kind === "timeline" || item.kind === "note" || item.kind === "image" || item.kind === "weather" ? item.kind : "system",
@@ -2582,14 +2649,14 @@ function normalizeState(value, chatId, characterId, characterName) {
     }];
   });
   const processedCommands = (Array.isArray(value.processedCommands) ? value.processedCommands : []).slice(-160).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const commandId = text2(item.id, 240);
     if (!commandId)
       return [];
     return [{ id: commandId, semanticKey: text2(item.semanticKey, 500), createdAt: text2(item.createdAt, 40) || nowIso(), activityId: text2(item.activityId, 180) || undefined }];
   });
-  const weatherValue = isRecord(value.weather) ? value.weather : {};
+  const weatherValue = isRecord2(value.weather) ? value.weather : {};
   const weather = {
     location: text2(weatherValue.location, 160) || fallback.weather.location,
     condition: text2(weatherValue.condition, 120) || fallback.weather.condition,
@@ -2600,10 +2667,12 @@ function normalizeState(value, chatId, characterId, characterName) {
     details: text2(weatherValue.details, 2000) || fallback.weather.details,
     updatedAt: text2(weatherValue.updatedAt, 40) || nowIso()
   };
-  const snapshotValue = isRecord(value.sceneSnapshot) ? value.sceneSnapshot : null;
+  if (weather.details === "A quiet, clear day in the roleplay timeline.")
+    weather.details = "Quiet, clear conditions in the roleplay timeline.";
+  const snapshotValue = isRecord2(value.sceneSnapshot) ? value.sceneSnapshot : null;
   const sceneSnapshot = snapshotValue ? {
     actors: (Array.isArray(snapshotValue.actors) ? snapshotValue.actors : []).slice(0, 8).flatMap((entry) => {
-      if (!isRecord(entry))
+      if (!isRecord2(entry))
         return [];
       const contactId = text2(entry.contactId, 180);
       if (!contactId)
@@ -2616,15 +2685,15 @@ function normalizeState(value, chatId, characterId, characterName) {
     sourceRevision: Math.max(0, Math.round(numberValue(snapshotValue.sourceRevision, 0))),
     stale: bool2(snapshotValue.stale, true)
   } : null;
-  const setupValue = isRecord(value.setup) ? value.setup : {};
+  const setupValue = isRecord2(value.setup) ? value.setup : {};
   const relays = (Array.isArray(value.relays) ? value.relays : []).slice(-24).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const relayId = text2(item.id, 180);
     const contactId = text2(item.contactId, 180);
     const conversationId = text2(item.conversationId, 180);
-    const tail = isRecord(item.conversationTail) ? item.conversationTail : isRecord(item.conversationSnapshot) ? item.conversationSnapshot : {};
-    const continuation = isRecord(item.continuation) ? item.continuation : {};
+    const tail = isRecord2(item.conversationTail) ? item.conversationTail : isRecord2(item.conversationSnapshot) ? item.conversationSnapshot : {};
+    const continuation = isRecord2(item.continuation) ? item.continuation : {};
     if (!relayId || !contactId || !conversationId)
       return [];
     const reason = item.reason === "arrived" || item.reason === "took_action" || item.reason === "continued_in_person" ? item.reason : "in_scene";
@@ -2661,7 +2730,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         generationId: text2(continuation.generationId, 180) || undefined,
         invokedAt: text2(continuation.invokedAt ?? continuation.attemptedAt, 40) || undefined,
         permissionCheckedAt: text2(continuation.permissionCheckedAt, 40) || undefined,
-        permissions: isRecord(continuation.permissions) ? {
+        permissions: isRecord2(continuation.permissions) ? {
           chatMutation: continuation.permissions.chatMutation === true,
           generation: continuation.permissions.generation === true
         } : undefined,
@@ -2676,7 +2745,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     }];
   });
   const references = (Array.isArray(value.references) ? value.references : []).slice(-24).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const referenceId = text2(item.id, 180);
     const conversationId = text2(item.conversationId, 180);
@@ -2685,7 +2754,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     const scope = item.scope === "recent_messages" || item.scope === "selected_messages" ? item.scope : "conversation";
     const status = item.status === "injected" || item.status === "consumed" || item.status === "cancelled" || item.status === "failed" ? item.status : "armed";
     const participants = (Array.isArray(item.participants) ? item.participants : []).slice(0, 16).flatMap((participant) => {
-      if (!isRecord(participant))
+      if (!isRecord2(participant))
         return [];
       const contactId = text2(participant.contactId, 180) || undefined;
       const actorId = text2(participant.actorId, 180) || contactId;
@@ -2695,7 +2764,7 @@ function normalizeState(value, chatId, characterId, characterName) {
       return [{ actorId, contactId, name, role: text2(participant.role, 100), identityBrief: text2(participant.identityBrief, 180) }];
     });
     const messages = (Array.isArray(item.messages) ? item.messages : []).slice(-8).flatMap((message) => {
-      if (!isRecord(message))
+      if (!isRecord2(message))
         return [];
       const messageId = text2(message.messageId, 180);
       const body = text2(message.text, 420);
@@ -2737,7 +2806,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     }];
   });
   const groupBatches = (Array.isArray(value.groupBatches) ? value.groupBatches : []).slice(-24).flatMap((item) => {
-    if (!isRecord(item))
+    if (!isRecord2(item))
       return [];
     const batchId = text2(item.id, 180);
     const requestId = text2(item.requestId, 180);
@@ -2746,7 +2815,7 @@ function normalizeState(value, chatId, characterId, characterName) {
       return [];
     const status = item.status === "queued" || item.status === "delivering" || item.status === "completed" || item.status === "cancelled" || item.status === "failed" ? item.status : "cancelled";
     const messages = (Array.isArray(item.messages) ? item.messages : []).slice(0, 4).flatMap((message) => {
-      if (!isRecord(message))
+      if (!isRecord2(message))
         return [];
       const id2 = text2(message.id, 180);
       const speakerId = text2(message.speakerId, 180);
@@ -2778,6 +2847,17 @@ function normalizeState(value, chatId, characterId, characterName) {
       error: text2(item.error, 500) || undefined
     }];
   });
+  const reconciliationValue = isRecord2(value.lastReconciliation) ? value.lastReconciliation : {};
+  const reconciliationDomains = (Array.isArray(reconciliationValue.domains) ? reconciliationValue.domains : []).map((entry) => text2(entry, 40)).filter((entry) => entry === "continuity" || entry === "clock" || entry === "weather" || entry === "presence" || entry === "timeline" || entry === "trackers").slice(0, 6);
+  const lastReconciliation = text2(reconciliationValue.sourceKey, 1600) ? {
+    revision: Math.max(0, Math.round(numberValue(reconciliationValue.revision, 0))),
+    sourceKey: text2(reconciliationValue.sourceKey, 1600),
+    sourceMessageIds: (Array.isArray(reconciliationValue.sourceMessageIds) ? reconciliationValue.sourceMessageIds : []).map((entry) => text2(entry, 180)).filter(Boolean).slice(-8),
+    generationId: text2(reconciliationValue.generationId, 180) || undefined,
+    messageId: text2(reconciliationValue.messageId, 180) || undefined,
+    updatedAt: text2(reconciliationValue.updatedAt, 40) || nowIso(),
+    domains: reconciliationDomains
+  } : undefined;
   const hadPocketData = Number(value.version || 0) > 0 && (collections.contacts.length > 1 || collections.conversations.some((entry) => entry.messages.length > 0) || notes.length > 0 || events.length > 0 || trackers.length > 0 || relays.length > 0 || references.length > 0 || groupBatches.length > 0);
   return {
     version: STATE_VERSION,
@@ -2789,6 +2869,8 @@ function normalizeState(value, chatId, characterId, characterName) {
     roleplayClockPrecision: value.roleplayClockPrecision === "exact" || value.roleplayClockPrecision === "approximate" || value.roleplayClockPrecision === "relative" ? value.roleplayClockPrecision : "unknown",
     roleplayClockLabel: text2(value.roleplayClockLabel, 160),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
+    stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    lastReconciliation,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
     setup: {
@@ -2863,7 +2945,7 @@ async function resolveActivePocketPersona(userId) {
       const image = await spindle.images.get(String(persona.image_id), { specificity: "sm", userId }).catch(() => null);
       avatarUrl = text2(image?.url, 2000);
     }
-    const metadata = isRecord(persona.metadata) ? persona.metadata : {};
+    const metadata = isRecord2(persona.metadata) ? persona.metadata : {};
     return {
       source: "lumiverse",
       linkedPersonaId: text2(persona.id, 180),
@@ -2972,18 +3054,19 @@ async function loadState(chatId, characterId, userId) {
     fallback: null,
     userId
   });
-  if (isRecord(raw) && Number(raw.version) > STATE_VERSION)
+  if (isRecord2(raw) && Number(raw.version) > STATE_VERSION)
     throw new Error("This phone state was created by a newer Pocket version.");
   const state = normalizeState(raw, chatId, characterId, characterName);
-  await loadPreferences(userId, isRecord(raw) ? raw.settings : undefined);
-  let stateChanged = Boolean(isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION));
+  await loadPreferences(userId, isRecord2(raw) ? raw.settings : undefined);
+  let stateChanged = Boolean(isRecord2(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION));
   if (state.actorMemoryVersion < 1) {
     backfillDirectPhoneMemories(state);
     state.actorMemoryVersion = 1;
     stateChanged = true;
   }
   state.trackers = state.trackers.map((tracker) => {
-    const result = materializeTracker(tracker, state.roleplayNow);
+    const trackerRoleplayNow = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? "" : state.roleplayNow;
+    const result = materializeTracker(tracker, trackerRoleplayNow);
     stateChanged ||= result.changed;
     return result.tracker;
   });
@@ -3024,7 +3107,7 @@ async function loadPreferences(userId, legacy) {
     spindle.log.warn("Pocket left newer device preferences untouched and used safe defaults for this session.");
     return preferences;
   }
-  if (raw === null || Number(isRecord(raw) ? raw.version : 0) !== preferences.version) {
+  if (raw === null || Number(isRecord2(raw) ? raw.version : 0) !== preferences.version) {
     await spindle.userStorage.setJson(PREFERENCES_PATH, preferences, { indent: 2, userId });
   }
   return preferences;
@@ -3041,7 +3124,7 @@ async function loadNpcBank(userId) {
     spindle.log.warn("Pocket left a newer NPC Bank untouched and used an empty bank for this session.");
     return bank;
   }
-  if (raw === null || Number(isRecord(raw) ? raw.version : 0) !== bank.version) {
+  if (raw === null || Number(isRecord2(raw) ? raw.version : 0) !== bank.version) {
     await spindle.userStorage.setJson(NPC_BANK_PATH, bank, { indent: 2, userId });
   }
   return bank;
@@ -3103,7 +3186,7 @@ function assignWallpaper(preferences, payload, forcedSource) {
   const current = target === "persona-home" || target === "persona-chat" ? preferences.personaAppearance[personaId]?.[target === "persona-chat" ? "chatWallpaper" : "homeWallpaper"] : preferences[target === "device-chat" || target === "chat" ? "chatWallpaper" : "homeWallpaper"];
   if ((target === "persona-home" || target === "persona-chat") && (!personaId || !preferences.personaAppearance[personaId]))
     throw new Error("Enable a Persona appearance before assigning its wallpaper.");
-  const raw = isRecord(payload.wallpaper) ? payload.wallpaper : {};
+  const raw = isRecord2(payload.wallpaper) ? payload.wallpaper : {};
   const wallpaper = normalizeWallpaper({ ...current, ...raw, source: forcedSource === undefined ? raw.source ?? payload.source : forcedSource });
   if (target === "persona-home" || target === "persona-chat") {
     preferences.personaAppearance[personaId][target === "persona-chat" ? "chatWallpaper" : "homeWallpaper"] = wallpaper;
@@ -3285,7 +3368,7 @@ async function listContactSources(state, userId) {
   return options;
 }
 function generatedPhoneProfile(value) {
-  if (!isRecord(value))
+  if (!isRecord2(value))
     return;
   const personality = text2(value.personality, 600);
   const appearance = text2(value.appearance, 360);
@@ -3365,7 +3448,7 @@ function promptDebugPath(requestId) {
 }
 function promptDebugSnapshot(task, requestId, request) {
   const messages = (Array.isArray(request.messages) ? request.messages : []).flatMap((entry) => {
-    if (!isRecord(entry))
+    if (!isRecord2(entry))
       return [];
     const role = text2(entry.role, 40);
     const content = typeof entry.content === "string" ? entry.content : "";
@@ -3380,8 +3463,8 @@ function promptDebugSnapshot(task, requestId, request) {
     capturedAt: nowIso(),
     type: text2(request.type, 80),
     messages,
-    parameters: isRecord(request.parameters) ? request.parameters : {},
-    reasoning: isRecord(request.reasoning) ? request.reasoning : undefined
+    parameters: isRecord2(request.parameters) ? request.parameters : {},
+    reasoning: isRecord2(request.reasoning) ? request.reasoning : undefined
   };
 }
 async function savePromptDebug(task, requestId, request, userId) {
@@ -3395,7 +3478,7 @@ async function loadPromptDebug(requestId, userId) {
   if (!requestId)
     return null;
   const raw = await spindle.userStorage.getJson(promptDebugPath(requestId), { fallback: null, userId });
-  if (!isRecord(raw) || raw.version !== 1)
+  if (!isRecord2(raw) || raw.version !== 1)
     return null;
   return {
     version: 1,
@@ -3404,19 +3487,19 @@ async function loadPromptDebug(requestId, userId) {
     capturedAt: text2(raw.capturedAt, 80),
     type: text2(raw.type, 80),
     messages: (Array.isArray(raw.messages) ? raw.messages : []).flatMap((entry) => {
-      if (!isRecord(entry))
+      if (!isRecord2(entry))
         return [];
       return [{ role: text2(entry.role, 40) || "unknown", content: typeof entry.content === "string" ? entry.content : "" }];
     }),
-    parameters: isRecord(raw.parameters) ? raw.parameters : {},
-    reasoning: isRecord(raw.reasoning) ? raw.reasoning : undefined
+    parameters: isRecord2(raw.parameters) ? raw.parameters : {},
+    reasoning: isRecord2(raw.reasoning) ? raw.reasoning : undefined
   };
 }
 async function runStructuredGeneration(task, requestId, request, userId) {
   await savePromptDebug(task, requestId, request, userId);
   const first = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId);
   return parseWithTruncationRetry(first.content, async () => {
-    const parameters = isRecord(request.parameters) ? request.parameters : {};
+    const parameters = isRecord2(request.parameters) ? request.parameters : {};
     const maxTokens = Math.min(1600, Math.max(80, Math.round(numberValue(parameters.max_tokens, 400) * 1.6)));
     const retry = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, `${requestId}:truncation-retry`, {
       ...request,
@@ -3693,7 +3776,7 @@ function relationshipValue(value) {
 function actorRefParts(value) {
   if (typeof value === "string")
     return { id: "", name: text2(value, 120), relationship: "background" };
-  if (!isRecord(value))
+  if (!isRecord2(value))
     return { id: "", name: "", relationship: "background" };
   return {
     id: text2(value.actorId ?? value.actor_id ?? value.contactId ?? value.contact_id ?? value.id, 180),
@@ -3867,7 +3950,7 @@ async function cameraGenerate(input, userId) {
   const presets = profile.presets ? `${profile.presets}, ` : "";
   const prompt = [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(", ");
   const manual = preferences.manualVisualProfile;
-  const parameters = { ...manual.parameters, ...isRecord(input.parameters) ? input.parameters : {} };
+  const parameters = { ...manual.parameters, ...isRecord2(input.parameters) ? input.parameters : {} };
   if (manual.loras.length && parameters.loras === undefined)
     parameters.loras = manual.loras;
   const connectionId = text2(input.connectionId, 200) || manual.connectionId;
@@ -3964,11 +4047,35 @@ function seedVisibility(value) {
 function seedTtl(value) {
   return value === "persistent" || value === "scene" ? value : "turn";
 }
+function normalizeNarrativeTrackerDeltas(value) {
+  const raw = isRecord2(value) && Array.isArray(value.trackerOps) ? value.trackerOps : [];
+  return raw.slice(0, 12).flatMap((entry) => {
+    if (!isRecord2(entry))
+      return [];
+    const key = trackerKey(entry.key, "");
+    const operation = entry.operation === "set" || entry.operation === "add" || entry.operation === "subtract" || entry.operation === "reset" || entry.operation === "set_state" ? entry.operation : "";
+    if (!key || !operation)
+      return [];
+    const amount = Number(entry.amount);
+    const state = text2(entry.state, 80);
+    if ((operation === "set" || operation === "add" || operation === "subtract") && !Number.isFinite(amount))
+      return [];
+    if (operation === "set_state" && !state)
+      return [];
+    return [{
+      key,
+      operation,
+      amount: Number.isFinite(amount) ? amount : undefined,
+      state: state || undefined,
+      reason: text2(entry.reason, 300) || "Narrative state reconciliation"
+    }];
+  });
+}
 function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
-  const raw = isRecord(value) ? value : {};
-  const rawWorld = isRecord(raw.world) ? raw.world : {};
-  const rawWeather = isRecord(rawWorld.weather) ? rawWorld.weather : null;
-  const rawClock = isRecord(rawWorld.clock) ? rawWorld.clock : {};
+  const raw = isRecord2(value) ? value : {};
+  const rawWorld = isRecord2(raw.world) ? raw.world : {};
+  const rawWeather = isRecord2(rawWorld.weather) ? rawWorld.weather : null;
+  const rawClock = isRecord2(rawWorld.clock) ? rawWorld.clock : {};
   const worldFacts = (Array.isArray(rawWorld.facts) ? rawWorld.facts : []).map((entry) => text2(entry, 360)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index).slice(0, 8);
   const world = {
     setting: text2(rawWorld.setting, 360),
@@ -3987,7 +4094,7 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
     }
   };
   const facts = (Array.isArray(raw.facts) ? raw.facts : []).slice(0, 10).flatMap((entry) => {
-    if (!isRecord(entry))
+    if (!isRecord2(entry))
       return [];
     const body = text2(entry.text ?? entry.fact, 360);
     const actors2 = seedStringList(entry.actors);
@@ -4003,7 +4110,7 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
   });
   const rawActors = Array.isArray(raw.actors) ? raw.actors : Array.isArray(raw.actorUpdates) ? raw.actorUpdates : [];
   const actors = rawActors.slice(0, 12).flatMap((entry) => {
-    if (!isRecord(entry))
+    if (!isRecord2(entry))
       return [];
     const name = text2(entry.name, 120);
     if (!name)
@@ -4012,6 +4119,7 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
     return [{
       name,
       status,
+      presence: entry.presence === "with_persona" || entry.presence === "away" ? entry.presence : status === "in_scene" ? "with_persona" : "unknown",
       activity: text2(entry.activity, 260),
       location: text2(entry.location, 180),
       visibility: seedVisibility(entry.visibility),
@@ -4020,7 +4128,7 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
     }];
   });
   const timeline = (Array.isArray(raw.timeline) ? raw.timeline : []).slice(0, 6).flatMap((entry) => {
-    if (!isRecord(entry))
+    if (!isRecord2(entry))
       return [];
     const title = text2(entry.title ?? entry.event, 180);
     if (!title)
@@ -4081,7 +4189,7 @@ function mergeNarrativeSeed(previous, fresh) {
 function narrativeSeedSourceKey(messages) {
   return messages.map((message, index) => {
     const idPart = text2(message?.id, 180) || `row-${index}`;
-    return `${idPart}:${String(message?.revision ?? "")}:${text2(message?.role, 20)}:${text2(message?.content, 180)}`;
+    return `${idPart}:${String(message?.revision ?? "")}:${text2(message?.role, 20)}:${sanitizeNarrativeContent(message?.content, 180)}`;
   }).join("|").slice(0, 1600);
 }
 function seedVisibleTo(entry, speakerName) {
@@ -4239,6 +4347,61 @@ function continuityEventKey(item) {
 function seededEventLane(event) {
   return event.createdBy === "model" && (event.lane === "Continuity" || event.lane === "Current goal");
 }
+function applyNarrativeActorPresence(state, actors, updatedAt) {
+  let changed = false;
+  for (const item of actors) {
+    if (item.presence === "unknown")
+      continue;
+    const matchedContactIds = new Set;
+    for (const actorId of matchingActorIds(state, item.name)) {
+      const contact = resolvePocketActor(state, actorId)?.contact;
+      if (!contact || matchedContactIds.has(contact.id))
+        continue;
+      matchedContactIds.add(contact.id);
+      const nextInScene = item.presence === "with_persona";
+      if (contact.presence.inScene !== nextInScene) {
+        contact.presence.inScene = nextInScene;
+        if (nextInScene)
+          contact.presence.lastSceneAt = updatedAt;
+        changed = true;
+      }
+      const nextSceneNote = nextInScene ? [item.activity, item.location].filter(Boolean).join(" \u2014 ").slice(0, 600) : "";
+      if (contact.sceneNote !== nextSceneNote && (nextSceneNote || item.presence === "away")) {
+        contact.sceneNote = nextSceneNote;
+        changed = true;
+      }
+      reconcileContactAvailability(state, contact);
+    }
+  }
+  return changed;
+}
+function applyNarrativeTrackerDeltas(state, deltas, updatedAt) {
+  let changed = false;
+  for (const delta of deltas) {
+    const index = state.trackers.findIndex((tracker2) => tracker2.key === delta.key && tracker2.allowModelWrite && tracker2.updateMode === "model");
+    if (index < 0)
+      continue;
+    const tracker = state.trackers[index];
+    try {
+      const next = applyTrackerOperation(tracker, {
+        operation: delta.operation,
+        amount: delta.amount,
+        state: delta.state,
+        reason: delta.reason,
+        source: "model",
+        now: updatedAt,
+        roleplayNow: state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? undefined : state.roleplayNow
+      });
+      if (next !== tracker) {
+        state.trackers[index] = next;
+        changed = true;
+      }
+    } catch (error) {
+      spindle.log.warn(`Pocket ignored invalid narrative tracker delta for ${delta.key}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return changed;
+}
 function applyNarrativeSeedState(state, seed) {
   let changed = applyNarrativeClock(state, seed.world.clock);
   const weather = seed.world.weather;
@@ -4338,7 +4501,7 @@ function applySetupCurrentGoal(state, seed) {
 }
 async function loadNarrativeSeed(chatId, characterId, userId) {
   const raw = await spindle.userStorage.getJson(continuitySeedPath(chatId, characterId), { fallback: null, userId });
-  if (!isRecord(raw))
+  if (!isRecord2(raw))
     return null;
   if (raw.version !== POCKET_CONTINUITY_SEED_VERSION) {
     spindle.log.info(`Pocket continuity seed cache invalidated (stored v${String(raw.version ?? "legacy")} \u2192 world-seed v${POCKET_CONTINUITY_SEED_VERSION}).`);
@@ -4346,7 +4509,7 @@ async function loadNarrativeSeed(chatId, characterId, userId) {
   }
   return normalizeNarrativeSeed(raw);
 }
-async function refreshNarrativeSeed(chatId, characterId, userId) {
+async function refreshNarrativeSeed(chatId, characterId, userId, options = {}) {
   if (!chatId || chatId === "_lobby" || !spindle.permissions.has("generation") || !spindle.permissions.has("chat_mutation")) {
     return loadNarrativeSeed(chatId, characterId, userId);
   }
@@ -4356,15 +4519,15 @@ async function refreshNarrativeSeed(chatId, characterId, userId) {
     return existingFlight;
   const flight = (async () => {
     const hostMessages = await spindle.chat.getMessages(chatId).catch(() => []);
-    const sourceMessages = hostMessages.filter((message) => (message?.role === "user" || message?.role === "assistant") && text2(message?.content, 1)).slice(-4);
+    const sourceMessages = hostMessages.filter((message) => (message?.role === "user" || message?.role === "assistant") && sanitizeNarrativeContent(message?.content, 1)).slice(-4);
     if (!sourceMessages.length)
       return loadNarrativeSeed(chatId, characterId, userId);
     const sourceKey = `v${POCKET_CONTINUITY_SEED_VERSION}:${narrativeSeedSourceKey(sourceMessages)}`;
     const sourceMessageIds = sourceMessages.map((message) => text2(message?.id, 180)).filter(Boolean).slice(-8);
     const previous = await loadNarrativeSeed(chatId, characterId, userId);
-    if (previous?.sourceKey === sourceKey)
-      return previous;
     const state = await loadState(chatId, characterId, userId);
+    if (previous?.sourceKey === sourceKey && state.lastReconciliation?.sourceKey === sourceKey)
+      return previous;
     const knownActors = [
       state.pocketPersona.displayName,
       state.characterName,
@@ -4372,10 +4535,41 @@ async function refreshNarrativeSeed(chatId, characterId, userId) {
     ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index).slice(0, 40);
     const recentNarrative = sourceMessages.map((message, index) => {
       const role = message?.role === "assistant" ? "ASSISTANT NARRATIVE" : "USER NARRATIVE";
-      return `${role} [${index + 1}]: ${text2(message?.content, 1300)}`;
+      return `${role} [${index + 1}]: ${sanitizeNarrativeContent(message?.content, 1300)}`;
     }).join(`
 
 `).slice(-5200);
+    const modelWritableTrackers = state.trackers.filter((tracker) => tracker.allowModelWrite && tracker.updateMode === "model").slice(0, 12).map((tracker) => ({
+      key: tracker.key,
+      label: tracker.label,
+      kind: tracker.kind,
+      value: tracker.kind === "state" ? tracker.state : tracker.value,
+      min: tracker.kind === "state" ? undefined : tracker.min,
+      max: tracker.kind === "state" ? undefined : tracker.max,
+      states: tracker.kind === "state" ? tracker.states : undefined,
+      target: tracker.target.label || tracker.target.id || tracker.target.type
+    }));
+    const currentStateAdvisory = {
+      clock: {
+        roleplayNow: state.roleplayNow,
+        source: state.roleplayClockSource || "legacy",
+        precision: state.roleplayClockPrecision || "unknown",
+        label: state.roleplayClockLabel || ""
+      },
+      weather: {
+        location: state.weather.location,
+        condition: state.weather.condition,
+        details: state.weather.details
+      },
+      inSceneActors: state.contacts.filter((contact) => contact.presence.inScene).map((contact) => contact.name).slice(0, 16),
+      activeTimeline: state.events.filter((event) => seededEventLane(event) && !event.completed).slice(-8).map((event) => ({
+        title: event.title,
+        description: event.description,
+        whenText: event.whenText,
+        actorContactIds: event.actorContactIds
+      })),
+      previousWorld: previous?.world || null
+    };
     const parsed = await runStructuredGeneration("continuity-seed", id("continuity_seed"), {
       type: "quiet",
       messages: [
@@ -4392,8 +4586,9 @@ Return strict JSON only:
     "weather":{"condition":"short condition","location":"where it applies","details":"short atmospheric detail"} | null
   },
   "facts":[{"text":"actor-specific factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["REQUIRED subject actor names"],"ttl":"turn|scene|persistent"}],
-  "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
-  "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}]
+  "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","presence":"with_persona|away|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
+  "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}],
+  "trackerOps":[{"key":"ONLY a key from MODEL-WRITABLE TRACKERS","operation":"set|add|subtract|reset|set_state","amount":0,"state":"state value for set_state","reason":"short evidence from recent narrative"}]
 }
 
 Rules:
@@ -4409,6 +4604,10 @@ Rules:
 - public means reasonably shared/cast-visible information. scene means explicitly witnessed; list witnesses in knownBy. private is the default for personal/internal information.
 - knownBy must be conservative. Never assume everyone knows a private fact.
 - Actor status is world/physical state only. busy does NOT mean unable to text.
+- actors[].presence is RELATIVE PHYSICAL CO-LOCATION with the Pocket Persona: with_persona only when recent prose supports that they are together; away only when recent prose supports separation; unknown when the latest prose does not establish it. Do not preserve a stale CURRENT POCKET STATE presence merely because it is already there.
+- CURRENT POCKET STATE is advisory and may be stale. It exists so you can emit corrections, not as evidence. RECENT NARRATIVE is authoritative when they conflict.
+- For an existing active Continuity/Current-goal timeline item that recent prose clearly resolves, emit the same beat with completed=true. Use whenText="Now" only when the latest supplied prose makes it explicitly current.
+- trackerOps is an EPHEMERAL delta list. Use ONLY keys listed under MODEL-WRITABLE TRACKERS and only when recent prose directly supports the change. Do not infer tracker changes from CURRENT POCKET STATE. Use [] when nothing changed.
 - Prefer 0\u20136 world facts, 0\u20136 actor facts, 0\u20138 actor updates, and 0\u20134 timeline rows.
 - Use exact names from KNOWN ACTORS when possible.`
         },
@@ -4418,7 +4617,13 @@ Rules:
 ${knownActors.join(`
 `)}
 
-RECENT NARRATIVE:
+CURRENT POCKET STATE \u2014 ADVISORY / MAY BE STALE / NEVER EVIDENCE:
+${JSON.stringify(currentStateAdvisory)}
+
+MODEL-WRITABLE TRACKERS:
+${JSON.stringify(modelWritableTrackers)}
+
+RECENT NARRATIVE \u2014 AUTHORITATIVE:
 ${recentNarrative}`
         }
       ],
@@ -4426,15 +4631,42 @@ ${recentNarrative}`
       userId
     }, userId);
     const fresh = normalizeNarrativeSeed({ ...parsed, sourceKey, sourceMessageIds, updatedAt: nowIso() }, sourceKey, sourceMessageIds);
+    const trackerDeltas = normalizeNarrativeTrackerDeltas(parsed);
     const seed = mergeNarrativeSeed(previous, fresh);
-    await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId });
     await withStateLock(stateKey(chatId, characterId), async () => {
       const latest = await loadState(chatId, characterId, userId);
-      if (!applyNarrativeSeedState(latest, seed))
-        return;
-      await saveState(latest, userId);
-      await sendState(latest, userId, "continuity_seed");
+      const alreadyApplied = latest.lastReconciliation?.sourceKey === sourceKey;
+      const continuityChanged = alreadyApplied ? false : applyNarrativeSeedState(latest, seed);
+      const presenceChanged = alreadyApplied ? false : applyNarrativeActorPresence(latest, fresh.actors, fresh.updatedAt);
+      const trackersChanged = alreadyApplied ? false : applyNarrativeTrackerDeltas(latest, trackerDeltas, fresh.updatedAt);
+      const domains = new Set(["continuity"]);
+      if (fresh.world.clock.time || fresh.world.clock.dayPart || fresh.world.clock.label)
+        domains.add("clock");
+      if (fresh.world.weather)
+        domains.add("weather");
+      if (fresh.actors.some((actor) => actor.presence !== "unknown") || presenceChanged)
+        domains.add("presence");
+      if (seed.timeline.length)
+        domains.add("timeline");
+      if (trackerDeltas.length || trackersChanged)
+        domains.add("trackers");
+      if (!alreadyApplied) {
+        const nextRevision = Math.max(0, latest.stateRevision || 0) + 1;
+        latest.stateRevision = nextRevision;
+        latest.lastReconciliation = {
+          revision: nextRevision,
+          sourceKey,
+          sourceMessageIds,
+          generationId: text2(options.generationId, 180) || undefined,
+          messageId: text2(options.messageId, 180) || undefined,
+          updatedAt: fresh.updatedAt,
+          domains: [...domains]
+        };
+        await saveState(latest, userId);
+        await sendState(latest, userId, "state_reconciled");
+      }
     });
+    await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId });
     return seed;
   })();
   narrativeSeedFlights.set(flightKey, flight);
@@ -4688,7 +4920,7 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
     }
     let relayToContinue = null;
     if (replaceIndex < 0 && !bool2(input.manualOverride)) {
-      const after = isRecord(generated.after) ? generated.after : {};
+      const after = isRecord2(generated.after) ? generated.after : {};
       if (after.state === "arriving") {
         conversation.pause = undefined;
         conversation.availability = { state: "arriving" };
@@ -4837,7 +5069,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
       userId
     }, userId);
     const generatedRows = (Array.isArray(parsed.messages) ? parsed.messages : []).slice(0, 4).flatMap((row) => {
-      if (!isRecord(row))
+      if (!isRecord2(row))
         return [];
       const speakerId = text2(row.speakerId, 180);
       const body = text2(row.text, 8000);
@@ -5045,7 +5277,7 @@ async function refreshCompactContactProfile(input, userId) {
   const discoveredActorId = contact.source.kind === "npc" ? contact.source.discoveredActorId : undefined;
   const phoneEvidence = discoveredSource ? state.conversations.flatMap((conversation) => conversation.messages.filter((message) => message.senderActorId === discoveredActorId || message.senderContactId === contact.id)).slice(-12).map((message) => `${message.senderName}: ${message.text.slice(0, 600)}`).join(`
 `) : "";
-  const roleplayEvidence = discoveredSource && spindle.permissions.has("chat_mutation") ? (await spindle.chat.getMessages(context.chatId)).slice(-18).map((message) => `${message.role}: ${text2(message.content, 700)}`).join(`
+  const roleplayEvidence = discoveredSource && spindle.permissions.has("chat_mutation") ? (await spindle.chat.getMessages(context.chatId)).slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeContent(message.content, 700)}`).join(`
 `).slice(-9000) : "";
   send({ type: "lumiphone:operation_progress", task: "profile-refresh", requestId, phase: "generating", message: "Refreshing compact profile\u2026" }, userId);
   const parsed = await runStructuredGeneration("profile-refresh", requestId, {
@@ -5117,7 +5349,7 @@ async function syncSceneContacts(input, userId) {
   send({ type: "lumiphone:operation_progress", task: "scene-sync", requestId, phase: "request", message: "Reading current scene\u2026" }, userId);
   const messages = await spindle.chat.getMessages(context.chatId);
   const authoritative = messages.at(-1);
-  const transcript = messages.slice(-24).map((message) => `${message.role}: ${text2(message.content, 1200)}`).join(`
+  const transcript = messages.slice(-24).map((message) => `${message.role}: ${sanitizeNarrativeContent(message.content, 1200)}`).join(`
 `).slice(-16000);
   const preflightState = await loadState(context.chatId, context.characterId, userId);
   const exclusions = [preflightState.characterName, preflightState.pocketPersona.displayName].filter(Boolean);
@@ -5137,7 +5369,7 @@ async function syncSceneContacts(input, userId) {
     throw new Error("Scene Sync returned no contacts array; no contact state was changed.");
   const aliasUniverse = [...new Set([...exclusions, ...preflightState.contacts.map((entry) => entry.name)])];
   const found = parsed.contacts.slice(0, 6).flatMap((entry) => {
-    if (!isRecord(entry))
+    if (!isRecord2(entry))
       return [];
     const name = text2(entry.name, 120);
     if (!name)
@@ -5473,7 +5705,7 @@ function parseTagContent(content) {
     return { text: trimmed };
   try {
     const parsed = JSON.parse(trimmed);
-    return isRecord(parsed) ? parsed : { text: trimmed };
+    return isRecord2(parsed) ? parsed : { text: trimmed };
   } catch {
     return { text: trimmed };
   }
@@ -5505,7 +5737,7 @@ async function applyAction(input, userId, source = "model") {
   const context = await resolveContext(input, userId);
   const action = text2(input.action, 40).toLowerCase();
   const key = stateKey(context.chatId, context.characterId);
-  const payload = isRecord(input.payload) ? input.payload : input;
+  const payload = isRecord2(input.payload) ? input.payload : input;
   if (action === "camera") {
     const reserved = await withStateLock(key, async () => {
       const state = await loadState(context.chatId, context.characterId, userId);
@@ -5545,7 +5777,7 @@ async function applyAction(input, userId, source = "model") {
         contact.presence.inScene = false;
       const snapshotActors = [];
       for (const raw of actors) {
-        if (!isRecord(raw))
+        if (!isRecord2(raw))
           continue;
         const name = text2(raw.name, 120);
         if (!name || uniqueAliasMatch(name, [state.characterName, state.pocketPersona.displayName].filter(Boolean)))
@@ -6004,7 +6236,7 @@ async function applyAction(input, userId, source = "model") {
   });
 }
 async function handleFrontend(payload, userId) {
-  if (!isRecord(payload) || !text2(payload.type, 120).startsWith("lumiphone:"))
+  if (!isRecord2(payload) || !text2(payload.type, 120).startsWith("lumiphone:"))
     return;
   const requestId = text2(payload.requestId, 180);
   try {
@@ -6077,7 +6309,7 @@ async function handleFrontend(payload, userId) {
         spindle.log.info(`Pocket contact save invoked: request=${requestId} chat=${context.chatId}`);
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
-          const raw = isRecord(payload.contact) ? payload.contact : payload;
+          const raw = isRecord2(payload.contact) ? payload.contact : payload;
           const existing = state.contacts.find((entry) => entry.id === text2(raw.id, 180));
           const candidate = normalizePocketContact({
             ...existing || {},
@@ -6259,7 +6491,7 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:save_preferences":
       case "lumiphone:save_settings": {
         const existing = await loadPreferences(userId);
-        const next = normalizePreferences({ ...existing, ...isRecord(payload.preferences) ? payload.preferences : isRecord(payload.settings) ? payload.settings : {} });
+        const next = normalizePreferences({ ...existing, ...isRecord2(payload.preferences) ? payload.preferences : isRecord2(payload.settings) ? payload.settings : {} });
         await validateChangedWallpaperSources(existing, next, userId);
         await savePreferences(next, userId);
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
@@ -6375,7 +6607,7 @@ Role: ${state.pocketPersona.role}
 Source description: ${text2(state.pocketPersona.identityBrief, 1500) || "(none)"}
 
 RECENT ROLEPLAY EVIDENCE
-${messages.slice(-18).map((message) => `${message.role}: ${text2(message.content, 700)}`).join(`
+${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeContent(message.content, 700)}`).join(`
 `).slice(-9000) || "(none)"}` }
             ],
             parameters: { temperature: 0.2, max_tokens: 360 },
@@ -6435,7 +6667,7 @@ ${messages.slice(-18).map((message) => `${message.role}: ${text2(message.content
         break;
       }
       case "lumiphone:model_action": {
-        const attrs = isRecord(payload.attrs) ? payload.attrs : {};
+        const attrs = isRecord2(payload.attrs) ? payload.attrs : {};
         const tagPayload = {
           ...parseTagContent(text2(payload.content, 40000)),
           ...attrs,
@@ -6787,9 +7019,9 @@ ${marker}`;
         break;
       }
       case "lumiphone:import_data": {
-        if (!isRecord(payload.data))
+        if (!isRecord2(payload.data))
           throw new Error("Import must be a Pocket JSON object.");
-        const rawState = isRecord(payload.data.state) ? payload.data.state : payload.data;
+        const rawState = isRecord2(payload.data.state) ? payload.data.state : payload.data;
         if (Number(rawState.version) > STATE_VERSION)
           throw new Error("This backup uses a newer Pocket state schema.");
         const characterName = await characterNameFor(context.characterId, userId);
@@ -6970,10 +7202,10 @@ spindle.on("TOOL_INVOCATION", async (payload, eventUserId) => {
     const userId = eventUserId;
     if (!userId)
       throw new Error("Pocket tool invocation is missing authenticated user context");
-    const args = isRecord(payload.args) ? payload.args : {};
+    const args = isRecord2(payload.args) ? payload.args : {};
     const merged = {
       ...args,
-      ...isRecord(args.payload) ? args.payload : {},
+      ...isRecord2(args.payload) ? args.payload : {},
       payload: args.payload,
       idempotencyKey: text2(payload.requestId, 240),
       messageId: text2(payload.messageId, 180)
@@ -7079,10 +7311,10 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
   try {
     const chat = await spindle.chats.get(chatId, userId);
     const characterId = text2(chat?.character_id, 180) || "_none";
+    const generationType = text2(payload?.generationType ?? payload?.generation_type, 40);
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId);
       let changed = false;
-      const generationType = text2(payload?.generationType ?? payload?.generation_type, 40);
       const relay = generationId ? relayForGeneration(state, generationId) : undefined;
       let reference = generationId ? referenceForGeneration(state, generationId) : undefined;
       let endedBoundUserMessageId = "";
@@ -7151,8 +7383,12 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
       const reason = relay ? relay.status === "consumed" ? "relay_consumed" : "relay_failed" : reference ? reference.status === "consumed" ? "reference_consumed" : "reference_failed" : "scene_stale";
       await sendState(state, userId, reason);
     });
+    if (generationType === "normal" && messageId && !payload?.error) {
+      await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId });
+      considerAmbientMessage(chatId, characterId, "turn", userId);
+    }
   } catch (error) {
-    spindle.log.warn(`Pocket could not mark the scene snapshot stale: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`Pocket post-turn reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 });
 spindle.on("GENERATION_STOPPED", async (payload, userId) => {
@@ -7178,17 +7414,6 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
       await saveState(state, userId);
       await sendState(state, userId, relay ? "relay_stopped" : "reference_failed");
     });
-  } catch {}
-});
-spindle.on("CHARACTER_MESSAGE_RENDERED", async (payload, userId) => {
-  const chatId = text2(payload?.chatId, 180);
-  if (!chatId)
-    return;
-  try {
-    const chat = spindle.permissions.has("chats") ? await spindle.chats.get(chatId, userId) : null;
-    const characterId = text2(chat?.character_id, 180) || "_none";
-    refreshNarrativeSeed(chatId, characterId, userId);
-    considerAmbientMessage(chatId, characterId, "turn", userId);
   } catch {}
 });
 spindle.log.info("Pocket backend loaded.");

@@ -735,6 +735,16 @@ export interface ProcessedPocketCommand {
   activityId?: string
 }
 
+export type PocketReconciliationDomain = 'continuity' | 'clock' | 'weather' | 'presence' | 'timeline' | 'trackers'
+export interface PocketStateReconciliation {
+  revision: number
+  sourceKey: string
+  sourceMessageIds: string[]
+  generationId?: string
+  messageId?: string
+  updatedAt: string
+  domains: PocketReconciliationDomain[]
+}
 export interface PhoneState {
   version: 10
   chatId: string
@@ -747,6 +757,10 @@ export interface PhoneState {
   roleplayClockLabel?: string
   /** Browser getTimezoneOffset(), persisted so backend can interpret narrative local times. */
   roleplayTimezoneOffsetMinutes?: number
+  /** Monotonic Pocket-state revision advanced by post-turn reconciliation. */
+  stateRevision?: number
+  /** Provenance for the latest committed narrative reconciliation pass. */
+  lastReconciliation?: PocketStateReconciliation
   sceneSnapshot: SceneActorSnapshot | null
   pocketPersona: ChatPocketPersona
   setup: {
