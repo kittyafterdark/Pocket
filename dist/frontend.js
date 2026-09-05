@@ -121,6 +121,7 @@ function defaultPreferences() {
     replyCadence: "natural",
     ambientMessaging: "off",
     roleplayContextMode: "smart",
+    showReconciliationStatus: true,
     recentRoleplayMessages: 8,
     notificationSounds: false,
     notificationPreviews: true,
@@ -232,6 +233,7 @@ function normalizePreferences(value) {
     replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
     ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
     roleplayContextMode: contextMode,
+    showReconciliationStatus: bool(raw.showReconciliationStatus, fallback.showReconciliationStatus),
     recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
     notificationSounds: bool(raw.notificationSounds, fallback.notificationSounds),
     notificationPreviews: bool(raw.notificationPreviews, fallback.notificationPreviews),
@@ -330,6 +332,18 @@ function conversationActorIds(conversation) {
   return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds;
 }
 function resolvePocketActor(state, actorId) {
+  if (state.pocketPersona && state.pocketPersonaActorId && actorId === state.pocketPersonaActorId) {
+    return {
+      actorId,
+      kind: "persona",
+      name: state.pocketPersona.displayName || "You",
+      role: state.pocketPersona.role || "Persona",
+      identityBrief: state.pocketPersona.identityBrief || "",
+      accent: state.pocketPersona.accent || "#8b7dff",
+      avatarUrl: state.pocketPersona.avatarUrl || "",
+      relationship: "close"
+    };
+  }
   const contact = state.contacts.find((entry) => entry.id === actorId);
   if (contact)
     return contactPresentation(contact, actorId);
@@ -370,6 +384,79 @@ function contactPresentation(contact, actorId) {
     relationship: contact.relationship,
     contact
   };
+}
+
+// src/domain/device.ts
+function pocketPersonaActorId(state) {
+  const persisted = typeof state.pocketPersonaActorId === "string" ? state.pocketPersonaActorId.trim() : "";
+  if (persisted)
+    return persisted;
+  const linked = state.pocketPersona?.linkedPersonaId?.trim();
+  const name = normalizeActorName(state.pocketPersona?.displayName).replace(/\s+/g, "_").slice(0, 120);
+  return `persona:${linked || name || `${state.chatId}:${state.characterId}` || "owner"}`;
+}
+function messageSenderActorId(state, message) {
+  if (message.sender === "persona")
+    return message.senderActorId || pocketPersonaActorId(state);
+  return message.senderActorId || message.senderContactId || "";
+}
+function conversationDeviceActorIds(state, conversation) {
+  const result = conversation.includesPocketPersona ? [pocketPersonaActorId(state)] : [];
+  for (const actorId of conversation.participantActorIds || conversation.participantContactIds || []) {
+    if (actorId && !result.includes(actorId))
+      result.push(actorId);
+  }
+  return result;
+}
+function conversationVisibleOnDevice(state, conversation, deviceOwnerActorId) {
+  return conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state));
+}
+function messageDirection(state, conversation, message, deviceOwnerActorId) {
+  const owner = deviceOwnerActorId || pocketPersonaActorId(state);
+  const sender = messageSenderActorId(state, message);
+  if (sender && sender === owner)
+    return "outbound";
+  const recipients = message.recipientActorIds?.length ? message.recipientActorIds : conversationDeviceActorIds(state, conversation).filter((actorId) => actorId !== sender);
+  return recipients.includes(owner) ? "inbound" : "external";
+}
+function messageReadByDevice(state, message, deviceOwnerActorId) {
+  const owner = deviceOwnerActorId || pocketPersonaActorId(state);
+  if (messageSenderActorId(state, message) === owner)
+    return true;
+  if (message.readByActorIds?.includes(owner))
+    return true;
+  return owner === pocketPersonaActorId(state) ? Boolean(message.read) : false;
+}
+function conversationUnreadForDevice(state, conversation, deviceOwnerActorId) {
+  const owner = deviceOwnerActorId || pocketPersonaActorId(state);
+  if (!conversationVisibleOnDevice(state, conversation, owner))
+    return 0;
+  return conversation.messages.reduce((count, message) => {
+    if (message.sender === "system")
+      return count;
+    return messageDirection(state, conversation, message, owner) === "inbound" && !messageReadByDevice(state, message, owner) ? count + 1 : count;
+  }, 0);
+}
+function counterpartActorIds(state, conversation, deviceOwnerActorId) {
+  const owner = deviceOwnerActorId || pocketPersonaActorId(state);
+  return conversationDeviceActorIds(state, conversation).filter((actorId) => actorId !== owner);
+}
+function deviceActorName(state, actorId) {
+  if (actorId === pocketPersonaActorId(state))
+    return state.pocketPersona.displayName || "You";
+  return resolvePocketActor(state, actorId)?.name || "Unknown actor";
+}
+function conversationTitleForDevice(state, conversation, deviceOwnerActorId) {
+  if (conversation.kind === "group")
+    return conversation.title || "Group";
+  const counterparts = counterpartActorIds(state, conversation, deviceOwnerActorId);
+  if (counterparts.length)
+    return counterparts.map((actorId) => deviceActorName(state, actorId)).join(" & ");
+  return conversation.title || "Conversation";
+}
+function notificationBelongsToDevice(state, deviceOwnerActorId, targetOwnerActorId) {
+  const owner = deviceOwnerActorId || pocketPersonaActorId(state);
+  return (targetOwnerActorId || pocketPersonaActorId(state)) === owner;
 }
 
 // src/frontend/surface.ts
@@ -898,6 +985,9 @@ function messages(host) {
     next.ambientMessaging = ambient.value;
   }));
   replies.append(el("div", "lp-label", "Ambient messages"), ambient);
+  replies.append(toggle("Show post-turn sync status", settings.showReconciliationStatus, (value) => commit((next) => {
+    next.showReconciliationStatus = value;
+  }), "Cosmetic only. Pocket still reconciles world state after eligible roleplay turns when this is hidden."));
   const context = el("section", "lp-card lp-settings-section");
   context.append(el("div", "lp-eyebrow", "Roleplay context"));
   const mode = el("select", "lp-select");
@@ -1634,12 +1724,12 @@ var LOCAL_COPY = {
   took_action: "continued this in the main conversation.",
   continued_in_person: "continued this in person."
 };
-function conversationTitle(state, conversation) {
-  if (conversation.kind === "group")
-    return conversation.title || "Group";
-  return resolvePocketActor(state, conversationActorIds(conversation)[0])?.name || conversation.title || conversation.messages.at(-1)?.senderName || "Conversation";
+function conversationTitle(state, conversation, deviceOwnerActorId) {
+  return conversationTitleForDevice(state, conversation, deviceOwnerActorId);
 }
 function newConversationView(host) {
+  if (host.readOnlyDevice)
+    return host.empty("Inspection mode", "Switch back to the roleplay Persona device to create or send conversations.");
   const { page, content } = host.page("New Message", "Choose a contact or start a group");
   const { section: directSection, body: directBody } = sectionBlock("Direct message", "Start or reopen a private Pocket conversation.");
   const contacts = [...host.state.contacts].sort((a, b) => a.name.localeCompare(b.name));
@@ -1671,6 +1761,8 @@ function newConversationView(host) {
   return page;
 }
 function groupEditor(host, conversation) {
+  if (host.readOnlyDevice)
+    return host.empty("Inspection mode", "Switch back to the roleplay Persona device to modify group membership.");
   let saveGroup = () => {};
   const { page, content } = host.page(conversation ? "Group Details" : "New Group", "Choose at least two contacts", { label: "Save", callback: () => saveGroup() });
   const title = el("input", "lp-input");
@@ -1864,17 +1956,17 @@ function referenceAttachment(host, reference) {
   return node;
 }
 function renderMessagesView(host) {
-  const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId) || null;
+  const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId && conversationVisibleOnDevice(host.state, item, host.deviceOwnerActorId)) || null;
   if (host.selectedView === "new-group")
     return newConversationView(host);
   if (selectedConversation?.kind === "group" && host.selectedView === "group-detail")
     return groupEditor(host, selectedConversation);
   if (!selectedConversation) {
-    const conversations = [...host.state.conversations].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const conversations = host.state.conversations.filter((conversation2) => conversationVisibleOnDevice(host.state, conversation2, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     const { page: page2, content } = host.page("Messages", `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}`, {
-      label: "New",
+      label: host.readOnlyDevice ? "" : "New",
       callback: () => host.selectConversation("", "new-group"),
-      enabled: host.state.contacts.length > 0
+      enabled: !host.readOnlyDevice && host.state.contacts.length > 0
     });
     content.classList.add("lp-conversation-list");
     for (const conversation2 of conversations) {
@@ -1882,8 +1974,8 @@ function renderMessagesView(host) {
       row2.dataset.clickable = "true";
       row2.tabIndex = 0;
       row2.setAttribute("role", "button");
-      const titleText2 = conversationTitle(host.state, conversation2);
-      const members = conversationActorIds(conversation2);
+      const titleText2 = conversationTitle(host.state, conversation2, host.deviceOwnerActorId);
+      const members = counterpartActorIds(host.state, conversation2, host.deviceOwnerActorId);
       const avatar = el("div", "lp-avatar", conversation2.kind === "group" ? String(members.length) : titleText2.slice(0, 1).toUpperCase());
       const directActor2 = conversation2.kind === "direct" ? resolvePocketActor(host.state, members[0]) : null;
       if (directActor2?.avatarUrl) {
@@ -1896,8 +1988,9 @@ function renderMessagesView(host) {
       const description = latest ? `${conversation2.kind === "group" && latest.sender === "contact" ? `${latest.senderName}: ` : ""}${latest.text}` : "Start a conversation";
       const identity = identityBlock({ name: titleText2, meta: latest ? formatTime(latest.createdAt) : "", description });
       row2.append(avatar, identity);
-      if (conversation2.unread)
-        row2.appendChild(el("span", "lp-unread", String(conversation2.unread)));
+      const unread = conversationUnreadForDevice(host.state, conversation2, host.deviceOwnerActorId);
+      if (unread)
+        row2.appendChild(el("span", "lp-unread", String(unread)));
       const open = () => host.selectConversation(conversation2.id);
       row2.addEventListener("click", open);
       row2.addEventListener("keydown", (event) => {
@@ -1913,14 +2006,15 @@ function renderMessagesView(host) {
     return page2;
   }
   const conversation = selectedConversation;
-  const titleText = conversationTitle(host.state, conversation);
+  const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId);
   const page = el("div", "lp-thread");
   const nav = el("header", "lp-nav");
   const back = button("‹ Back", "lp-nav-action");
   back.addEventListener("click", () => host.back());
   const title = el("div", "lp-nav-title", titleText);
-  const memberActorIds = conversationActorIds(conversation);
-  title.appendChild(el("span", "lp-nav-subtitle", conversation.kind === "group" ? `${memberActorIds.length} participants` : "Direct message"));
+  const memberActorIds = conversationDeviceActorIds(host.state, conversation);
+  const counterpartIds = counterpartActorIds(host.state, conversation, host.deviceOwnerActorId);
+  title.appendChild(el("span", "lp-nav-subtitle", host.readOnlyDevice ? `${conversation.kind === "group" ? memberActorIds.length : 2} participants · inspection mode` : conversation.kind === "group" ? `${memberActorIds.length} participants` : "Direct message"));
   const menu = el("details", "lp-conversation-menu");
   const menuToggle = el("summary", "lp-nav-action", "⋯");
   menuToggle.setAttribute("aria-label", "Conversation menu");
@@ -1936,11 +2030,11 @@ function renderMessagesView(host) {
   menuSheet.appendChild(menuAction(conversation.kind === "group" ? "Participants" : "Contact info", () => {
     if (conversation.kind === "group")
       host.selectConversation(conversation.id, "group-detail");
-    else
-      host.openActor(memberActorIds[0]);
+    else if (counterpartIds[0])
+      host.openActor(counterpartIds[0]);
   }));
   const referenceAction = menuAction("Reference in roleplay", () => host.showReferenceSheet(conversation.id));
-  referenceAction.disabled = !conversation.messages.some((message) => message.sender !== "system");
+  referenceAction.disabled = host.readOnlyDevice || !conversation.messages.some((message) => message.sender !== "system");
   menuSheet.appendChild(referenceAction);
   menuSheet.appendChild(menuAction("View Timeline", () => host.openTimeline("")));
   menuSheet.appendChild(menuAction("Generation info", () => host.showConversationGenerationInfo(conversation.id)));
@@ -1955,27 +2049,28 @@ function renderMessagesView(host) {
   page.appendChild(referenceSlot);
   const busy = host.busyConversations.get(conversation.id);
   const replyBusy = Boolean(busy);
-  const directActor = conversation.kind === "direct" ? resolvePocketActor(host.state, memberActorIds[0]) : null;
+  const directActor = conversation.kind === "direct" ? resolvePocketActor(host.state, counterpartIds[0] || "") : null;
   const directContact = directActor?.contact || null;
   const scenePresent = Boolean(directContact?.presence.inScene);
   const bubbles = el("div", "lp-bubbles");
   bubbles.dataset.pocketThread = conversation.id;
   bubbles.dataset.conversationKind = conversation.kind;
-  const conversationRelays = host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== "dismissed");
+  const conversationRelays = host.readOnlyDevice ? [] : host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== "dismissed");
   const renderedRelayIds = new Set;
   let priorGroupSpeakerId = "";
   for (const message of conversation.messages) {
     const bubble = el("div", "lp-bubble");
     bubble.dataset.messageId = message.id;
     bubble.dataset.selected = String(message.id === host.selectedMessageId);
-    bubble.dataset.sender = message.sender;
-    const senderActor = message.sender === "contact" ? resolvePocketActor(host.state, message.senderActorId || message.senderContactId || memberActorIds[0]) : null;
+    const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId);
+    bubble.dataset.sender = direction === "outbound" ? "persona" : message.sender === "system" ? "system" : "contact";
+    const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === "contact" ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || "") : null;
     const resolvedAccent = senderActor?.accent || message.senderAccent || directActor?.accent || "";
-    if (message.sender === "contact")
+    if (direction !== "outbound")
       bubble.style.setProperty("--message-accent", resolvedAccent);
     const messageActorId = message.senderActorId || message.senderContactId || "";
-    const continuesRun = conversation.kind === "group" && message.sender === "contact" && priorGroupSpeakerId === messageActorId;
-    if (conversation.kind === "group" && message.sender === "contact" && !continuesRun) {
+    const continuesRun = conversation.kind === "group" && direction !== "outbound" && priorGroupSpeakerId === messageActorId;
+    if (conversation.kind === "group" && direction !== "outbound" && !continuesRun && senderActor) {
       const sender = button(senderActor?.name || message.senderName, "lp-bubble-sender lp-actor-link");
       sender.addEventListener("click", () => {
         if (messageActorId)
@@ -1986,20 +2081,23 @@ function renderMessagesView(host) {
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
     if (message.generation) {
       const tools = el("span", "lp-bubble-tools");
-      const retry = button("↻", "lp-bubble-action");
-      retry.type = "button";
-      retry.title = "Retry";
-      retry.setAttribute("aria-label", `Retry message from ${message.senderName}`);
-      retry.addEventListener("click", () => host.send("lumiphone:retry_message", { conversationId: conversation.id, messageId: message.id }));
+      if (!host.readOnlyDevice) {
+        const retry = button("↻", "lp-bubble-action");
+        retry.type = "button";
+        retry.title = "Retry";
+        retry.setAttribute("aria-label", `Retry message from ${message.senderName}`);
+        retry.addEventListener("click", () => host.send("lumiphone:retry_message", { conversationId: conversation.id, messageId: message.id }));
+        tools.appendChild(retry);
+      }
       const generationInfo = button("ⓘ", "lp-bubble-action");
       generationInfo.type = "button";
       generationInfo.title = "Generation info";
       generationInfo.setAttribute("aria-label", "Generation info");
       generationInfo.addEventListener("click", () => host.showGenerationInfo(message));
-      tools.append(retry, generationInfo);
+      tools.appendChild(generationInfo);
       bubble.appendChild(tools);
     }
-    if (message.eventSuggestion) {
+    if (message.eventSuggestion && !host.readOnlyDevice) {
       const suggestion = message.eventSuggestion;
       const suggestionBox = el("div", "lp-event-suggestion-actions");
       suggestionBox.style.display = "flex";
@@ -2024,7 +2122,7 @@ function renderMessagesView(host) {
       }
       bubble.appendChild(suggestionBox);
     }
-    if (conversation.kind === "group" && message.sender === "contact" && senderActor) {
+    if (conversation.kind === "group" && direction !== "outbound" && senderActor) {
       const row2 = el("div", "lp-group-message");
       row2.style.setProperty("--message-accent", resolvedAccent);
       row2.dataset.continuation = String(continuesRun);
@@ -2086,6 +2184,11 @@ function renderMessagesView(host) {
   }
   if (!conversation.messages.length)
     bubbles.appendChild(host.empty("Say hello", "This thread is private to this Pocket roleplay state."));
+  if (host.readOnlyDevice) {
+    const inspect = el("div", "lp-conversation-status", `Viewing ${resolvePocketActor(host.state, host.deviceOwnerActorId)?.name || "this actor"}'s Pocket · inspection mode`);
+    page.append(bubbles, inspect);
+    return page;
+  }
   if (availability.state === "local" && !host.manualOverride) {
     if (!conversationRelays.length)
       bubbles.appendChild(el("div", "lp-conversation-status", `${directContact?.name || titleText} is currently with you.`));
@@ -2125,7 +2228,7 @@ function renderMessagesView(host) {
     speakerMenu.append(summary, sheet);
   } else
     speakerMenu.hidden = true;
-  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : memberActorIds[0]));
+  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : counterpartIds[0]));
   const textarea = el("textarea", "lp-textarea");
   textarea.rows = 1;
   textarea.placeholder = "Message…";
@@ -2734,7 +2837,7 @@ class PocketRouteHistory {
 
 // src/frontend/activity.ts
 var ICONS = {
-  message: "Message",
+  message: "Pocket",
   "tracker-change": "Tracker",
   timeline: "Timeline",
   note: "Journal",
@@ -2743,6 +2846,30 @@ var ICONS = {
   weather: "Weather",
   system: "Pocket"
 };
+function presentationLabel(activity) {
+  switch (activity.presentation?.kind) {
+    case "sent":
+      return "Sent";
+    case "received":
+      return "Received";
+    case "observed":
+      return "Observed";
+    case "referenced":
+      return "Referenced";
+    default:
+      return ICONS[activity.kind];
+  }
+}
+function actorLine(activity) {
+  const presentation = activity.presentation;
+  if (!presentation)
+    return "";
+  const sender = presentation.senderName || "";
+  const recipients = presentation.recipientNames?.filter(Boolean).join(", ") || "";
+  if (sender && recipients)
+    return `${sender} → ${recipients}`;
+  return sender || recipients || presentation.conversationTitle || "";
+}
 function activityReceipt(ctx, activity, openRoute) {
   const messageId = activity.source?.messageId;
   if (!messageId)
@@ -2751,30 +2878,61 @@ function activityReceipt(ctx, activity, openRoute) {
   if (!bubble)
     return null;
   const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
-  const button2 = document.createElement("button");
-  button2.type = "button";
-  button2.className = "pocket-receipt";
-  button2.setAttribute("aria-label", `Open ${activity.title} in Pocket`);
+  const stack = document.createElement("span");
+  stack.className = "pocket-artifact-stack";
+  const presentation = activity.presentation;
+  if (presentation && (presentation.kind === "sent" || presentation.kind === "received" || presentation.kind === "observed")) {
+    const primary = document.createElement(presentation.kind === "observed" ? "div" : "button");
+    if (primary instanceof HTMLButtonElement)
+      primary.type = "button";
+    primary.className = "pocket-inline-artifact";
+    primary.dataset.kind = presentation.kind;
+    const eyebrow = document.createElement("span");
+    eyebrow.className = "pocket-inline-artifact-kind";
+    eyebrow.textContent = `Pocket · ${presentationLabel(activity)}`;
+    const actors = document.createElement("strong");
+    actors.textContent = actorLine(activity) || presentation.conversationTitle || activity.title;
+    const copy2 = document.createElement("span");
+    copy2.className = "pocket-inline-artifact-copy";
+    copy2.textContent = activity.summary || "";
+    primary.append(eyebrow, actors, copy2);
+    if (primary instanceof HTMLButtonElement) {
+      primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title} in Pocket`);
+      primary.addEventListener("click", () => openRoute(activity.route));
+    } else {
+      primary.setAttribute("aria-label", "Observed external Pocket communication");
+    }
+    stack.appendChild(primary);
+  }
+  const receipt = document.createElement(activity.presentation?.kind === "observed" ? "span" : "button");
+  if (receipt instanceof HTMLButtonElement)
+    receipt.type = "button";
+  receipt.className = "pocket-receipt";
   const label = document.createElement("span");
   label.className = "pocket-receipt-kind";
-  label.textContent = ICONS[activity.kind];
+  label.textContent = `Pocket · ${presentationLabel(activity)}`;
   const copy = document.createElement("span");
   copy.className = "pocket-receipt-copy";
   const title = document.createElement("strong");
-  title.textContent = activity.title;
+  title.textContent = presentation?.conversationTitle || activity.title;
   copy.appendChild(title);
-  if (activity.summary) {
+  const detail2 = actorLine(activity) || activity.summary;
+  if (detail2) {
     const summary = document.createElement("span");
-    summary.textContent = activity.summary;
+    summary.textContent = detail2;
     copy.appendChild(summary);
   }
   const arrow = document.createElement("span");
   arrow.className = "pocket-receipt-arrow";
   arrow.setAttribute("aria-hidden", "true");
-  arrow.textContent = "›";
-  button2.append(label, copy, arrow);
-  button2.addEventListener("click", () => openRoute(activity.route));
-  wrapper.replaceChildren(button2);
+  arrow.textContent = receipt instanceof HTMLButtonElement ? "›" : "·";
+  receipt.append(label, copy, arrow);
+  if (receipt instanceof HTMLButtonElement) {
+    receipt.setAttribute("aria-label", `Open ${presentation?.conversationTitle || activity.title} in Pocket`);
+    receipt.addEventListener("click", () => openRoute(activity.route));
+  }
+  stack.appendChild(receipt);
+  wrapper.replaceChildren(stack);
   return wrapper;
 }
 
@@ -2868,6 +3026,9 @@ class PocketController {
   npcDraft = null;
   previousNpcDraft = null;
   selectedConversationId = "";
+  deviceOwnerActorId = "";
+  syncIndicator;
+  syncIndicatorTimer = 0;
   selectedConversationView = "thread";
   selectedMessageId = "";
   selectedNoteId = "";
@@ -2952,13 +3113,15 @@ class PocketController {
     this.screen = el("main", "lumiphone-screen");
     this.alert = el("div", "lp-alert");
     this.alert.hidden = true;
+    this.syncIndicator = el("div", "lumiphone-sync-indicator");
+    this.syncIndicator.hidden = true;
     const homebar = el("div", "lumiphone-homebar");
     const homeButton = button("");
     homeButton.setAttribute("aria-label", "Home or dismiss phone");
     homebar.appendChild(homeButton);
     this.customStyle = document.createElement("style");
     this.customStyle.dataset.pocketCustomCss = "true";
-    this.shell.append(status, this.screen, homebar, this.alert, this.customStyle);
+    this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle);
     this.launcher.addEventListener("pointerdown", (event) => {
       this.launcherPointer = { x: event.clientX, y: event.clientY };
     });
@@ -3001,6 +3164,7 @@ class PocketController {
     window.clearTimeout(this.alertTimer);
     window.clearInterval(this.receiptSweepTimer);
     window.clearTimeout(this.notificationTimer);
+    window.clearTimeout(this.syncIndicatorTimer);
     window.clearTimeout(this.settingsSaveTimer);
     for (const cleanup of this.cleanups.splice(0)) {
       try {
@@ -3018,12 +3182,7 @@ class PocketController {
     this.drawer.destroy();
   }
   installHostIntegrations() {
-    this.cleanups.push(this.drawer.onActivate(() => {
-      if (this.widget)
-        this.open();
-      else
-        this.mountPhoneInDrawer();
-    }));
+    this.cleanups.push(this.drawer.onActivate(() => this.renderDrawerLanding()));
     const action = this.ctx.ui.registerInputBarAction({
       id: "open-lumiphone",
       label: "Open Pocket",
@@ -3163,19 +3322,67 @@ class PocketController {
   renderDrawerLanding() {
     this.drawer.root.replaceChildren();
     const outer = el("div", "lumiphone-drawer");
-    const card = el("div", "lumiphone-drawer-card");
+    const card = el("div", "lumiphone-drawer-card lumiphone-device-card");
     const logo = el("div", "lumiphone-drawer-icon");
     logo.innerHTML = PHONE_ICON;
-    const title = el("h2", "lumiphone-drawer-title", "Pocket");
-    const copy = el("p", "lumiphone-drawer-copy", "A persistent phone for each chat and character—messages, photos, journals, roleplay weather, timeline events, and live trackers in one place.");
+    const title = el("h2", "lumiphone-drawer-title", "Pocket devices");
+    const copy = el("p", "lumiphone-drawer-copy", "Choose whose Pocket you are inspecting. This changes only the phone viewport; the roleplay Persona stays the same.");
+    card.append(logo, title, copy);
+    if (this.state) {
+      const personaId = pocketPersonaActorId(this.state);
+      const ids = [personaId];
+      for (const conversation of this.state.conversations) {
+        for (const actorId of conversationDeviceActorIds(this.state, conversation))
+          if (!ids.includes(actorId))
+            ids.push(actorId);
+      }
+      const selected = this.currentDeviceOwnerActorId() || personaId;
+      const list = el("div", "lumiphone-device-list");
+      for (const actorId of ids) {
+        const actor = resolvePocketActor(this.state, actorId);
+        if (!actor)
+          continue;
+        const row2 = button("", "lumiphone-device-row");
+        row2.dataset.selected = String(actorId === selected);
+        const identity = el("span", "lumiphone-device-identity");
+        identity.append(el("strong", "", actor.name), el("span", "", actorId === personaId ? "Roleplay Persona" : actor.role || "Pocket actor"));
+        const meta = el("span", "lumiphone-device-meta");
+        if (actorId === personaId)
+          meta.appendChild(el("span", "lumiphone-device-rp", "RP"));
+        const messageUnread = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, actorId), 0);
+        const notificationUnread = this.state.notifications.filter((entry) => !entry.read && !entry.dismissedAt && notificationBelongsToDevice(this.state, actorId, entry.deviceOwnerActorId)).length;
+        const unread = Math.max(messageUnread, notificationUnread);
+        if (unread)
+          meta.appendChild(el("span", "lumiphone-device-unread", unread > 99 ? "99+" : String(unread)));
+        row2.append(identity, meta);
+        row2.addEventListener("click", () => {
+          this.deviceOwnerActorId = actorId;
+          this.selectedConversationId = "";
+          this.selectedMessageId = "";
+          this.currentApp = "home";
+          this.router.reset({ app: "home" });
+          this.updateBadge();
+          this.renderDrawerLanding();
+          this.announceView();
+          if (this.widget)
+            this.open();
+          else
+            this.mountPhoneInDrawer();
+        });
+        list.appendChild(row2);
+      }
+      card.appendChild(list);
+    } else {
+      card.appendChild(el("p", "lumiphone-drawer-copy", "Pocket is still loading this chat."));
+    }
     const actions = el("div", "lumiphone-drawer-actions");
-    const open = button("Open phone", "lumiphone-drawer-button");
+    const open = button("Open selected phone", "lumiphone-drawer-button");
     open.dataset.primary = "true";
     open.addEventListener("click", () => this.open());
     const permission = button("Manage access", "lumiphone-drawer-button");
     permission.addEventListener("click", () => this.requestPermissions());
     actions.append(open, permission);
-    card.append(logo, title, copy, actions);
+    card.appendChild(actions);
     outer.appendChild(card);
     this.drawer.root.appendChild(outer);
   }
@@ -3375,10 +3582,15 @@ class PocketController {
       characterId: active.characterId || this.state?.characterId || null
     };
   }
+  currentDeviceOwnerActorId() {
+    if (!this.state)
+      return this.deviceOwnerActorId;
+    return this.deviceOwnerActorId || pocketPersonaActorId(this.state);
+  }
   send(type, payload = {}) {
     const context = this.activeContext();
     const id = String(payload.requestId || requestId());
-    this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, ...payload });
+    this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId(), ...payload });
     return id;
   }
   refresh() {
@@ -3553,6 +3765,10 @@ class PocketController {
         return;
       const previousUnread = this.unreadCount();
       this.state = payload.state;
+      const personaDeviceId = pocketPersonaActorId(this.state);
+      const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state, conversation))]);
+      if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId))
+        this.deviceOwnerActorId = personaDeviceId;
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries : [];
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId);
@@ -3580,6 +3796,7 @@ class PocketController {
       this.applyAppearance();
       this.syncComposerReferencePill();
       this.updateBadge();
+      this.renderDrawerLanding();
       this.announceView();
       if (payload.open)
         this.open();
@@ -3599,6 +3816,36 @@ class PocketController {
           { transform: "scale(1.13) rotate(-4deg)" },
           { transform: "scale(1)" }
         ], { duration: 420, easing: "ease-out" });
+      return;
+    }
+    if (payload.type === "lumiphone:reconciliation_status") {
+      if (!this.preferences.showReconciliationStatus)
+        return;
+      window.clearTimeout(this.syncIndicatorTimer);
+      const status = String(payload.status || "");
+      this.syncIndicator.dataset.status = status;
+      if (status === "working") {
+        this.syncIndicator.textContent = "Pocket · Reconciling world…";
+        this.syncIndicator.hidden = false;
+        this.launcher.dataset.sync = "working";
+      } else if (status === "complete") {
+        const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean).join(", ") : "";
+        this.syncIndicator.textContent = `Pocket · Synced${domains ? ` · ${domains}` : ""}`;
+        this.syncIndicator.hidden = false;
+        this.launcher.dataset.sync = "complete";
+        this.syncIndicatorTimer = window.setTimeout(() => {
+          this.syncIndicator.hidden = true;
+          delete this.launcher.dataset.sync;
+        }, 1800);
+      } else {
+        this.syncIndicator.textContent = `Pocket · Sync issue${payload.error ? ` · ${String(payload.error).slice(0, 120)}` : ""}`;
+        this.syncIndicator.hidden = false;
+        this.launcher.dataset.sync = "error";
+        this.syncIndicatorTimer = window.setTimeout(() => {
+          this.syncIndicator.hidden = true;
+          delete this.launcher.dataset.sync;
+        }, 5000);
+      }
       return;
     }
     if (payload.type === "lumiphone:debug_prompt") {
@@ -3847,8 +4094,9 @@ class PocketController {
   unreadCount() {
     if (!this.state)
       return 0;
-    const notifications2 = this.state.notifications.filter((item) => !item.read && !item.dismissedAt).length;
-    const messages2 = this.state.conversations.reduce((sum, conversation) => sum + conversation.unread, 0);
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
+    const notifications2 = this.state.notifications.filter((item) => !item.read && !item.dismissedAt && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
+    const messages2 = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0);
     return Math.min(999, Math.max(notifications2, messages2));
   }
   updateBadge() {
@@ -3856,7 +4104,8 @@ class PocketController {
     this.launcherBadge.hidden = unread === 0;
     this.launcherBadge.textContent = unread > 99 ? "99+" : String(unread);
     this.drawer.setBadge(unread ? unread > 99 ? "99+" : String(unread) : null);
-    const notificationUnread = this.state?.notifications.filter((entry) => !entry.read && !entry.dismissedAt).length || 0;
+    const owner = this.state ? this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state) : "";
+    const notificationUnread = this.state?.notifications.filter((entry) => !entry.read && !entry.dismissedAt && notificationBelongsToDevice(this.state, owner, entry.deviceOwnerActorId)).length || 0;
     this.notificationIsland.dataset.unread = String(notificationUnread > 0);
     this.notificationIsland.setAttribute("aria-label", notificationUnread ? `Open Notification Center, ${notificationUnread} unread` : "Open Notification Center");
   }
@@ -3927,6 +4176,8 @@ class PocketController {
     }, 240);
   }
   showIncomingNotification(notification) {
+    if (this.state && !notificationBelongsToDevice(this.state, this.currentDeviceOwnerActorId(), notification.deviceOwnerActorId))
+      return;
     if (!this.expanded) {
       this.launcher.animate([{ transform: "scale(1)" }, { transform: "scale(1.12)" }, { transform: "scale(1)" }], { duration: 360 });
       return;
@@ -4049,7 +4300,8 @@ class PocketController {
       this.settingsDraft = null;
     this.currentApp = route.app;
     if (route.app === "messages") {
-      const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId) : null) || (route.contactId ? this.state.conversations.find((entry) => entry.kind === "direct" && conversationActorIds(entry)[0] === route.contactId) : null);
+      const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
+      const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId && conversationVisibleOnDevice(this.state, entry, owner)) : null) || (route.contactId ? this.state.conversations.find((entry) => entry.kind === "direct" && conversationVisibleOnDevice(this.state, entry, owner) && conversationActorIds(entry).includes(route.contactId)) : null);
       this.selectedConversationId = conversation?.id || "";
       this.selectedConversationView = route.view || "thread";
       this.selectedMessageId = conversation && route.messageId && conversation.messages.some((entry) => entry.id === route.messageId) ? route.messageId : "";
@@ -4191,7 +4443,8 @@ class PocketController {
     for (const meta of APP_META.filter((entry) => !entry.dock))
       grid.appendChild(this.appIcon(meta));
     const activity = el("div", "lp-home-activity");
-    const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read).slice(0, 3);
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(state);
+    const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read && notificationBelongsToDevice(state, owner, entry.deviceOwnerActorId)).slice(0, 3);
     for (const item of recentNotifications) {
       const receipt = button("", "lp-home-activity-item");
       receipt.append(el("strong", "", item.title), el("span", "", item.body || item.app), el("span", "lp-home-activity-arrow", "›"));
@@ -4221,7 +4474,8 @@ class PocketController {
     node.type = "button";
     const box = el("span", `lp-app-icon-box lp-icon-${meta.icon}`);
     box.appendChild(icon(meta.icon));
-    const unread = meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversation.unread, 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app).length;
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
+    const unread = meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
     if (unread)
       box.appendChild(el("span", "lp-app-dot", unread > 99 ? "99+" : String(unread)));
     node.append(box, el("span", "lp-app-label", meta.label));
@@ -4229,9 +4483,12 @@ class PocketController {
     return node;
   }
   renderMessages() {
+    const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
     return renderMessagesView({
       state: this.state,
       selectedConversationId: this.selectedConversationId,
+      deviceOwnerActorId: owner,
+      readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
       generationAvailable: Boolean(this.caps?.generation),
@@ -5104,7 +5361,7 @@ ${body}`;
   }
   renderNotifications() {
     return renderNotificationsView({
-      notifications: this.state.notifications,
+      notifications: this.state.notifications.filter((entry) => notificationBelongsToDevice(this.state, this.currentDeviceOwnerActorId(), entry.deviceOwnerActorId)),
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       navigate: (route) => this.openPocket(route),
       send: (type, payload) => {
@@ -5801,6 +6058,22 @@ var PHONE_STYLES = `
   .lumiphone-drawer-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
   .lumiphone-drawer-button { appearance:none; min-height:36px; padding:8px 13px; border:1px solid var(--lumiverse-border,rgba(127,127,127,.3)); border-radius:11px; background:var(--lumiverse-fill,rgba(127,127,127,.14)); color:inherit; font:inherit; font-size:11px; font-weight:720; cursor:pointer; }
   .lumiphone-drawer-button[data-primary="true"] { border-color:transparent; background:var(--lumiverse-primary,#7866e8); color:white; }
+  .lumiphone-device-card { align-content:start; }
+  .lumiphone-device-list { width:100%; display:grid; gap:7px; margin-top:4px; }
+  .lumiphone-device-row { appearance:none; width:100%; padding:10px 11px; border:1px solid var(--lumiverse-border,rgba(127,127,127,.28)); border-radius:13px; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; background:var(--lumiverse-fill,rgba(127,127,127,.08)); color:inherit; font:inherit; text-align:left; cursor:pointer; }
+  .lumiphone-device-row[data-selected="true"] { border-color:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 62%,transparent); background:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 12%,transparent); }
+  .lumiphone-device-identity { min-width:0; display:grid; gap:2px; }
+  .lumiphone-device-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+  .lumiphone-device-identity span { color:var(--lumiverse-text-muted,currentColor); font-size:10px; }
+  .lumiphone-device-meta { display:flex; align-items:center; gap:6px; }
+  .lumiphone-device-rp,.lumiphone-device-unread { min-width:24px; padding:3px 6px; border-radius:999px; background:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 18%,transparent); font-size:9px; font-weight:800; text-align:center; }
+  .lumiphone-device-unread { background:#d84f68; color:#fff; }
+
+  .lumiphone-sync-indicator { position:absolute; z-index:44; top:37px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); padding:5px 9px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .lumiphone-sync-indicator[hidden] { display:none; }
+  .lumiphone-sync-indicator[data-status="complete"] { color:var(--lp-text); }
+  .lumiphone-sync-indicator[data-status="error"] { border-color:color-mix(in srgb,#ff6a80 50%,var(--lp-border)); color:#ff9dac; }
+  .lumiphone-launcher[data-sync="working"] { box-shadow:0 0 0 4px color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 20%,transparent); }
 
   @media (max-width: 720px) {
     .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; }
@@ -5825,21 +6098,25 @@ var PHONE_STYLES = `
   .lp-gallery-item[data-selected="true"] { outline:3px solid var(--lp-accent); outline-offset:2px; }
   .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
 
-  .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,420px); }
-  .pocket-receipt {
-    appearance:none; width:100%; min-height:48px; padding:8px 10px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 32%,transparent);
-    border-radius:13px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:9px;
-    background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,var(--lumiverse-primary,#8b7dff) 8%); color:var(--lumiverse-text,#f7f5ff);
-    font:inherit; text-align:left; cursor:pointer; box-shadow:0 8px 22px rgba(0,0,0,.12); transition:transform .15s ease,border-color .15s ease;
-  }
-  .pocket-receipt:hover { transform:translateY(-1px); border-color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 68%,transparent); }
-  .pocket-receipt:focus-visible { outline:3px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 55%,white); outline-offset:2px; }
-  .pocket-receipt-kind { padding:4px 7px; border-radius:8px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 18%,transparent); font-size:10px; font-weight:800; }
-  .pocket-receipt-copy { min-width:0; display:grid; gap:1px; }
+  .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
+  .pocket-artifact-stack { display:grid; gap:5px; }
+  .pocket-inline-artifact { appearance:none; width:100%; min-height:58px; padding:9px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 42%,transparent); border-radius:15px; display:grid; gap:2px; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,var(--lumiverse-primary,#8b7dff) 10%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); }
+  button.pocket-inline-artifact { cursor:pointer; }
+  .pocket-inline-artifact[data-kind="sent"] { border-style:dashed; }
+  .pocket-inline-artifact[data-kind="observed"] { opacity:.9; }
+  .pocket-inline-artifact-kind { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 72%,white); font-size:9px; font-weight:850; letter-spacing:.035em; text-transform:uppercase; }
+  .pocket-inline-artifact strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; opacity:.82; font-size:11px; line-height:1.35; }
+  .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
+  button.pocket-receipt { cursor:pointer; }
+  button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }
+  button.pocket-receipt:focus-visible,.pocket-inline-artifact:focus-visible { outline:3px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 55%,white); outline-offset:2px; }
+  .pocket-receipt-kind { padding:2px 5px; border-radius:7px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 12%,transparent); font-size:8px; font-weight:800; }
+  .pocket-receipt-copy { min-width:0; display:flex; align-items:baseline; gap:6px; }
   .pocket-receipt-copy strong,.pocket-receipt-copy span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .pocket-receipt-copy strong { font-size:12px; }
-  .pocket-receipt-copy span { opacity:.68; font-size:10px; }
-  .pocket-receipt-arrow { font-size:22px; opacity:.7; }
+  .pocket-receipt-copy strong { font-size:9px; }
+  .pocket-receipt-copy span { opacity:.6; font-size:8px; }
+  .pocket-receipt-arrow { font-size:14px; opacity:.45; }
   .lp-tracker-filters { display:flex; gap:6px; overflow:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-tracker-card { display:grid; gap:9px; border-left:3px solid color-mix(in srgb,var(--lp-accent) 68%,transparent); }
   .lp-tracker-card[role="button"]:focus-visible { outline:3px solid color-mix(in srgb,var(--lp-accent) 52%,white); outline-offset:2px; }

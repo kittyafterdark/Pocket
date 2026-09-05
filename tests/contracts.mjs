@@ -233,7 +233,17 @@ await frontendHandler({
 const latestState = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state
 assert.equal(latestState.conversations[0].messages.at(-1).text, 'Hello from the phone.')
 assert.equal(latestState.conversations[0].messages.at(-1).sender, 'persona')
-assert.equal(latestState.notifications.length, 0, 'user send must not notify the sender')
+const personaDeviceId = latestState.pocketPersonaActorId
+const recipientDeviceId = latestState.conversations[0].participantActorIds[0]
+assert.equal(
+  latestState.notifications.some((entry) => !entry.deviceOwnerActorId || entry.deviceOwnerActorId === personaDeviceId),
+  false,
+  'user send must not notify the sender device',
+)
+assert.ok(
+  latestState.notifications.some((entry) => entry.deviceOwnerActorId === recipientDeviceId && entry.body.includes('Hello from the phone.')),
+  'user send should notify the recipient device',
+)
 assert.equal(latestState.activities.length, userActivityCount, 'user send must not emit a user-visible Pocket activity')
 
 const firstConversationId = latestState.conversations[0].id
@@ -491,7 +501,17 @@ await backendEvents.get('TOOL_INVOCATION')({
 }, 'user-a')
 lazyState = storage.get('phones/chat-a__char-a.json')
 assert.equal(lazyState.discoveredActors.filter((actor) => actor.displayName === 'Maya').length, 1, 'repeat names must reuse the same discovered actor')
-assert.equal(lazyState.conversations.find((conversation) => conversation.id === mayaDm.id).messages.length, 2)
+const externalMayaAlice = lazyState.conversations.find((conversation) => conversation.id === mayaDm.id)
+assert.equal(externalMayaAlice.messages.length, 1, 'the explicit Maya → Alice external DM must remain its own communication')
+const personaMayaDm = lazyState.conversations.find((conversation) =>
+  conversation.kind === 'direct'
+  && conversation.includesPocketPersona
+  && conversation.participantActorIds?.includes(mayaActor.id)
+)
+assert.ok(personaMayaDm, 'a targetless Maya message should resolve as Maya → current Pocket Persona')
+assert.equal(personaMayaDm.messages.length, 1)
+assert.equal(personaMayaDm.messages[0].senderActorId, mayaActor.id, 'the reused Maya actor must author the Persona-facing DM')
+assert.equal(personaMayaDm.messages[0].text, 'Still twenty bucks.')
 
 // Device projection: model-authored Persona names canonicalize to the Persona actor,
 // while NPC-to-NPC direct messages persist externally without leaking onto the Persona phone.

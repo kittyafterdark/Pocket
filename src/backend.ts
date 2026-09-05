@@ -3459,9 +3459,17 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         }
       } else if (sender === 'persona') {
         const targetRef = payload.target ?? payload.contactId ?? payload.contact_id
-        const target = ensureMessageActor(state, targetRef, source, payload.relationship ?? payload.close)
-        if (!target || target.kind === 'persona') throw new Error('Choose a valid non-Persona direct-message target.')
-        conversation = ensureDirectActorConversation(state, target.actorId, nowIso(), id)
+        if (!targetRef && source === 'user') {
+          // Preserve the legacy native-phone send path: the frontend historically
+          // omitted an explicit target and resolved the active Character DM.
+          // Model/tag-authored Persona traffic remains strict so it cannot guess
+          // which device conversation should receive a newly-authored message.
+          conversation = resolveConversation(state, payload)
+        } else {
+          const target = ensureMessageActor(state, targetRef, source, payload.relationship ?? payload.close)
+          if (!target || target.kind === 'persona') throw new Error('Choose a valid non-Persona direct-message target.')
+          conversation = ensureDirectActorConversation(state, target.actorId, nowIso(), id)
+        }
       } else if (sender === 'contact') {
         senderActor = ensureMessageActor(state, rawSpeaker, source, payload.relationship ?? payload.close)
         if (!senderActor || senderActor.kind === 'persona') throw new Error('A new direct-message sender needs a name; no full profile is required.')
