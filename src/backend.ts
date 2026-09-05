@@ -2442,13 +2442,13 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
   groupBatchFlights.set(flightKey, flightToken)
   let progressOpen = false
   try {
-    const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
     const conversation = state.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
     if (!conversation) throw new Error('That group conversation no longer exists.')
     const activeBatch = state.groupBatches.find((entry) => entry.conversationId === conversation.id && (entry.status === 'queued' || entry.status === 'delivering'))
     if (activeBatch) throw new Error('This group already has a reply burst in progress.')
+    const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
     const sourceBurstId = text(input.sourceBurstId, 180) || conversation.outgoingBurst?.id
     const eligible = conversationActorIds(conversation)
       .map((actorId) => resolvePocketActor(state, actorId))
@@ -4317,10 +4317,11 @@ function ensureInterceptor(): void {
 
 spindle.frontendCapabilities.declare('message_tag_interceptor')
 spindle.onFrontendMessage(handleFrontend)
-spindle.on('TOOL_INVOCATION', async (payload, eventUserId?: string) => {
+spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
   if (payload.toolName !== 'phone_action') return ''
   try {
-    const userId = eventUserId || text((payload as any).userId, 180) || undefined
+    const userId = eventUserId
+    if (!userId) throw new Error('Pocket tool invocation is missing authenticated user context')
     const args = isRecord(payload.args) ? payload.args : {}
     const merged = {
       ...args, ...(isRecord(args.payload) ? args.payload : {}), payload: args.payload,

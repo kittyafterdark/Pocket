@@ -300,14 +300,24 @@ autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find(
 assert.equal(autoDecisionCalls, 1, 'blur must resume and finalize the held burst once')
 assert.equal(autoConversation.outgoingBurst.finalized, true)
 
-let manualGenerationCalls = 0
-spindle.generate.quiet = async () => { manualGenerationCalls += 1; return { content: 'Manual flush reply.' } }
+let manualReplyDecisionCalls = 0
+spindle.generate.quiet = async (request) => {
+  const systemPrompt = String(request?.messages?.find((message) => message?.role === 'system')?.content || '')
+  if (systemPrompt.includes('Classify the next channel state')) {
+    manualReplyDecisionCalls += 1
+    return { content: '{"action":"none"}' }
+  }
+  // Continuity-seed generation is orthogonal to this contract.
+  // Preserve the old stub's non-JSON behavior so this test does not persist
+  // a new continuity seed and change unrelated downstream interceptor state.
+  return { content: 'Manual flush reply.' }
+}
 const beforeManualFlush = autoConversation.messages.length
 await frontendHandler({ type: 'lumiphone:action', requestId: 'manual-flush-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'Answer this now', sender: 'persona' } }, 'user-a')
 await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'manual-flush-generate', chatId: 'chat-a', characterId: 'char-a', conversationId: firstConversationId }, 'user-a')
 await new Promise((resolve) => setTimeout(resolve, 40))
 autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
-assert.equal(manualGenerationCalls, 1, 'manual generation must flush the burst without a separate reply decision')
+assert.equal(manualReplyDecisionCalls, 0, 'manual generation must flush the burst without a separate reply decision')
 assert.equal(autoConversation.messages.length, beforeManualFlush + 2)
 assert.equal(autoConversation.messages.at(-1).text, 'Manual flush reply.')
 assert.equal(autoConversation.outgoingBurst.finalized, true)
@@ -405,15 +415,27 @@ storage.set('phones/chat-a__char-a.json', resumedState)
 autoConversation = resumedState.conversations.find((entry) => entry.id === firstConversationId)
 
 autoDecisionCalls = 0
-spindle.generate.quiet = async () => {
-  autoDecisionCalls += 1
-  return autoDecisionCalls === 1 ? { content: '{"reply":true}' } : { content: 'I can reply now.' }
+let autoReplyGenerationCalls = 0
+spindle.generate.quiet = async (request) => {
+  const systemPrompt = String(request?.messages?.find((message) => message?.role === 'system')?.content || '')
+  if (systemPrompt.includes('Classify the next channel state')) {
+    autoDecisionCalls += 1
+    return { content: '{"reply":true}' }
+  }
+  // generateMessage may refresh narrative continuity before writing the phone reply.
+  // Keep that orthogonal generation observationally neutral for this contract.
+  if (systemPrompt.includes('Extract a small structured RP WORLD STATE delta')) {
+    return { content: 'I can reply now.' }
+  }
+  autoReplyGenerationCalls += 1
+  return { content: 'I can reply now.' }
 }
 const beforeTrueDecision = autoConversation.messages.length
 await frontendHandler({ type: 'lumiphone:action', requestId: 'auto-true-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'Please reply', sender: 'persona' } }, 'user-a')
 await new Promise((resolve) => setTimeout(resolve, 60))
 autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
-assert.equal(autoDecisionCalls, 2, 'true decision must trigger exactly one separate reply generation')
+assert.equal(autoDecisionCalls, 1, 'true decision must perform exactly one bounded reply-decision call')
+assert.equal(autoReplyGenerationCalls, 1, 'true decision must trigger exactly one separate reply generation')
 assert.equal(autoConversation.messages.length, beforeTrueDecision + 2)
 assert.equal(autoConversation.messages.at(-1).text, 'I can reply now.')
 assert.equal(autoConversation.pause, undefined, 'a successful new incoming reply must resume a paused conversation')
@@ -423,22 +445,28 @@ await frontendHandler({ type: 'lumiphone:save_preferences', requestId: 'auto-rep
 const intercepted = await interceptorHandler([{ role: 'user', content: 'Continue.' }], {
   chatId: 'chat-a', characterId: 'char-a', userId: 'user-a',
 })
-assert.equal(intercepted.messages.length, 2)
+const interceptedContent = intercepted.messages.map((message) => String(message.content || '')).join('\n\n')
+assert.equal(intercepted.messages.length, 3, 'consumed relay must fall back to persistent established handoff history')
+assert.deepEqual(
+  intercepted.breakdown.map((entry) => entry.name),
+  ['Pocket memory', 'Pocket handoff memory — established history'],
+)
 assert.match(intercepted.messages[1].content, /Current Pocket snapshot/)
-assert.doesNotMatch(intercepted.messages[1].content, /POCKET CONTINUITY RELAY/, 'consumed relay urgency must disappear')
+assert.match(intercepted.messages[2].content, /POCKET HANDOFF MEMORY — ESTABLISHED SHARED HISTORY/)
+assert.doesNotMatch(interceptedContent, /POCKET CONTINUITY RELAY — NEWER STATE/, 'consumed relay urgency must disappear')
 assert.doesNotMatch(intercepted.messages[1].content, /Hello from the phone/)
 
 const toolResult = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'tool-1', args: {
     action: 'note', chat_id: 'chat-a', character_id: 'char-a', payload: { title: 'Private thought', body: 'Remember the station.' },
   },
-})
+}, 'user-a')
 assert.equal(JSON.parse(toolResult).ok, true)
 await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'tool-1', args: {
     action: 'note', chat_id: 'chat-a', character_id: 'char-a', payload: { title: 'Private thought', body: 'Remember the station.' },
   },
-})
+}, 'user-a')
 assert.equal(storage.get('phones/chat-a__char-a.json').notes.filter((note) => note.title === 'Private thought').length, 1)
 assert.equal(storage.get('phones/chat-a__char-a.json').activities.filter((activity) => activity.title === 'Journal updated').length, 1)
 
@@ -447,7 +475,7 @@ const lazyDm = await backendEvents.get('TOOL_INVOCATION')({
     action: 'message', chat_id: 'chat-a', character_id: 'char-a',
     payload: { channel: 'dm', speaker: 'Maya', target: 'Alice', message: 'Tell Shoto he still owes me twenty bucks.' },
   },
-})
+}, 'user-a')
 assert.equal(JSON.parse(lazyDm).ok, true)
 let lazyState = storage.get('phones/chat-a__char-a.json')
 const mayaActor = lazyState.discoveredActors.find((actor) => actor.displayName === 'Maya')
@@ -460,7 +488,7 @@ await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'lazy-maya-2', args: {
     action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: { name: 'Maya' }, text: 'Still twenty bucks.' },
   },
-})
+}, 'user-a')
 lazyState = storage.get('phones/chat-a__char-a.json')
 assert.equal(lazyState.discoveredActors.filter((actor) => actor.displayName === 'Maya').length, 1, 'repeat names must reuse the same discovered actor')
 assert.equal(lazyState.conversations.find((conversation) => conversation.id === mayaDm.id).messages.length, 2)
@@ -470,7 +498,7 @@ const groupCreateTool = await backendEvents.get('TOOL_INVOCATION')({
     action: 'conversation', chat_id: 'chat-a', character_id: 'char-a',
     payload: { kind: 'group', title: 'Agency Staff', participants: [{ name: 'Maya', relationship: 'close' }, 'Jun'] },
   },
-})
+}, 'user-a')
 assert.equal(JSON.parse(groupCreateTool).ok, true)
 lazyState = storage.get('phones/chat-a__char-a.json')
 const agencyGroup = lazyState.conversations.find((conversation) => conversation.title === 'Agency Staff')
@@ -482,14 +510,14 @@ const groupMessageTool = await backendEvents.get('TOOL_INVOCATION')({
     action: 'message', chat_id: 'chat-a', character_id: 'char-a',
     payload: { channel: 'gc', conversation: 'Agency Staff', speaker: 'Jun', text: 'conference room changed to three, btw' },
   },
-})
+}, 'user-a')
 assert.equal(JSON.parse(groupMessageTool).ok, true)
 const rejectedOutsider = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'lazy-group-outsider', args: {
     action: 'message', chat_id: 'chat-a', character_id: 'char-a',
     payload: { channel: 'gc', conversation: 'Agency Staff', speaker: 'Random Receptionist', text: 'I have opinions.' },
   },
-})
+}, 'user-a')
 assert.match(rejectedOutsider, /not a participant/i)
 assert.equal(storage.get('phones/chat-a__char-a.json').discoveredActors.some((actor) => actor.displayName === 'Random Receptionist'), false, 'rejected GC speech must not mutate membership or actor state')
 const mayaContactCount = storage.get('phones/chat-a__char-a.json').contacts.length
@@ -526,7 +554,7 @@ await frontendHandler({
 }, 'user-a')
 const deniedTrackerTool = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'private-tracker-tool', args: { action: 'tracker', chat_id: 'chat-a', character_id: 'char-a', payload: { trackerId: 'private-tracker', operation: 'add', amount: 5 } },
-})
+}, 'user-a')
 assert.match(deniedTrackerTool, /does not allow model updates/)
 await frontendHandler({
   type: 'lumiphone:action', requestId: 'private-tracker-user', chatId: 'chat-a', characterId: 'char-a', action: 'tracker',
@@ -540,7 +568,7 @@ await frontendHandler({
 }, 'user-a')
 const allowedTrackerTool = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'writable-tracker-tool', args: { action: 'tracker', chat_id: 'chat-a', character_id: 'char-a', payload: { key: 'writable_meter', operation: 'add', amount: 4, reason: 'story change' } },
-})
+}, 'user-a')
 assert.equal(JSON.parse(allowedTrackerTool).ok, true)
 const writableTracker = storage.get('phones/chat-a__char-a.json').trackers.find((tracker) => tracker.id === 'writable-tracker')
 assert.equal(writableTracker.value, 5)
@@ -577,7 +605,20 @@ assert.ok(luna, 'Council source was not imported')
 const lunaDirect = contactState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.participantContactIds[0] === luna.id)
 const quietBeforeCouncil = quietRequests.length
 await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'reply-luna', chatId: 'chat-a', characterId: 'char-a', conversationId: lunaDirect.id }, 'user-a')
-assert.equal(quietRequests.length, quietBeforeCouncil + 1)
+const councilGenerationRequests = quietRequests.slice(quietBeforeCouncil)
+assert.equal(councilGenerationRequests.length, 2, 'Council DM generation must perform one continuity refresh and one phone reply generation')
+assert.ok(
+  councilGenerationRequests.some((request) =>
+    String(request?.messages?.find((message) => message?.role === 'system')?.content || '').includes('Extract a small structured RP WORLD STATE delta')
+  ),
+  'Council DM generation must include the bounded continuity-seed refresh',
+)
+assert.ok(
+  councilGenerationRequests.some((request) =>
+    String(request?.messages?.find((message) => message?.role === 'system')?.content || '').includes('You are Luna writing a private phone DM')
+  ),
+  'Council DM generation must include Luna\'s direct-message generation request',
+)
 contactState = storage.get('phones/chat-a__char-a.json')
 assert.equal(contactState.conversations.find((conversation) => conversation.id === lunaDirect.id).messages.at(-1).senderContactId, luna.id)
 const generatedLuna = contactState.conversations.find((conversation) => conversation.id === lunaDirect.id).messages.at(-1)
@@ -614,6 +655,9 @@ const groupBatchQuiet = spindle.generate.quiet
 let groupBatchCalls = 0
 spindle.generate.quiet = async (request) => {
   quietRequests.push(request)
+  const systemPrompt = String(request?.messages?.find((message) => message?.role === 'system')?.content || '')
+  const isGroupReplyRequest = systemPrompt.includes('Generate the next natural burst in a fictional private group chat')
+  if (!isGroupReplyRequest) return { content: 'continuity seed intentionally omitted in this scoped group-generation contract' }
   groupBatchCalls += 1
   return { content: JSON.stringify({ messages: [
     { speakerId: 'char-a', text: 'The first group reaction.' },
@@ -691,7 +735,11 @@ const normalReferenceIntercept = await interceptorHandler([{
 }], {
   chatId: 'chat-a', characterId: 'char-a', userId: 'user-a', generationId: 'reference-generation', generationType: 'normal', isDryRun: false,
 })
-assert.equal(normalReferenceIntercept.messages.length, 3, 'the ordinary Pocket snapshot and explicit reference must remain separate prompt contributions')
+assert.equal(normalReferenceIntercept.messages.length, 4, 'Pocket snapshot, established handoff history, and explicit reference must remain separate prompt contributions')
+assert.deepEqual(
+  normalReferenceIntercept.breakdown.map((entry) => entry.name),
+  ['Pocket memory', 'Pocket handoff memory — established history', 'Pocket user reference — this turn'],
+)
 assert.match(normalReferenceIntercept.messages.at(-1).content, /POCKET USER REFERENCE — THIS TURN/)
 assert.match(normalReferenceIntercept.messages.at(-1).content, /Conversation: Night Shift/)
 assert.match(normalReferenceIntercept.messages.at(-1).content, /Participants: .*Luna/)
@@ -963,7 +1011,8 @@ assert.ok(dockHandle.size < initialDockSize, 'scale control did not derive a new
 dockRoot.querySelector('.lumiphone-homebar button').click()
 const messagesIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Messages'))
 messagesIcon.click()
-const conversationCard = dockRoot.querySelector('.lp-content .lp-card[data-clickable="true"]')
+const conversationCard = dockRoot.querySelector('.lp-conversation-list .lp-conversation-row[role="button"][data-clickable="true"]')
+assert.ok(conversationCard, 'conversation list must render a clickable conversation row')
 conversationCard.click()
 assert.equal(dockRoot.querySelector('.lp-conversation-menu > summary').textContent, '⋯', 'thread header must use a compact conversation menu instead of the overloaded Info button')
 assert.equal(dockRoot.querySelector('.lp-conversation-menu > summary').getAttribute('aria-label'), 'Conversation menu')
