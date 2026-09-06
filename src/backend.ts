@@ -26,6 +26,7 @@ import type {
   PocketReferenceScope,
   PocketRelay,
   PocketResolvedWallpapers,
+  PocketTurnCandidateOrigin,
   ChatPocketPersona,
   SceneActorSnapshot,
   RoleplayWeather,
@@ -73,10 +74,19 @@ const relayFlights = new Set<string>()
 const groupBatchFlights = new Map<string, string>()
 interface PocketViewState { chatId: string; characterId: string; deviceOwnerActorId: string; open: boolean; route: PocketRoute; updatedAt: number }
 const frontendViews = new Map<string, PocketViewState>()
+interface ActivePocketCandidate extends PocketTurnCandidateOrigin {
+  userKey: string
+  characterId: string
+  generationType: string
+  startedAt: number
+}
+const activePocketCandidates = new Map<string, ActivePocketCandidate>()
 
 const PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-world phone state.
 
 Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt. Pocket automatically renders successfully persisted phone actions in the roleplay UI. Do not repeat or shim a phone message in prose merely to make it visible. Normal prose may naturally describe using, reading, showing, or reacting to a phone when that action matters to the scene.
+
+Pocket Action is an execution step, not an output section. Do not reason about where the tool call or its result belongs in the written response, whether the user can see it, or how to compensate for it. Invoke it when the phone action occurs, then continue the roleplay normally. After a successful Pocket Action, do not ask the user to click, continue, confirm, or complete anything; Pocket owns persistence and UI presentation.
 
 When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
@@ -206,6 +216,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     characterName: characterName || 'Character',
     roleplayNow: createdAt,
     stateRevision: 0,
+    hostSwipeSelections: [],
     sceneSnapshot: null,
     pocketPersona: defaultPocketPersona(createdAt),
     pocketPersonaActorId: personaActorId,
@@ -501,6 +512,14 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     .map((entry) => text(entry, 40))
     .filter((entry) => entry === 'continuity' || entry === 'clock' || entry === 'weather' || entry === 'presence' || entry === 'timeline' || entry === 'trackers')
     .slice(0, 6) as NonNullable<PhoneState['lastReconciliation']>['domains']
+  const hostSwipeSelections = (Array.isArray(value.hostSwipeSelections) ? value.hostSwipeSelections : []).slice(-320).flatMap((item) => {
+    if (!isRecord(item)) return []
+    const hostMessageId = text(item.hostMessageId, 180)
+    const swipeValue = item.swipeId
+    const swipeId = Number(swipeValue)
+    if (!hostMessageId || swipeValue === null || swipeValue === undefined || !Number.isInteger(swipeId) || swipeId < 0) return []
+    return [{ hostMessageId, swipeId, updatedAt: text(item.updatedAt, 40) || nowIso() }]
+  })
   const lastReconciliation: PhoneState['lastReconciliation'] = text(reconciliationValue.sourceKey, 1_600)
     ? {
         revision: Math.max(0, Math.round(numberValue(reconciliationValue.revision, 0))),
@@ -524,6 +543,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayClockLabel: text(value.roleplayClockLabel, 160),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    hostSwipeSelections,
     lastReconciliation,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
@@ -848,6 +868,105 @@ function imageSourceKey(source: DevicePreferences['homeWallpaper']['source']): s
   return source.kind === 'gallery' ? `gallery:${source.imageId}` : source.kind === 'asset' ? `asset:${source.assetId}` : `url:${source.url}`
 }
 
+function candidateRuntimeKey(userId: string | undefined, generationId: string): string {
+  return `${viewKey(userId)}:${generationId}`
+}
+
+function candidateOrigin(value: unknown, expectedChatId = ''): PocketTurnCandidateOrigin | undefined {
+  if (!isRecord(value)) return undefined
+  const chatId = text(value.chatId, 180)
+  const hostMessageId = text(value.hostMessageId, 180)
+  const swipeId = Number(value.swipeId)
+  if (!chatId || !hostMessageId || !Number.isInteger(swipeId) || swipeId < 0) return undefined
+  if (expectedChatId && chatId !== expectedChatId) return undefined
+  return { chatId, hostMessageId, swipeId, generationId: text(value.generationId, 180) || undefined }
+}
+
+function setHostSwipeSelection(state: PhoneState, hostMessageId: string, swipeId: number): boolean {
+  if (!hostMessageId || !Number.isInteger(swipeId) || swipeId < 0) return false
+  state.hostSwipeSelections ||= []
+  const existing = state.hostSwipeSelections.find((entry) => entry.hostMessageId === hostMessageId)
+  if (existing?.swipeId === swipeId) return false
+  if (existing) {
+    existing.swipeId = swipeId
+    existing.updatedAt = nowIso()
+  } else {
+    state.hostSwipeSelections.push({ hostMessageId, swipeId, updatedAt: nowIso() })
+    state.hostSwipeSelections = state.hostSwipeSelections.slice(-320)
+  }
+  return true
+}
+
+function selectedHostSwipe(state: PhoneState, hostMessageId: string): number | undefined {
+  return [...(state.hostSwipeSelections || [])].reverse().find((entry) => entry.hostMessageId === hostMessageId)?.swipeId
+}
+
+function pocketMessageActiveForSwipe(state: PhoneState, message: PhoneMessage): boolean {
+  const origin = message.origin
+  if (!origin || origin.chatId !== state.chatId) return true
+  const selected = selectedHostSwipe(state, origin.hostMessageId)
+  return selected === undefined || selected === origin.swipeId
+}
+
+function activeConversationMessages(state: PhoneState, conversation: PocketConversation): PhoneMessage[] {
+  return conversation.messages.filter((message) => pocketMessageActiveForSwipe(state, message))
+}
+
+function routeTargetsPocketMessage(route: PocketRoute | undefined, hiddenMessageIds: Set<string>): boolean {
+  return Boolean(route?.app === 'messages' && route.messageId && hiddenMessageIds.has(route.messageId))
+}
+
+function projectSwipeScopedState(state: PhoneState): PhoneState {
+  const projected = structuredClone(state)
+  const hiddenMessageIds = new Set<string>()
+  for (const sourceConversation of state.conversations) {
+    for (const message of sourceConversation.messages) {
+      if (!pocketMessageActiveForSwipe(state, message)) hiddenMessageIds.add(message.id)
+    }
+  }
+  if (!hiddenMessageIds.size) return projected
+  for (const conversation of projected.conversations) {
+    conversation.messages = conversation.messages.filter((message) => !hiddenMessageIds.has(message.id))
+    conversation.unread = conversationUnreadForDevice(projected, conversation, pocketPersonaActorId(projected))
+    if (conversation.outgoingBurst) {
+      conversation.outgoingBurst.messageIds = conversation.outgoingBurst.messageIds.filter((messageId) => !hiddenMessageIds.has(messageId))
+      if (!conversation.outgoingBurst.messageIds.length) conversation.outgoingBurst = undefined
+    }
+  }
+  projected.notifications = projected.notifications.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds))
+  projected.activities = projected.activities.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds))
+  projected.actorMemories = projected.actorMemories.filter((entry) => !hiddenMessageIds.has(entry.messageId))
+  return projected
+}
+
+function activeCandidateForTool(userId: string, chatId: string): ActivePocketCandidate | undefined {
+  const userKey = viewKey(userId)
+  const cutoff = Date.now() - 10 * 60_000
+  for (const [key, candidate] of activePocketCandidates) {
+    if (candidate.startedAt < cutoff) activePocketCandidates.delete(key)
+  }
+  const matches = [...activePocketCandidates.values()].filter((candidate) => candidate.userKey === userKey && candidate.chatId === chatId)
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+function removePocketMessageArtifacts(state: PhoneState, conversationId: string, messageId: string): boolean {
+  const conversation = state.conversations.find((entry) => entry.id === conversationId)
+  if (!conversation) return false
+  const before = conversation.messages.length
+  conversation.messages = conversation.messages.filter((entry) => entry.id !== messageId)
+  if (conversation.messages.length === before) return false
+  state.actorMemories = removeActorMemoryByMessageId(state.actorMemories, messageId)
+  state.notifications = state.notifications.filter((entry) => !(entry.route?.app === 'messages' && entry.route.messageId === messageId))
+  state.activities = state.activities.filter((entry) => !(entry.route?.app === 'messages' && entry.route.messageId === messageId))
+  if (conversation.outgoingBurst) {
+    conversation.outgoingBurst.messageIds = conversation.outgoingBurst.messageIds.filter((entry) => entry !== messageId)
+    if (!conversation.outgoingBurst.messageIds.length) conversation.outgoingBurst = undefined
+  }
+  conversation.unread = conversationUnreadForDevice(state, conversation, pocketPersonaActorId(state))
+  conversation.updatedAt = nowIso()
+  return true
+}
+
 async function validateChangedWallpaperSources(existing: DevicePreferences, next: DevicePreferences, userId?: string): Promise<void> {
   const pairs: Array<[DevicePreferences['homeWallpaper']['source'], DevicePreferences['homeWallpaper']['source']]> = [
     [existing.homeWallpaper.source, next.homeWallpaper.source],
@@ -884,7 +1003,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
   for (const [target, result] of Object.entries(resolvedWallpapers)) {
     if (result.status === 'error') spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || 'unknown error'}`)
   }
-  send({ type: 'lumiphone:state', state, npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  send({ type: 'lumiphone:state', state: projectSwipeScopedState(state), npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -2430,7 +2549,7 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
       actor = participants[0].actor
       contact = participants[0].contact
     } else {
-      const lastSpeakerId = [...conversation.messages].reverse().find((entry) => entry.sender === 'contact')?.senderActorId
+      const lastSpeakerId = [...activeConversationMessages(state, conversation)].reverse().find((entry) => entry.sender === 'contact')?.senderActorId
       const currentIndex = participants.findIndex((entry) => entry.actor.actorId === lastSpeakerId)
       const selected = participants[(currentIndex + 1 + participants.length) % participants.length]
       actor = selected.actor
@@ -2444,7 +2563,9 @@ async function generateMessage(input: AnyRecord, userId?: string): Promise<void>
     const profile = await resolveContactProfile(contact, userId)
     const replaceMessageId = text(input.replaceMessageId, 180)
     const replaceIndex = replaceMessageId ? conversation.messages.findIndex((message) => message.id === replaceMessageId && message.sender === 'contact') : -1
-    const contextConversation = replaceIndex >= 0 ? { ...conversation, messages: conversation.messages.slice(0, replaceIndex) } : conversation
+    const activeMessages = activeConversationMessages(state, conversation)
+    const replaceActiveIndex = replaceMessageId ? activeMessages.findIndex((message) => message.id === replaceMessageId && message.sender === 'contact') : -1
+    const contextConversation = { ...conversation, messages: replaceActiveIndex >= 0 ? activeMessages.slice(0, replaceActiveIndex) : activeMessages }
     const knownIdentity = pocketContactPhoneBrief(contact, profile)
     const compactIdentity = `Relationship importance: ${actor.relationship}.\n${knownIdentity || 'No full profile is registered; use only the name and current phone exchange.'}`.slice(0, 1_400)
     const assembled = await assemblePocketContext({
@@ -2698,8 +2819,9 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       return { actor, contact, profile: await resolveContactProfile(contact, userId) }
     }))
     const primary = profiles[0]
+    const projectedConversation = { ...conversation, messages: activeConversationMessages(state, conversation) }
     const assembled = await assemblePocketContext({
-      state, contact: primary.contact, conversation, preferences,
+      state, contact: primary.contact, conversation: projectedConversation, preferences,
       actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship})\n${pocketContactPhoneBrief(contact, profile) || 'No profile; infer only from the live exchange.'}`.slice(0, 900)).join('\n\n').slice(0, 3_600),
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
       includeRoleplayBackground: false,
@@ -2900,7 +3022,7 @@ async function refreshCompactContactProfile(input: AnyRecord, userId?: string): 
   const discoveredSource = contact.source.kind === 'npc' && contact.source.origin === 'discovered'
   const discoveredActorId = contact.source.kind === 'npc' ? contact.source.discoveredActorId : undefined
   const phoneEvidence = discoveredSource
-    ? state.conversations.flatMap((conversation) => conversation.messages.filter((message) => message.senderActorId === discoveredActorId || message.senderContactId === contact.id)).slice(-12).map((message) => `${message.senderName}: ${message.text.slice(0, 600)}`).join('\n')
+    ? state.conversations.flatMap((conversation) => activeConversationMessages(state, conversation).filter((message) => message.senderActorId === discoveredActorId || message.senderContactId === contact.id)).slice(-12).map((message) => `${message.senderName}: ${message.text.slice(0, 600)}`).join('\n')
     : ''
   const roleplayEvidence = discoveredSource && spindle.permissions.has('chat_mutation')
     ? (await spindle.chat.getMessages(context.chatId)).slice(-18).map((message: any) => `${message.role}: ${sanitizeNarrativeContent(message.content, 700)}`).join('\n').slice(-9_000)
@@ -3271,9 +3393,12 @@ function reserveCommand(state: PhoneState, input: AnyRecord, action: string, pay
   const commandId = text(input.idempotencyKey ?? input.commandId ?? input.command_id ?? input.requestId, 240)
   const semanticKey = actionSemanticKey(action, input, payload)
   const cutoff = Date.now() - 20_000
-  const duplicate = commandId
-    ? state.processedCommands.find((entry) => entry.id === commandId)
-    : source !== 'user' ? state.processedCommands.find((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff) : undefined
+  const commandDuplicate = commandId ? state.processedCommands.find((entry) => entry.id === commandId) : undefined
+  const candidateScoped = source === 'model' && Boolean(candidateOrigin(input.__candidateOrigin))
+  const semanticDuplicate = source !== 'user' && (!commandId || candidateScoped)
+    ? state.processedCommands.find((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff)
+    : undefined
+  const duplicate = commandDuplicate || semanticDuplicate
   if (duplicate) return { accepted: false, command: duplicate }
   const command: ProcessedPocketCommand = { id: commandId || id('cmd'), semanticKey, createdAt: nowIso() }
   state.processedCommands.push(command)
@@ -3501,6 +3626,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         if (notificationDestinationVisible(state, routeBase, userId, ownerActorId) && !readByActorIds.includes(ownerActorId)) readByActorIds.push(ownerActorId)
       }
       const personaRead = readByActorIds.includes(personaActorId)
+      const actionOrigin = source === 'model' ? candidateOrigin(input.__candidateOrigin, context.chatId) : undefined
       const message: PhoneMessage = {
         id: id('msg'), sender, senderActorId, recipientActorIds, readByActorIds,
         senderActorKind: sender === 'contact' ? (senderActor!.kind === 'persona' ? undefined : senderActor!.kind) : undefined,
@@ -3509,6 +3635,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
         text: messageText, createdAt: phoneMessageTimestamp(state), read: personaRead,
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
+        origin: actionOrigin,
       }
       conversation.messages.push(message)
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
@@ -3764,7 +3891,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const conversationId = text(payload.conversationId, 180)
         const conversation = state.conversations.find((entry) => entry.id === conversationId)
         if (!conversation) throw new Error('That conversation is no longer available.')
-        const generated = [...conversation.messages].reverse().find((message) => Boolean(message.generation?.requestId))
+        const generated = [...activeConversationMessages(state, conversation)].reverse().find((message) => Boolean(message.generation?.requestId))
         const promptRequestId = generated?.generation?.requestId || ''
         const debug = await loadPromptDebug(promptRequestId, userId)
         send({
@@ -4108,8 +4235,9 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         if (!actor) throw new Error('That conversation has no available actor.')
         const contact = actorAsGenerationContact(actor, nowIso())
         const profile = await resolveContactProfile(contact, userId)
+        const projectedConversation = { ...conversation, messages: activeConversationMessages(state, conversation) }
         const assembled = await assemblePocketContext({
-          state, contact, conversation, preferences: await loadPreferences(userId),
+          state, contact, conversation: projectedConversation, preferences: await loadPreferences(userId),
           actorIdentity: contact.identityBrief || profile.description,
           getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(context.chatId) : undefined,
         })
@@ -4208,10 +4336,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           if (!conversation) throw new Error('That Pocket conversation no longer exists.')
           const scope: PocketReferenceScope = payload.scope === 'recent_messages' || payload.scope === 'selected_messages' ? payload.scope : 'conversation'
           const selectedMessageIds = (Array.isArray(payload.messageIds) ? payload.messageIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 12)
-          if (scope === 'selected_messages' && !selectedMessageIds.some((messageId) => conversation.messages.some((message) => message.id === messageId))) {
+          const projectedConversation = { ...conversation, messages: activeConversationMessages(state, conversation) }
+          if (scope === 'selected_messages' && !selectedMessageIds.some((messageId) => projectedConversation.messages.some((message) => message.id === messageId))) {
             throw new Error('Select at least one message to reference.')
           }
-          const reference = createPocketReference({ state, conversation, scope, selectedMessageIds, createdAt: nowIso(), makeId: id })
+          const reference = createPocketReference({ state, conversation: projectedConversation, scope, selectedMessageIds, createdAt: nowIso(), makeId: id })
           if (!reference.messages.length) throw new Error('That conversation has no messages to reference yet.')
           for (const existing of state.references) {
             if (existing.status === 'armed' || existing.status === 'failed') existing.status = 'cancelled'
@@ -4447,6 +4576,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
             for (const conversation of state.conversations) conversation.participantContactIds = conversation.participantContactIds.filter((entry) => entry !== targetId)
           }
           if (kind === 'conversation') state.conversations = state.conversations.filter((entry) => entry.id !== targetId)
+          if (kind === 'message') {
+            const conversationId = text(payload.conversationId, 180)
+            if (!conversationId) throw new Error('Deleting a Pocket message requires its conversation id.')
+            removePocketMessageArtifacts(state, conversationId, targetId)
+          }
           await saveState(state, userId)
           await sendState(state, userId, 'delete')
         })
@@ -4650,8 +4784,16 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
       ...args, ...(isRecord(args.payload) ? args.payload : {}), payload: args.payload,
       idempotencyKey: text(payload.requestId, 240), messageId: text((payload as any).messageId, 180),
     }
-    const result = await applyAction(merged, userId, 'model')
-    return JSON.stringify(result)
+    const context = await resolveContext(args, userId)
+    const activeCandidate = activeCandidateForTool(userId, context.chatId)
+    const actionCandidateOrigin = activeCandidate ? {
+      chatId: activeCandidate.chatId, hostMessageId: activeCandidate.hostMessageId, swipeId: activeCandidate.swipeId, generationId: activeCandidate.generationId,
+    } : undefined
+    const result = await applyAction(actionCandidateOrigin ? { ...merged, __candidateOrigin: actionCandidateOrigin } : merged, userId, 'model')
+    return JSON.stringify({
+      ...result,
+      presentation: 'Pocket persisted the action and handles its UI presentation automatically. Continue the roleplay normally; do not repeat the action solely for visibility or ask the user to click, continue, or confirm anything.',
+    })
   } catch (error) {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`
   }
@@ -4699,11 +4841,22 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
   const chatId = text(payload?.chatId, 180)
   const generationId = text(payload?.generationId, 180)
   if (!chatId || !generationId || !spindle.permissions.has('chats')) return
+  const hostMessageId = text(payload?.targetMessageId ?? payload?.target_message_id, 180)
+  const rawSwipeValue = payload?.targetSwipeId ?? payload?.target_swipe_id
+  const rawSwipeId = Number(rawSwipeValue)
+  const hasCandidate = Boolean(hostMessageId && rawSwipeValue !== null && rawSwipeValue !== undefined && Number.isInteger(rawSwipeId) && rawSwipeId >= 0)
   try {
     const chat: any = await spindle.chats.get(chatId, userId)
-    const characterId = text(chat?.character_id, 180) || '_none'
+    const characterId = text(payload?.characterId ?? payload?.character_id, 180) || text(chat?.character_id, 180) || '_none'
+    if (hasCandidate) {
+      activePocketCandidates.set(candidateRuntimeKey(userId, generationId), {
+        userKey: viewKey(userId), chatId, characterId, hostMessageId, swipeId: rawSwipeId, generationId,
+        generationType: text(payload?.generationType ?? payload?.generation_type, 40), startedAt: Date.now(),
+      })
+    }
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
+      const selectionChanged = hasCandidate ? setHostSwipeSelection(state, hostMessageId, rawSwipeId) : false
       let relay = relayForGeneration(state, generationId)
       if (!relay) {
         const launching = state.relays.filter((entry) => entry.status === 'pending' && entry.continuation.state === 'launching' && !entry.continuation.generationId)
@@ -4714,7 +4867,7 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
         const unbound = state.references.filter((entry) => entry.status === 'injected' && entry.injectedAt && !entry.injectedGenerationId)
         if (unbound.length === 1) reference = unbound[0]
       }
-      if (!relay && !reference) return
+      if (!relay && !reference && !selectionChanged) return
       if (relay) {
         relay.continuation.state = 'started'
         relay.continuation.generationId = generationId
@@ -4729,10 +4882,47 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
         spindle.log.info(`Pocket observed GENERATION_STARTED: reference=${reference.id} generation=${generationId}`)
       }
       await saveState(state, userId)
-      await sendState(state, userId, relay ? 'relay_started' : 'reference_started')
+      await sendState(state, userId, relay ? 'relay_started' : reference ? 'reference_started' : 'generation_candidate_started')
     })
   } catch (error) {
     spindle.log.warn(`Pocket could not associate GENERATION_STARTED: ${error instanceof Error ? error.message : String(error)}`)
+  }
+})
+
+spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
+  const chatId = text(payload?.chatId, 180)
+  const hostMessageId = text(payload?.message?.id ?? payload?.messageId, 180)
+  if (!chatId || !hostMessageId || !spindle.permissions.has('chats')) return
+  try {
+    const chat: any = await spindle.chats.get(chatId, userId)
+    const characterId = text(payload?.characterId ?? payload?.character_id, 180) || text(chat?.character_id, 180) || '_none'
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId)
+      let changed = false
+      const action = text(payload?.action, 40).toLowerCase()
+      const eventSwipeValue = payload?.swipeId
+      const eventSwipeId = Number(eventSwipeValue)
+      if (action === 'delete' && eventSwipeValue !== null && eventSwipeValue !== undefined && Number.isInteger(eventSwipeId) && eventSwipeId >= 0) {
+        for (const conversation of state.conversations) {
+          const deleteIds: string[] = []
+          for (const message of conversation.messages) {
+            const origin = message.origin
+            if (!origin || origin.chatId !== chatId || origin.hostMessageId !== hostMessageId) continue
+            if (origin.swipeId === eventSwipeId) deleteIds.push(message.id)
+            else if (origin.swipeId > eventSwipeId) { origin.swipeId -= 1; changed = true }
+          }
+          for (const messageId of deleteIds) changed = removePocketMessageArtifacts(state, conversation.id, messageId) || changed
+        }
+      }
+      const selectedSwipeValue = payload?.message?.swipe_id ?? payload?.message?.swipeId ?? payload?.swipeId
+      const selectedSwipeId = Number(selectedSwipeValue)
+      if (selectedSwipeValue !== null && selectedSwipeValue !== undefined && Number.isInteger(selectedSwipeId) && selectedSwipeId >= 0) changed = setHostSwipeSelection(state, hostMessageId, selectedSwipeId) || changed
+      if (!changed) return
+      await saveState(state, userId)
+      await sendState(state, userId, 'host_swipe')
+    })
+  } catch (error) {
+    spindle.log.warn(`Pocket could not project MESSAGE_SWIPED: ${error instanceof Error ? error.message : String(error)}`)
   }
 })
 
@@ -4740,6 +4930,7 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
   const chatId = text(payload?.chatId, 180)
   const messageId = text(payload?.messageId, 180)
   const generationId = text(payload?.generationId, 180)
+  if (generationId) activePocketCandidates.delete(candidateRuntimeKey(userId, generationId))
   if (!chatId || !spindle.permissions.has('chats')) return
   try {
     const chat: any = await spindle.chats.get(chatId, userId)

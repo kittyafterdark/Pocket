@@ -19,14 +19,14 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions']) {
+for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'MESSAGE_SWIPED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
   assert.ok(`${frontendSource}\n${controllerSource}\n${surfaceSource}`.includes(token), `frontend contract missing ${token}`)
 }
 assert.ok(controllerSource.includes('oldThreadNearBottom') && controllerSource.includes('thread.scrollHeight'), 'thread rerenders must preserve/follow the GC scroll anchor intentionally')
-for (const token of ['participantActorIds', 'resolvePocketActor', 'lp-actor-link']) assert.ok(messagesSource.includes(token), `message actor UI missing ${token}`)
+for (const token of ['participantActorIds', 'resolvePocketActor', 'lp-actor-link', 'Delete message', "kind: 'message'"]) assert.ok(messagesSource.includes(token), `message actor UI missing ${token}`)
 for (const token of ['.lp-thread', '.lp-camera', '.lp-timeline', '.lp-progress', '@media (max-width: 720px)']) {
   assert.ok(stylesSource.includes(token), `style contract missing ${token}`)
 }
@@ -566,6 +566,47 @@ await frontendHandler({ type: 'lumiphone:get_state', requestId: 'delete-state-ag
 const deletedState = storage.get('phones/chat-delete__char-a.json')
 assert.equal(deletedState.contacts.some((contact) => contact.id === 'char-a'), false, 'deleted linked Character contact must stay deleted')
 assert.ok(deletedState.suppressedContactSourceKeys.includes('character:char-a'))
+
+// Swipe candidates are mutually exclusive phone realities inside one host message.
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', characterId: 'char-a', generationId: 'swipe-gen-0', generationType: 'normal', targetMessageId: 'host-swipe-message', targetSwipeId: 0 }, 'user-a')
+const swipeZeroResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'swipe-tool-0', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
+}, 'user-a'))
+assert.match(swipeZeroResult.presentation, /Continue the roleplay normally/i)
+const sameCandidateDuplicate = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'swipe-tool-0-repeat', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
+}, 'user-a'))
+assert.equal(sameCandidateDuplicate.deduplicated, true, 'same candidate must not commit the same phone side effect twice')
+assert.equal(storage.get('phones/chat-a__char-a.json').conversations.flatMap((entry) => entry.messages).filter((entry) => entry.text === 'Candidate zero.').length, 1)
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-0', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', characterId: 'char-a', generationId: 'swipe-gen-1', generationType: 'regenerate', targetMessageId: 'host-swipe-message', targetSwipeId: 1 }, 'user-a')
+const swipeOneResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'swipe-tool-1', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate one.' } },
+}, 'user-a'))
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-1', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
+const swipeStored = storage.get('phones/chat-a__char-a.json')
+const swipeConversation = swipeStored.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
+assert.equal(swipeConversation.messages.find((entry) => entry.id === swipeZeroResult.messageId).origin.swipeId, 0)
+assert.equal(swipeConversation.messages.find((entry) => entry.id === swipeOneResult.messageId).origin.swipeId, 1)
+const projectedSwipeOne = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
+assert.equal(projectedSwipeOne.messages.some((entry) => entry.id === swipeZeroResult.messageId), false)
+assert.equal(projectedSwipeOne.messages.some((entry) => entry.id === swipeOneResult.messageId), true)
+await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'navigate', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
+const projectedSwipeZero = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
+assert.equal(projectedSwipeZero.messages.some((entry) => entry.id === swipeZeroResult.messageId), true)
+assert.equal(projectedSwipeZero.messages.some((entry) => entry.id === swipeOneResult.messageId), false)
+await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'delete', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
+const reindexedSwipeState = storage.get('phones/chat-a__char-a.json')
+const reindexedSwipeConversation = reindexedSwipeState.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
+assert.equal(reindexedSwipeConversation.messages.some((entry) => entry.id === swipeZeroResult.messageId), false, "deleting a host swipe must remove that candidate's Pocket side effects")
+assert.equal(reindexedSwipeConversation.messages.find((entry) => entry.id === swipeOneResult.messageId).origin.swipeId, 0, 'host swipe deletion must reindex later Pocket candidate origins')
+const projectedAfterHostDelete = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
+assert.equal(projectedAfterHostDelete.messages.some((entry) => entry.id === swipeOneResult.messageId), true, 'the surviving host candidate must become active after swipe deletion')
+await frontendHandler({ type: 'lumiphone:delete', requestId: 'delete-single-pocket-message', chatId: 'chat-a', characterId: 'char-a', kind: 'message', conversationId: swipeZeroResult.conversationId, id: swipeOneResult.messageId }, 'user-a')
+const afterPocketMessageDelete = storage.get('phones/chat-a__char-a.json')
+assert.equal(afterPocketMessageDelete.conversations.find((entry) => entry.id === swipeZeroResult.conversationId).messages.some((entry) => entry.id === swipeOneResult.messageId), false)
+assert.equal(afterPocketMessageDelete.notifications.some((entry) => entry.route?.app === 'messages' && entry.route.messageId === swipeOneResult.messageId), false)
+assert.equal(afterPocketMessageDelete.activities.some((entry) => entry.route?.app === 'messages' && entry.route.messageId === swipeOneResult.messageId), false)
 
 const groupCreateTool = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'lazy-group-create', args: {

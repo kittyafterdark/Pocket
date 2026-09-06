@@ -247,6 +247,19 @@ export interface PhoneEventSuggestion {
 }
 export type PocketMessageDirection = 'outbound' | 'inbound' | 'external'
 
+export interface PocketTurnCandidateOrigin {
+  chatId: string
+  hostMessageId: string
+  swipeId: number
+  generationId?: string
+}
+
+export interface PocketHostSwipeSelection {
+  hostMessageId: string
+  swipeId: number
+  updatedAt: string
+}
+
 export interface PhoneMessage {
   id: string
   sender: 'persona' | 'contact' | 'system'
@@ -269,6 +282,8 @@ export interface PhoneMessage {
   imageId?: string
   imageUrl?: string
   eventSuggestion?: PhoneEventSuggestion
+  /** Host roleplay candidate that caused this model-authored side effect. */
+  origin?: PocketTurnCandidateOrigin
   generation?: {
     requestId: string
     retryOf?: string
@@ -782,6 +797,8 @@ export interface PhoneState {
   roleplayTimezoneOffsetMinutes?: number
   /** Monotonic Pocket-state revision advanced by post-turn reconciliation. */
   stateRevision?: number
+  /** Active host swipe per assistant message. Used to project candidate-owned side effects. */
+  hostSwipeSelections?: PocketHostSwipeSelection[]
   /** Provenance for the latest committed narrative reconciliation pass. */
   lastReconciliation?: PocketStateReconciliation
   sceneSnapshot: SceneActorSnapshot | null

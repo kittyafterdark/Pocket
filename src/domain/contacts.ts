@@ -175,6 +175,12 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     imageId: clean(value.imageId, 160) || undefined,
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
+    origin: record(value.origin) && clean(value.origin.chatId, 180) && clean(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {
+      chatId: clean(value.origin.chatId, 180),
+      hostMessageId: clean(value.origin.hostMessageId, 180),
+      swipeId: Math.max(0, Math.round(Number(value.origin.swipeId))),
+      generationId: clean(value.origin.generationId, 180) || undefined,
+    } : undefined,
     generation: generation && clean(generation.requestId, 180) ? {
       requestId: clean(generation.requestId, 180),
       retryOf: clean(generation.retryOf, 180) || undefined,

@@ -404,20 +404,29 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       bubble.appendChild(sender)
     }
     bubble.append(document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
-    if (message.generation) {
+    if (message.generation || !host.readOnlyDevice) {
       const tools = el('span', 'lp-bubble-tools')
-      if (!host.readOnlyDevice) {
+      if (message.generation && !host.readOnlyDevice) {
         const retry = button('↻', 'lp-bubble-action')
         retry.type = 'button'; retry.title = 'Retry'
         retry.setAttribute('aria-label', `Retry message from ${message.senderName}`)
         retry.addEventListener('click', () => host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: message.id }))
         tools.appendChild(retry)
       }
-      const generationInfo = button('ⓘ', 'lp-bubble-action')
-      generationInfo.type = 'button'; generationInfo.title = 'Generation info'
-      generationInfo.setAttribute('aria-label', 'Generation info')
-      generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
-      tools.appendChild(generationInfo)
+      if (message.generation) {
+        const generationInfo = button('ⓘ', 'lp-bubble-action')
+        generationInfo.type = 'button'; generationInfo.title = 'Generation info'
+        generationInfo.setAttribute('aria-label', 'Generation info')
+        generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
+        tools.appendChild(generationInfo)
+      }
+      if (!host.readOnlyDevice) {
+        const remove = button('×', 'lp-bubble-action')
+        remove.type = 'button'; remove.title = 'Delete message'
+        remove.setAttribute('aria-label', 'Delete message')
+        remove.addEventListener('click', () => host.send('lumiphone:delete', { kind: 'message', conversationId: conversation.id, id: message.id }))
+        tools.appendChild(remove)
+      }
       bubble.appendChild(tools)
     }
     if (message.eventSuggestion && !host.readOnlyDevice) {
