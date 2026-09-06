@@ -163,7 +163,7 @@ function normalizePreferences(value) {
     const item = record(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "reply-decision", "ambient-decision", "scene-planner", "connection-test"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -2079,7 +2079,7 @@ function renderMessagesView(host) {
       bubble.appendChild(sender);
     }
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
-    if (message.generation || !host.readOnlyDevice) {
+    if (message.generation || message.origin || !host.readOnlyDevice) {
       const tools = el("span", "lp-bubble-tools");
       if (message.generation && !host.readOnlyDevice) {
         const retry = button("↻", "lp-bubble-action");
@@ -2089,7 +2089,7 @@ function renderMessagesView(host) {
         retry.addEventListener("click", () => host.send("lumiphone:retry_message", { conversationId: conversation.id, messageId: message.id }));
         tools.appendChild(retry);
       }
-      if (message.generation) {
+      if (message.generation || message.origin) {
         const generationInfo = button("ⓘ", "lp-bubble-action");
         generationInfo.type = "button";
         generationInfo.title = "Generation info";
@@ -2880,14 +2880,7 @@ function actorLine(activity) {
     return `${sender} → ${recipients}`;
   return sender || recipients || presentation.conversationTitle || "";
 }
-function activityReceipt(ctx, activity, openRoute) {
-  const messageId = activity.source?.messageId;
-  if (!messageId)
-    return null;
-  const bubble = ctx.dom.findMessageElement(messageId);
-  if (!bubble)
-    return null;
-  const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
+function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
   stack.className = "pocket-artifact-stack";
   const presentation = activity.presentation;
@@ -2897,15 +2890,29 @@ function activityReceipt(ctx, activity, openRoute) {
       primary.type = "button";
     primary.className = "pocket-inline-artifact";
     primary.dataset.kind = presentation.kind;
-    const eyebrow = document.createElement("span");
-    eyebrow.className = "pocket-inline-artifact-kind";
-    eyebrow.textContent = `Pocket · ${presentationLabel(activity)}`;
+    const chrome = document.createElement("span");
+    chrome.className = "pocket-inline-artifact-chrome";
+    const app = document.createElement("span");
+    app.className = "pocket-inline-artifact-app";
+    app.textContent = presentation.kind === "received" ? "Messages" : presentation.kind === "sent" ? "Pocket chat" : "Observed phone";
+    const state = document.createElement("span");
+    state.className = "pocket-inline-artifact-state";
+    state.textContent = presentation.kind === "received" ? "now" : presentation.kind === "sent" ? "sent" : "external";
+    chrome.append(app, state);
     const actors = document.createElement("strong");
+    actors.className = "pocket-inline-artifact-actors";
     actors.textContent = actorLine(activity) || presentation.conversationTitle || activity.title;
-    const copy2 = document.createElement("span");
-    copy2.className = "pocket-inline-artifact-copy";
-    copy2.textContent = activity.summary || "";
-    primary.append(eyebrow, actors, copy2);
+    const copy = document.createElement("span");
+    copy.className = "pocket-inline-artifact-copy";
+    copy.textContent = activity.summary || "";
+    if (presentation.kind === "sent") {
+      const bubble = document.createElement("span");
+      bubble.className = "pocket-inline-chat-bubble";
+      bubble.append(copy);
+      primary.append(chrome, actors, bubble);
+    } else {
+      primary.append(chrome, actors, copy);
+    }
     if (primary instanceof HTMLButtonElement) {
       primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title} in Pocket`);
       primary.addEventListener("click", () => openRoute(activity.route));
@@ -2914,36 +2921,53 @@ function activityReceipt(ctx, activity, openRoute) {
     }
     stack.appendChild(primary);
   }
-  const receipt = document.createElement(activity.presentation?.kind === "observed" ? "span" : "button");
-  if (receipt instanceof HTMLButtonElement)
-    receipt.type = "button";
-  receipt.className = "pocket-receipt";
-  const label = document.createElement("span");
-  label.className = "pocket-receipt-kind";
-  label.textContent = `Pocket · ${presentationLabel(activity)}`;
-  const copy = document.createElement("span");
-  copy.className = "pocket-receipt-copy";
-  const title = document.createElement("strong");
-  title.textContent = presentation?.conversationTitle || activity.title;
-  copy.appendChild(title);
-  const detail2 = actorLine(activity) || activity.summary;
-  if (detail2) {
-    const summary = document.createElement("span");
-    summary.textContent = detail2;
-    copy.appendChild(summary);
+  if (options.includeReceipt !== false) {
+    const receipt = document.createElement(activity.presentation?.kind === "observed" ? "span" : "button");
+    if (receipt instanceof HTMLButtonElement)
+      receipt.type = "button";
+    receipt.className = "pocket-receipt";
+    const label = document.createElement("span");
+    label.className = "pocket-receipt-kind";
+    label.textContent = `Pocket · ${presentationLabel(activity)}`;
+    const copy = document.createElement("span");
+    copy.className = "pocket-receipt-copy";
+    const title = document.createElement("strong");
+    title.textContent = presentation?.conversationTitle || activity.title;
+    copy.appendChild(title);
+    const detail2 = actorLine(activity) || activity.summary;
+    if (detail2) {
+      const summary = document.createElement("span");
+      summary.textContent = detail2;
+      copy.appendChild(summary);
+    }
+    const arrow = document.createElement("span");
+    arrow.className = "pocket-receipt-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = receipt instanceof HTMLButtonElement ? "›" : "·";
+    receipt.append(label, copy, arrow);
+    if (receipt instanceof HTMLButtonElement) {
+      receipt.setAttribute("aria-label", `Open ${presentation?.conversationTitle || activity.title} in Pocket`);
+      receipt.addEventListener("click", () => openRoute(activity.route));
+    }
+    stack.appendChild(receipt);
   }
-  const arrow = document.createElement("span");
-  arrow.className = "pocket-receipt-arrow";
-  arrow.setAttribute("aria-hidden", "true");
-  arrow.textContent = receipt instanceof HTMLButtonElement ? "›" : "·";
-  receipt.append(label, copy, arrow);
-  if (receipt instanceof HTMLButtonElement) {
-    receipt.setAttribute("aria-label", `Open ${presentation?.conversationTitle || activity.title} in Pocket`);
-    receipt.addEventListener("click", () => openRoute(activity.route));
-  }
-  stack.appendChild(receipt);
-  wrapper.replaceChildren(stack);
-  return wrapper;
+  return stack;
+}
+function renderActivityHost(host, activity, openRoute, options = {}) {
+  host.replaceChildren(buildActivityStack(activity, openRoute, options));
+  return host;
+}
+function activityReceipt(ctx, activity, openRoute) {
+  const messageId = activity.source?.messageId;
+  if (!messageId)
+    return null;
+  const bubble = ctx.dom.findMessageElement(messageId);
+  if (!bubble)
+    return null;
+  const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
+  wrapper.classList.add("pocket-receipt-host");
+  wrapper.setAttribute("data-pocket-activity-id", activity.id);
+  return renderActivityHost(wrapper, activity, openRoute);
 }
 
 // src/frontend/controller.ts
@@ -3071,6 +3095,9 @@ class PocketController {
   pendingRoute = null;
   injectedActivities = new Map;
   pendingActivities = new Map;
+  pendingArtifactPlacements = new Map;
+  artifactHosts = new Map;
+  knownActivities = new Map;
   viewCleanups = [];
   receiptSweepTimer = 0;
   notificationTimer = 0;
@@ -3227,12 +3254,32 @@ class PocketController {
         idempotencyKey: `tag:${payload.messageId || ""}:${payload.fullMatch}`
       });
     }));
+    this.cleanups.push(this.ctx.messages.registerTagInterceptor({ tagName: "pocket-artifact", removeFromMessage: true }, (payload) => {
+      if (payload.isStreaming)
+        return;
+      const activityId = typeof payload.attrs?.ref === "string" ? payload.attrs.ref.trim() : "";
+      const messageId = typeof payload.messageId === "string" ? payload.messageId.trim() : "";
+      if (!activityId || !messageId)
+        return;
+      const key = `artifact:${messageId}:${payload.fullMatch}`;
+      const existing = this.pendingArtifactPlacements.get(key);
+      if (existing && this.artifactHosts.get(activityId)?.some((host) => host.isConnected))
+        return;
+      this.pendingArtifactPlacements.set(key, { messageId, activityId });
+      this.sweepArtifactPlacements();
+    }));
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
       this.pendingActivities.clear();
+      this.pendingArtifactPlacements.clear();
+      this.artifactHosts.clear();
+      this.knownActivities.clear();
       this.hideComposerReferencePill();
       this.refresh();
-      window.setTimeout(() => this.sweepActivityReceipts(), 0);
+      window.setTimeout(() => {
+        this.sweepArtifactPlacements();
+        this.sweepActivityReceipts();
+      }, 0);
     }));
     const returned = (event) => {
       const detail2 = event.detail;
@@ -3801,8 +3848,10 @@ class PocketController {
         else
           this.renderFirstChatSetupBody();
       }
-      for (const activity of this.state.activities || [])
+      for (const activity of this.state.activities || []) {
+        this.knownActivities.set(activity.id, activity);
         this.queueActivityReceipt(activity);
+      }
       this.applyAppearance();
       this.syncComposerReferencePill();
       this.updateBadge();
@@ -3863,6 +3912,7 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:activity" && payload.activity) {
+      this.knownActivities.set(payload.activity.id, payload.activity);
       this.queueActivityReceipt(payload.activity);
       return;
     }
@@ -4346,9 +4396,44 @@ class PocketController {
     this.announceView();
     this.render(true);
   }
+  sweepArtifactPlacements() {
+    for (const [key, placement] of this.pendingArtifactPlacements) {
+      const bubble = this.ctx.dom.findMessageElement(placement.messageId);
+      if (!bubble)
+        continue;
+      const host = this.ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
+      host.classList.add("pocket-receipt-host");
+      host.setAttribute("data-pocket-artifact-ref", placement.activityId);
+      host.setAttribute("data-pocket-activity-id", placement.activityId);
+      const hosts = this.artifactHosts.get(placement.activityId) || [];
+      hosts.push(host);
+      this.artifactHosts.set(placement.activityId, hosts);
+      this.pendingArtifactPlacements.delete(key);
+      const activity = this.knownActivities.get(placement.activityId);
+      if (activity)
+        renderActivityHost(host, activity, (route) => this.openPocket(route));
+    }
+  }
+  tryRenderTaggedArtifact(activity) {
+    const hosts = (this.artifactHosts.get(activity.id) || []).filter((host) => host.isConnected);
+    if (!hosts.length)
+      return false;
+    this.artifactHosts.set(activity.id, hosts);
+    const fallback = this.injectedActivities.get(activity.id);
+    if (fallback) {
+      this.ctx.dom.uninject(fallback);
+      this.injectedActivities.delete(activity.id);
+    }
+    for (const host of hosts)
+      renderActivityHost(host, activity, (route) => this.openPocket(route));
+    return true;
+  }
   queueActivityReceipt(activity) {
     const active = this.activeContext();
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId)
+      return;
+    this.sweepArtifactPlacements();
+    if (this.tryRenderTaggedArtifact(activity))
       return;
     if (this.injectedActivities.has(activity.id) || !activity.source?.messageId)
       return;
@@ -4356,7 +4441,12 @@ class PocketController {
     this.sweepActivityReceipts();
   }
   sweepActivityReceipts() {
+    this.sweepArtifactPlacements();
     for (const [activityId, activity] of this.pendingActivities) {
+      if (this.tryRenderTaggedArtifact(activity)) {
+        this.pendingActivities.delete(activityId);
+        continue;
+      }
       const injected = activityReceipt(this.ctx, activity, (route) => this.openPocket(route));
       if (!injected)
         continue;
@@ -4443,7 +4533,8 @@ class PocketController {
     const home = el("div", "lp-home");
     const head = el("div", "lp-home-head");
     const left = el("div");
-    left.append(el("div", "lp-home-date", formatDate(state.roleplayNow, false)), el("div", "lp-home-clock", formatTime(state.roleplayNow)));
+    const roleplayClockText = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" && state.roleplayClockLabel ? state.roleplayClockLabel : formatTime(state.roleplayNow);
+    left.append(el("div", "lp-home-date", formatDate(state.roleplayNow, false)), el("div", "lp-home-clock", roleplayClockText));
     const weather = el("button", "lp-home-weather");
     weather.type = "button";
     weather.append(icon("weather"), el("span", "", `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`));
@@ -4599,7 +4690,21 @@ class PocketController {
     const info = message.generation?.info;
     const modal = this.ctx.ui.showModal({ title: "Generation info", width: 460, maxHeight: 620 });
     const content = el("div", "lp-settings-section");
-    if (!info) {
+    if (!info && message.origin) {
+      const selectedSwipe = [...this.state?.hostSwipeSelections || []].reverse().find((entry) => entry.hostMessageId === message.origin.hostMessageId)?.swipeId;
+      for (const [label, value] of [
+        ["Source", "Main roleplay generation · Pocket Action"],
+        ["Host message", message.origin.hostMessageId],
+        ["Swipe candidate", String(message.origin.swipeId + 1)],
+        ["Candidate state", selectedSwipe === undefined || selectedSwipe === message.origin.swipeId ? "active" : "inactive"],
+        ["Generation ID", message.origin.generationId || "not recorded"]
+      ]) {
+        const row2 = el("div", "lp-row-between");
+        row2.append(el("strong", "", label), el("span", "lp-copy", value));
+        content.appendChild(row2);
+      }
+      content.appendChild(el("p", "lp-copy", "This message was authored by the main RP model and persisted through Pocket Action. Retry is intentionally not offered here because rewriting only the phone bubble would diverge from the source RP swipe."));
+    } else if (!info) {
       content.appendChild(el("p", "lp-copy", `Request ${message.generation?.requestId || "unknown"} predates detailed diagnostics.`));
     } else {
       for (const [label, value] of [
@@ -6110,13 +6215,18 @@ var PHONE_STYLES = `
 
   .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
   .pocket-artifact-stack { display:grid; gap:5px; }
-  .pocket-inline-artifact { appearance:none; width:100%; min-height:58px; padding:9px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 42%,transparent); border-radius:15px; display:grid; gap:2px; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,var(--lumiverse-primary,#8b7dff) 10%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); }
+  .pocket-inline-artifact { appearance:none; width:100%; min-height:62px; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 38%,transparent); border-radius:16px; display:grid; gap:5px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); overflow:hidden; }
   button.pocket-inline-artifact { cursor:pointer; }
-  .pocket-inline-artifact[data-kind="sent"] { border-style:dashed; }
-  .pocket-inline-artifact[data-kind="observed"] { opacity:.9; }
-  .pocket-inline-artifact-kind { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 72%,white); font-size:9px; font-weight:850; letter-spacing:.035em; text-transform:uppercase; }
-  .pocket-inline-artifact strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; opacity:.82; font-size:11px; line-height:1.35; }
+  .pocket-inline-artifact[data-kind="received"] { background:linear-gradient(180deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 84%,white 5%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); backdrop-filter:blur(14px); }
+  .pocket-inline-artifact[data-kind="sent"] { width:min(88%,420px); margin-left:auto; border:0; background:transparent; box-shadow:none; padding:2px 0; }
+  .pocket-inline-artifact[data-kind="observed"] { width:min(92%,430px); opacity:.92; border-style:dashed; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 94%,transparent),color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 7%,var(--lumiverse-fill,#17151d))); }
+  .pocket-inline-artifact-chrome { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+  .pocket-inline-artifact-app { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 74%,white); font-size:9px; font-weight:850; letter-spacing:.025em; }
+  .pocket-inline-artifact-state { opacity:.46; font-size:8px; text-transform:uppercase; letter-spacing:.04em; }
+  .pocket-inline-artifact-actors { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; opacity:.84; font-size:11px; line-height:1.38; }
+  .pocket-inline-chat-bubble { justify-self:end; max-width:100%; padding:8px 10px; border-radius:15px 15px 4px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 54%,var(--lumiverse-fill,#17151d)); box-shadow:0 7px 18px rgba(0,0,0,.14); }
+  .pocket-inline-chat-bubble .pocket-inline-artifact-copy { opacity:.96; }
   .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
   button.pocket-receipt { cursor:pointer; }
   button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }

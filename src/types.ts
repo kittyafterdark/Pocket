@@ -100,7 +100,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'scene-planner' | 'connection-test'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -257,6 +257,25 @@ export interface PocketTurnCandidateOrigin {
 export interface PocketHostSwipeSelection {
   hostMessageId: string
   swipeId: number
+  updatedAt: string
+}
+
+export interface PocketRoleplayClockSnapshot {
+  roleplayNow: string
+  source: 'manual' | 'narrative' | 'legacy'
+  precision: 'exact' | 'approximate' | 'relative' | 'unknown'
+  label: string
+}
+
+export interface PocketHostClockBaseline extends PocketRoleplayClockSnapshot {
+  hostMessageId: string
+  updatedAt: string
+}
+
+export interface PocketCandidateClockSnapshot extends PocketRoleplayClockSnapshot {
+  hostMessageId: string
+  swipeId: number
+  generationId?: string
   updatedAt: string
 }
 
@@ -799,6 +818,10 @@ export interface PhoneState {
   stateRevision?: number
   /** Active host swipe per assistant message. Used to project candidate-owned side effects. */
   hostSwipeSelections?: PocketHostSwipeSelection[]
+  /** Clock state immediately before a host assistant message, shared by all of its swipe candidates. */
+  hostClockBaselines?: PocketHostClockBaseline[]
+  /** Post-turn clock state for each generated swipe candidate. */
+  candidateClocks?: PocketCandidateClockSnapshot[]
   /** Provenance for the latest committed narrative reconciliation pass. */
   lastReconciliation?: PocketStateReconciliation
   sceneSnapshot: SceneActorSnapshot | null

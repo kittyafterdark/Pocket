@@ -42,6 +42,8 @@ A cooperating main model may also provide a bounded structured scene update with
 
 The frontend removes these tags from rendered prose. Frontend actions, model tools, and tags converge on one backend action path with durable request-id deduplication plus a short semantic duplicate window, so a tool/tag retry does not produce two entries. Settings control whether model actions also open the phone and whether to send rate-limited OS push notifications.
 
+When a Pocket Action tool call succeeds, its JSON result may include an `artifactTag` such as `<pocket-artifact ref="activity_123"></pocket-artifact>`. The RP model should place that exact tag at the point in prose where the already-persisted phone action becomes narratively visible. The frontend removes the tag text and renders the corresponding Pocket artifact instead; if no tag is placed, Pocket falls back to its normal end-of-message receipt injection.
+
 ## Roleplay context and identity
 
 Pocket keeps five concepts deliberately separate: source identity (Character Card, Council member, or Pocket NPC), replaceable scene snapshot, recent/story roleplay context, the selected phone thread, and the chat-scoped Pocket Persona.

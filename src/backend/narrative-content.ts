@@ -6,6 +6,8 @@ const OPEN_ENDED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_res
 const FENCED_BLOCK = /```(?:think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[\s\S]*?```/gi
 const POCKET_ACTION_BLOCK = /<lumi-phone\b[^>]*>[\s\S]*?<\/lumi-phone\s*>/gi
 const POCKET_ACTION_SINGLE = /<lumi-phone\b[^>]*\/\s*>/gi
+const POCKET_ARTIFACT_BLOCK = /<pocket-artifact\b[^>]*>[\s\S]*?<\/pocket-artifact\s*>/gi
+const POCKET_ARTIFACT_SINGLE = /<pocket-artifact\b[^>]*\/\s*>/gi
 
 function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -35,6 +37,8 @@ function stripMachineWrappers(value: string): string {
       .replace(WRAPPED_BLOCK, '')
       .replace(POCKET_ACTION_BLOCK, '')
       .replace(POCKET_ACTION_SINGLE, '')
+      .replace(POCKET_ARTIFACT_BLOCK, '')
+      .replace(POCKET_ARTIFACT_SINGLE, '')
     if (next === text) break
     text = next
   }

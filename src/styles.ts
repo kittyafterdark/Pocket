@@ -428,13 +428,18 @@ export const PHONE_STYLES = `
 
   .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
   .pocket-artifact-stack { display:grid; gap:5px; }
-  .pocket-inline-artifact { appearance:none; width:100%; min-height:58px; padding:9px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 42%,transparent); border-radius:15px; display:grid; gap:2px; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,var(--lumiverse-primary,#8b7dff) 10%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); }
+  .pocket-inline-artifact { appearance:none; width:100%; min-height:62px; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 38%,transparent); border-radius:16px; display:grid; gap:5px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); overflow:hidden; }
   button.pocket-inline-artifact { cursor:pointer; }
-  .pocket-inline-artifact[data-kind="sent"] { border-style:dashed; }
-  .pocket-inline-artifact[data-kind="observed"] { opacity:.9; }
-  .pocket-inline-artifact-kind { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 72%,white); font-size:9px; font-weight:850; letter-spacing:.035em; text-transform:uppercase; }
-  .pocket-inline-artifact strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; opacity:.82; font-size:11px; line-height:1.35; }
+  .pocket-inline-artifact[data-kind="received"] { background:linear-gradient(180deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 84%,white 5%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); backdrop-filter:blur(14px); }
+  .pocket-inline-artifact[data-kind="sent"] { width:min(88%,420px); margin-left:auto; border:0; background:transparent; box-shadow:none; padding:2px 0; }
+  .pocket-inline-artifact[data-kind="observed"] { width:min(92%,430px); opacity:.92; border-style:dashed; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 94%,transparent),color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 7%,var(--lumiverse-fill,#17151d))); }
+  .pocket-inline-artifact-chrome { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+  .pocket-inline-artifact-app { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 74%,white); font-size:9px; font-weight:850; letter-spacing:.025em; }
+  .pocket-inline-artifact-state { opacity:.46; font-size:8px; text-transform:uppercase; letter-spacing:.04em; }
+  .pocket-inline-artifact-actors { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; opacity:.84; font-size:11px; line-height:1.38; }
+  .pocket-inline-chat-bubble { justify-self:end; max-width:100%; padding:8px 10px; border-radius:15px 15px 4px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 54%,var(--lumiverse-fill,#17151d)); box-shadow:0 7px 18px rgba(0,0,0,.14); }
+  .pocket-inline-chat-bubble .pocket-inline-artifact-copy { opacity:.96; }
   .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
   button.pocket-receipt { cursor:pointer; }
   button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }

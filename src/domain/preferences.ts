@@ -156,7 +156,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const item = record(entry)
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
-    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'reply-decision', 'ambient-decision', 'scene-planner', 'connection-test'])
+    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test'])
     if (!requestId || !tasks.has(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{

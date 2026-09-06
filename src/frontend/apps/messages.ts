@@ -404,7 +404,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       bubble.appendChild(sender)
     }
     bubble.append(document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
-    if (message.generation || !host.readOnlyDevice) {
+    if (message.generation || message.origin || !host.readOnlyDevice) {
       const tools = el('span', 'lp-bubble-tools')
       if (message.generation && !host.readOnlyDevice) {
         const retry = button('↻', 'lp-bubble-action')
@@ -413,7 +413,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
         retry.addEventListener('click', () => host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: message.id }))
         tools.appendChild(retry)
       }
-      if (message.generation) {
+      if (message.generation || message.origin) {
         const generationInfo = button('ⓘ', 'lp-bubble-action')
         generationInfo.type = 'button'; generationInfo.title = 'Generation info'
         generationInfo.setAttribute('aria-label', 'Generation info')

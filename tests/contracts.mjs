@@ -19,14 +19,14 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'MESSAGE_SWIPED', 'targetSwipeId']) {
+for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'artifactTag', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
   assert.ok(`${frontendSource}\n${controllerSource}\n${surfaceSource}`.includes(token), `frontend contract missing ${token}`)
 }
 assert.ok(controllerSource.includes('oldThreadNearBottom') && controllerSource.includes('thread.scrollHeight'), 'thread rerenders must preserve/follow the GC scroll anchor intentionally')
-for (const token of ['participantActorIds', 'resolvePocketActor', 'lp-actor-link', 'Delete message', "kind: 'message'"]) assert.ok(messagesSource.includes(token), `message actor UI missing ${token}`)
+for (const token of ['participantActorIds', 'resolvePocketActor', 'lp-actor-link', 'Delete message', "kind: 'message'", 'message.origin']) assert.ok(messagesSource.includes(token), `message actor UI missing ${token}`)
 for (const token of ['.lp-thread', '.lp-camera', '.lp-timeline', '.lp-progress', '@media (max-width: 720px)']) {
   assert.ok(stylesSource.includes(token), `style contract missing ${token}`)
 }
@@ -526,7 +526,9 @@ const personaSendResult = await backendEvents.get('TOOL_INVOCATION')({
     payload: { channel: 'dm', speaker: 'Kai', target: 'Tyler', text: 'Bring him. Just you two.' },
   },
 }, 'user-a')
-assert.equal(JSON.parse(personaSendResult).ok, true)
+const personaSendPayload = JSON.parse(personaSendResult)
+assert.equal(personaSendPayload.ok, true)
+assert.equal(personaSendPayload.artifactTag, `<pocket-artifact ref="${personaSendPayload.activityId}"></pocket-artifact>`)
 let deviceState = storage.get('phones/chat-device__char-a.json')
 const devicePersonaId = deviceState.pocketPersonaActorId
 const tylerActor = deviceState.discoveredActors.find((actor) => actor.displayName === 'Tyler')
@@ -548,7 +550,9 @@ const externalResult = await backendEvents.get('TOOL_INVOCATION')({
     payload: { channel: 'dm', speaker: 'Marcus', target: 'Tyler', text: 'Track him. Send the pin.' },
   },
 }, 'user-a')
-assert.equal(JSON.parse(externalResult).ok, true)
+const externalPayload = JSON.parse(externalResult)
+assert.equal(externalPayload.ok, true)
+assert.equal(externalPayload.artifactTag, `<pocket-artifact ref="${externalPayload.activityId}"></pocket-artifact>`)
 deviceState = storage.get('phones/chat-device__char-a.json')
 const marcusActor = deviceState.discoveredActors.find((actor) => actor.displayName === 'Marcus')
 const externalDm = deviceState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona === false && conversation.participantActorIds.includes(marcusActor.id) && conversation.participantActorIds.includes(tylerActor.id))
@@ -573,6 +577,8 @@ const swipeZeroResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'swipe-tool-0', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
 }, 'user-a'))
 assert.match(swipeZeroResult.presentation, /Continue the roleplay normally/i)
+const swipeZeroActivity = storage.get('phones/chat-a__char-a.json').activities.find((entry) => entry.id === swipeZeroResult.activityId)
+assert.equal(swipeZeroActivity?.source?.messageId, 'host-swipe-message', 'tool-authored message activity must anchor to its host candidate even when TOOL_INVOCATION omits messageId')
 const sameCandidateDuplicate = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'swipe-tool-0-repeat', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
 }, 'user-a'))
@@ -581,13 +587,14 @@ assert.equal(storage.get('phones/chat-a__char-a.json').conversations.flatMap((en
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-0', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
 await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', characterId: 'char-a', generationId: 'swipe-gen-1', generationType: 'regenerate', targetMessageId: 'host-swipe-message', targetSwipeId: 1 }, 'user-a')
 const swipeOneResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
-  toolName: 'phone_action', requestId: 'swipe-tool-1', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate one.' } },
+  toolName: 'phone_action', requestId: 'swipe-tool-1', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
 }, 'user-a'))
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-1', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
 const swipeStored = storage.get('phones/chat-a__char-a.json')
 const swipeConversation = swipeStored.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
 assert.equal(swipeConversation.messages.find((entry) => entry.id === swipeZeroResult.messageId).origin.swipeId, 0)
 assert.equal(swipeConversation.messages.find((entry) => entry.id === swipeOneResult.messageId).origin.swipeId, 1)
+assert.equal(swipeConversation.messages.filter((entry) => entry.text === 'Candidate zero.').length, 2, 'identical text on two different swipe candidates must persist once per candidate')
 const projectedSwipeOne = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
 assert.equal(projectedSwipeOne.messages.some((entry) => entry.id === swipeZeroResult.messageId), false)
 assert.equal(projectedSwipeOne.messages.some((entry) => entry.id === swipeOneResult.messageId), true)
@@ -969,6 +976,54 @@ mira = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => cont
 assert.equal(mira.presence.inScene, false, 'absent scene-derived contacts must be retained and marked away')
 spindle.generate.quiet = sceneQuiet
 
+// Regenerated swipe candidates get a narrow post-turn audit: recover plaintexted phone messages and
+// reconcile only candidate-local clock state, leaving full world reconciliation to committed normal turns.
+const recoveryQuiet = spindle.generate.quiet
+const recoveryMessages = spindle.chat.getMessages
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'recovery-state', chatId: 'chat-recovery', characterId: 'char-a' }, 'user-a')
+const recoveryStatePath = 'phones/chat-recovery__char-a.json'
+const recoveryBefore = storage.get(recoveryStatePath)
+recoveryBefore.pocketPersona.displayName = 'Kai'
+recoveryBefore.roleplayNow = '2026-09-04T03:39:00.000Z'
+recoveryBefore.roleplayClockSource = 'manual'
+recoveryBefore.roleplayClockPrecision = 'exact'
+recoveryBefore.roleplayClockLabel = '3:39 AM'
+recoveryBefore.roleplayTimezoneOffsetMinutes = 0
+storage.set(recoveryStatePath, recoveryBefore)
+spindle.chat.getMessages = async () => [
+  { id: 'recovery-assistant', revision: 1, role: 'assistant', content: 'Kai texted Tyler: “First.” Another text: “Second.” A minute later, he put the phone down.' },
+]
+spindle.generate.quiet = async (request) => {
+  const systemPrompt = String(request?.messages?.find((message) => message?.role === 'system')?.content || '')
+  assert.match(systemPrompt, /Audit one committed fictional roleplay assistant turn/)
+  return { content: JSON.stringify({
+    clock: { date: '', time: '', dayPart: '', precision: 'relative', label: '', advanceMinutes: 1 },
+    phoneMessages: [{ channel: 'dm', speaker: 'Kai', target: 'Tyler', conversation: '', text: 'Second.' }],
+  }) }
+}
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-recovery', characterId: 'char-a', generationId: 'recovery-gen-0', generationType: 'regenerate', targetMessageId: 'recovery-assistant', targetSwipeId: 0 }, 'user-a')
+const recoveryFirst = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'recovery-tool-first', args: {
+    action: 'message', chat_id: 'chat-recovery', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Kai', target: 'Tyler', text: 'First.' },
+  },
+}, 'user-a'))
+assert.equal(recoveryFirst.ok, true)
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-recovery', generationId: 'recovery-gen-0', generationType: 'regenerate', messageId: 'recovery-assistant' }, 'user-a')
+let recoveryAfter = storage.get(recoveryStatePath)
+const recoveredConversation = recoveryAfter.conversations.find((entry) => entry.id === recoveryFirst.conversationId)
+assert.equal(recoveredConversation.messages.filter((entry) => entry.text === 'First.').length, 1)
+assert.equal(recoveredConversation.messages.filter((entry) => entry.text === 'Second.').length, 1, 'post-turn audit must recover an unpersisted same-turn text')
+assert.equal(recoveredConversation.messages.find((entry) => entry.text === 'Second.').origin.swipeId, 0)
+assert.equal(recoveryAfter.roleplayNow, '2026-09-04T03:40:00.000Z', 'explicit one-minute scene advancement should advance the candidate clock from its pre-turn anchor')
+assert.equal(recoveryAfter.candidateClocks.find((entry) => entry.hostMessageId === 'recovery-assistant' && entry.swipeId === 0).roleplayNow, '2026-09-04T03:40:00.000Z')
+
+// Starting a replacement swipe restores the pre-turn clock before the new candidate is audited.
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-recovery', characterId: 'char-a', generationId: 'recovery-gen-1', generationType: 'regenerate', targetMessageId: 'recovery-assistant', targetSwipeId: 1 }, 'user-a')
+recoveryAfter = storage.get(recoveryStatePath)
+assert.equal(recoveryAfter.roleplayNow, '2026-09-04T03:39:00.000Z')
+spindle.chat.getMessages = recoveryMessages
+spindle.generate.quiet = recoveryQuiet
+
 // Successful committed normal turns own bounded world-state reconciliation.
 // Use an isolated chat so this contract cannot perturb the primary Pocket fixture.
 const reconciliationQuiet = spindle.generate.quiet
@@ -1125,7 +1180,7 @@ let handoffScrollCount = 0
 dom.window.HTMLElement.prototype.scrollIntoView = () => { handoffScrollCount += 1 }
 
 let backendReceiver = null
-let tagReceiver = null
+const tagReceivers = new Map()
 const frontendSends = []
 const drawerRoot = document.createElement('div')
 const widgetRoot = document.createElement('div')
@@ -1176,7 +1231,7 @@ const frontendContext = {
       return { root: record.root, onDismiss: () => () => {}, dismiss: () => { record.dismissed = true } }
     },
   },
-  messages: { registerTagInterceptor: (_options, handler) => { tagReceiver = handler; return () => {} } },
+  messages: { registerTagInterceptor: (options, handler) => { tagReceivers.set(options.tagName, handler); return () => { if (tagReceivers.get(options.tagName) === handler) tagReceivers.delete(options.tagName) } } },
   events: { on: () => () => {} },
   permissions: { getGranted: async () => manifest.permissions, request: async () => manifest.permissions },
   getActiveChat: () => ({ chatId: 'chat-a', characterId: 'char-a' }),
@@ -1470,13 +1525,35 @@ assert.equal(saveTracker.disabled, false, 'Tracker Save must be enabled by the p
 const trackerActionsBefore = frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length
 saveTracker.click()
 assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length, trackerActionsBefore + 1, 'Tracker Save must dispatch its action')
+const inlineMessageActivity = {
+  id: 'inline-message-activity', kind: 'message', title: 'Received message', summary: 'He is awake and on his way.',
+  route: { app: 'messages', conversationId: 'conversation-inline', messageId: 'message-inline' },
+  createdAt: new Date().toISOString(), scope: { chatId: 'chat-a', characterId: 'char-a' },
+  presentation: { kind: 'received', senderName: 'Devon', recipientNames: ['Kai'], conversationTitle: 'Devon' },
+  source: { messageId: 'host-message-a', conversationId: 'conversation-inline' },
+}
+backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
+assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'message activity must render a diegetic inline notification artifact')
+assert.match(messageBubble.querySelector('.pocket-inline-artifact')?.textContent || '', /Messages.*Devon.*He is awake and on his way\./s)
+tagReceivers.get('pocket-artifact')({
+  attrs: { ref: 'inline-message-activity' }, content: '', fullMatch: '<pocket-artifact ref="inline-message-activity"></pocket-artifact>', isStreaming: false,
+  chatId: 'chat-a', messageId: 'host-message-a',
+})
+backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
+const taggedArtifactHost = messageBubble.querySelector('[data-pocket-artifact-ref="inline-message-activity"]')
+assert.ok(taggedArtifactHost, 'artifact tag must create a host placement for the rendered Pocket artifact')
+assert.equal(taggedArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'tagged artifact host must retain its placement identity after rendering')
+assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'tagged placement must replace the fallback footer artifact rather than duplicate it')
+assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"]').length, 1, 'tagged message activity must own exactly one rendered host')
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
 backendReceiver({ type: 'lumiphone:activity', activity })
-assert.equal(messageBubble.querySelectorAll('.pocket-receipt').length, 1, 'accepted activity receipt was not deduplicated')
-messageBubble.querySelector('.pocket-receipt').click()
+const acceptedActivityHosts = messageBubble.querySelectorAll(`[data-pocket-activity-id="${activity.id}"]`)
+assert.equal(acceptedActivityHosts.length, 1, 'accepted activity receipt was not deduplicated')
+assert.equal(acceptedActivityHosts[0].querySelectorAll('.pocket-receipt').length, 1, 'accepted activity host must contain exactly one provenance receipt')
+acceptedActivityHosts[0].querySelector('.pocket-receipt').click()
 assert.match(dockRoot.textContent, /Notes|Edit Note/, 'activity route did not open Pocket safely')
-tagReceiver({
+tagReceivers.get('lumi-phone')({
   messageId: 'message-a', chatId: 'chat-a', attrs: { action: 'notify', app: 'home', title: 'Ping' },
   content: 'Open the phone', fullMatch: '<lumi-phone>Open the phone</lumi-phone>', isStreaming: false,
 })

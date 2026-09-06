@@ -33,7 +33,7 @@ import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
-import { activityReceipt } from './activity.js'
+import { activityReceipt, renderActivityHost } from './activity.js'
 import type { PocketImageTarget } from './components/image-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
@@ -174,6 +174,9 @@ class PocketController {
   private pendingRoute: PocketRoute | null = null
   private injectedActivities = new Map<string, Element>()
   private pendingActivities = new Map<string, PocketActivity>()
+  private pendingArtifactPlacements = new Map<string, { messageId: string; activityId: string }>()
+  private artifactHosts = new Map<string, Element[]>()
+  private knownActivities = new Map<string, PocketActivity>()
   private viewCleanups: Cleanup[] = []
   private receiptSweepTimer = 0
   private notificationTimer = 0
@@ -313,12 +316,29 @@ class PocketController {
         })
       },
     ))
+    this.cleanups.push(this.ctx.messages.registerTagInterceptor(
+      { tagName: 'pocket-artifact', removeFromMessage: true },
+      (payload) => {
+        if (payload.isStreaming) return
+        const activityId = typeof payload.attrs?.ref === 'string' ? payload.attrs.ref.trim() : ''
+        const messageId = typeof payload.messageId === 'string' ? payload.messageId.trim() : ''
+        if (!activityId || !messageId) return
+        const key = `artifact:${messageId}:${payload.fullMatch}`
+        const existing = this.pendingArtifactPlacements.get(key)
+        if (existing && this.artifactHosts.get(activityId)?.some((host) => host.isConnected)) return
+        this.pendingArtifactPlacements.set(key, { messageId, activityId })
+        this.sweepArtifactPlacements()
+      },
+    ))
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
       this.pendingActivities.clear()
+      this.pendingArtifactPlacements.clear()
+      this.artifactHosts.clear()
+      this.knownActivities.clear()
       this.hideComposerReferencePill()
       this.refresh()
-      window.setTimeout(() => this.sweepActivityReceipts(), 0)
+      window.setTimeout(() => { this.sweepArtifactPlacements(); this.sweepActivityReceipts() }, 0)
     }))
     const returned = (event: Event) => {
       const detail = (event as CustomEvent).detail
@@ -856,7 +876,7 @@ class PocketController {
         if (this.state.setup.initialized) this.setupModalDismiss?.()
         else this.renderFirstChatSetupBody()
       }
-      for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
+      for (const activity of this.state.activities || []) { this.knownActivities.set(activity.id, activity); this.queueActivityReceipt(activity) }
       this.applyAppearance()
       this.syncComposerReferencePill()
       this.updateBadge()
@@ -907,6 +927,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:activity' && payload.activity) {
+      this.knownActivities.set((payload.activity as PocketActivity).id, payload.activity as PocketActivity)
       this.queueActivityReceipt(payload.activity as PocketActivity)
       return
     }
@@ -1354,16 +1375,56 @@ class PocketController {
     this.render(true)
   }
 
+  private sweepArtifactPlacements(): void {
+    for (const [key, placement] of this.pendingArtifactPlacements) {
+      const bubble = this.ctx.dom.findMessageElement(placement.messageId)
+      if (!bubble) continue
+      const host = this.ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', 'beforeend')
+      // Spindle hosts and test adapters may return either the injected node itself or
+      // a wrapper around the supplied markup. Own the returned node explicitly so
+      // renderActivityHost() cannot erase the placement identity with replaceChildren().
+      host.classList.add('pocket-receipt-host')
+      host.setAttribute('data-pocket-artifact-ref', placement.activityId)
+      host.setAttribute('data-pocket-activity-id', placement.activityId)
+      const hosts = this.artifactHosts.get(placement.activityId) || []
+      hosts.push(host)
+      this.artifactHosts.set(placement.activityId, hosts)
+      this.pendingArtifactPlacements.delete(key)
+      const activity = this.knownActivities.get(placement.activityId)
+      if (activity) renderActivityHost(host, activity, (route) => this.openPocket(route))
+    }
+  }
+
+  private tryRenderTaggedArtifact(activity: PocketActivity): boolean {
+    const hosts = (this.artifactHosts.get(activity.id) || []).filter((host) => host.isConnected)
+    if (!hosts.length) return false
+    this.artifactHosts.set(activity.id, hosts)
+    const fallback = this.injectedActivities.get(activity.id)
+    if (fallback) {
+      this.ctx.dom.uninject(fallback)
+      this.injectedActivities.delete(activity.id)
+    }
+    for (const host of hosts) renderActivityHost(host, activity, (route) => this.openPocket(route))
+    return true
+  }
+
   private queueActivityReceipt(activity: PocketActivity): void {
     const active = this.activeContext()
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) return
+    this.sweepArtifactPlacements()
+    if (this.tryRenderTaggedArtifact(activity)) return
     if (this.injectedActivities.has(activity.id) || !activity.source?.messageId) return
     this.pendingActivities.set(activity.id, activity)
     this.sweepActivityReceipts()
   }
 
   private sweepActivityReceipts(): void {
+    this.sweepArtifactPlacements()
     for (const [activityId, activity] of this.pendingActivities) {
+      if (this.tryRenderTaggedArtifact(activity)) {
+        this.pendingActivities.delete(activityId)
+        continue
+      }
       const injected = activityReceipt(this.ctx, activity, (route) => this.openPocket(route))
       if (!injected) continue
       this.pendingActivities.delete(activityId)
@@ -1456,7 +1517,10 @@ class PocketController {
     const home = el('div', 'lp-home')
     const head = el('div', 'lp-home-head')
     const left = el('div')
-    left.append(el('div', 'lp-home-date', formatDate(state.roleplayNow, false)), el('div', 'lp-home-clock', formatTime(state.roleplayNow)))
+    const roleplayClockText = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' && state.roleplayClockLabel
+      ? state.roleplayClockLabel
+      : formatTime(state.roleplayNow)
+    left.append(el('div', 'lp-home-date', formatDate(state.roleplayNow, false)), el('div', 'lp-home-clock', roleplayClockText))
     const weather = el('button', 'lp-home-weather')
     weather.type = 'button'
     weather.append(icon('weather'), el('span', '', `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`))
@@ -1589,7 +1653,19 @@ class PocketController {
     const info = message.generation?.info
     const modal = this.ctx.ui.showModal({ title: 'Generation info', width: 460, maxHeight: 620 })
     const content = el('div', 'lp-settings-section')
-    if (!info) {
+    if (!info && message.origin) {
+      const selectedSwipe = [...(this.state?.hostSwipeSelections || [])].reverse().find((entry) => entry.hostMessageId === message.origin!.hostMessageId)?.swipeId
+      for (const [label, value] of [
+        ['Source', 'Main roleplay generation · Pocket Action'],
+        ['Host message', message.origin.hostMessageId],
+        ['Swipe candidate', String(message.origin.swipeId + 1)],
+        ['Candidate state', selectedSwipe === undefined || selectedSwipe === message.origin.swipeId ? 'active' : 'inactive'],
+        ['Generation ID', message.origin.generationId || 'not recorded'],
+      ]) {
+        const row = el('div', 'lp-row-between'); row.append(el('strong', '', label), el('span', 'lp-copy', value)); content.appendChild(row)
+      }
+      content.appendChild(el('p', 'lp-copy', 'This message was authored by the main RP model and persisted through Pocket Action. Retry is intentionally not offered here because rewriting only the phone bubble would diverge from the source RP swipe.'))
+    } else if (!info) {
       content.appendChild(el('p', 'lp-copy', `Request ${message.generation?.requestId || 'unknown'} predates detailed diagnostics.`))
     } else {
       for (const [label, value] of [

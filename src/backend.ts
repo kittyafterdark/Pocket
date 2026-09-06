@@ -27,6 +27,9 @@ import type {
   PocketRelay,
   PocketResolvedWallpapers,
   PocketTurnCandidateOrigin,
+  PocketRoleplayClockSnapshot,
+  PocketHostClockBaseline,
+  PocketCandidateClockSnapshot,
   ChatPocketPersona,
   SceneActorSnapshot,
   RoleplayWeather,
@@ -88,10 +91,11 @@ Pocket reference blocks are read-only history. Their messages already happened. 
 
 Pocket Action is an execution step, not an output section. Do not reason about where the tool call or its result belongs in the written response, whether the user can see it, or how to compensate for it. Invoke it when the phone action occurs, then continue the roleplay normally. After a successful Pocket Action, do not ask the user to click, continue, confirm, or complete anything; Pocket owns persistence and UI presentation.
 
-When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
+When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. One Pocket Action invocation persists exactly one action. Multiple Pocket Action calls in the same assistant turn are expected whenever multiple distinct phone actions occur; a successful first call does NOT cover later messages or phone actions. If another text, reply, call, event, or other phone action happens later in the same scene, invoke Pocket Action again for that later action before continuing past it. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
+After each successful Pocket Action, Pocket returns an artifactTag such as <pocket-artifact ref="..."></pocket-artifact>. Place that exact returned artifactTag at the point in your prose where the persisted phone action becomes narratively visible. Do not alter the tag, wrap it in markdown, or rewrite it. The artifact tag is only a display pointer; it does not create or persist the action by itself. If a persisted action should remain off-screen and not be directly visible in the prose, you may omit the artifact tag for that action.
 
-For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
+For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. This requirement still applies when the current POV cannot read the screen: if the scene establishes that one NPC actually sends or receives a new message, call Pocket Action with the canonical sender, recipient, and message text you are establishing in-world even if that text is not quoted in prose. A phone lighting up, a visible notification preview, an NPC reacting to a newly arrived message, or prose saying one actor texted another are all phone actions; do not skip them merely because neither participant is the Pocket Persona. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
 ONLY when no Pocket Action function/tool is present in the model's available tools, emit hidden machine data using one <lumi-phone> tag per distinct Pocket action (maximum 3):
 <lumi-phone action="message">{"channel":"dm","speaker":"Name","target":"Name","text":"message text"}</lumi-phone>
@@ -217,6 +221,8 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     roleplayNow: createdAt,
     stateRevision: 0,
     hostSwipeSelections: [],
+    hostClockBaselines: [],
+    candidateClocks: [],
     sceneSnapshot: null,
     pocketPersona: defaultPocketPersona(createdAt),
     pocketPersonaActorId: personaActorId,
@@ -342,7 +348,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     if (!isRecord(item)) return []
     const commandId = text(item.id, 240)
     if (!commandId) return []
-    return [{ id: commandId, semanticKey: text(item.semanticKey, 500), createdAt: text(item.createdAt, 40) || nowIso(), activityId: text(item.activityId, 180) || undefined }]
+    return [{ id: commandId, semanticKey: text(item.semanticKey, 4_000), createdAt: text(item.createdAt, 40) || nowIso(), activityId: text(item.activityId, 180) || undefined }]
   })
   const weatherValue = isRecord(value.weather) ? value.weather : {}
   const weather: RoleplayWeather = {
@@ -520,6 +526,31 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     if (!hostMessageId || swipeValue === null || swipeValue === undefined || !Number.isInteger(swipeId) || swipeId < 0) return []
     return [{ hostMessageId, swipeId, updatedAt: text(item.updatedAt, 40) || nowIso() }]
   })
+  const normalizeClockSource = (raw: unknown): PocketRoleplayClockSnapshot['source'] => raw === 'manual' || raw === 'narrative' ? raw : 'legacy'
+  const normalizeClockPrecision = (raw: unknown): PocketRoleplayClockSnapshot['precision'] => raw === 'exact' || raw === 'approximate' || raw === 'relative' ? raw : 'unknown'
+  const hostClockBaselines: PocketHostClockBaseline[] = (Array.isArray(value.hostClockBaselines) ? value.hostClockBaselines : []).slice(-320).flatMap((item) => {
+    if (!isRecord(item)) return []
+    const hostMessageId = text(item.hostMessageId, 180)
+    const roleplayNow = text(item.roleplayNow, 80)
+    if (!hostMessageId || !roleplayNow) return []
+    return [{
+      hostMessageId, roleplayNow, source: normalizeClockSource(item.source), precision: normalizeClockPrecision(item.precision),
+      label: text(item.label, 160), updatedAt: text(item.updatedAt, 40) || nowIso(),
+    }]
+  })
+  const candidateClocks: PocketCandidateClockSnapshot[] = (Array.isArray(value.candidateClocks) ? value.candidateClocks : []).slice(-640).flatMap((item) => {
+    if (!isRecord(item)) return []
+    const hostMessageId = text(item.hostMessageId, 180)
+    const swipeValue = item.swipeId
+    const swipeId = Number(swipeValue)
+    const roleplayNow = text(item.roleplayNow, 80)
+    if (!hostMessageId || !roleplayNow || swipeValue === null || swipeValue === undefined || !Number.isInteger(swipeId) || swipeId < 0) return []
+    return [{
+      hostMessageId, swipeId, generationId: text(item.generationId, 180) || undefined, roleplayNow,
+      source: normalizeClockSource(item.source), precision: normalizeClockPrecision(item.precision), label: text(item.label, 160),
+      updatedAt: text(item.updatedAt, 40) || nowIso(),
+    }]
+  })
   const lastReconciliation: PhoneState['lastReconciliation'] = text(reconciliationValue.sourceKey, 1_600)
     ? {
         revision: Math.max(0, Math.round(numberValue(reconciliationValue.revision, 0))),
@@ -544,6 +575,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
     hostSwipeSelections,
+    hostClockBaselines,
+    candidateClocks,
     lastReconciliation,
     sceneSnapshot,
     pocketPersona: normalizePocketPersona(value.pocketPersona, fallback.pocketPersona),
@@ -899,6 +932,74 @@ function setHostSwipeSelection(state: PhoneState, hostMessageId: string, swipeId
 
 function selectedHostSwipe(state: PhoneState, hostMessageId: string): number | undefined {
   return [...(state.hostSwipeSelections || [])].reverse().find((entry) => entry.hostMessageId === hostMessageId)?.swipeId
+}
+
+function roleplayClockSnapshot(state: PhoneState): PocketRoleplayClockSnapshot {
+  return {
+    roleplayNow: state.roleplayNow,
+    source: state.roleplayClockSource === 'manual' || state.roleplayClockSource === 'narrative' ? state.roleplayClockSource : 'legacy',
+    precision: state.roleplayClockPrecision === 'exact' || state.roleplayClockPrecision === 'approximate' || state.roleplayClockPrecision === 'relative' ? state.roleplayClockPrecision : 'unknown',
+    label: text(state.roleplayClockLabel, 160),
+  }
+}
+
+function applyRoleplayClockSnapshot(state: PhoneState, snapshot: PocketRoleplayClockSnapshot): boolean {
+  let changed = false
+  if (snapshot.roleplayNow && state.roleplayNow !== snapshot.roleplayNow) { state.roleplayNow = snapshot.roleplayNow; changed = true }
+  if (state.roleplayClockSource !== snapshot.source) { state.roleplayClockSource = snapshot.source; changed = true }
+  if (state.roleplayClockPrecision !== snapshot.precision) { state.roleplayClockPrecision = snapshot.precision; changed = true }
+  if (state.roleplayClockLabel !== snapshot.label) { state.roleplayClockLabel = snapshot.label; changed = true }
+  return changed
+}
+
+function ensureHostClockBaseline(state: PhoneState, hostMessageId: string): { baseline: PocketHostClockBaseline; created: boolean } {
+  state.hostClockBaselines ||= []
+  const existing = state.hostClockBaselines.find((entry) => entry.hostMessageId === hostMessageId)
+  if (existing) return { baseline: existing, created: false }
+  const baseline: PocketHostClockBaseline = { hostMessageId, ...roleplayClockSnapshot(state), updatedAt: nowIso() }
+  state.hostClockBaselines.push(baseline)
+  state.hostClockBaselines = state.hostClockBaselines.slice(-320)
+  return { baseline, created: true }
+}
+
+function storeCandidateClock(state: PhoneState, origin: PocketTurnCandidateOrigin, snapshot: PocketRoleplayClockSnapshot): boolean {
+  state.candidateClocks ||= []
+  const existing = state.candidateClocks.find((entry) => entry.hostMessageId === origin.hostMessageId && entry.swipeId === origin.swipeId)
+  const next: PocketCandidateClockSnapshot = {
+    hostMessageId: origin.hostMessageId, swipeId: origin.swipeId, generationId: origin.generationId, ...snapshot, updatedAt: nowIso(),
+  }
+  if (existing) {
+    const same = existing.roleplayNow === next.roleplayNow && existing.source === next.source && existing.precision === next.precision && existing.label === next.label && existing.generationId === next.generationId
+    Object.assign(existing, next)
+    return !same
+  }
+  state.candidateClocks.push(next)
+  state.candidateClocks = state.candidateClocks.slice(-640)
+  return true
+}
+
+function candidateClockSnapshot(state: PhoneState, hostMessageId: string, swipeId: number): PocketCandidateClockSnapshot | undefined {
+  return [...(state.candidateClocks || [])].reverse().find((entry) => entry.hostMessageId === hostMessageId && entry.swipeId === swipeId)
+}
+
+function restoreClockForSelectedCandidate(state: PhoneState, hostMessageId: string, swipeId: number): boolean {
+  const candidate = candidateClockSnapshot(state, hostMessageId, swipeId)
+  if (candidate) return applyRoleplayClockSnapshot(state, candidate)
+  const baseline = [...(state.hostClockBaselines || [])].reverse().find((entry) => entry.hostMessageId === hostMessageId)
+  return baseline ? applyRoleplayClockSnapshot(state, baseline) : false
+}
+
+function formatRoleplayClockLabel(iso: string, timezoneOffsetMinutes: number | undefined): string {
+  const parsed = new Date(iso)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const offset = Number.isFinite(Number(timezoneOffsetMinutes)) ? Number(timezoneOffsetMinutes) : 0
+  const local = new Date(parsed.getTime() - offset * 60_000)
+  let hour = local.getUTCHours()
+  const minute = local.getUTCMinutes()
+  const suffix = hour >= 12 ? 'PM' : 'AM'
+  hour %= 12
+  if (!hour) hour = 12
+  return `${hour}:${String(minute).padStart(2, '0')} ${suffix}`
 }
 
 function pocketMessageActiveForSwipe(state: PhoneState, message: PhoneMessage): boolean {
@@ -1828,6 +1929,22 @@ interface NarrativeTrackerDelta {
   reason: string
 }
 
+interface PostTurnAuditClock extends NarrativeSeedClock {
+  /** Explicit scene advancement relative to the pre-turn Pocket clock. Never inferred from an event age. */
+  advanceMinutes: number
+}
+interface RecoveredPhoneMessage {
+  channel: 'dm' | 'gc'
+  speaker: string
+  target: string
+  conversation: string
+  text: string
+}
+interface PostTurnAuditResult {
+  clock: PostTurnAuditClock
+  phoneMessages: RecoveredPhoneMessage[]
+}
+
 const POCKET_CONTINUITY_SEED_VERSION = 4 as const
 const narrativeSeedFlights = new Map<string, Promise<NarrativeSeedSnapshot | null>>()
 
@@ -1864,6 +1981,42 @@ function normalizeNarrativeTrackerDeltas(value: unknown): NarrativeTrackerDelta[
       reason: text(entry.reason, 300) || 'Narrative state reconciliation',
     }]
   })
+}
+function normalizePostTurnAudit(value: unknown): PostTurnAuditResult {
+  const raw = isRecord(value) ? value : {}
+  const rawClock = isRecord(raw.clock) ? raw.clock : {}
+  const rawAdvance = Number(rawClock.advanceMinutes ?? rawClock.advance_minutes)
+  const clock: PostTurnAuditClock = {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(text(rawClock.date, 20)) ? text(rawClock.date, 20) : '',
+    time: /^\d{2}:\d{2}$/.test(text(rawClock.time, 10)) ? text(rawClock.time, 10) : '',
+    dayPart: text(rawClock.dayPart ?? rawClock.day_part, 80),
+    precision: rawClock.precision === 'exact' || rawClock.precision === 'approximate' || rawClock.precision === 'relative' ? rawClock.precision : 'unknown',
+    label: text(rawClock.label, 160),
+    advanceMinutes: Number.isFinite(rawAdvance) ? Math.max(-1_440, Math.min(1_440, Math.round(rawAdvance))) : 0,
+  }
+  const rawMessages = Array.isArray(raw.phoneMessages) ? raw.phoneMessages : Array.isArray(raw.phone_messages) ? raw.phone_messages : []
+  const phoneMessages = rawMessages.slice(0, 4).flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const channel: RecoveredPhoneMessage['channel'] = entry.channel === 'gc' || entry.channel === 'group' ? 'gc' : 'dm'
+    const speaker = text(entry.speaker, 120)
+    const target = text(entry.target, 120)
+    const conversation = text(entry.conversation ?? entry.conversationTitle ?? entry.conversation_title, 120)
+    const body = text(entry.text ?? entry.message ?? entry.content, 12_000)
+    if (!speaker || !body) return []
+    if (channel === 'dm' && !target) return []
+    if (channel === 'gc' && !conversation) return []
+    return [{ channel, speaker, target, conversation, text: body }]
+  })
+  return { clock, phoneMessages }
+}
+
+function compactStableHash(value: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(36)
 }
 function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds: string[] = []): NarrativeSeedSnapshot {
   const raw = isRecord(value) ? value : {}
@@ -2103,6 +2256,162 @@ function applyNarrativeClock(state: PhoneState, clock: NarrativeSeedClock): bool
   if (state.roleplayClockPrecision !== nextPrecision) { state.roleplayClockPrecision = nextPrecision; changed = true }
   if (state.roleplayClockLabel !== nextLabel) { state.roleplayClockLabel = nextLabel; changed = true }
   return changed
+}
+
+function deriveCandidateClockFromAudit(state: PhoneState, baseline: PocketRoleplayClockSnapshot, audit: PostTurnAuditClock): PocketRoleplayClockSnapshot {
+  const explicitExact = audit.precision === 'exact' && /^\d{2}:\d{2}$/.test(audit.time)
+  if (audit.advanceMinutes) {
+    const baseMs = Date.parse(baseline.roleplayNow)
+    if (Number.isFinite(baseMs)) {
+      const roleplayNow = new Date(baseMs + audit.advanceMinutes * 60_000).toISOString()
+      const exactBaseline = baseline.precision === 'exact' || baseline.source === 'manual'
+      return {
+        roleplayNow,
+        source: 'narrative',
+        precision: exactBaseline ? 'exact' : 'relative',
+        label: audit.label || (exactBaseline ? formatRoleplayClockLabel(roleplayNow, state.roleplayTimezoneOffsetMinutes) : `${audit.advanceMinutes > 0 ? '+' : ''}${audit.advanceMinutes} minutes`),
+      }
+    }
+  }
+  if (explicitExact) {
+    const temp = { ...state, roleplayNow: baseline.roleplayNow } as PhoneState
+    const roleplayNow = narrativeClockIso(temp, audit) || baseline.roleplayNow
+    return {
+      roleplayNow, source: 'narrative', precision: 'exact',
+      label: audit.label || formatRoleplayClockLabel(roleplayNow, state.roleplayTimezoneOffsetMinutes) || [audit.date, audit.time].filter(Boolean).join(' '),
+    }
+  }
+  const hasEvidence = Boolean(audit.time || audit.dayPart || audit.label)
+  if (!hasEvidence || baseline.source === 'manual') return { ...baseline }
+  return {
+    roleplayNow: baseline.roleplayNow, source: 'narrative', precision: audit.precision,
+    label: audit.label || [audit.date, audit.time, audit.dayPart].filter(Boolean).join(' '),
+  }
+}
+
+function candidateMessagesForOrigin(state: PhoneState, origin: PocketTurnCandidateOrigin): Array<{ conversation: string; speaker: string; recipients: string[]; text: string }> {
+  const rows: Array<{ conversation: string; speaker: string; recipients: string[]; text: string }> = []
+  for (const conversation of state.conversations) {
+    for (const message of conversation.messages) {
+      const messageOrigin = message.origin
+      if (!messageOrigin || messageOrigin.chatId !== origin.chatId || messageOrigin.hostMessageId !== origin.hostMessageId || messageOrigin.swipeId !== origin.swipeId) continue
+      rows.push({
+        conversation: conversation.title,
+        speaker: message.senderName,
+        recipients: (message.recipientActorIds || []).map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === pocketPersonaActorId(state) ? state.pocketPersona.displayName : '')).filter(Boolean),
+        text: message.text,
+      })
+    }
+  }
+  return rows.slice(-12)
+}
+
+function narrativeLikelyContainsPhoneAction(value: string): boolean {
+  return /\b(?:text(?:ed|ing|s)?|message(?:d|s|ing)?|dm(?:ed|s|ing)?|phone|screen|notification|reply|replied|sent|send|another\s+text|group\s*chat|gc)\b/i.test(value)
+}
+
+async function reconcilePostTurnCandidate(
+  chatId: string,
+  characterId: string,
+  origin: PocketTurnCandidateOrigin,
+  generationType: string,
+  userId?: string,
+  options: { auditClock: boolean } = { auditClock: false },
+): Promise<void> {
+  if (!spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) return
+  const hostMessages: any[] = await spindle.chat.getMessages(chatId).catch(() => [])
+  const current = hostMessages.find((message) => text(message?.id, 180) === origin.hostMessageId)
+  const currentNarrative = sanitizeNarrativeContent(current?.content, 6_000)
+  if (!currentNarrative) return
+
+  const state = await loadState(chatId, characterId, userId)
+  const persisted = candidateMessagesForOrigin(state, origin)
+  if (!options.auditClock && !persisted.length && !narrativeLikelyContainsPhoneAction(currentNarrative)) return
+
+  const currentIndex = hostMessages.findIndex((message) => text(message?.id, 180) === origin.hostMessageId)
+  const contextMessages = (currentIndex >= 0 ? hostMessages.slice(Math.max(0, currentIndex - 3), currentIndex + 1) : [current])
+    .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))
+  const recentNarrative = contextMessages.map((message, index) => {
+    const role = message?.role === 'assistant' ? 'ASSISTANT' : 'USER'
+    return `${role} [${index + 1}]: ${sanitizeNarrativeContent(message?.content, 1_500)}`
+  }).join('\n\n').slice(-6_000)
+  const baseline = [...(state.hostClockBaselines || [])].reverse().find((entry) => entry.hostMessageId === origin.hostMessageId) || {
+    hostMessageId: origin.hostMessageId, ...roleplayClockSnapshot(state), updatedAt: nowIso(),
+  }
+
+  const parsed = await runStructuredGeneration('post-turn-audit', id('post_turn_audit'), {
+    type: 'quiet',
+    messages: [
+      { role: 'system', content: `Audit one committed fictional roleplay assistant turn for two narrowly-scoped things: narrative clock evidence and phone messages that were written into prose but not persisted through Pocket.
+
+Return strict JSON only:
+{
+  "clock":{"date":"YYYY-MM-DD or empty","time":"HH:MM or empty","dayPart":"short or empty","precision":"exact|approximate|relative|unknown","label":"short human-readable time or empty","advanceMinutes":0},
+  "phoneMessages":[{"channel":"dm|gc","speaker":"exact actor name","target":"exact DM recipient or empty for gc","conversation":"exact group title or empty for dm","text":"exact message body"}]
+}
+
+CLOCK RULES:
+- The PRE-TURN CLOCK is an anchor, not narrative evidence. Never copy it into clock merely because it exists.
+- exact requires an explicit current-scene clock time in the supplied narrative. Do not invent minutes.
+- advanceMinutes is ONLY for explicit elapsed scene progression inside the CURRENT ASSISTANT TURN, e.g. "ten minutes later" or "an hour passed". Sum multiple explicit forward/backward scene advances when clear.
+- Do NOT use event ages or retrospective phrases such as "he was asleep twenty minutes ago" as scene advancement.
+- Approximate/daypart evidence may use approximate or relative with a label.
+
+PHONE RECOVERY RULES:
+- Inspect only phone messages newly authored as events in CURRENT ASSISTANT TURN.
+- ALREADY PERSISTED messages already succeeded; NEVER return them again, even if the prose repeats or paraphrases them.
+- Recover only messages that the prose clearly depicts as actually sent, received, or observed. Omit plans, hypotheticals, remembered/history quotes, and messages merely being read from prior context.
+- Preserve the authored message body as closely as possible. Do not improve or rewrite it.
+- A phrase such as "another text" may inherit the immediately preceding sender/recipient/thread only when the same-turn context makes that inheritance unambiguous. Otherwise omit it.
+- DM requires both speaker and target. GC requires speaker and an existing group title.
+- Return at most four missing phone messages. When uncertain, omit.` },
+      { role: 'user', content: `GENERATION TYPE: ${generationType || 'unknown'}
+
+PRE-TURN CLOCK — ANCHOR ONLY:
+${JSON.stringify(baseline)}
+
+ALREADY PERSISTED POCKET MESSAGES FOR THIS CANDIDATE:
+${JSON.stringify(persisted)}
+
+RECENT NARRATIVE CONTEXT:
+${recentNarrative}
+
+CURRENT ASSISTANT TURN — AUDIT THIS TURN FOR MISSING PHONE MESSAGES:
+${currentNarrative}` },
+    ],
+    parameters: { temperature: 0.02, max_tokens: 700 },
+    userId,
+  }, userId)
+  const audit = normalizePostTurnAudit(parsed)
+
+  if (options.auditClock) {
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const latest = await loadState(chatId, characterId, userId)
+      const latestBaseline = [...(latest.hostClockBaselines || [])].reverse().find((entry) => entry.hostMessageId === origin.hostMessageId) || baseline
+      const nextClock = deriveCandidateClockFromAudit(latest, latestBaseline, audit.clock)
+      const snapshotChanged = storeCandidateClock(latest, origin, nextClock)
+      const selected = selectedHostSwipe(latest, origin.hostMessageId)
+      const activeChanged = selected === origin.swipeId ? applyRoleplayClockSnapshot(latest, nextClock) : false
+      if (!snapshotChanged && !activeChanged) return
+      await saveState(latest, userId)
+      await sendState(latest, userId, 'candidate_clock_reconciled')
+    })
+  }
+
+  for (const [index, recovered] of audit.phoneMessages.entries()) {
+    const payload: AnyRecord = recovered.channel === 'gc'
+      ? { channel: 'gc', speaker: recovered.speaker, conversation: recovered.conversation, text: recovered.text }
+      : { channel: 'dm', speaker: recovered.speaker, target: recovered.target, text: recovered.text }
+    const recoveryKey = `postturn:${origin.hostMessageId}:${origin.swipeId}:${compactStableHash(JSON.stringify(payload))}`.slice(0, 240)
+    try {
+      await applyAction({
+        action: 'message', chat_id: chatId, character_id: characterId, payload, idempotencyKey: recoveryKey,
+        messageId: origin.hostMessageId, __candidateOrigin: origin, __recoveredFromNarrative: true, recoveryIndex: index,
+      }, userId, 'model')
+    } catch (error) {
+      spindle.log.warn(`Pocket post-turn phone recovery skipped one message: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
 }
 
 function resolveEventParticipants(
@@ -3380,7 +3689,7 @@ function parseTagContent(content: string): AnyRecord {
 
 function actionSemanticKey(action: string, input: AnyRecord, payload: AnyRecord): string {
   const merged: AnyRecord = { ...input, ...payload }
-  for (const key of ['type', 'requestId', 'request_id', 'commandId', 'command_id', 'idempotencyKey', 'chatId', 'chat_id', 'characterId', 'character_id', 'payload']) delete merged[key]
+  for (const key of ['type', 'requestId', 'request_id', 'commandId', 'command_id', 'idempotencyKey', 'chatId', 'chat_id', 'characterId', 'character_id', 'messageId', 'message_id', 'payload', '__candidateOrigin', '__recoveredFromNarrative', 'recoveryIndex']) delete merged[key]
   const normalized = Object.keys(merged).sort().reduce<AnyRecord>((result, key) => {
     const value = merged[key]
     result[key] = typeof value === 'string' ? value.trim() : value
@@ -3391,10 +3700,14 @@ function actionSemanticKey(action: string, input: AnyRecord, payload: AnyRecord)
 
 function reserveCommand(state: PhoneState, input: AnyRecord, action: string, payload: AnyRecord, source: 'model' | 'user' | 'tag'): { accepted: boolean; command: ProcessedPocketCommand } {
   const commandId = text(input.idempotencyKey ?? input.commandId ?? input.command_id ?? input.requestId, 240)
-  const semanticKey = actionSemanticKey(action, input, payload)
+  const origin = source === 'model' ? candidateOrigin(input.__candidateOrigin) : undefined
+  const baseSemanticKey = actionSemanticKey(action, input, payload)
+  const semanticKey = origin
+    ? `candidate:${origin.chatId}:${origin.hostMessageId}:${origin.swipeId}:${baseSemanticKey}`.slice(0, 4_000)
+    : baseSemanticKey
   const cutoff = Date.now() - 20_000
   const commandDuplicate = commandId ? state.processedCommands.find((entry) => entry.id === commandId) : undefined
-  const candidateScoped = source === 'model' && Boolean(candidateOrigin(input.__candidateOrigin))
+  const candidateScoped = Boolean(origin)
   const semanticDuplicate = source !== 'user' && (!commandId || candidateScoped)
     ? state.processedCommands.find((entry) => entry.semanticKey === semanticKey && Date.parse(entry.createdAt) >= cutoff)
     : undefined
@@ -3688,7 +4001,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           senderActorId, recipientActorIds,
           senderName: message.senderName, recipientNames, conversationTitle: conversation.title,
         },
-        source: { messageId: text(input.messageId, 180) || undefined, contactId: senderContact?.id, conversationId: conversation.id },
+        source: { messageId: text(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id },
       }, command)
     } else if (action === 'contact') {
       const contactId = text(payload.contactId ?? payload.contact_id ?? payload.id, 180)
@@ -4652,7 +4965,7 @@ function registerTool(): void {
   spindle.registerTool({
     name: 'phone_action',
     display_name: 'Pocket Action',
-    description: 'Pocket persistence tool for the primary roleplay model. Call this tool instead of formatting phone messages into narrative text whenever the generated scene creates a new phone action that should appear in Pocket. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
+    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
@@ -4774,6 +5087,11 @@ function ensureInterceptor(): void {
 
 spindle.frontendCapabilities.declare('message_tag_interceptor')
 spindle.onFrontendMessage(handleFrontend)
+function pocketArtifactTag(activityId: unknown): string | undefined {
+  const value = text(activityId, 180)
+  return value ? `<pocket-artifact ref=\"${value}\"></pocket-artifact>` : undefined
+}
+
 spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
   if (payload.toolName !== 'phone_action') return ''
   try {
@@ -4792,7 +5110,8 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
     const result = await applyAction(actionCandidateOrigin ? { ...merged, __candidateOrigin: actionCandidateOrigin } : merged, userId, 'model')
     return JSON.stringify({
       ...result,
-      presentation: 'Pocket persisted the action and handles its UI presentation automatically. Continue the roleplay normally; do not repeat the action solely for visibility or ask the user to click, continue, or confirm anything.',
+      artifactTag: pocketArtifactTag((result as AnyRecord).activityId),
+      presentation: 'Pocket persisted exactly this action and handles its UI presentation automatically. Continue the roleplay normally. If another distinct phone action occurs later in this same assistant turn, including communication between two NPCs or on a phone the current POV cannot read, call Pocket Action again for that later action. Do not repeat this action solely for visibility or ask the user to click, continue, or confirm anything. If this action should appear in the visible prose, place the exact returned artifactTag where it becomes narratively visible.',
     })
   } catch (error) {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`
@@ -4856,7 +5175,9 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
     }
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
+      const baselineResult = hasCandidate ? ensureHostClockBaseline(state, hostMessageId) : null
       const selectionChanged = hasCandidate ? setHostSwipeSelection(state, hostMessageId, rawSwipeId) : false
+      const clockRestored = hasCandidate ? restoreClockForSelectedCandidate(state, hostMessageId, rawSwipeId) : false
       let relay = relayForGeneration(state, generationId)
       if (!relay) {
         const launching = state.relays.filter((entry) => entry.status === 'pending' && entry.continuation.state === 'launching' && !entry.continuation.generationId)
@@ -4867,7 +5188,7 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
         const unbound = state.references.filter((entry) => entry.status === 'injected' && entry.injectedAt && !entry.injectedGenerationId)
         if (unbound.length === 1) reference = unbound[0]
       }
-      if (!relay && !reference && !selectionChanged) return
+      if (!relay && !reference && !selectionChanged && !baselineResult?.created && !clockRestored) return
       if (relay) {
         relay.continuation.state = 'started'
         relay.continuation.generationId = generationId
@@ -4913,10 +5234,19 @@ spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
           }
           for (const messageId of deleteIds) changed = removePocketMessageArtifacts(state, conversation.id, messageId) || changed
         }
+        const beforeClockCount = (state.candidateClocks || []).length
+        state.candidateClocks = (state.candidateClocks || []).filter((entry) => !(entry.hostMessageId === hostMessageId && entry.swipeId === eventSwipeId))
+        if (state.candidateClocks.length !== beforeClockCount) changed = true
+        for (const entry of state.candidateClocks) {
+          if (entry.hostMessageId === hostMessageId && entry.swipeId > eventSwipeId) { entry.swipeId -= 1; changed = true }
+        }
       }
       const selectedSwipeValue = payload?.message?.swipe_id ?? payload?.message?.swipeId ?? payload?.swipeId
       const selectedSwipeId = Number(selectedSwipeValue)
-      if (selectedSwipeValue !== null && selectedSwipeValue !== undefined && Number.isInteger(selectedSwipeId) && selectedSwipeId >= 0) changed = setHostSwipeSelection(state, hostMessageId, selectedSwipeId) || changed
+      if (selectedSwipeValue !== null && selectedSwipeValue !== undefined && Number.isInteger(selectedSwipeId) && selectedSwipeId >= 0) {
+        changed = setHostSwipeSelection(state, hostMessageId, selectedSwipeId) || changed
+        changed = restoreClockForSelectedCandidate(state, hostMessageId, selectedSwipeId) || changed
+      }
       if (!changed) return
       await saveState(state, userId)
       await sendState(state, userId, 'host_swipe')
@@ -4930,6 +5260,7 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
   const chatId = text(payload?.chatId, 180)
   const messageId = text(payload?.messageId, 180)
   const generationId = text(payload?.generationId, 180)
+  const endedCandidate = generationId ? activePocketCandidates.get(candidateRuntimeKey(userId, generationId)) : undefined
   if (generationId) activePocketCandidates.delete(candidateRuntimeKey(userId, generationId))
   if (!chatId || !spindle.permissions.has('chats')) return
   try {
@@ -5045,6 +5376,25 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
         throw error
       }
       void considerAmbientMessage(chatId, characterId, 'turn', userId)
+    }
+
+    if (endedCandidate && messageId && !payload?.error) {
+      const origin: PocketTurnCandidateOrigin = {
+        chatId: endedCandidate.chatId, hostMessageId: endedCandidate.hostMessageId, swipeId: endedCandidate.swipeId, generationId: endedCandidate.generationId,
+      }
+      if (generationType === 'normal') {
+        await withStateLock(stateKey(chatId, characterId), async () => {
+          const latest = await loadState(chatId, characterId, userId)
+          const changed = storeCandidateClock(latest, origin, roleplayClockSnapshot(latest))
+          if (!changed) return
+          await saveState(latest, userId)
+        })
+      }
+      try {
+        await reconcilePostTurnCandidate(chatId, characterId, origin, generationType, userId, { auditClock: generationType === 'regenerate' })
+      } catch (error) {
+        spindle.log.warn(`Pocket post-turn candidate audit skipped: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
   } catch (error) {
     spindle.log.warn(`Pocket post-turn reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
