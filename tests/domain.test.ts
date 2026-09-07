@@ -67,6 +67,34 @@ describe('conversation channel continuity', () => {
     expect(decision.normalizationReason).toContain('actor_is_local')
   })
 
+  test('uses an arrival handoff without claiming the actor is already local', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const collections = normalizeContactCollections({ contacts: [{ id: 'shoto', name: 'Shoto Todoroki', presence: { inScene: false } }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-arrival` })
+    const contact = collections.contacts.find((entry) => entry.id === 'shoto')!
+    const conversation = ensureDirectConversation(collections, contact.id, now, (prefix) => `${prefix}-shoto`)
+    conversation.availability = { state: 'arriving' }
+    conversation.messages.push(
+      { id: 'm1', sender: 'contact', senderContactId: 'shoto', senderName: 'Shoto Todoroki', senderAccent: '', text: "I'm leaving now. I'll let myself in.", createdAt: now, read: true, status: 'read' },
+      { id: 'm2', sender: 'persona', senderName: 'You', senderAccent: '', text: 'gave it to you for a reason, dumbass', createdAt: now, read: true, status: 'sent' },
+    )
+    const decision = normalizeReplyDecision({ rawAction: 'arrival_handoff', rawReason: 'arriving', contact, conversation, explicitRemoteOverride: false, createdAt: now })
+    expect(decision.normalizedAction).toBe('arrival_handoff')
+    expect(decision.reason).toBe('arriving')
+    const snapshot = conversationTailSnapshot(conversation, now)
+    const state = {
+      pocketPersona: { displayName: 'You' }, contacts: collections.contacts,
+      relays: [{ id: 'arrival-r1', kind: 'arrival', chatId: 'chat', characterId: 'active', contactId: 'shoto', conversationId: conversation.id, reason: 'arriving', actorState: 'arriving', conversationTail: snapshot, latestExchange: snapshot.text, timelineEventId: 'arrival-e1', createdAt: now, status: 'pending', continuation: { state: 'idle' } }],
+    } as unknown as PhoneState
+    const relayContext = pendingRelayContext(state, { relayId: 'arrival-r1' })
+    expect(relayContext).toContain('POCKET ARRIVAL RELAY — NEWER STATE')
+    expect(relayContext).toContain('NOT physically present yet')
+    expect(relayContext).toContain('remote -> arriving')
+    expect(relayContext).not.toContain('remote -> local')
+    state.relays[0].status = 'consumed'
+    state.relays[0].continuation = { state: 'completed' }
+    expect(persistentHandoffContext(state)).toContain('prior arrival bridge')
+  })
+
   test('keeps explicit local texting available and emits bounded pending relay context', () => {
     const now = '2026-01-01T00:00:00.000Z'
     const collections = normalizeContactCollections({ contacts: [{ id: 'z', name: 'Zephyr', presence: { inScene: true } }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })

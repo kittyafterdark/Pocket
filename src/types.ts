@@ -343,7 +343,7 @@ export interface PhoneMessage {
   }
 }
 
-export type ReplyDecisionAction = 'reply' | 'none' | 'pause' | 'handoff'
+export type ReplyDecisionAction = 'reply' | 'none' | 'pause' | 'handoff' | 'arrival_handoff'
 
 export interface PocketReplyDecision {
   rawAction: ReplyDecisionAction
@@ -571,8 +571,13 @@ export interface CalendarEvent {
   /** Stable semantic identity for world-seeded Timeline rows across reseeds/promotions. */
   continuityKey?: string
   source?: { app: 'messages'; conversationId: string; relayId?: string; messageId?: string; suggestionId?: string }
-  channelTransition?: { from: 'remote' | 'arriving' | 'paused'; to: 'local'; reason: ConversationLocalReason }
+  channelTransition?:
+    | { from: 'remote' | 'arriving' | 'paused'; to: 'local'; reason: ConversationLocalReason }
+    | { from: 'remote' | 'arriving' | 'paused'; to: 'arriving'; reason: 'arriving' }
 }
+
+export type PocketRelayKind = 'local' | 'arrival'
+export type PocketRelayReason = ConversationLocalReason | 'arriving'
 
 export interface PocketRelay {
   id: string
@@ -582,8 +587,10 @@ export interface PocketRelay {
   conversationId: string
   /** Outgoing decision burst which created this relay. Absent only on migrated/scene-created relays. */
   burstId?: string
-  reason: ConversationLocalReason
-  actorState: 'in_scene' | 'arrived' | 'took_action' | 'continued_in_person'
+  /** Local handoffs close the phone channel; arrival relays keep it remote/arriving. */
+  kind: PocketRelayKind
+  reason: PocketRelayReason
+  actorState: 'arriving' | 'in_scene' | 'arrived' | 'took_action' | 'continued_in_person'
   conversationTail: PocketConversationTailSnapshot
   latestExchange: string
   sourceMessageId?: string

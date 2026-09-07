@@ -36,7 +36,7 @@ export function normalizeReplyDecision(input: {
   burstId?: string
 }): PocketReplyDecision {
   const candidate = String(input.rawAction || '').toLowerCase()
-  const rawAction: ReplyDecisionAction = candidate === 'reply' || candidate === 'pause' || candidate === 'handoff' ? candidate : 'none'
+  const rawAction: ReplyDecisionAction = candidate === 'reply' || candidate === 'pause' || candidate === 'handoff' || candidate === 'arrival_handoff' ? candidate : 'none'
   const rawReason = String(input.rawReason || '').toLowerCase()
   const impossibleRemote = !input.explicitRemoteOverride && (input.contact.presence.inScene || input.conversation.availability.state === 'local')
   if (impossibleRemote) {
@@ -44,7 +44,7 @@ export function normalizeReplyDecision(input: {
       rawAction,
       normalizedAction: 'handoff',
       reason: LOCAL_REASONS.has(rawReason as ConversationLocalReason) ? rawReason : input.contact.presence.inScene ? 'in_scene' : 'continued_in_person',
-      normalizationReason: rawAction === 'handoff' ? 'deterministic_local_channel' : `normalized_${rawAction}_because_actor_is_local`,
+      normalizationReason: rawAction === 'handoff' || rawAction === 'arrival_handoff' ? 'deterministic_local_channel' : `normalized_${rawAction}_because_actor_is_local`,
       contactInScene: input.contact.presence.inScene,
       remoteEligible: input.contact.messagingPolicy.remoteEligible,
       explicitRemoteOverride: false,
@@ -56,6 +56,13 @@ export function normalizeReplyDecision(input: {
     return {
       rawAction, normalizedAction: 'pause', reason: PAUSE_REASONS.has(rawReason as ConversationPauseReason) ? rawReason : 'unknown',
       normalizationReason: '', contactInScene: input.contact.presence.inScene, remoteEligible: input.contact.messagingPolicy.remoteEligible,
+      explicitRemoteOverride: input.explicitRemoteOverride, createdAt: input.createdAt, burstId: input.burstId,
+    }
+  }
+  if (rawAction === 'arrival_handoff') {
+    return {
+      rawAction, normalizedAction: 'arrival_handoff', reason: 'arriving', normalizationReason: '',
+      contactInScene: input.contact.presence.inScene, remoteEligible: input.contact.messagingPolicy.remoteEligible,
       explicitRemoteOverride: input.explicitRemoteOverride, createdAt: input.createdAt, burstId: input.burstId,
     }
   }
@@ -83,6 +90,22 @@ export function pendingRelayContext(state: PhoneState, options: { relayId?: stri
     const contact = state.contacts.find((entry) => entry.id === relay.contactId)
     const actorName = contact?.name || relay.contactId
     const personaName = state.pocketPersona.displayName || 'the current Persona'
+    if (relay.kind === 'arrival') {
+      return [
+        '=== POCKET ARRIVAL RELAY — NEWER STATE ===',
+        `relayId: ${relay.id}`,
+        `actor: ${actorName}`,
+        'transition: remote -> arriving',
+        'reason: arriving',
+        '',
+        `${actorName} and ${personaName} were texting immediately before this generation. ${actorName} has begun traveling toward the current scene, but is NOT physically present yet. Keep that distinction authoritative even if older scene context conflicts.`,
+        '',
+        `Immediate phone exchange:\n${relay.conversationTail.text}`,
+        '',
+        'Continue the physical roleplay naturally toward the expected arrival. Time may pass. Do not teleport the actor, do not narrate them as already present, and do not mark presence/local until the roleplay itself establishes arrival. Avoid filler remote acknowledgements merely to keep the phone thread alive.',
+        '=== END POCKET ARRIVAL RELAY ===',
+      ].join('\n')
+    }
     const physicalState = relay.reason === 'arrived' || relay.reason === 'in_scene'
       ? `${actorName} is now physically present in the current scene.`
       : `${actorName} has moved the interaction from the phone into the physical scene.`
@@ -119,13 +142,16 @@ export function persistentHandoffContext(
   const actorName = contact?.name || relay.contactId
   const personaName = state.pocketPersona.displayName || 'the current Persona'
   const exchange = relay.conversationTail.text.trim()
+  const transitionCopy = relay.kind === 'arrival'
+    ? `The following phone exchange immediately preceded a prior arrival bridge: ${actorName} had begun traveling toward the scene, but was not yet physically present when the relay fired.`
+    : 'The following phone exchange happened immediately before a prior transition into the physical scene.'
 
   return [
     '=== POCKET HANDOFF MEMORY — ESTABLISHED SHARED HISTORY ===',
     `sourceRelayId: ${relay.id}`,
     `participants: ${actorName} + ${personaName}`,
     '',
-    `The following phone exchange happened immediately before a prior transition into the physical scene. It is no longer a live phone channel, but it remains established shared history between ${actorName} and ${personaName}.`,
+    `${transitionCopy} It remains established shared history between ${actorName} and ${personaName}.`,
     'Both participants may remember and act on what was directly said here on later roleplay turns.',
     'Do not make either participant forget this exchange merely because the one-shot handoff relay has already been consumed.',
     'The current roleplay transcript is newer authority for present location, timing, and physical actions. Transitional statements such as “ten minutes away” are historical once the scene has advanced.',

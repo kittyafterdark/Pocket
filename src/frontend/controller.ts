@@ -1709,6 +1709,7 @@ class PocketController {
       messageAnyway: (conversationId) => { this.manualMessageOverrides.add(conversationId); this.render(false) },
       manualOverride: this.manualMessageOverrides.has(this.selectedConversationId),
       continueRelay: () => { this.send('lumiphone:continue_relay', { conversationId: this.selectedConversationId }) },
+      continueArrival: (conversationId) => { this.send('lumiphone:continue_arrival', { conversationId }) },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
@@ -1722,7 +1723,7 @@ class PocketController {
         if (this.focusedHandoffRelays.has(relayId)) return false
         const relay = this.state?.relays.find((entry) => entry.id === relayId)
         const conversation = relay ? this.state?.conversations.find((entry) => entry.id === relay.conversationId) : null
-        if (!relay || conversation?.availability.state !== 'local') return false
+        if (!relay || (relay.kind === 'arrival' ? conversation?.availability.state !== 'arriving' : conversation?.availability.state !== 'local')) return false
         this.focusedHandoffRelays.add(relayId)
         return true
       },

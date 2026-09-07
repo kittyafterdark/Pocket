@@ -1841,8 +1841,9 @@ function handoffActivity(host, conversation, relay) {
   const primary = el("div", "lp-handoff-primary");
   const mark = el("span", "lp-handoff-mark", completed ? "✓" : failed ? "!" : "");
   const copy = el("div", "lp-grow");
-  const title = completed ? "Continued in roleplay" : failed ? "Couldn’t continue in roleplay" : generating ? "Continuing in roleplay…" : accepted ? "Host accepted the handoff" : "Preparing roleplay handoff…";
-  const subtitle = completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || "The handoff is still pending." : generating ? "Pocket delivered the conversation context to the scene." : accepted ? "Waiting for relay injection." : "Gathering the latest phone exchange.";
+  const arrival = relay.kind === "arrival";
+  const title = arrival ? completed ? "Continued toward arrival" : failed ? "Couldn’t continue toward arrival" : generating ? "Continuing toward arrival…" : accepted ? "Host accepted the arrival bridge" : "Preparing arrival bridge…" : completed ? "Continued in roleplay" : failed ? "Couldn’t continue in roleplay" : generating ? "Continuing in roleplay…" : accepted ? "Host accepted the handoff" : "Preparing roleplay handoff…";
+  const subtitle = arrival ? completed ? `${actor} is still marked on the way until the RP establishes arrival.` : failed ? continuation.error || relay.injectionError || "The arrival bridge is still pending." : generating ? "Pocket delivered the phone exchange without claiming the actor is already present." : accepted ? "Waiting for arrival-relay injection." : "Returning narrative control to the main RP while keeping the actor off-scene." : completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || "The handoff is still pending." : generating ? "Pocket delivered the conversation context to the scene." : accepted ? "Waiting for relay injection." : "Gathering the latest phone exchange.";
   copy.append(el("strong", "", title), el("span", "lp-copy", subtitle));
   primary.append(mark, copy);
   if (completed) {
@@ -2188,8 +2189,18 @@ function renderMessagesView(host) {
   const availability = scenePresent && conversation.availability.state !== "local" ? { state: "local", reason: "in_scene" } : conversation.availability;
   if (!replyBusy && (availability.state === "arriving" || availability.state === "paused" || conversation.pause)) {
     const reason = availability.state === "local" ? LOCAL_COPY[availability.reason] : availability.state === "arriving" ? "is on the way." : PAUSE_COPY[availability.state === "paused" ? availability.reason : conversation.pause.reason];
-    const banner = el("div", "lp-conversation-status", `${directContact?.name || titleText} ${reason}`);
+    const banner = el("div", availability.state === "arriving" ? "lp-conversation-status lp-arrival-status" : "lp-conversation-status");
     banner.dataset.pauseReason = availability.state === "local" ? availability.reason : availability.state === "arriving" ? "arriving" : availability.state === "paused" ? availability.reason : conversation.pause.reason;
+    banner.appendChild(el("span", "", `${directContact?.name || titleText} ${reason}`));
+    if (availability.state === "arriving" && directContact && !host.readOnlyDevice) {
+      const activeArrivalRelay = conversationRelays.some((entry) => entry.kind === "arrival" && entry.status === "pending" && (entry.continuation.state === "launching" || entry.continuation.state === "accepted" || entry.continuation.state === "started"));
+      if (!activeArrivalRelay) {
+        const continueButton = button("Continue to arrival", "lp-handoff-action");
+        continueButton.type = "button";
+        continueButton.addEventListener("click", () => host.continueArrival(conversation.id));
+        banner.appendChild(continueButton);
+      }
+    }
     bubbles.appendChild(banner);
   }
   if (!conversation.messages.length)
@@ -3096,6 +3107,7 @@ class PocketController {
   injectedActivities = new Map;
   pendingActivities = new Map;
   knownActivities = new Map;
+  provisionalActivities = new Map;
   inlineArtifactObserver = null;
   inlineMountFrame = 0;
   viewCleanups = [];
@@ -3263,7 +3275,7 @@ class PocketController {
     this.installInlineArtifactObserver();
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
-      this.clearActivitySurfaces(true);
+      this.clearActivitySurfaces(true, true);
       this.hideComposerReferencePill();
       this.refresh();
       window.setTimeout(() => this.sweepActivityReceipts(), 0);
@@ -3838,8 +3850,10 @@ class PocketController {
           this.renderFirstChatSetupBody();
       }
       this.knownActivities.clear();
-      for (const activity of this.state.activities || [])
+      for (const activity of this.state.activities || []) {
         this.knownActivities.set(activity.id, activity);
+        this.provisionalActivities.delete(activity.id);
+      }
       this.pruneInactiveActivitySurfaces();
       this.mountInlineArtifacts();
       for (const activity of this.state.activities || [])
@@ -3901,6 +3915,39 @@ class PocketController {
     }
     if (payload.type === "lumiphone:debug_prompt") {
       this.showOutgoingPromptResult(payload);
+      return;
+    }
+    if (payload.type === "lumiphone:provisional_activity" && payload.activity && payload.origin) {
+      const activity = payload.activity;
+      const origin = payload.origin;
+      const active = this.activeContext();
+      if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId || origin.chatId !== active.chatId)
+        return;
+      this.provisionalActivities.set(activity.id, { activity, origin });
+      this.mountInlineArtifacts();
+      return;
+    }
+    if (payload.type === "lumiphone:candidate_activity_discard" && Array.isArray(payload.activityIds)) {
+      for (const rawId of payload.activityIds) {
+        const activityId = typeof rawId === "string" ? rawId : "";
+        if (!activityId)
+          continue;
+        this.provisionalActivities.delete(activityId);
+        if (this.knownActivities.has(activityId))
+          continue;
+        for (const host of this.inlineHosts(activityId)) {
+          host.replaceChildren();
+          host.hidden = true;
+          delete host.dataset.pocketMounted;
+          delete host.dataset.pocketActivityId;
+        }
+        const fallback = this.injectedActivities.get(activityId);
+        if (fallback) {
+          this.ctx.dom.uninject(fallback);
+          this.injectedActivities.delete(activityId);
+        }
+        this.pendingActivities.delete(activityId);
+      }
       return;
     }
     if (payload.type === "lumiphone:activity" && payload.activity) {
@@ -4398,19 +4445,39 @@ class PocketController {
   scheduleInlineArtifactMount() {
     if (this.inlineMountFrame || this.destroyed)
       return;
-    this.inlineMountFrame = requestAnimationFrame(() => {
+    let firedSynchronously = false;
+    const frame = requestAnimationFrame(() => {
+      firedSynchronously = true;
       this.inlineMountFrame = 0;
       this.mountInlineArtifacts();
     });
+    if (!firedSynchronously)
+      this.inlineMountFrame = frame;
   }
   inlineHosts(activityId) {
     return [...document.querySelectorAll("[data-pocket-inline-anchor]")].filter((node) => node.dataset.pocketInlineAnchor === activityId);
+  }
+  provisionalActivityIsActive(record2) {
+    const active = this.activeContext();
+    if (record2.activity.scope.chatId !== active.chatId || record2.activity.scope.characterId !== active.characterId)
+      return false;
+    if (record2.origin.chatId !== active.chatId)
+      return false;
+    const selection = [...this.state?.hostSwipeSelections || []].reverse().find((entry) => entry.hostMessageId === record2.origin.hostMessageId);
+    return !selection || selection.swipeId === record2.origin.swipeId;
+  }
+  inlineActivity(activityId) {
+    const canonical = this.knownActivities.get(activityId);
+    if (canonical)
+      return canonical;
+    const provisional = this.provisionalActivities.get(activityId);
+    return provisional && this.provisionalActivityIsActive(provisional) ? provisional.activity : undefined;
   }
   mountInlineArtifacts() {
     const active = this.activeContext();
     for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
       const activityId = host.dataset.pocketInlineAnchor || "";
-      const activity = this.knownActivities.get(activityId);
+      const activity = this.inlineActivity(activityId);
       if (!activity || activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) {
         if (host.dataset.pocketMounted === "true")
           host.replaceChildren();
@@ -4435,24 +4502,26 @@ class PocketController {
   }
   pruneInactiveActivitySurfaces() {
     for (const [activityId, injected] of this.injectedActivities) {
-      if (this.knownActivities.has(activityId))
+      if (this.inlineActivity(activityId))
         continue;
       this.ctx.dom.uninject(injected);
       this.injectedActivities.delete(activityId);
       this.pendingActivities.delete(activityId);
     }
     for (const activityId of [...this.pendingActivities.keys()]) {
-      if (!this.knownActivities.has(activityId))
+      if (!this.inlineActivity(activityId))
         this.pendingActivities.delete(activityId);
     }
   }
-  clearActivitySurfaces(clearKnown = false) {
+  clearActivitySurfaces(clearKnown = false, clearProvisional = false) {
     for (const injected of this.injectedActivities.values())
       this.ctx.dom.uninject(injected);
     this.injectedActivities.clear();
     this.pendingActivities.clear();
     if (clearKnown)
       this.knownActivities.clear();
+    if (clearProvisional)
+      this.provisionalActivities.clear();
     for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
       host.replaceChildren();
       host.hidden = true;
@@ -4679,6 +4748,9 @@ class PocketController {
       continueRelay: () => {
         this.send("lumiphone:continue_relay", { conversationId: this.selectedConversationId });
       },
+      continueArrival: (conversationId) => {
+        this.send("lumiphone:continue_arrival", { conversationId });
+      },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: "calendar", eventId }),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
@@ -4693,7 +4765,7 @@ class PocketController {
           return false;
         const relay = this.state?.relays.find((entry) => entry.id === relayId);
         const conversation = relay ? this.state?.conversations.find((entry) => entry.id === relay.conversationId) : null;
-        if (!relay || conversation?.availability.state !== "local")
+        if (!relay || (relay.kind === "arrival" ? conversation?.availability.state !== "arriving" : conversation?.availability.state !== "local"))
           return false;
         this.focusedHandoffRelays.add(relayId);
         return true;
@@ -6327,6 +6399,8 @@ var PHONE_STYLES = `
   .lumiphone-shell .lp-compose { padding:calc(8px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); gap:calc(6px * var(--pocket-ui-scale)); grid-template-columns:auto minmax(0,1fr) auto; }
   .lumiphone-shell .lp-compose .lp-textarea { min-height:calc(34px * var(--pocket-ui-scale)); max-height:calc(112px * var(--pocket-ui-scale)); border-radius:calc(17px * var(--pocket-ui-scale)); }
   .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-arrival-status { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
+  .lp-arrival-status .lp-handoff-action { min-height:24px; padding:4px 7px; }
   .lp-handoff-activity { align-self:stretch; margin:7px 0; border:1px solid color-mix(in srgb,var(--lp-accent) 28%,var(--lp-border)); border-radius:14px; background:color-mix(in srgb,var(--lp-surface) 92%,transparent); box-shadow:0 6px 20px rgba(0,0,0,.10); overflow:hidden; }
   .lp-handoff-primary { min-height:52px; padding:9px 10px; display:flex; align-items:center; gap:9px; }
   .lp-handoff-primary .lp-grow { display:grid; gap:2px; min-width:0; }

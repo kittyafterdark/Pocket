@@ -19,7 +19,7 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
+for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'arrival_handoff', 'commitArrivalHandoff', 'lumiphone:continue_arrival', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
@@ -346,6 +346,37 @@ await new Promise((resolve) => setTimeout(resolve, 40))
 autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === firstConversationId)
 assert.deepEqual(autoConversation.availability, { state: 'arriving' }, 'arriving must remain a usable remote transition until scene presence corroborates it')
 
+// Once travel is established and the remote exchange naturally closes, Pocket may
+// bridge narrative control back to the main RP without claiming physical arrival.
+spindle.generate.quiet = async () => ({ content: '{"action":"arrival_handoff","reason":"arriving"}' })
+const beforeArrivalAppendCount = appendedChatMessages.length
+await frontendHandler({ type: 'lumiphone:action', requestId: 'arrival-bridge-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'gave it to you for a reason, dumbass', sender: 'persona' } }, 'user-a')
+await new Promise((resolve) => setTimeout(resolve, 60))
+let arrivalState = storage.get('phones/chat-a__char-a.json')
+autoConversation = arrivalState.conversations.find((entry) => entry.id === firstConversationId)
+const arrivalRelay = [...arrivalState.relays].reverse().find((entry) => entry.kind === 'arrival' && entry.status === 'pending' && entry.conversationId === firstConversationId)
+assert.ok(arrivalRelay, 'arrival_handoff must create a pending arrival relay')
+assert.equal(arrivalRelay.reason, 'arriving')
+assert.equal(arrivalRelay.actorState, 'arriving')
+assert.deepEqual(autoConversation.availability, { state: 'arriving' }, 'arrival relay must not localize the actor')
+assert.equal(autoConversation.lastDecision.normalizedAction, 'arrival_handoff')
+assert.equal(appendedChatMessages.length, beforeArrivalAppendCount + 1, 'arrival handoff must trigger one native main-RP generation')
+assert.equal(appendedChatMessages.at(-1).options.triggerGeneration, true)
+assert.match(appendedChatMessages.at(-1).message.content, /toward the arrival/i)
+const arrivalEvent = arrivalState.events.find((entry) => entry.source?.relayId === arrivalRelay.id)
+assert.equal(arrivalEvent?.channelTransition?.to, 'arriving')
+assert.equal(arrivalEvent?.channelTransition?.reason, 'arriving')
+const arrivalIntercept = await interceptorHandler([{ role: 'user', content: 'Continue toward arrival.', sourceMessageMetadata: { pocketContinuation: true, pocketRelayId: arrivalRelay.id } }], { chatId: 'chat-a', userId: 'user-a' })
+assert.match(arrivalIntercept.messages.at(-1).content, /POCKET ARRIVAL RELAY — NEWER STATE/)
+assert.match(arrivalIntercept.messages.at(-1).content, /NOT physically present yet/)
+assert.doesNotMatch(arrivalIntercept.messages.at(-1).content, /transition: remote -> local/)
+const injectedArrivalRelay = storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.id === arrivalRelay.id)
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', generationId: injectedArrivalRelay.continuation.generationId }, 'user-a')
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: injectedArrivalRelay.continuation.generationId, messageId: 'arrival-rp-message' }, 'user-a')
+arrivalState = storage.get('phones/chat-a__char-a.json')
+assert.equal(arrivalState.relays.find((entry) => entry.id === arrivalRelay.id).status, 'consumed')
+assert.deepEqual(arrivalState.conversations.find((entry) => entry.id === firstConversationId).availability, { state: 'arriving' }, 'consuming an arrival relay must still wait for narrative presence')
+
 const handoffState = storage.get('phones/chat-a__char-a.json')
 handoffState.contacts.find((entry) => entry.id === 'char-a').presence.inScene = true
 storage.set('phones/chat-a__char-a.json', handoffState)
@@ -357,8 +388,9 @@ autoConversation = storage.get('phones/chat-a__char-a.json').conversations.find(
 assert.equal(autoDecisionCalls, 0, 'scene-present actors must hand off deterministically without asking the reply model for none')
 assert.deepEqual(autoConversation.availability, { state: 'local', reason: 'arrived' })
 assert.equal(storage.get('phones/chat-a__char-a.json').relays.filter((entry) => entry.status === 'pending').length, 1)
-assert.equal(storage.get('phones/chat-a__char-a.json').events.filter((entry) => entry.kind === 'phone-handoff' && entry.id !== 'legacy-handoff').length, 1)
-assert.equal(storage.get('phones/chat-a__char-a.json').events.find((entry) => entry.kind === 'phone-handoff' && entry.id !== 'legacy-handoff').completed, true, 'Timeline records the occurred handoff independently of relay consumption')
+const localHandoffEvents = storage.get('phones/chat-a__char-a.json').events.filter((entry) => entry.kind === 'phone-handoff' && entry.id !== 'legacy-handoff' && entry.channelTransition?.to === 'local')
+assert.equal(localHandoffEvents.length, 1)
+assert.equal(localHandoffEvents[0].completed, true, 'Timeline records the occurred local handoff independently of relay consumption')
 assert.equal(appendedChatMessages.at(-1).options.triggerGeneration, true, 'handoff must trigger native main roleplay generation')
 const pendingRelay = storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.status === 'pending')
 assert.equal(pendingRelay.burstId, autoConversation.lastDecision.burstId, 'relay must persist its creating decision burst')
@@ -1374,6 +1406,11 @@ pausedUiState.state.conversations[0].availability = { state: 'arriving' }
 backendReceiver(pausedUiState)
 assert.match(dockRoot.textContent, /Alice is on the way\./, 'arriving must render Pocket-owned transition copy')
 assert.ok(dockRoot.querySelector('.lp-compose'), 'arriving must keep remote messaging usable until the actor becomes local')
+const continueToArrival = [...dockRoot.querySelectorAll('button')].find((node) => node.textContent === 'Continue to arrival')
+assert.ok(continueToArrival, 'arriving state must expose an explicit roleplay bridge without disabling texting')
+const arrivalBridgeRequestsBefore = frontendSends.filter((message) => message.type === 'lumiphone:continue_arrival').length
+continueToArrival.click()
+assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:continue_arrival').length, arrivalBridgeRequestsBefore + 1)
 
 const localUiState = structuredClone(pausedUiState)
 const localConversation = localUiState.state.conversations[0]
@@ -1390,7 +1427,7 @@ localConversation.lastDecision = {
 }
 localUiState.state.relays = [{
   id: 'relay-ui', chatId: 'chat-a', characterId: 'char-a', contactId: 'char-a', conversationId: localConversation.id,
-  burstId: 'burst-ui', reason: 'arrived', actorState: 'arrived', sourceMessageId: handoffSource.id,
+  burstId: 'burst-ui', kind: 'local', reason: 'arrived', actorState: 'arrived', sourceMessageId: handoffSource.id,
   conversationTail: { text: 'You: See you here', recentMessageIds: [handoffSource.id], updatedAt: new Date().toISOString() },
   latestExchange: 'You: See you here', timelineEventId: 'timeline-ui', createdAt: new Date().toISOString(), status: 'pending',
   continuation: { state: 'launching', invokedAt: new Date().toISOString() },

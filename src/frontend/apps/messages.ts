@@ -32,6 +32,7 @@ export interface MessagesViewHost {
   messageAnyway(conversationId: string): void
   manualOverride: boolean
   continueRelay(): void
+  continueArrival(conversationId: string): void
   openRoleplay(): void
   openTimeline(eventId: string): void
   scheduleEventSuggestion(conversationId: string, messageId: string): void
@@ -182,8 +183,13 @@ function handoffActivity(host: MessagesViewHost, conversation: PocketConversatio
   const primary = el('div', 'lp-handoff-primary')
   const mark = el('span', 'lp-handoff-mark', completed ? '✓' : failed ? '!' : '')
   const copy = el('div', 'lp-grow')
-  const title = completed ? 'Continued in roleplay' : failed ? 'Couldn’t continue in roleplay' : generating ? 'Continuing in roleplay…' : accepted ? 'Host accepted the handoff' : 'Preparing roleplay handoff…'
-  const subtitle = completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || 'The handoff is still pending.' : generating ? 'Pocket delivered the conversation context to the scene.' : accepted ? 'Waiting for relay injection.' : 'Gathering the latest phone exchange.'
+  const arrival = relay.kind === 'arrival'
+  const title = arrival
+    ? completed ? 'Continued toward arrival' : failed ? 'Couldn’t continue toward arrival' : generating ? 'Continuing toward arrival…' : accepted ? 'Host accepted the arrival bridge' : 'Preparing arrival bridge…'
+    : completed ? 'Continued in roleplay' : failed ? 'Couldn’t continue in roleplay' : generating ? 'Continuing in roleplay…' : accepted ? 'Host accepted the handoff' : 'Preparing roleplay handoff…'
+  const subtitle = arrival
+    ? completed ? `${actor} is still marked on the way until the RP establishes arrival.` : failed ? continuation.error || relay.injectionError || 'The arrival bridge is still pending.' : generating ? 'Pocket delivered the phone exchange without claiming the actor is already present.' : accepted ? 'Waiting for arrival-relay injection.' : 'Returning narrative control to the main RP while keeping the actor off-scene.'
+    : completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || 'The handoff is still pending.' : generating ? 'Pocket delivered the conversation context to the scene.' : accepted ? 'Waiting for relay injection.' : 'Gathering the latest phone exchange.'
   copy.append(el('strong', '', title), el('span', 'lp-copy', subtitle))
   primary.append(mark, copy)
   if (completed) {
@@ -503,8 +509,18 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     : conversation.availability
   if (!replyBusy && (availability.state === 'arriving' || availability.state === 'paused' || conversation.pause)) {
     const reason = availability.state === 'local' ? LOCAL_COPY[availability.reason] : availability.state === 'arriving' ? 'is on the way.' : PAUSE_COPY[availability.state === 'paused' ? availability.reason : conversation.pause!.reason]
-    const banner = el('div', 'lp-conversation-status', `${directContact?.name || titleText} ${reason}`)
+    const banner = el('div', availability.state === 'arriving' ? 'lp-conversation-status lp-arrival-status' : 'lp-conversation-status')
     banner.dataset.pauseReason = availability.state === 'local' ? availability.reason : availability.state === 'arriving' ? 'arriving' : availability.state === 'paused' ? availability.reason : conversation.pause!.reason
+    banner.appendChild(el('span', '', `${directContact?.name || titleText} ${reason}`))
+    if (availability.state === 'arriving' && directContact && !host.readOnlyDevice) {
+      const activeArrivalRelay = conversationRelays.some((entry) => entry.kind === 'arrival' && entry.status === 'pending' && (entry.continuation.state === 'launching' || entry.continuation.state === 'accepted' || entry.continuation.state === 'started'))
+      if (!activeArrivalRelay) {
+        const continueButton = button('Continue to arrival', 'lp-handoff-action')
+        continueButton.type = 'button'
+        continueButton.addEventListener('click', () => host.continueArrival(conversation.id))
+        banner.appendChild(continueButton)
+      }
+    }
     bubbles.appendChild(banner)
   }
   if (!conversation.messages.length) bubbles.appendChild(host.empty('Say hello', 'This thread is private to this Pocket roleplay state.'))

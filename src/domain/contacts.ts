@@ -201,8 +201,8 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
           eligibleCount: count(groupBatch.eligibleCount),
         } : undefined,
         replyDecision: decision ? {
-          rawAction: decision.rawAction === 'reply' || decision.rawAction === 'pause' || decision.rawAction === 'handoff' ? decision.rawAction : 'none',
-          normalizedAction: decision.normalizedAction === 'reply' || decision.normalizedAction === 'pause' || decision.normalizedAction === 'handoff' ? decision.normalizedAction : 'none',
+          rawAction: decision.rawAction === 'reply' || decision.rawAction === 'pause' || decision.rawAction === 'handoff' || decision.rawAction === 'arrival_handoff' ? decision.rawAction : 'none',
+          normalizedAction: decision.normalizedAction === 'reply' || decision.normalizedAction === 'pause' || decision.normalizedAction === 'handoff' || decision.normalizedAction === 'arrival_handoff' ? decision.normalizedAction : 'none',
           reason: clean(decision.reason, 80), normalizationReason: clean(decision.normalizationReason, 180),
         } : undefined,
       } : undefined,
@@ -280,8 +280,8 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
       updatedAt: timestamp(rawTail.updatedAt, now),
     } : undefined,
     lastDecision: record(value.lastDecision) ? {
-      rawAction: value.lastDecision.rawAction === 'reply' || value.lastDecision.rawAction === 'pause' || value.lastDecision.rawAction === 'handoff' ? value.lastDecision.rawAction : 'none',
-      normalizedAction: value.lastDecision.normalizedAction === 'reply' || value.lastDecision.normalizedAction === 'pause' || value.lastDecision.normalizedAction === 'handoff' ? value.lastDecision.normalizedAction : 'none',
+      rawAction: value.lastDecision.rawAction === 'reply' || value.lastDecision.rawAction === 'pause' || value.lastDecision.rawAction === 'handoff' || value.lastDecision.rawAction === 'arrival_handoff' ? value.lastDecision.rawAction : 'none',
+      normalizedAction: value.lastDecision.normalizedAction === 'reply' || value.lastDecision.normalizedAction === 'pause' || value.lastDecision.normalizedAction === 'handoff' || value.lastDecision.normalizedAction === 'arrival_handoff' ? value.lastDecision.normalizedAction : 'none',
       reason: clean(value.lastDecision.reason, 80), normalizationReason: clean(value.lastDecision.normalizationReason, 180),
       contactInScene: flag(value.lastDecision.contactInScene), remoteEligible: flag(value.lastDecision.remoteEligible, true),
       explicitRemoteOverride: flag(value.lastDecision.explicitRemoteOverride), createdAt: timestamp(value.lastDecision.createdAt, now),

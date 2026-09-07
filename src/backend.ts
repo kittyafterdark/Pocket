@@ -288,7 +288,11 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       source: isRecord(item.source) && item.source.app === 'messages' ? {
         app: 'messages' as const, conversationId: text(item.source.conversationId, 180), relayId: text(item.source.relayId, 180) || undefined, messageId: text(item.source.messageId, 180) || undefined, suggestionId: text(item.source.suggestionId, 180) || undefined,
       } : undefined,
-      channelTransition: isRecord(item.channelTransition) && item.channelTransition.to === 'local' ? {
+      channelTransition: isRecord(item.channelTransition) && item.channelTransition.to === 'arriving' ? {
+        from: item.channelTransition.from === 'arriving' || item.channelTransition.from === 'paused' ? item.channelTransition.from : 'remote',
+        to: 'arriving' as const,
+        reason: 'arriving' as const,
+      } : isRecord(item.channelTransition) && item.channelTransition.to === 'local' ? {
         from: item.channelTransition.from === 'arriving' || item.channelTransition.from === 'paused' ? item.channelTransition.from : 'remote',
         to: 'local' as const,
         reason: item.channelTransition.reason === 'arrived' || item.channelTransition.reason === 'took_action' || item.channelTransition.reason === 'continued_in_person' ? item.channelTransition.reason : 'in_scene',
@@ -385,12 +389,13 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     const tail = isRecord(item.conversationTail) ? item.conversationTail : isRecord(item.conversationSnapshot) ? item.conversationSnapshot : {}
     const continuation = isRecord(item.continuation) ? item.continuation : {}
     if (!relayId || !contactId || !conversationId) return []
-    const reason = item.reason === 'arrived' || item.reason === 'took_action' || item.reason === 'continued_in_person' ? item.reason : 'in_scene'
+    const kind = item.kind === 'arrival' || item.reason === 'arriving' || item.actorState === 'arriving' ? 'arrival' as const : 'local' as const
+    const reason = kind === 'arrival' ? 'arriving' as const : item.reason === 'arrived' || item.reason === 'took_action' || item.reason === 'continued_in_person' ? item.reason : 'in_scene' as const
     const continuationState = continuation.state === 'launching' || continuation.state === 'accepted' || continuation.state === 'started' || continuation.state === 'completed' || continuation.state === 'blocked' || continuation.state === 'failed' || continuation.state === 'stopped'
       ? continuation.state
       : continuation.state === 'requested' ? 'accepted' : 'idle'
     return [{
-      id: relayId, chatId, characterId, contactId, conversationId, reason, actorState: reason,
+      id: relayId, chatId, characterId, contactId, conversationId, kind, reason, actorState: reason,
       burstId: text(item.burstId, 180) || undefined,
       conversationTail: {
         text: text(tail.text ?? tail.summary, 2_400),
@@ -1441,7 +1446,7 @@ function commitConversationHandoff(
   conversation.availability = resumePauseReason ? { state: 'local', reason, resumePauseReason } : { state: 'local', reason }
   conversation.pause = undefined
   conversation.tailSnapshot = conversationTailSnapshot(conversation, createdAt)
-  const existing = state.relays.find((entry) => entry.status === 'pending' && entry.conversationId === conversation.id && decision.burstId && entry.burstId === decision.burstId)
+  const existing = state.relays.find((entry) => entry.kind === 'local' && entry.status === 'pending' && entry.conversationId === conversation.id && decision.burstId && entry.burstId === decision.burstId)
   if (existing) {
     decision.relayId = existing.id
     conversation.lastDecision = decision
@@ -1452,7 +1457,7 @@ function commitConversationHandoff(
   const latestMessageId = conversation.messages.at(-1)?.id
   const relay: PocketRelay = {
     id: relayId, chatId: state.chatId, characterId: state.characterId, contactId: contact.id, conversationId: conversation.id,
-    burstId: decision.burstId, reason, actorState: reason, conversationTail: conversation.tailSnapshot, latestExchange: relayLatestExchange(conversation),
+    burstId: decision.burstId, kind: 'local', reason, actorState: reason, conversationTail: conversation.tailSnapshot, latestExchange: relayLatestExchange(conversation),
     sourceMessageId: latestMessageId, timelineEventId: eventId, createdAt, status: 'pending', continuation: { state: 'idle' },
   }
   decision.relayId = relayId
@@ -1474,6 +1479,59 @@ function commitConversationHandoff(
   return relay
 }
 
+function commitArrivalHandoff(
+  state: PhoneState,
+  conversation: PocketConversation,
+  contact: PocketContact,
+  decision: ReturnType<typeof normalizeReplyDecision>,
+): PocketRelay {
+  const createdAt = decision.createdAt
+  const previous = conversation.availability.state === 'paused' || conversation.availability.state === 'arriving' ? conversation.availability.state : 'remote'
+  conversation.availability = { state: 'arriving' }
+  conversation.pause = undefined
+  conversation.tailSnapshot = conversationTailSnapshot(conversation, createdAt)
+  const existing = [...state.relays].reverse().find((entry) => entry.kind === 'arrival' && entry.status === 'pending' && entry.conversationId === conversation.id)
+  if (existing) {
+    const active = existing.continuation.state === 'launching' || existing.continuation.state === 'accepted' || existing.continuation.state === 'started'
+    if (!active) {
+      existing.burstId = decision.burstId || existing.burstId
+      existing.conversationTail = conversation.tailSnapshot
+      existing.latestExchange = relayLatestExchange(conversation)
+      existing.sourceMessageId = conversation.messages.at(-1)?.id
+      existing.injectionError = undefined
+    }
+    decision.relayId = existing.id
+    conversation.lastDecision = decision
+    return existing
+  }
+  const relayId = id('relay')
+  const eventId = id('evt')
+  const latestMessageId = conversation.messages.at(-1)?.id
+  const relay: PocketRelay = {
+    id: relayId, chatId: state.chatId, characterId: state.characterId, contactId: contact.id, conversationId: conversation.id,
+    burstId: decision.burstId, kind: 'arrival', reason: 'arriving', actorState: 'arriving',
+    conversationTail: conversation.tailSnapshot, latestExchange: relayLatestExchange(conversation),
+    sourceMessageId: latestMessageId, timelineEventId: eventId, createdAt, status: 'pending', continuation: { state: 'idle' },
+  }
+  decision.relayId = relayId
+  conversation.lastDecision = decision
+  state.relays.push(relay)
+  state.relays = state.relays.slice(-24)
+  state.events.push({
+    id: eventId, title: `${contact.name} started heading over`, description: relay.latestExchange,
+    start: state.roleplayNow || createdAt, end: state.roleplayNow || createdAt, whenKind: 'relative', whenText: 'Now',
+    color: contactAccent(contact), lane: 'Phone handoffs', completed: true, createdBy: 'model', kind: 'phone-handoff',
+    actorContactIds: [contact.id], source: { app: 'messages', conversationId: conversation.id, relayId, messageId: latestMessageId },
+    channelTransition: { from: previous, to: 'arriving', reason: 'arriving' },
+  })
+  state.events = state.events.slice(-MAX_EVENTS)
+  addActivity(state, {
+    kind: 'timeline', title: `${contact.name} is on the way`, summary: 'Pocket handed the narrative back to the roleplay without claiming they have arrived yet.',
+    route: { app: 'calendar', eventId }, source: { contactId: contact.id, conversationId: conversation.id, eventId },
+  })
+  return relay
+}
+
 async function requestRelayContinuation(chatId: string, characterId: string, relayId: string, userId?: string): Promise<void> {
   const method = 'spindle.chat.appendMessage(triggerGeneration)' as const
   const permissions = {
@@ -1489,7 +1547,7 @@ async function requestRelayContinuation(chatId: string, characterId: string, rel
     const launch = await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
       const relay = state.relays.find((entry) => entry.id === relayId && entry.status === 'pending')
-      if (!relay || relay.continuation.state === 'launching' || relay.continuation.state === 'accepted' || relay.continuation.state === 'started') return { proceed: false, error: '' }
+      if (!relay || relay.continuation.state === 'launching' || relay.continuation.state === 'accepted' || relay.continuation.state === 'started') return { proceed: false, error: '', kind: relay?.kind || 'local' as const }
       const missing = [!permissions.chatMutation ? 'Chat mutation' : '', !permissions.generation ? 'Generation' : ''].filter(Boolean)
       if (missing.length) {
         const error = `${missing.join(' and ')} permission${missing.length > 1 ? 's are' : ' is'} required to continue in roleplay.`
@@ -1498,12 +1556,12 @@ async function requestRelayContinuation(chatId: string, characterId: string, rel
         }
         await saveState(state, userId)
         await sendState(state, userId, 'relay_blocked')
-        return { proceed: false, error }
+        return { proceed: false, error, kind: relay.kind }
       }
       const activeRelay = state.relays.find((entry) => entry.id !== relayId && entry.status === 'pending' && (
         entry.continuation.state === 'launching' || entry.continuation.state === 'accepted' || entry.continuation.state === 'started'
       ))
-      if (activeRelay) return { proceed: false, error: `Pocket is already continuing relay ${activeRelay.id} in this roleplay.` }
+      if (activeRelay) return { proceed: false, error: `Pocket is already continuing relay ${activeRelay.id} in this roleplay.`, kind: relay.kind }
       relay.continuation = {
         state: 'launching', invokedAt, permissionCheckedAt: nowIso(), permissions, method,
       }
@@ -1515,7 +1573,7 @@ async function requestRelayContinuation(chatId: string, characterId: string, rel
       relay.injectionError = undefined
       await saveState(state, userId)
       await sendState(state, userId, 'relay_launching')
-      return { proceed: true, error: '' }
+      return { proceed: true, error: '', kind: relay.kind }
     })
     if (!launch.proceed) {
       if (launch.error) send({ type: 'lumiphone:error', error: launch.error }, userId)
@@ -1523,7 +1581,7 @@ async function requestRelayContinuation(chatId: string, characterId: string, rel
     }
     const appended = await spindle.chat.appendMessage(chatId, {
       role: 'user',
-      content: 'Continue the current scene from the Pocket conversation handoff.',
+      content: launch.kind === 'arrival' ? 'Continue the current scene toward the arrival established by the Pocket conversation.' : 'Continue the current scene from the Pocket conversation handoff.',
       metadata: { source: 'pocket', pocketRelayId: relayId, pocketContinuation: true },
     }, { triggerGeneration: true })
     await spindle.chat.setMessageHidden(chatId, appended.id, true).catch(() => undefined)
@@ -3589,17 +3647,17 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
     }, userId)
     const explicitRemoteOverride = Boolean(burst?.explicitRemoteOverride)
     const deterministicLocal = !explicitRemoteOverride && (contact.presence.inScene || conversation.availability.state === 'local')
-    const rawDecision = deterministicLocal ? { action: 'handoff', reason: contact.presence.inScene ? conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene' : conversation.availability.state === 'local' ? conversation.availability.reason : 'continued_in_person' } : !contact.messagingPolicy.remoteEligible
+    const rawDecision = deterministicLocal ? { action: 'handoff', reason: contact.presence.inScene ? conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene' : conversation.availability.state === 'local' ? conversation.availability.reason : 'continued_in_person' } : !contact.messagingPolicy.remoteEligible && conversation.availability.state !== 'arriving'
       ? { action: 'pause', reason: 'away' }
       : await runStructuredGeneration('reply-decision', requestId, {
         type: 'quiet',
         messages: [
-          { role: 'system', content: 'Classify the next channel state of this fictional direct-message thread. The physical-scene facts are authoritative. Return strict JSON only: {"action":"reply"}, {"action":"none"}, {"action":"pause","reason":"ended|busy|away|sleeping|unknown"}, or {"action":"handoff","reason":"arriving|arrived|took_action|continued_in_person"}. none means the remote channel is still valid but no reply is warranted. Never use none when the actor is in the physical scene. arriving means they are traveling toward the scene but are not there yet. No prose or custom UI copy.' },
+          { role: 'system', content: 'Classify the next channel state of this fictional direct-message thread. The physical-scene facts are authoritative. Return strict JSON only: {"action":"reply"}, {"action":"none"}, {"action":"pause","reason":"ended|busy|away|sleeping|unknown"}, {"action":"arrival_handoff","reason":"arriving"}, or {"action":"handoff","reason":"arrived|took_action|continued_in_person"}. reply means the latest Persona text genuinely warrants a remote answer. none means the remote channel remains valid but no reply is warranted and the narrative does not need to move toward an arrival. arrival_handoff means the off-scene actor has begun traveling toward the Persona/current scene AND the remote exchange has naturally reached an endpoint; use it to return narrative control to the main RP without claiming the actor has arrived. Prefer arrival_handoff over filler acknowledgements such as “okay”, “I know”, “coming”, or another repeated ETA when travel has already begun and no substantive remote answer is needed. handoff is only for interaction that has already become physical/local. Never use none when the actor is physically in the active scene. No prose or custom UI copy.' },
           { role: 'user', content: `Contact: ${contact.name} (${contact.role})\nChannel: ${conversation.availability.state}\nPresence: ${contact.presence.inScene ? 'physically in the active scene' : 'off-scene'}\nRemote eligible: ${contact.messagingPolicy.remoteEligible}\nScene snapshot: ${(state.sceneSnapshot?.actors || []).map((actor) => `${state.contacts.find((entry) => entry.id === actor.contactId)?.name || actor.contactId}: ${actor.sceneBrief}`).join(' | ') || 'none'}\nRecent DM:\n${conversation.messages.slice(-8).map((message) => `${message.senderName}: ${message.text.slice(0, 700)}`).join('\n')}\nSettled outgoing burst:\n${burstMessages.map((message) => message.text.slice(0, 1_200)).join('\n')}` },
         ],
         parameters: { temperature: 0.1, max_tokens: 100 }, userId,
       }, userId)
-    const rawAction = rawDecision.action === 'reply' || rawDecision.reply === true ? 'reply' : rawDecision.action === 'pause' ? 'pause' : rawDecision.action === 'handoff' ? 'handoff' : 'none'
+    const rawAction = rawDecision.action === 'reply' || rawDecision.reply === true ? 'reply' : rawDecision.action === 'pause' ? 'pause' : rawDecision.action === 'arrival_handoff' ? 'arrival_handoff' : rawDecision.action === 'handoff' ? 'handoff' : 'none'
     const outcome = await withStateLock(stateKey(chatId, characterId), async (): Promise<{ action: ReturnType<typeof normalizeReplyDecision>['normalizedAction']; relayId?: string } | null> => {
       const latestState = await loadState(chatId, characterId, userId)
       const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId)
@@ -3623,7 +3681,13 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
         const reason = decision.reason as NonNullable<PocketConversation['pause']>['reason']
         latestConversation.pause = { reason, createdAt: decision.createdAt, source: 'model' }
         latestConversation.availability = { state: 'paused', reason }
+      } else if (decision.normalizedAction === 'arrival_handoff' && !latestContact.presence.inScene) {
+        latestConversation.availability = { state: 'arriving' }
+        latestConversation.pause = undefined
+        if (latestActor.contact) relayId = commitArrivalHandoff(latestState, latestConversation, latestContact, decision).id
       } else if (decision.normalizedAction === 'handoff' && decision.reason === 'arriving' && !latestContact.presence.inScene) {
+        // Legacy classifier compatibility: arriving without an explicit arrival_handoff
+        // updates channel state but does not force a main-RP continuation.
         latestConversation.availability = { state: 'arriving' }
         latestConversation.pause = undefined
       } else if (decision.normalizedAction === 'handoff' && latestActor.contact) {
@@ -3632,7 +3696,7 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
         latestConversation.availability = { state: 'local', reason: decision.reason === 'arrived' || decision.reason === 'in_scene' || decision.reason === 'took_action' || decision.reason === 'continued_in_person' ? decision.reason : 'continued_in_person' }
       }
       await saveState(latestState, userId)
-      await sendState(latestState, userId, decision.normalizedAction === 'handoff' ? 'conversation_handoff' : decision.normalizedAction === 'pause' ? 'conversation_pause' : 'reply_decision')
+      await sendState(latestState, userId, decision.normalizedAction === 'arrival_handoff' ? 'conversation_arrival_handoff' : decision.normalizedAction === 'handoff' ? 'conversation_handoff' : decision.normalizedAction === 'pause' ? 'conversation_pause' : 'reply_decision')
       return { action: decision.normalizedAction, relayId }
     })
     send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, actorId: actor.actorId, contactId: actor.contact?.id, phase: 'done' }, userId)
@@ -4648,6 +4712,35 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           speakerActorId: message.senderActorId || message.senderContactId,
           instruction: 'Generate a different natural reply for this same point in the phone conversation.',
         }, userId)
+        break
+      }
+      case 'lumiphone:continue_arrival': {
+        let relayId = ''
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const conversationId = text(payload.conversationId, 180)
+          const conversation = state.conversations.find((entry) => entry.id === conversationId && entry.kind === 'direct' && entry.includesPocketPersona !== false)
+          if (!conversation) throw new Error('That direct conversation is no longer available.')
+          const actor = resolvePocketActor(state, conversationActorIds(conversation)[0])
+          if (!actor?.contact) throw new Error('Pocket needs a saved contact before it can bridge this arrival into the main roleplay.')
+          const contact = actorAsGenerationContact(actor, nowIso())
+          if (contact.presence.inScene || conversation.availability.state === 'local') throw new Error(`${contact.name} is already in the physical scene.`)
+          const existing = [...state.relays].reverse().find((entry) => entry.kind === 'arrival' && entry.status === 'pending' && entry.conversationId === conversation.id)
+          if (existing) {
+            relayId = existing.id
+            return
+          }
+          const decision = normalizeReplyDecision({
+            rawAction: 'arrival_handoff', rawReason: 'arriving', contact, conversation,
+            explicitRemoteOverride: false, createdAt: nowIso(),
+          })
+          conversation.lastDecision = decision
+          relayId = commitArrivalHandoff(state, conversation, contact, decision).id
+          await saveState(state, userId)
+          await sendState(state, userId, 'conversation_arrival_handoff')
+        })
+        if (!relayId) throw new Error('Pocket could not prepare the arrival bridge.')
+        void requestRelayContinuation(context.chatId, context.characterId, relayId, userId)
         break
       }
       case 'lumiphone:continue_relay': {
