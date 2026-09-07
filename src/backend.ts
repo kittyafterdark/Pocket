@@ -93,7 +93,7 @@ Pocket Action is an execution step, not an output section. Do not reason about w
 
 When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. One Pocket Action invocation persists exactly one action. Multiple Pocket Action calls in the same assistant turn are expected whenever multiple distinct phone actions occur; a successful first call does NOT cover later messages or phone actions. If another text, reply, call, event, or other phone action happens later in the same scene, invoke Pocket Action again for that later action before continuing past it. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
-After each successful message Pocket Action, Pocket returns an artifactTag such as <pocket-artifact ref="..."></pocket-artifact>. When the message itself is visible/readable in the scene, put that exact artifactTag ON ITS OWN LINE at the exact narrative position where the message is seen. The artifact replaces the message UI: do NOT also quote, retype, color, italicize, or otherwise print the message text in prose. Write only the surrounding physical narration, the exact artifactTag, then continue the scene. Do not alter or wrap the tag. If the communication happens off-screen or its content is genuinely not visible to the current POV, you may omit the artifactTag while still persisting the action. The artifact tag is display-only and never creates the action itself.
+After each successful message Pocket Action, Pocket returns two candidate-commit markers: artifactTag and commitTag. The tool mutation is PROVISIONAL until the final assistant candidate carries exactly one returned marker. Every phone message that survives into final canon MUST have exactly one marker in final assistant content. If the phone action is visible/readable/observed in the final scene, place artifactTag exactly ON ITS OWN LINE at that narrative position and do NOT also quote, retype, color, italicize, or otherwise print the message text in prose. If the action truly happens in canon but should remain completely off-screen/unrendered, place commitTag exactly once; Pocket removes it from visible prose. If you invoked Pocket while reasoning and decide that action does NOT belong in the final scene, emit neither marker and Pocket will discard that provisional action at commit. Never emit both markers for one action. Do not assume the tool call itself commits canon; the final marker is the commit receipt.
 
 For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. This requirement still applies when the current POV cannot read the screen: if the scene establishes that one NPC actually sends or receives a new message, call Pocket Action with the canonical sender, recipient, and message text you are establishing in-world even if that text is not quoted in prose. A phone lighting up, a visible notification preview, an NPC reacting to a newly arrived message, or prose saying one actor texted another are all phone actions; do not skip them merely because neither participant is the Pocket Persona. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
@@ -1003,6 +1003,7 @@ function formatRoleplayClockLabel(iso: string, timezoneOffsetMinutes: number | u
 }
 
 function pocketMessageActiveForSwipe(state: PhoneState, message: PhoneMessage): boolean {
+  if (message.candidateCommitState === 'provisional') return false
   const origin = message.origin
   if (!origin || origin.chatId !== state.chatId) return true
   const selected = selectedHostSwipe(state, origin.hostMessageId)
@@ -1058,7 +1059,9 @@ function removePocketMessageArtifacts(state: PhoneState, conversationId: string,
   if (conversation.messages.length === before) return false
   state.actorMemories = removeActorMemoryByMessageId(state.actorMemories, messageId)
   state.notifications = state.notifications.filter((entry) => !(entry.route?.app === 'messages' && entry.route.messageId === messageId))
+  const removedActivityIds = new Set(state.activities.filter((entry) => entry.route?.app === 'messages' && entry.route.messageId === messageId).map((entry) => entry.id))
   state.activities = state.activities.filter((entry) => !(entry.route?.app === 'messages' && entry.route.messageId === messageId))
+  if (removedActivityIds.size) state.processedCommands = state.processedCommands.filter((entry) => !entry.activityId || !removedActivityIds.has(entry.activityId))
   if (conversation.outgoingBurst) {
     conversation.outgoingBurst.messageIds = conversation.outgoingBurst.messageIds.filter((entry) => entry !== messageId)
     if (!conversation.outgoingBurst.messageIds.length) conversation.outgoingBurst = undefined
@@ -2416,7 +2419,7 @@ ${currentNarrative}` },
     try {
       await applyAction({
         action: 'message', chat_id: chatId, character_id: characterId, payload, idempotencyKey: recoveryKey,
-        messageId: origin.hostMessageId, __candidateOrigin: origin, __recoveredFromNarrative: true, recoveryIndex: index,
+        messageId: origin.hostMessageId, __candidateOrigin: origin, __candidateCommitted: true, __recoveredFromNarrative: true, recoveryIndex: index,
       }, userId, 'model')
     } catch (error) {
       spindle.log.warn(`Pocket post-turn phone recovery skipped one message: ${error instanceof Error ? error.message : String(error)}`)
@@ -3699,7 +3702,7 @@ function parseTagContent(content: string): AnyRecord {
 
 function actionSemanticKey(action: string, input: AnyRecord, payload: AnyRecord): string {
   const merged: AnyRecord = { ...input, ...payload }
-  for (const key of ['type', 'requestId', 'request_id', 'commandId', 'command_id', 'idempotencyKey', 'chatId', 'chat_id', 'characterId', 'character_id', 'messageId', 'message_id', 'payload', '__candidateOrigin', '__recoveredFromNarrative', 'recoveryIndex']) delete merged[key]
+  for (const key of ['type', 'requestId', 'request_id', 'commandId', 'command_id', 'idempotencyKey', 'chatId', 'chat_id', 'characterId', 'character_id', 'messageId', 'message_id', 'payload', '__candidateOrigin', '__candidateCommitted', '__recoveredFromNarrative', 'recoveryIndex']) delete merged[key]
   const normalized = Object.keys(merged).sort().reduce<AnyRecord>((result, key) => {
     const value = merged[key]
     result[key] = typeof value === 'string' ? value.trim() : value
@@ -3734,6 +3737,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
   const action = text(input.action, 40).toLowerCase()
   const key = stateKey(context.chatId, context.characterId)
   const payload = isRecord(input.payload) ? input.payload : input
+  const candidateMessageProvisional = source === 'model' && action === 'message' && Boolean(candidateOrigin(input.__candidateOrigin, context.chatId)) && !bool(input.__candidateCommitted)
   if (action === 'camera') {
     const reserved = await withStateLock(key, async () => {
       const state = await loadState(context.chatId, context.characterId, userId)
@@ -3753,7 +3757,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
     const reservation = reserveCommand(state, input, action, payload, source)
     if (!reservation.accepted) {
       const duplicateActivity = state.activities.find((entry) => entry.id === reservation.command.activityId)
-      sendActivity(duplicateActivity, userId)
+      if (!candidateMessageProvisional) sendActivity(duplicateActivity, userId)
       return { ok: true, action, deduplicated: true, activityId: duplicateActivity?.id }
     }
     const command = reservation.command
@@ -3959,6 +3963,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         text: messageText, createdAt: phoneMessageTimestamp(state), read: personaRead,
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
         origin: actionOrigin,
+        candidateCommitState: actionOrigin ? (candidateMessageProvisional ? 'provisional' : 'committed') : undefined,
       }
       conversation.messages.push(message)
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
@@ -4191,10 +4196,12 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       throw new Error(`Unsupported phone action: ${action || '(empty)'}`)
     }
     await saveState(state, userId)
-    if (notification) await maybePush(state, preferences, notification, userId)
-    await sendState(state, userId, action, source !== 'user' && preferences.autoOpenOnModelAction)
-    sendActivity(activity, userId)
-    sendNotification(notification, userId)
+    if (!candidateMessageProvisional) {
+      if (notification) await maybePush(state, preferences, notification, userId)
+      await sendState(state, userId, action, source !== 'user' && preferences.autoOpenOnModelAction)
+      sendActivity(activity, userId)
+      sendNotification(notification, userId)
+    }
     if (action === 'message' && source === 'user' && preferences.autoReplyAfterSend && typeof result.conversationId === 'string') {
       void scheduleReplyBurst(context.chatId, context.characterId, result.conversationId, userId)
     }
@@ -4975,7 +4982,7 @@ function registerTool(): void {
   spindle.registerTool({
     name: 'phone_action',
     display_name: 'Pocket Action',
-    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. A successful message call returns artifactTag: when the message is visible/readable, put that exact tag on its own line at the exact story position and DO NOT also quote or style the message text in prose. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
+    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. Message calls are provisional: the tool call alone does NOT commit canon. Every message that survives into the final assistant response MUST include exactly one returned commit marker. Use artifactTag on its own line at the exact story position when the action is visible/readable/observed and DO NOT also quote or style the message text. Use commitTag exactly once when the action truly occurs but should remain wholly off-screen/unrendered. If a call happened only during reasoning and is not part of the final scene, emit neither marker so Pocket discards it. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
@@ -5106,10 +5113,25 @@ function pocketArtifactTag(activityId: unknown, action: unknown): string | undef
 }
 
 const POCKET_ARTIFACT_TAG_PATTERN = /<pocket-artifact\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-artifact\s*>)/gi
+const POCKET_COMMIT_TAG_PATTERN = /<pocket-commit\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-commit\s*>)/gi
 
 function pocketArtifactRef(attrs: string): string {
   const match = /\bref\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(attrs)
   return text(match?.[1] || match?.[2], 180)
+}
+
+function candidateCommitRefs(content: string): Set<string> {
+  const refs = new Set<string>()
+  for (const pattern of [POCKET_ARTIFACT_TAG_PATTERN, POCKET_COMMIT_TAG_PATTERN]) {
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(content))) {
+      const ref = pocketArtifactRef(match[1] || '')
+      if (ref) refs.add(ref)
+      if (!match[0]) pattern.lastIndex += 1
+    }
+  }
+  return refs
 }
 
 function escapePocketHtmlAttribute(value: string): string {
@@ -5131,6 +5153,123 @@ function activityBelongsToCandidate(state: PhoneState, activity: PocketActivity,
     && messageOrigin.swipeId === origin.swipeId)
 }
 
+async function discardCandidateMessages(
+  characterId: string,
+  origin: PocketTurnCandidateOrigin,
+  userId?: string,
+  reason = 'candidate_discarded',
+): Promise<number> {
+  return withStateLock(stateKey(origin.chatId, characterId), async () => {
+    const state = await loadState(origin.chatId, characterId, userId)
+    let removed = 0
+    for (const conversation of state.conversations) {
+      const deleteIds = conversation.messages
+        .filter((message) => message.origin?.chatId === origin.chatId && message.origin.hostMessageId === origin.hostMessageId && message.origin.swipeId === origin.swipeId)
+        .map((message) => message.id)
+      for (const messageId of deleteIds) if (removePocketMessageArtifacts(state, conversation.id, messageId)) removed += 1
+    }
+    if (!removed) return 0
+    await saveState(state, userId)
+    await sendState(state, userId, reason)
+    return removed
+  })
+}
+
+function normalizedRenderedMessageLine(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, '')
+    .replace(/^\s*>\s*/, '')
+    .trim()
+    .replace(/^(?:\*\*|__|\*|_|~~|`)+/, '')
+    .replace(/(?:\*\*|__|\*|_|~~|`)+$/, '')
+    .trim()
+    .replace(/^["'“”‘’]+/, '')
+    .replace(/["'“”‘’]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function replacePlaintextMessageWithInlineAnchor(content: string, messageText: string, activityId: string): { content: string; changed: boolean } {
+  const target = messageText.replace(/\s+/g, ' ').trim()
+  if (!target || !activityId) return { content, changed: false }
+  const anchor = pocketInlineAnchor(activityId)
+  const newline = content.includes('\r\n') ? '\r\n' : '\n'
+  const lines = content.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index += 1) {
+    if (normalizedRenderedMessageLine(lines[index]) !== target) continue
+    lines[index] = anchor
+    return { content: lines.join(newline), changed: true }
+  }
+  const exactAt = content.indexOf(messageText)
+  if (exactAt < 0) return { content, changed: false }
+  return { content: `${content.slice(0, exactAt)}${anchor}${content.slice(exactAt + messageText.length)}`, changed: true }
+}
+
+async function updateCandidateHostContent(origin: PocketTurnCandidateOrigin, target: any, nextContent: string): Promise<void> {
+  const swipes = Array.isArray(target?.swipes) ? [...target.swipes] : []
+  if (typeof swipes[origin.swipeId] === 'string') {
+    swipes[origin.swipeId] = nextContent
+    await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, {
+      swipes,
+      swipe_id: Number.isInteger(target?.swipe_id) ? Number(target.swipe_id) : origin.swipeId,
+      skipChunkRebuild: true,
+    })
+    return
+  }
+  await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, { content: nextContent, skipChunkRebuild: true })
+}
+
+async function pruneUncommittedCandidateMessages(
+  characterId: string,
+  origin: PocketTurnCandidateOrigin,
+  userId?: string,
+): Promise<{ removed: number; kept: number; rescuedInline: number }> {
+  const hostMessages: any[] = await spindle.chat.getMessages(origin.chatId).catch(() => [])
+  const target = hostMessages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  let candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
+  const committedRefs = candidateCommitRefs(candidateContent)
+  let rescuedInline = 0
+  const result = await withStateLock(stateKey(origin.chatId, characterId), async () => {
+    const state = await loadState(origin.chatId, characterId, userId)
+    let removed = 0
+    let kept = 0
+    for (const conversation of state.conversations) {
+      const candidateRows = conversation.messages.filter((message) => {
+        const messageOrigin = message.origin
+        return Boolean(messageOrigin
+          && messageOrigin.chatId === origin.chatId
+          && messageOrigin.hostMessageId === origin.hostMessageId
+          && messageOrigin.swipeId === origin.swipeId)
+      })
+      for (const message of candidateRows) {
+        const activity = state.activities.find((entry) => entry.kind === 'message' && entry.route?.app === 'messages' && entry.route.messageId === message.id)
+        if (activity?.id && committedRefs.has(activity.id)) {
+          if (message.candidateCommitState !== 'committed') message.candidateCommitState = 'committed'
+          kept += 1
+          continue
+        }
+        if (activity?.id) {
+          const rescued = replacePlaintextMessageWithInlineAnchor(candidateContent, message.text, activity.id)
+          if (rescued.changed) {
+            candidateContent = rescued.content
+            committedRefs.add(activity.id)
+            message.candidateCommitState = 'committed'
+            kept += 1
+            rescuedInline += 1
+            continue
+          }
+        }
+        if (removePocketMessageArtifacts(state, conversation.id, message.id)) removed += 1
+      }
+    }
+    if (removed || kept) await saveState(state, userId)
+    if (removed || kept) await sendState(state, userId, removed ? 'candidate_provisionals_pruned' : 'candidate_committed')
+    return { removed, kept }
+  })
+  if (rescuedInline && target && candidateContent) await updateCandidateHostContent(origin, target, candidateContent)
+  return { ...result, rescuedInline }
+}
+
 async function finalizeCandidateArtifactTags(
   characterId: string,
   origin: PocketTurnCandidateOrigin,
@@ -5141,29 +5280,25 @@ async function finalizeCandidateArtifactTags(
   const target = hostMessages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
   if (!target) return false
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
-  if (!candidateContent || !candidateContent.includes('<pocket-artifact')) return false
+  if (!candidateContent || (!candidateContent.includes('<pocket-artifact') && !candidateContent.includes('<pocket-commit'))) return false
 
   const state = await loadState(origin.chatId, characterId, userId)
   const activities = new Map(state.activities.map((activity) => [activity.id, activity] as const))
   let changed = false
-  const nextContent = candidateContent.replace(POCKET_ARTIFACT_TAG_PATTERN, (_full: string, attrs: string) => {
+  let nextContent = candidateContent.replace(POCKET_ARTIFACT_TAG_PATTERN, (_full: string, attrs: string) => {
     changed = true
     const ref = pocketArtifactRef(attrs)
     const activity = ref ? activities.get(ref) : undefined
     return activity && activityBelongsToCandidate(state, activity, origin) ? pocketInlineAnchor(ref) : ''
   })
+  nextContent = nextContent.replace(POCKET_COMMIT_TAG_PATTERN, (_full: string, attrs: string) => {
+    changed = true
+    const ref = pocketArtifactRef(attrs)
+    const activity = ref ? activities.get(ref) : undefined
+    return activity && activityBelongsToCandidate(state, activity, origin) ? '' : ''
+  })
   if (!changed || nextContent === candidateContent) return false
-  const swipes = Array.isArray(target.swipes) ? [...target.swipes] : []
-  if (typeof swipes[origin.swipeId] === 'string') {
-    swipes[origin.swipeId] = nextContent
-    await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, {
-      swipes,
-      swipe_id: Number.isInteger(target.swipe_id) ? Number(target.swipe_id) : origin.swipeId,
-      skipChunkRebuild: true,
-    })
-  } else {
-    await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, { content: nextContent, skipChunkRebuild: true })
-  }
+  await updateCandidateHostContent(origin, target, nextContent)
   spindle.log.info(`Pocket finalized inline artifacts: message=${origin.hostMessageId} swipe=${origin.swipeId}`)
   return true
 }
@@ -5185,13 +5320,15 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
     } : undefined
     const result = await applyAction(actionCandidateOrigin ? { ...merged, __candidateOrigin: actionCandidateOrigin } : merged, userId, 'model')
     const artifactTag = pocketArtifactTag((result as AnyRecord).activityId, (result as AnyRecord).action)
+    const commitTag = artifactTag ? artifactTag.replace(/^<pocket-artifact\b/i, '<pocket-commit').replace(/<\/pocket-artifact>$/i, '</pocket-commit>') : undefined
     return JSON.stringify({
       ...result,
       artifactTag,
+      commitTag,
       artifactInstruction: artifactTag
-        ? 'INSERT artifactTag EXACTLY ON ITS OWN LINE where this message becomes visible. Do not quote, retype, color, italicize, or otherwise print the message text in prose; the artifact renders it. Then continue the scene.'
+        ? 'REQUIRED COMMIT RECEIPT: this message is PROVISIONAL until final assistant content contains exactly one returned marker. If visible/readable/observed, put artifactTag EXACTLY ON ITS OWN LINE at that story position and do not print the message text separately. If wholly off-screen, put commitTag exactly once. If this was exploratory reasoning and is absent from the final scene, emit neither. Never emit both. Continue the roleplay normally after placing the required marker.'
         : undefined,
-      presentation: 'Pocket persisted exactly this action. Continue the roleplay normally. If another distinct phone action occurs later in this turn, call Pocket Action again. For genuinely off-screen or unreadable communication, persist it but omit display markup.',
+      presentation: 'Pocket staged exactly this action provisionally. Continue the roleplay normally. If another distinct phone action occurs later in this turn, call Pocket Action again.',
     })
   } catch (error) {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`
@@ -5244,14 +5381,19 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
   const rawSwipeValue = payload?.targetSwipeId ?? payload?.target_swipe_id
   const rawSwipeId = Number(rawSwipeValue)
   const hasCandidate = Boolean(hostMessageId && rawSwipeValue !== null && rawSwipeValue !== undefined && Number.isInteger(rawSwipeId) && rawSwipeId >= 0)
+  const payloadCharacterId = text(payload?.characterId ?? payload?.character_id, 180)
+  if (hasCandidate) {
+    activePocketCandidates.set(candidateRuntimeKey(userId, generationId), {
+      userKey: viewKey(userId), chatId, characterId: payloadCharacterId || '_none', hostMessageId, swipeId: rawSwipeId, generationId,
+      generationType: text(payload?.generationType ?? payload?.generation_type, 40), startedAt: Date.now(),
+    })
+  }
   try {
     const chat: any = await spindle.chats.get(chatId, userId)
-    const characterId = text(payload?.characterId ?? payload?.character_id, 180) || text(chat?.character_id, 180) || '_none'
+    const characterId = payloadCharacterId || text(chat?.character_id, 180) || '_none'
     if (hasCandidate) {
-      activePocketCandidates.set(candidateRuntimeKey(userId, generationId), {
-        userKey: viewKey(userId), chatId, characterId, hostMessageId, swipeId: rawSwipeId, generationId,
-        generationType: text(payload?.generationType ?? payload?.generation_type, 40), startedAt: Date.now(),
-      })
+      const active = activePocketCandidates.get(candidateRuntimeKey(userId, generationId))
+      if (active) active.characterId = characterId
     }
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
@@ -5303,7 +5445,7 @@ spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
       const action = text(payload?.action, 40).toLowerCase()
       const eventSwipeValue = payload?.swipeId
       const eventSwipeId = Number(eventSwipeValue)
-      if (action === 'delete' && eventSwipeValue !== null && eventSwipeValue !== undefined && Number.isInteger(eventSwipeId) && eventSwipeId >= 0) {
+      if ((action === 'delete' || action === 'deleted') && eventSwipeValue !== null && eventSwipeValue !== undefined && Number.isInteger(eventSwipeId) && eventSwipeId >= 0) {
         for (const conversation of state.conversations) {
           const deleteIds: string[] = []
           for (const message of conversation.messages) {
@@ -5327,12 +5469,60 @@ spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
         changed = setHostSwipeSelection(state, hostMessageId, selectedSwipeId) || changed
         changed = restoreClockForSelectedCandidate(state, hostMessageId, selectedSwipeId) || changed
       }
-      if (!changed) return
-      await saveState(state, userId)
+      if (changed) await saveState(state, userId)
+      // Always republish on host swipe navigation. The host can reuse the same
+      // message DOM while changing its selected swipe, so a no-op state delta
+      // still needs a fresh projection to evict stale inline/receipt surfaces.
       await sendState(state, userId, 'host_swipe')
     })
   } catch (error) {
     spindle.log.warn(`Pocket could not project MESSAGE_SWIPED: ${error instanceof Error ? error.message : String(error)}`)
+  }
+})
+
+spindle.on('MESSAGE_DELETED', async (payload: any, userId?: string) => {
+  const chatId = text(payload?.chatId, 180)
+  const hostMessageId = text(payload?.messageId ?? payload?.message?.id, 180)
+  if (!chatId || !hostMessageId || !spindle.permissions.has('chats')) return
+  for (const [key, candidate] of activePocketCandidates) {
+    if (candidate.chatId === chatId && candidate.hostMessageId === hostMessageId && candidate.userKey === viewKey(userId)) activePocketCandidates.delete(key)
+  }
+  try {
+    const chat: any = await spindle.chats.get(chatId, userId)
+    const characterId = text(payload?.characterId ?? payload?.character_id, 180) || text(chat?.character_id, 180) || '_none'
+    await withStateLock(stateKey(chatId, characterId), async () => {
+      const state = await loadState(chatId, characterId, userId)
+      let changed = false
+      for (const conversation of state.conversations) {
+        const deleteIds = conversation.messages
+          .filter((message) => message.origin?.chatId === chatId && message.origin.hostMessageId === hostMessageId)
+          .map((message) => message.id)
+        for (const messageId of deleteIds) changed = removePocketMessageArtifacts(state, conversation.id, messageId) || changed
+      }
+      const swipeSelectionCount = (state.hostSwipeSelections || []).length
+      state.hostSwipeSelections = (state.hostSwipeSelections || []).filter((entry) => entry.hostMessageId !== hostMessageId)
+      if (state.hostSwipeSelections.length !== swipeSelectionCount) changed = true
+      const baselineCount = (state.hostClockBaselines || []).length
+      state.hostClockBaselines = (state.hostClockBaselines || []).filter((entry) => entry.hostMessageId !== hostMessageId)
+      if (state.hostClockBaselines.length !== baselineCount) changed = true
+      const candidateClockCount = (state.candidateClocks || []).length
+      state.candidateClocks = (state.candidateClocks || []).filter((entry) => entry.hostMessageId !== hostMessageId)
+      if (state.candidateClocks.length !== candidateClockCount) changed = true
+      const removedHostActivityIds = new Set(state.activities.filter((entry) => entry.source?.messageId === hostMessageId).map((entry) => entry.id))
+      const activityCount = state.activities.length
+      state.activities = state.activities.filter((entry) => entry.source?.messageId !== hostMessageId)
+      if (state.activities.length !== activityCount) changed = true
+      if (removedHostActivityIds.size) {
+        const commandCount = state.processedCommands.length
+        state.processedCommands = state.processedCommands.filter((entry) => !entry.activityId || !removedHostActivityIds.has(entry.activityId))
+        if (state.processedCommands.length !== commandCount) changed = true
+      }
+      if (!changed) return
+      await saveState(state, userId)
+      await sendState(state, userId, 'host_message_deleted')
+    })
+  } catch (error) {
+    spindle.log.warn(`Pocket could not clean deleted host message: ${error instanceof Error ? error.message : String(error)}`)
   }
 })
 
@@ -5458,6 +5648,19 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
       void considerAmbientMessage(chatId, characterId, 'turn', userId)
     }
 
+    if (endedCandidate && (payload?.error || !messageId)) {
+      try {
+        await discardCandidateMessages(characterId, {
+          chatId: endedCandidate.chatId,
+          hostMessageId: endedCandidate.hostMessageId,
+          swipeId: endedCandidate.swipeId,
+          generationId: endedCandidate.generationId,
+        }, userId, 'candidate_failed')
+      } catch (error) {
+        spindle.log.warn(`Pocket failed to discard errored candidate side effects: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
     if (endedCandidate && messageId && !payload?.error) {
       const origin: PocketTurnCandidateOrigin = {
         chatId: endedCandidate.chatId, hostMessageId: endedCandidate.hostMessageId, swipeId: endedCandidate.swipeId, generationId: endedCandidate.generationId,
@@ -5471,7 +5674,13 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
         })
       }
       try {
-        await reconcilePostTurnCandidate(chatId, characterId, origin, generationType, userId, { auditClock: generationType === 'regenerate' })
+        const commitResult = await pruneUncommittedCandidateMessages(characterId, origin, userId)
+        if (commitResult.removed || commitResult.rescuedInline) spindle.log.info(`Pocket candidate commit: removed=${commitResult.removed} rescuedInline=${commitResult.rescuedInline} message=${origin.hostMessageId} swipe=${origin.swipeId}`)
+      } catch (error) {
+        spindle.log.warn(`Pocket provisional commit pruning skipped: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      try {
+        await reconcilePostTurnCandidate(chatId, characterId, origin, generationType, userId, { auditClock: generationType === 'regenerate' || generationType === 'swipe' || generationType === 'continue' })
       } catch (error) {
         spindle.log.warn(`Pocket post-turn candidate audit skipped: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -5489,23 +5698,33 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
 spindle.on('GENERATION_STOPPED', async (payload: any, userId?: string) => {
   const chatId = text(payload?.chatId, 180)
   const generationId = text(payload?.generationId, 180)
+  const stoppedCandidate = generationId ? activePocketCandidates.get(candidateRuntimeKey(userId, generationId)) : undefined
+  if (generationId) activePocketCandidates.delete(candidateRuntimeKey(userId, generationId))
   if (!chatId || !generationId || !spindle.permissions.has('chats')) return
   try {
     const chat: any = await spindle.chats.get(chatId, userId)
-    const characterId = text(chat?.character_id, 180) || '_none'
+    const characterId = text(chat?.character_id, 180) || stoppedCandidate?.characterId || '_none'
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
       const relay = relayForGeneration(state, generationId)
       const reference = referenceForGeneration(state, generationId)
-      if (!relay && !reference) return
       if (relay) relay.continuation = { ...relay.continuation, state: 'stopped', error: 'Generation was stopped. The relay remains pending.' }
       if (reference) {
         reference.status = 'failed'
         reference.error = 'Generation was stopped. The reference was not consumed.'
       }
+      if (!relay && !reference) return
       await saveState(state, userId)
       await sendState(state, userId, relay ? 'relay_stopped' : 'reference_failed')
     })
+    if (stoppedCandidate) {
+      await discardCandidateMessages(characterId, {
+        chatId: stoppedCandidate.chatId,
+        hostMessageId: stoppedCandidate.hostMessageId,
+        swipeId: stoppedCandidate.swipeId,
+        generationId: stoppedCandidate.generationId,
+      }, userId, 'candidate_stopped')
+    }
   } catch { /* best-effort status update */ }
 })
 

@@ -2884,7 +2884,7 @@ function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
   stack.className = "pocket-artifact-stack";
   const presentation = activity.presentation;
-  if (presentation && (presentation.kind === "sent" || presentation.kind === "received" || presentation.kind === "observed")) {
+  if (options.includeArtifact !== false && presentation && (presentation.kind === "sent" || presentation.kind === "received" || presentation.kind === "observed")) {
     const primary = document.createElement(presentation.kind === "observed" ? "div" : "button");
     if (primary instanceof HTMLButtonElement)
       primary.type = "button";
@@ -2967,7 +2967,7 @@ function activityReceipt(ctx, activity, openRoute) {
   const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
   wrapper.classList.add("pocket-receipt-host");
   wrapper.setAttribute("data-pocket-activity-id", activity.id);
-  return renderActivityHost(wrapper, activity, openRoute);
+  return renderActivityHost(wrapper, activity, openRoute, { includeArtifact: false, includeReceipt: true });
 }
 
 // src/frontend/controller.ts
@@ -3095,9 +3095,9 @@ class PocketController {
   pendingRoute = null;
   injectedActivities = new Map;
   pendingActivities = new Map;
-  pendingArtifactPlacements = new Map;
-  artifactHosts = new Map;
   knownActivities = new Map;
+  inlineArtifactObserver = null;
+  inlineMountFrame = 0;
   viewCleanups = [];
   receiptSweepTimer = 0;
   notificationTimer = 0;
@@ -3203,6 +3203,10 @@ class PocketController {
     window.clearTimeout(this.notificationTimer);
     window.clearTimeout(this.syncIndicatorTimer);
     window.clearTimeout(this.settingsSaveTimer);
+    if (this.inlineMountFrame)
+      cancelAnimationFrame(this.inlineMountFrame);
+    this.inlineArtifactObserver?.disconnect();
+    this.inlineArtifactObserver = null;
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup();
@@ -3254,32 +3258,15 @@ class PocketController {
         idempotencyKey: `tag:${payload.messageId || ""}:${payload.fullMatch}`
       });
     }));
-    this.cleanups.push(this.ctx.messages.registerTagInterceptor({ tagName: "pocket-artifact", removeFromMessage: true }, (payload) => {
-      if (payload.isStreaming)
-        return;
-      const activityId = typeof payload.attrs?.ref === "string" ? payload.attrs.ref.trim() : "";
-      const messageId = typeof payload.messageId === "string" ? payload.messageId.trim() : "";
-      if (!activityId || !messageId)
-        return;
-      const key = `artifact:${messageId}:${payload.fullMatch}`;
-      const existing = this.pendingArtifactPlacements.get(key);
-      if (existing && this.artifactHosts.get(activityId)?.some((host) => host.isConnected))
-        return;
-      this.pendingArtifactPlacements.set(key, { messageId, activityId });
-      this.sweepArtifactPlacements();
-    }));
+    this.cleanups.push(this.ctx.messages.registerTagInterceptor({ tagName: "pocket-artifact", removeFromMessage: true }, () => {}));
+    this.cleanups.push(this.ctx.messages.registerTagInterceptor({ tagName: "pocket-commit", removeFromMessage: true }, () => {}));
+    this.installInlineArtifactObserver();
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
-      this.pendingActivities.clear();
-      this.pendingArtifactPlacements.clear();
-      this.artifactHosts.clear();
-      this.knownActivities.clear();
+      this.clearActivitySurfaces(true);
       this.hideComposerReferencePill();
       this.refresh();
-      window.setTimeout(() => {
-        this.sweepArtifactPlacements();
-        this.sweepActivityReceipts();
-      }, 0);
+      window.setTimeout(() => this.sweepActivityReceipts(), 0);
     }));
     const returned = (event) => {
       const detail2 = event.detail;
@@ -3821,6 +3808,8 @@ class PocketController {
       if (active.characterId && payload.state.characterId !== active.characterId)
         return;
       const previousUnread = this.unreadCount();
+      if (payload.reason === "host_swipe")
+        this.clearActivitySurfaces(true);
       this.state = payload.state;
       const personaDeviceId = pocketPersonaActorId(this.state);
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state, conversation))]);
@@ -3848,10 +3837,13 @@ class PocketController {
         else
           this.renderFirstChatSetupBody();
       }
-      for (const activity of this.state.activities || []) {
+      this.knownActivities.clear();
+      for (const activity of this.state.activities || [])
         this.knownActivities.set(activity.id, activity);
+      this.pruneInactiveActivitySurfaces();
+      this.mountInlineArtifacts();
+      for (const activity of this.state.activities || [])
         this.queueActivityReceipt(activity);
-      }
       this.applyAppearance();
       this.syncComposerReferencePill();
       this.updateBadge();
@@ -4396,44 +4388,95 @@ class PocketController {
     this.announceView();
     this.render(true);
   }
-  sweepArtifactPlacements() {
-    for (const [key, placement] of this.pendingArtifactPlacements) {
-      const bubble = this.ctx.dom.findMessageElement(placement.messageId);
-      if (!bubble)
+  installInlineArtifactObserver() {
+    if (this.inlineArtifactObserver || typeof MutationObserver === "undefined")
+      return;
+    this.inlineArtifactObserver = new MutationObserver(() => this.scheduleInlineArtifactMount());
+    this.inlineArtifactObserver.observe(document.body, { childList: true, subtree: true });
+    this.scheduleInlineArtifactMount();
+  }
+  scheduleInlineArtifactMount() {
+    if (this.inlineMountFrame || this.destroyed)
+      return;
+    this.inlineMountFrame = requestAnimationFrame(() => {
+      this.inlineMountFrame = 0;
+      this.mountInlineArtifacts();
+    });
+  }
+  inlineHosts(activityId) {
+    return [...document.querySelectorAll("[data-pocket-inline-anchor]")].filter((node) => node.dataset.pocketInlineAnchor === activityId);
+  }
+  mountInlineArtifacts() {
+    const active = this.activeContext();
+    for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
+      const activityId = host.dataset.pocketInlineAnchor || "";
+      const activity = this.knownActivities.get(activityId);
+      if (!activity || activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) {
+        if (host.dataset.pocketMounted === "true")
+          host.replaceChildren();
+        host.hidden = true;
+        delete host.dataset.pocketMounted;
         continue;
-      const host = this.ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
-      host.classList.add("pocket-receipt-host");
-      host.setAttribute("data-pocket-artifact-ref", placement.activityId);
-      host.setAttribute("data-pocket-activity-id", placement.activityId);
-      const hosts = this.artifactHosts.get(placement.activityId) || [];
-      hosts.push(host);
-      this.artifactHosts.set(placement.activityId, hosts);
-      this.pendingArtifactPlacements.delete(key);
-      const activity = this.knownActivities.get(placement.activityId);
-      if (activity)
-        renderActivityHost(host, activity, (route) => this.openPocket(route));
+      }
+      host.hidden = false;
+      host.classList.add("pocket-inline-anchor");
+      host.dataset.pocketActivityId = activity.id;
+      if (host.dataset.pocketMounted !== "true") {
+        host.dataset.pocketMounted = "true";
+        renderActivityHost(host, activity, (route) => this.openPocket(route), { includeArtifact: true, includeReceipt: false });
+      }
+      const fallback = this.injectedActivities.get(activity.id);
+      if (fallback) {
+        this.ctx.dom.uninject(fallback);
+        this.injectedActivities.delete(activity.id);
+      }
+      this.pendingActivities.delete(activity.id);
     }
   }
-  tryRenderTaggedArtifact(activity) {
-    const hosts = (this.artifactHosts.get(activity.id) || []).filter((host) => host.isConnected);
+  pruneInactiveActivitySurfaces() {
+    for (const [activityId, injected] of this.injectedActivities) {
+      if (this.knownActivities.has(activityId))
+        continue;
+      this.ctx.dom.uninject(injected);
+      this.injectedActivities.delete(activityId);
+      this.pendingActivities.delete(activityId);
+    }
+    for (const activityId of [...this.pendingActivities.keys()]) {
+      if (!this.knownActivities.has(activityId))
+        this.pendingActivities.delete(activityId);
+    }
+  }
+  clearActivitySurfaces(clearKnown = false) {
+    for (const injected of this.injectedActivities.values())
+      this.ctx.dom.uninject(injected);
+    this.injectedActivities.clear();
+    this.pendingActivities.clear();
+    if (clearKnown)
+      this.knownActivities.clear();
+    for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
+      host.replaceChildren();
+      host.hidden = true;
+      delete host.dataset.pocketMounted;
+      delete host.dataset.pocketActivityId;
+    }
+  }
+  tryRenderInlineArtifact(activity) {
+    this.mountInlineArtifacts();
+    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === "true" && !host.hidden);
     if (!hosts.length)
       return false;
-    this.artifactHosts.set(activity.id, hosts);
     const fallback = this.injectedActivities.get(activity.id);
     if (fallback) {
       this.ctx.dom.uninject(fallback);
       this.injectedActivities.delete(activity.id);
     }
-    for (const host of hosts)
-      renderActivityHost(host, activity, (route) => this.openPocket(route));
     return true;
   }
   queueActivityReceipt(activity) {
     const active = this.activeContext();
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId)
       return;
-    this.sweepArtifactPlacements();
-    if (this.tryRenderTaggedArtifact(activity))
+    if (this.tryRenderInlineArtifact(activity))
       return;
     if (this.injectedActivities.has(activity.id) || !activity.source?.messageId)
       return;
@@ -4441,9 +4484,9 @@ class PocketController {
     this.sweepActivityReceipts();
   }
   sweepActivityReceipts() {
-    this.sweepArtifactPlacements();
+    this.mountInlineArtifacts();
     for (const [activityId, activity] of this.pendingActivities) {
-      if (this.tryRenderTaggedArtifact(activity)) {
+      if (this.tryRenderInlineArtifact(activity)) {
         this.pendingActivities.delete(activityId);
         continue;
       }
@@ -6214,6 +6257,9 @@ var PHONE_STYLES = `
   .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
 
   .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
+  .pocket-inline-anchor { display:block; width:100%; margin:12px 0; min-height:0; }
+  .pocket-inline-anchor[hidden] { display:none !important; }
+  .pocket-inline-anchor .pocket-artifact-stack { width:100%; }
   .pocket-artifact-stack { display:grid; gap:5px; }
   .pocket-inline-artifact { appearance:none; width:100%; min-height:62px; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 38%,transparent); border-radius:16px; display:grid; gap:5px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); overflow:hidden; }
   button.pocket-inline-artifact { cursor:pointer; }

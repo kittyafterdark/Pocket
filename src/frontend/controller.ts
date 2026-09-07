@@ -325,6 +325,10 @@ class PocketController {
       { tagName: 'pocket-artifact', removeFromMessage: true },
       () => {},
     ))
+    this.cleanups.push(this.ctx.messages.registerTagInterceptor(
+      { tagName: 'pocket-commit', removeFromMessage: true },
+      () => {},
+    ))
     this.installInlineArtifactObserver()
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {

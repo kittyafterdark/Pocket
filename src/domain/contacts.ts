@@ -181,6 +181,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
       swipeId: Math.max(0, Math.round(Number(value.origin.swipeId))),
       generationId: clean(value.origin.generationId, 180) || undefined,
     } : undefined,
+    candidateCommitState: value.candidateCommitState === 'provisional' ? 'provisional' : value.candidateCommitState === 'committed' ? 'committed' : undefined,
     generation: generation && clean(generation.requestId, 180) ? {
       requestId: clean(generation.requestId, 180),
       retryOf: clean(generation.retryOf, 180) || undefined,

@@ -303,6 +303,8 @@ export interface PhoneMessage {
   eventSuggestion?: PhoneEventSuggestion
   /** Host roleplay candidate that caused this model-authored side effect. */
   origin?: PocketTurnCandidateOrigin
+  /** Candidate-scoped model messages remain hidden until the final assistant candidate commits them. */
+  candidateCommitState?: 'provisional' | 'committed'
   generation?: {
     requestId: string
     retryOf?: string

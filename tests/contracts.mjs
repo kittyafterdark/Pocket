@@ -19,7 +19,7 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'artifactTag', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'targetSwipeId']) {
+for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
@@ -600,7 +600,13 @@ await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', characterId: '
 const swipeOneResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'swipe-tool-1', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
 }, 'user-a'))
+assert.match(swipeOneResult.commitTag, /<pocket-commit\b/, 'message tool result must provide an off-screen commit marker')
+const candidateOneHostContent = `The message happens off-screen.
+
+${swipeOneResult.commitTag}`
+spindle.chat.getMessages = async () => [{ id: 'host-swipe-message', index_in_chat: 1, role: 'assistant', content: candidateOneHostContent, swipes: [candidateZeroHostContent, candidateOneHostContent], swipe_id: 1 }]
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-1', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
+spindle.chat.getMessages = getMessagesBeforeInlineFinalize
 const swipeStored = storage.get('phones/chat-a__char-a.json')
 const swipeConversation = swipeStored.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
 assert.equal(swipeConversation.messages.find((entry) => entry.id === swipeZeroResult.messageId).origin.swipeId, 0)
@@ -609,11 +615,14 @@ assert.equal(swipeConversation.messages.filter((entry) => entry.text === 'Candid
 const projectedSwipeOne = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
 assert.equal(projectedSwipeOne.messages.some((entry) => entry.id === swipeZeroResult.messageId), false)
 assert.equal(projectedSwipeOne.messages.some((entry) => entry.id === swipeOneResult.messageId), true)
-await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'navigate', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
+await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'navigated', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
 const projectedSwipeZero = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
 assert.equal(projectedSwipeZero.messages.some((entry) => entry.id === swipeZeroResult.messageId), true)
 assert.equal(projectedSwipeZero.messages.some((entry) => entry.id === swipeOneResult.messageId), false)
-await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'delete', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
+const statesBeforeNoopSwipe = frontendMessages.filter((message) => message.type === 'lumiphone:state').length
+await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'navigated', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
+assert.equal(frontendMessages.filter((message) => message.type === 'lumiphone:state').length, statesBeforeNoopSwipe + 1, 'host swipe navigation must republish projection even when the selected swipe id is unchanged')
+await backendEvents.get('MESSAGE_SWIPED')({ chatId: 'chat-a', action: 'deleted', swipeId: 0, message: { id: 'host-swipe-message', swipe_id: 0 } }, 'user-a')
 const reindexedSwipeState = storage.get('phones/chat-a__char-a.json')
 const reindexedSwipeConversation = reindexedSwipeState.conversations.find((entry) => entry.id === swipeZeroResult.conversationId)
 assert.equal(reindexedSwipeConversation.messages.some((entry) => entry.id === swipeZeroResult.messageId), false, "deleting a host swipe must remove that candidate's Pocket side effects")
@@ -625,6 +634,45 @@ const afterPocketMessageDelete = storage.get('phones/chat-a__char-a.json')
 assert.equal(afterPocketMessageDelete.conversations.find((entry) => entry.id === swipeZeroResult.conversationId).messages.some((entry) => entry.id === swipeOneResult.messageId), false)
 assert.equal(afterPocketMessageDelete.notifications.some((entry) => entry.route?.app === 'messages' && entry.route.messageId === swipeOneResult.messageId), false)
 assert.equal(afterPocketMessageDelete.activities.some((entry) => entry.route?.app === 'messages' && entry.route.messageId === swipeOneResult.messageId), false)
+
+
+// Tool calls made during exploratory reasoning are provisional and disappear unless final content commits them.
+const ghostMessagesBefore = spindle.chat.getMessages
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'ghost-state', chatId: 'chat-ghost', characterId: 'char-a' }, 'user-a')
+const ghostState = storage.get('phones/chat-ghost__char-a.json')
+ghostState.pocketPersona.displayName = 'Kai'
+storage.set('phones/chat-ghost__char-a.json', ghostState)
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-ghost', characterId: 'char-a', generationId: 'ghost-gen', generationType: 'regenerate', targetMessageId: 'ghost-host', targetSwipeId: 0 }, 'user-a')
+const ghostTool = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'ghost-tool', args: { action: 'message', chat_id: 'chat-ghost', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Kai', target: 'Tyler', text: 'Reasoning-only ghost.' } },
+}, 'user-a'))
+assert.equal(ghostTool.ok, true)
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'ghost-mid-generation-state', chatId: 'chat-ghost', characterId: 'char-a' }, 'user-a')
+const ghostProjectedMidGeneration = frontendMessages.filter((message) => message.type === 'lumiphone:state').at(-1).state
+assert.equal(ghostProjectedMidGeneration.conversations.flatMap((entry) => entry.messages).some((entry) => entry.text === 'Reasoning-only ghost.'), false, 'provisional reasoning tool calls must stay hidden from Pocket projection before candidate commit')
+spindle.chat.getMessages = async () => [{ id: 'ghost-host', role: 'assistant', content: 'Kai considered texting Tyler, then decided against it.', swipes: ['Kai considered texting Tyler, then decided against it.'], swipe_id: 0 }]
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-ghost', generationId: 'ghost-gen', generationType: 'regenerate', messageId: 'ghost-host' }, 'user-a')
+assert.equal(storage.get('phones/chat-ghost__char-a.json').conversations.flatMap((entry) => entry.messages).some((entry) => entry.text === 'Reasoning-only ghost.'), false, 'uncommitted reasoning tool calls must not survive the final candidate')
+spindle.chat.getMessages = ghostMessagesBefore
+
+// Deleting a host assistant message removes every Pocket side effect owned by that turn.
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'host-delete-state', chatId: 'chat-host-delete', characterId: 'char-a' }, 'user-a')
+const hostDeleteState = storage.get('phones/chat-host-delete__char-a.json')
+hostDeleteState.pocketPersona.displayName = 'Kai'
+storage.set('phones/chat-host-delete__char-a.json', hostDeleteState)
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-host-delete', characterId: 'char-a', generationId: 'host-delete-gen', generationType: 'regenerate', targetMessageId: 'host-delete-message', targetSwipeId: 0 }, 'user-a')
+const hostDeleteTool = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
+  toolName: 'phone_action', requestId: 'host-delete-tool', args: { action: 'message', chat_id: 'chat-host-delete', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Kai', target: 'Tyler', text: 'Delete me with the RP turn.' } },
+}, 'user-a'))
+spindle.chat.getMessages = async () => [{ id: 'host-delete-message', role: 'assistant', content: hostDeleteTool.commitTag, swipes: [hostDeleteTool.commitTag], swipe_id: 0 }]
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-host-delete', generationId: 'host-delete-gen', generationType: 'regenerate', messageId: 'host-delete-message' }, 'user-a')
+assert.equal(storage.get('phones/chat-host-delete__char-a.json').conversations.flatMap((entry) => entry.messages).some((entry) => entry.id === hostDeleteTool.messageId), true)
+await backendEvents.get('MESSAGE_DELETED')({ chatId: 'chat-host-delete', messageId: 'host-delete-message' }, 'user-a')
+const afterHostMessageDelete = storage.get('phones/chat-host-delete__char-a.json')
+assert.equal(afterHostMessageDelete.conversations.flatMap((entry) => entry.messages).some((entry) => entry.id === hostDeleteTool.messageId), false, 'host message deletion must remove candidate-owned Pocket messages')
+assert.equal(afterHostMessageDelete.activities.some((entry) => entry.source?.messageId === 'host-delete-message'), false, 'host message deletion must remove candidate-owned activities')
+assert.equal((afterHostMessageDelete.hostClockBaselines || []).some((entry) => entry.hostMessageId === 'host-delete-message'), false, 'host message deletion must remove the turn clock baseline')
+spindle.chat.getMessages = ghostMessagesBefore
 
 const groupCreateTool = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'lazy-group-create', args: {
@@ -1019,7 +1067,10 @@ const recoveryFirst = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
   },
 }, 'user-a'))
 assert.equal(recoveryFirst.ok, true)
+const recoveryUpdatesBefore = updatedChatMessages.length
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-recovery', generationId: 'recovery-gen-0', generationType: 'regenerate', messageId: 'recovery-assistant' }, 'user-a')
+const rescuedInlineUpdate = updatedChatMessages.slice(recoveryUpdatesBefore).find((entry) => entry.messageId === 'recovery-assistant' && /data-pocket-inline-anchor=/.test(JSON.stringify(entry.patch || {})))
+assert.ok(rescuedInlineUpdate, 'a provisional tool message plaintexted into final prose must be rescued into an inline Pocket anchor')
 let recoveryAfter = storage.get(recoveryStatePath)
 const recoveredConversation = recoveryAfter.conversations.find((entry) => entry.id === recoveryFirst.conversationId)
 assert.equal(recoveredConversation.messages.filter((entry) => entry.text === 'First.').length, 1)

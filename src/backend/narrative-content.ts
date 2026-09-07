@@ -8,6 +8,8 @@ const POCKET_ACTION_BLOCK = /<lumi-phone\b[^>]*>[\s\S]*?<\/lumi-phone\s*>/gi
 const POCKET_ACTION_SINGLE = /<lumi-phone\b[^>]*\/\s*>/gi
 const POCKET_ARTIFACT_BLOCK = /<pocket-artifact\b[^>]*>[\s\S]*?<\/pocket-artifact\s*>/gi
 const POCKET_ARTIFACT_SINGLE = /<pocket-artifact\b[^>]*\/\s*>/gi
+const POCKET_COMMIT_BLOCK = /<pocket-commit\b[^>]*>[\s\S]*?<\/pocket-commit\s*>/gi
+const POCKET_COMMIT_SINGLE = /<pocket-commit\b[^>]*\/\s*>/gi
 const POCKET_INLINE_ANCHOR_BLOCK = /<(span|div)\b[^>]*\bdata-pocket-inline-anchor\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/\1\s*>/gi
 
 function isRecord(value: unknown): value is AnyRecord {
@@ -40,6 +42,8 @@ function stripMachineWrappers(value: string): string {
       .replace(POCKET_ACTION_SINGLE, '')
       .replace(POCKET_ARTIFACT_BLOCK, '')
       .replace(POCKET_ARTIFACT_SINGLE, '')
+      .replace(POCKET_COMMIT_BLOCK, '')
+      .replace(POCKET_COMMIT_SINGLE, '')
       .replace(POCKET_INLINE_ANCHOR_BLOCK, '')
     if (next === text) break
     text = next
