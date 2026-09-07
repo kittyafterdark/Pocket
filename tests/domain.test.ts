@@ -368,6 +368,7 @@ describe('narrative reconciliation hygiene', () => {
     expect(sanitizeNarrativeContent('Before.\n<think>secret chain</think>\nAfter.')).toBe('Before.\n\nAfter.')
     expect(sanitizeNarrativeContent('<lumi-phone action="message">{"text":"hidden"}</lumi-phone>Visible.')).toBe('Visible.')
     expect(sanitizeNarrativeContent('Visible.<pocket-artifact ref="act_1"></pocket-artifact>Still visible.')).toBe('Visible.Still visible.')
+    expect(sanitizeNarrativeContent('Visible.<div class="pocket-inline-anchor" data-pocket-inline-anchor="act_1"></div>Still visible.')).toBe('Visible.Still visible.')
     expect(sanitizeNarrativeContent('I should call Marcus before sunrise.')).toBe('I should call Marcus before sunrise.')
   })
 

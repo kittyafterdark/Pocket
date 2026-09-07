@@ -174,9 +174,9 @@ class PocketController {
   private pendingRoute: PocketRoute | null = null
   private injectedActivities = new Map<string, Element>()
   private pendingActivities = new Map<string, PocketActivity>()
-  private pendingArtifactPlacements = new Map<string, { messageId: string; activityId: string }>()
-  private artifactHosts = new Map<string, Element[]>()
   private knownActivities = new Map<string, PocketActivity>()
+  private inlineArtifactObserver: MutationObserver | null = null
+  private inlineMountFrame = 0
   private viewCleanups: Cleanup[] = []
   private receiptSweepTimer = 0
   private notificationTimer = 0
@@ -268,6 +268,9 @@ class PocketController {
     window.clearTimeout(this.notificationTimer)
     window.clearTimeout(this.syncIndicatorTimer)
     window.clearTimeout(this.settingsSaveTimer)
+    if (this.inlineMountFrame) cancelAnimationFrame(this.inlineMountFrame)
+    this.inlineArtifactObserver?.disconnect()
+    this.inlineArtifactObserver = null
     for (const cleanup of this.cleanups.splice(0)) {
       try { cleanup() } catch { /* best effort */ }
     }
@@ -316,29 +319,19 @@ class PocketController {
         })
       },
     ))
+    // During streaming, hide the display pointer. After commit the backend rewrites
+    // it in-place to a durable exact-position anchor for the specific swipe.
     this.cleanups.push(this.ctx.messages.registerTagInterceptor(
       { tagName: 'pocket-artifact', removeFromMessage: true },
-      (payload) => {
-        if (payload.isStreaming) return
-        const activityId = typeof payload.attrs?.ref === 'string' ? payload.attrs.ref.trim() : ''
-        const messageId = typeof payload.messageId === 'string' ? payload.messageId.trim() : ''
-        if (!activityId || !messageId) return
-        const key = `artifact:${messageId}:${payload.fullMatch}`
-        const existing = this.pendingArtifactPlacements.get(key)
-        if (existing && this.artifactHosts.get(activityId)?.some((host) => host.isConnected)) return
-        this.pendingArtifactPlacements.set(key, { messageId, activityId })
-        this.sweepArtifactPlacements()
-      },
+      () => {},
     ))
+    this.installInlineArtifactObserver()
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
-      this.pendingActivities.clear()
-      this.pendingArtifactPlacements.clear()
-      this.artifactHosts.clear()
-      this.knownActivities.clear()
+      this.clearActivitySurfaces(true)
       this.hideComposerReferencePill()
       this.refresh()
-      window.setTimeout(() => { this.sweepArtifactPlacements(); this.sweepActivityReceipts() }, 0)
+      window.setTimeout(() => this.sweepActivityReceipts(), 0)
     }))
     const returned = (event: Event) => {
       const detail = (event as CustomEvent).detail
@@ -856,6 +849,7 @@ class PocketController {
       if (active.chatId && payload.state.chatId !== active.chatId) return
       if (active.characterId && payload.state.characterId !== active.characterId) return
       const previousUnread = this.unreadCount()
+      if (payload.reason === 'host_swipe') this.clearActivitySurfaces(true)
       this.state = payload.state as PhoneState
       const personaDeviceId = pocketPersonaActorId(this.state)
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state!, conversation))])
@@ -876,7 +870,11 @@ class PocketController {
         if (this.state.setup.initialized) this.setupModalDismiss?.()
         else this.renderFirstChatSetupBody()
       }
-      for (const activity of this.state.activities || []) { this.knownActivities.set(activity.id, activity); this.queueActivityReceipt(activity) }
+      this.knownActivities.clear()
+      for (const activity of this.state.activities || []) this.knownActivities.set(activity.id, activity)
+      this.pruneInactiveActivitySurfaces()
+      this.mountInlineArtifacts()
+      for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
       this.applyAppearance()
       this.syncComposerReferencePill()
       this.updateBadge()
@@ -1375,53 +1373,103 @@ class PocketController {
     this.render(true)
   }
 
-  private sweepArtifactPlacements(): void {
-    for (const [key, placement] of this.pendingArtifactPlacements) {
-      const bubble = this.ctx.dom.findMessageElement(placement.messageId)
-      if (!bubble) continue
-      const host = this.ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', 'beforeend')
-      // Spindle hosts and test adapters may return either the injected node itself or
-      // a wrapper around the supplied markup. Own the returned node explicitly so
-      // renderActivityHost() cannot erase the placement identity with replaceChildren().
-      host.classList.add('pocket-receipt-host')
-      host.setAttribute('data-pocket-artifact-ref', placement.activityId)
-      host.setAttribute('data-pocket-activity-id', placement.activityId)
-      const hosts = this.artifactHosts.get(placement.activityId) || []
-      hosts.push(host)
-      this.artifactHosts.set(placement.activityId, hosts)
-      this.pendingArtifactPlacements.delete(key)
-      const activity = this.knownActivities.get(placement.activityId)
-      if (activity) renderActivityHost(host, activity, (route) => this.openPocket(route))
+  private installInlineArtifactObserver(): void {
+    if (this.inlineArtifactObserver || typeof MutationObserver === 'undefined') return
+    this.inlineArtifactObserver = new MutationObserver(() => this.scheduleInlineArtifactMount())
+    this.inlineArtifactObserver.observe(document.body, { childList: true, subtree: true })
+    this.scheduleInlineArtifactMount()
+  }
+
+  private scheduleInlineArtifactMount(): void {
+    if (this.inlineMountFrame || this.destroyed) return
+    this.inlineMountFrame = requestAnimationFrame(() => {
+      this.inlineMountFrame = 0
+      this.mountInlineArtifacts()
+    })
+  }
+
+  private inlineHosts(activityId: string): HTMLElement[] {
+    return [...document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')]
+      .filter((node) => node.dataset.pocketInlineAnchor === activityId)
+  }
+
+  private mountInlineArtifacts(): void {
+    const active = this.activeContext()
+    for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
+      const activityId = host.dataset.pocketInlineAnchor || ''
+      const activity = this.knownActivities.get(activityId)
+      if (!activity || activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) {
+        if (host.dataset.pocketMounted === 'true') host.replaceChildren()
+        host.hidden = true
+        delete host.dataset.pocketMounted
+        continue
+      }
+      host.hidden = false
+      host.classList.add('pocket-inline-anchor')
+      host.dataset.pocketActivityId = activity.id
+      if (host.dataset.pocketMounted !== 'true') {
+        host.dataset.pocketMounted = 'true'
+        renderActivityHost(host, activity, (route) => this.openPocket(route), { includeArtifact: true, includeReceipt: false })
+      }
+      const fallback = this.injectedActivities.get(activity.id)
+      if (fallback) {
+        this.ctx.dom.uninject(fallback)
+        this.injectedActivities.delete(activity.id)
+      }
+      this.pendingActivities.delete(activity.id)
     }
   }
 
-  private tryRenderTaggedArtifact(activity: PocketActivity): boolean {
-    const hosts = (this.artifactHosts.get(activity.id) || []).filter((host) => host.isConnected)
+  private pruneInactiveActivitySurfaces(): void {
+    for (const [activityId, injected] of this.injectedActivities) {
+      if (this.knownActivities.has(activityId)) continue
+      this.ctx.dom.uninject(injected)
+      this.injectedActivities.delete(activityId)
+      this.pendingActivities.delete(activityId)
+    }
+    for (const activityId of [...this.pendingActivities.keys()]) {
+      if (!this.knownActivities.has(activityId)) this.pendingActivities.delete(activityId)
+    }
+  }
+
+  private clearActivitySurfaces(clearKnown = false): void {
+    for (const injected of this.injectedActivities.values()) this.ctx.dom.uninject(injected)
+    this.injectedActivities.clear()
+    this.pendingActivities.clear()
+    if (clearKnown) this.knownActivities.clear()
+    for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
+      host.replaceChildren()
+      host.hidden = true
+      delete host.dataset.pocketMounted
+      delete host.dataset.pocketActivityId
+    }
+  }
+
+  private tryRenderInlineArtifact(activity: PocketActivity): boolean {
+    this.mountInlineArtifacts()
+    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === 'true' && !host.hidden)
     if (!hosts.length) return false
-    this.artifactHosts.set(activity.id, hosts)
     const fallback = this.injectedActivities.get(activity.id)
     if (fallback) {
       this.ctx.dom.uninject(fallback)
       this.injectedActivities.delete(activity.id)
     }
-    for (const host of hosts) renderActivityHost(host, activity, (route) => this.openPocket(route))
     return true
   }
 
   private queueActivityReceipt(activity: PocketActivity): void {
     const active = this.activeContext()
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) return
-    this.sweepArtifactPlacements()
-    if (this.tryRenderTaggedArtifact(activity)) return
+    if (this.tryRenderInlineArtifact(activity)) return
     if (this.injectedActivities.has(activity.id) || !activity.source?.messageId) return
     this.pendingActivities.set(activity.id, activity)
     this.sweepActivityReceipts()
   }
 
   private sweepActivityReceipts(): void {
-    this.sweepArtifactPlacements()
+    this.mountInlineArtifacts()
     for (const [activityId, activity] of this.pendingActivities) {
-      if (this.tryRenderTaggedArtifact(activity)) {
+      if (this.tryRenderInlineArtifact(activity)) {
         this.pendingActivities.delete(activityId)
         continue
       }

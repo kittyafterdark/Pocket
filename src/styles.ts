@@ -427,6 +427,9 @@ export const PHONE_STYLES = `
   .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
 
   .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
+  .pocket-inline-anchor { display:block; width:100%; margin:12px 0; min-height:0; }
+  .pocket-inline-anchor[hidden] { display:none !important; }
+  .pocket-inline-anchor .pocket-artifact-stack { width:100%; }
   .pocket-artifact-stack { display:grid; gap:5px; }
   .pocket-inline-artifact { appearance:none; width:100%; min-height:62px; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 38%,transparent); border-radius:16px; display:grid; gap:5px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); overflow:hidden; }
   button.pocket-inline-artifact { cursor:pointer; }

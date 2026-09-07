@@ -50,7 +50,7 @@ import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/sch
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
-import { sanitizeNarrativeContent } from './backend/narrative-content.js'
+import { sanitizeNarrativeContent, stripPocketPresentationMarkup } from './backend/narrative-content.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
 import { assertPocketImageResolved, resolvePocketImageSource } from './backend/image-sources.js'
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
@@ -93,7 +93,7 @@ Pocket Action is an execution step, not an output section. Do not reason about w
 
 When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. One Pocket Action invocation persists exactly one action. Multiple Pocket Action calls in the same assistant turn are expected whenever multiple distinct phone actions occur; a successful first call does NOT cover later messages or phone actions. If another text, reply, call, event, or other phone action happens later in the same scene, invoke Pocket Action again for that later action before continuing past it. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
-After each successful Pocket Action, Pocket returns an artifactTag such as <pocket-artifact ref="..."></pocket-artifact>. Place that exact returned artifactTag at the point in your prose where the persisted phone action becomes narratively visible. Do not alter the tag, wrap it in markdown, or rewrite it. The artifact tag is only a display pointer; it does not create or persist the action by itself. If a persisted action should remain off-screen and not be directly visible in the prose, you may omit the artifact tag for that action.
+After each successful message Pocket Action, Pocket returns an artifactTag such as <pocket-artifact ref="..."></pocket-artifact>. When the message itself is visible/readable in the scene, put that exact artifactTag ON ITS OWN LINE at the exact narrative position where the message is seen. The artifact replaces the message UI: do NOT also quote, retype, color, italicize, or otherwise print the message text in prose. Write only the surrounding physical narration, the exact artifactTag, then continue the scene. Do not alter or wrap the tag. If the communication happens off-screen or its content is genuinely not visible to the current POV, you may omit the artifactTag while still persisting the action. The artifact tag is display-only and never creates the action itself.
 
 For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. This requirement still applies when the current POV cannot read the screen: if the scene establishes that one NPC actually sends or receives a new message, call Pocket Action with the canonical sender, recipient, and message text you are establishing in-world even if that text is not quoted in prose. A phone lighting up, a visible notification preview, an NPC reacting to a newly arrived message, or prose saying one actor texted another are all phone actions; do not skip them merely because neither participant is the Pocket Persona. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
@@ -2289,6 +2289,13 @@ function deriveCandidateClockFromAudit(state: PhoneState, baseline: PocketRolepl
   }
 }
 
+function hostMessageCandidateContent(message: any, swipeId: number, max = 120_000): string {
+  const swipes = Array.isArray(message?.swipes) ? message.swipes : []
+  if (typeof swipes[swipeId] === 'string') return text(swipes[swipeId], max)
+  const displayedSwipeId = Number.isInteger(message?.swipe_id) ? Number(message.swipe_id) : swipeId
+  return displayedSwipeId === swipeId ? text(message?.content, max) : ''
+}
+
 function candidateMessagesForOrigin(state: PhoneState, origin: PocketTurnCandidateOrigin): Array<{ conversation: string; speaker: string; recipients: string[]; text: string }> {
   const rows: Array<{ conversation: string; speaker: string; recipients: string[]; text: string }> = []
   for (const conversation of state.conversations) {
@@ -2321,7 +2328,7 @@ async function reconcilePostTurnCandidate(
   if (!spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) return
   const hostMessages: any[] = await spindle.chat.getMessages(chatId).catch(() => [])
   const current = hostMessages.find((message) => text(message?.id, 180) === origin.hostMessageId)
-  const currentNarrative = sanitizeNarrativeContent(current?.content, 6_000)
+  const currentNarrative = sanitizeNarrativeContent(hostMessageCandidateContent(current, origin.swipeId, 12_000), 6_000)
   if (!currentNarrative) return
 
   const state = await loadState(chatId, characterId, userId)
@@ -2333,7 +2340,10 @@ async function reconcilePostTurnCandidate(
     .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))
   const recentNarrative = contextMessages.map((message, index) => {
     const role = message?.role === 'assistant' ? 'ASSISTANT' : 'USER'
-    return `${role} [${index + 1}]: ${sanitizeNarrativeContent(message?.content, 1_500)}`
+    const sourceContent = text(message?.id, 180) === origin.hostMessageId
+      ? hostMessageCandidateContent(message, origin.swipeId, 4_000)
+      : message?.content
+    return `${role} [${index + 1}]: ${sanitizeNarrativeContent(sourceContent, 1_500)}`
   }).join('\n\n').slice(-6_000)
   const baseline = [...(state.hostClockBaselines || [])].reverse().find((entry) => entry.hostMessageId === origin.hostMessageId) || {
     hostMessageId: origin.hostMessageId, ...roleplayClockSnapshot(state), updatedAt: nowIso(),
@@ -4965,7 +4975,7 @@ function registerTool(): void {
   spindle.registerTool({
     name: 'phone_action',
     display_name: 'Pocket Action',
-    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
+    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. A successful message call returns artifactTag: when the message is visible/readable, put that exact tag on its own line at the exact story position and DO NOT also quote or style the message text in prose. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
@@ -4995,7 +5005,10 @@ function ensureInterceptor(): void {
       const characterId = await stateCharacterIdForChat(chatId, context.characterId, context.userId)
       const generationId = text(context.generationId, 180)
       let state = await loadState(chatId, characterId, context.userId)
-      const metadataRelayId = relayIdFromMessages(messages as unknown as Array<Record<string, unknown>>)
+      const cleanMessages = messages.map((message: any) => typeof message?.content === 'string'
+        ? { ...message, content: stripPocketPresentationMarkup(message.content) }
+        : message)
+      const metadataRelayId = relayIdFromMessages(cleanMessages as unknown as Array<Record<string, unknown>>)
       const generationRelay = generationId ? state.relays.find((entry) => entry.status === 'pending' && entry.continuation.generationId === generationId) : undefined
       const active = state.relays.filter((entry) => entry.status === 'pending' && (
         entry.continuation.state === 'launching' || entry.continuation.state === 'accepted' || entry.continuation.state === 'started'
@@ -5007,8 +5020,8 @@ function ensureInterceptor(): void {
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3_600 })
       const handoffMemoryBlock = targetRelayId ? '' : persistentHandoffContext(state, { maxChars: 2_600 })
       const generic = { role: 'system' as const, content: `${PHONE_GUIDANCE}\nCurrent Pocket snapshot:\n${projectPhoneContext(state)}` }
-      const injectedMessages = [...messages, generic]
-      const breakdown = [{ messageIndex: messages.length, name: 'Pocket memory' }]
+      const injectedMessages = [...cleanMessages, generic]
+      const breakdown = [{ messageIndex: cleanMessages.length, name: 'Pocket memory' }]
       if (handoffMemoryBlock) {
         injectedMessages.push({ role: 'system' as const, content: handoffMemoryBlock })
         breakdown.push({ messageIndex: injectedMessages.length - 1, name: 'Pocket handoff memory — established history' })
@@ -5046,7 +5059,7 @@ function ensureInterceptor(): void {
       // continuation, dry run, swipe/regeneration, or non-user continuation cannot
       // consume the one-shot attachment.
       const generationType = text(context.generationType, 40)
-      const lastUserMessage = [...messages].reverse().find((message: any) => message?.role === 'user' && message.__isChatHistory === true && text(message.sourceMessageId, 180)) as any
+      const lastUserMessage = [...cleanMessages].reverse().find((message: any) => message?.role === 'user' && message.__isChatHistory === true && text(message.sourceMessageId, 180)) as any
       const referenceEligible = !targetRelayId && context.isDryRun !== true && generationType === 'normal' && Boolean(lastUserMessage)
       const armedReference = referenceEligible ? latestArmedReference(state) : undefined
       if (armedReference) {
@@ -5087,9 +5100,72 @@ function ensureInterceptor(): void {
 
 spindle.frontendCapabilities.declare('message_tag_interceptor')
 spindle.onFrontendMessage(handleFrontend)
-function pocketArtifactTag(activityId: unknown): string | undefined {
+function pocketArtifactTag(activityId: unknown, action: unknown): string | undefined {
   const value = text(activityId, 180)
-  return value ? `<pocket-artifact ref=\"${value}\"></pocket-artifact>` : undefined
+  return value && text(action, 40) === 'message' ? `<pocket-artifact ref=\"${value}\"></pocket-artifact>` : undefined
+}
+
+const POCKET_ARTIFACT_TAG_PATTERN = /<pocket-artifact\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-artifact\s*>)/gi
+
+function pocketArtifactRef(attrs: string): string {
+  const match = /\bref\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(attrs)
+  return text(match?.[1] || match?.[2], 180)
+}
+
+function escapePocketHtmlAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function pocketInlineAnchor(activityId: string): string {
+  return `<div class="pocket-inline-anchor" data-pocket-inline-anchor="${escapePocketHtmlAttribute(activityId)}"></div>`
+}
+
+function activityBelongsToCandidate(state: PhoneState, activity: PocketActivity, origin: PocketTurnCandidateOrigin): boolean {
+  const route = activity.route.app === 'messages' ? activity.route : undefined
+  if (activity.kind !== 'message' || !route?.messageId) return false
+  const pocketMessage = state.conversations.flatMap((entry) => entry.messages).find((entry) => entry.id === route.messageId)
+  const messageOrigin = pocketMessage?.origin
+  return Boolean(messageOrigin
+    && messageOrigin.chatId === origin.chatId
+    && messageOrigin.hostMessageId === origin.hostMessageId
+    && messageOrigin.swipeId === origin.swipeId)
+}
+
+async function finalizeCandidateArtifactTags(
+  characterId: string,
+  origin: PocketTurnCandidateOrigin,
+  userId?: string,
+): Promise<boolean> {
+  if (!spindle.permissions.has('chat_mutation')) return false
+  const hostMessages: any[] = await spindle.chat.getMessages(origin.chatId)
+  const target = hostMessages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  if (!target) return false
+  const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
+  if (!candidateContent || !candidateContent.includes('<pocket-artifact')) return false
+
+  const state = await loadState(origin.chatId, characterId, userId)
+  const activities = new Map(state.activities.map((activity) => [activity.id, activity] as const))
+  let changed = false
+  const nextContent = candidateContent.replace(POCKET_ARTIFACT_TAG_PATTERN, (_full: string, attrs: string) => {
+    changed = true
+    const ref = pocketArtifactRef(attrs)
+    const activity = ref ? activities.get(ref) : undefined
+    return activity && activityBelongsToCandidate(state, activity, origin) ? pocketInlineAnchor(ref) : ''
+  })
+  if (!changed || nextContent === candidateContent) return false
+  const swipes = Array.isArray(target.swipes) ? [...target.swipes] : []
+  if (typeof swipes[origin.swipeId] === 'string') {
+    swipes[origin.swipeId] = nextContent
+    await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, {
+      swipes,
+      swipe_id: Number.isInteger(target.swipe_id) ? Number(target.swipe_id) : origin.swipeId,
+      skipChunkRebuild: true,
+    })
+  } else {
+    await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, { content: nextContent, skipChunkRebuild: true })
+  }
+  spindle.log.info(`Pocket finalized inline artifacts: message=${origin.hostMessageId} swipe=${origin.swipeId}`)
+  return true
 }
 
 spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
@@ -5108,10 +5184,14 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
       chatId: activeCandidate.chatId, hostMessageId: activeCandidate.hostMessageId, swipeId: activeCandidate.swipeId, generationId: activeCandidate.generationId,
     } : undefined
     const result = await applyAction(actionCandidateOrigin ? { ...merged, __candidateOrigin: actionCandidateOrigin } : merged, userId, 'model')
+    const artifactTag = pocketArtifactTag((result as AnyRecord).activityId, (result as AnyRecord).action)
     return JSON.stringify({
       ...result,
-      artifactTag: pocketArtifactTag((result as AnyRecord).activityId),
-      presentation: 'Pocket persisted exactly this action and handles its UI presentation automatically. Continue the roleplay normally. If another distinct phone action occurs later in this same assistant turn, including communication between two NPCs or on a phone the current POV cannot read, call Pocket Action again for that later action. Do not repeat this action solely for visibility or ask the user to click, continue, or confirm anything. If this action should appear in the visible prose, place the exact returned artifactTag where it becomes narratively visible.',
+      artifactTag,
+      artifactInstruction: artifactTag
+        ? 'INSERT artifactTag EXACTLY ON ITS OWN LINE where this message becomes visible. Do not quote, retype, color, italicize, or otherwise print the message text in prose; the artifact renders it. Then continue the scene.'
+        : undefined,
+      presentation: 'Pocket persisted exactly this action. Continue the roleplay normally. If another distinct phone action occurs later in this turn, call Pocket Action again. For genuinely off-screen or unreadable communication, persist it but omit display markup.',
     })
   } catch (error) {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`
@@ -5394,6 +5474,11 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
         await reconcilePostTurnCandidate(chatId, characterId, origin, generationType, userId, { auditClock: generationType === 'regenerate' })
       } catch (error) {
         spindle.log.warn(`Pocket post-turn candidate audit skipped: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      try {
+        await finalizeCandidateArtifactTags(characterId, origin, userId)
+      } catch (error) {
+        spindle.log.warn(`Pocket inline artifact finalization skipped: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
   } catch (error) {

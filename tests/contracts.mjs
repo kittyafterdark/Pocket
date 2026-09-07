@@ -584,7 +584,18 @@ const sameCandidateDuplicate = JSON.parse(await backendEvents.get('TOOL_INVOCATI
 }, 'user-a'))
 assert.equal(sameCandidateDuplicate.deduplicated, true, 'same candidate must not commit the same phone side effect twice')
 assert.equal(storage.get('phones/chat-a__char-a.json').conversations.flatMap((entry) => entry.messages).filter((entry) => entry.text === 'Candidate zero.').length, 1)
+const getMessagesBeforeInlineFinalize = spindle.chat.getMessages
+const candidateZeroHostContent = `Before the phone.\n\n${swipeZeroResult.artifactTag}\n\nAfter the phone.`
+spindle.chat.getMessages = async () => [{ id: 'host-swipe-message', index_in_chat: 1, role: 'assistant', content: candidateZeroHostContent, swipes: [candidateZeroHostContent], swipe_id: 0 }]
+const updatesBeforeInlineFinalize = updatedChatMessages.length
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-0', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
+const inlineFinalizeUpdate = updatedChatMessages.slice(updatesBeforeInlineFinalize).find((entry) => entry.messageId === 'host-swipe-message' && Array.isArray(entry.patch?.swipes))
+assert.ok(inlineFinalizeUpdate, 'candidate completion must rewrite the returned Pocket artifact tag into the exact target swipe')
+assert.match(inlineFinalizeUpdate.patch.swipes[0], /data-pocket-inline-anchor=/, 'inline finalizer must persist an exact-position anchor in the candidate swipe')
+assert.doesNotMatch(inlineFinalizeUpdate.patch.swipes[0], /<pocket-artifact\b/i, 'raw display pointer must not survive finalization')
+assert.equal(inlineFinalizeUpdate.patch.swipe_id, 0, 'artifact finalization must not navigate away from the currently selected swipe')
+assert.equal(inlineFinalizeUpdate.patch.skipChunkRebuild, true, 'display-anchor finalization must not rebuild narrative chunks')
+spindle.chat.getMessages = getMessagesBeforeInlineFinalize
 await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', characterId: 'char-a', generationId: 'swipe-gen-1', generationType: 'regenerate', targetMessageId: 'host-swipe-message', targetSwipeId: 1 }, 'user-a')
 const swipeOneResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'swipe-tool-1', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
@@ -1171,6 +1182,7 @@ Object.assign(globalThis, {
   HTMLSelectElement: dom.window.HTMLSelectElement,
   Event: dom.window.Event,
   CustomEvent: dom.window.CustomEvent,
+  MutationObserver: dom.window.MutationObserver,
   requestAnimationFrame: (callback) => { callback(0); return 1 },
   cancelAnimationFrame: () => {},
 })
@@ -1533,18 +1545,17 @@ const inlineMessageActivity = {
   source: { messageId: 'host-message-a', conversationId: 'conversation-inline' },
 }
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
-assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'message activity must render a diegetic inline notification artifact')
-assert.match(messageBubble.querySelector('.pocket-inline-artifact')?.textContent || '', /Messages.*Devon.*He is awake and on his way\./s)
-tagReceivers.get('pocket-artifact')({
-  attrs: { ref: 'inline-message-activity' }, content: '', fullMatch: '<pocket-artifact ref="inline-message-activity"></pocket-artifact>', isStreaming: false,
-  chatId: 'chat-a', messageId: 'host-message-a',
-})
+assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 0, 'missing placement tags must degrade to provenance instead of a fake end-of-message phone card')
+assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 1, 'missing placement tag must retain one fallback provenance receipt')
+const exactArtifactHost = document.createElement('div')
+exactArtifactHost.className = 'pocket-inline-anchor'
+exactArtifactHost.dataset.pocketInlineAnchor = 'inline-message-activity'
+messageBubble.prepend(exactArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
-const taggedArtifactHost = messageBubble.querySelector('[data-pocket-artifact-ref="inline-message-activity"]')
-assert.ok(taggedArtifactHost, 'artifact tag must create a host placement for the rendered Pocket artifact')
-assert.equal(taggedArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'tagged artifact host must retain its placement identity after rendering')
-assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'tagged placement must replace the fallback footer artifact rather than duplicate it')
-assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"]').length, 1, 'tagged message activity must own exactly one rendered host')
+assert.equal(exactArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'persisted exact-position anchor must render the diegetic Pocket artifact')
+assert.match(exactArtifactHost.textContent || '', /Messages.*Devon.*He is awake and on his way\./s)
+assert.equal(exactArtifactHost.querySelectorAll('.pocket-receipt').length, 0, 'inline story artifact must not carry the diagnostic receipt underneath it')
+assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"]').length, 1, 'inline placement must replace the fallback receipt rather than duplicate it')
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
 backendReceiver({ type: 'lumiphone:activity', activity })
@@ -1553,6 +1564,10 @@ assert.equal(acceptedActivityHosts.length, 1, 'accepted activity receipt was not
 assert.equal(acceptedActivityHosts[0].querySelectorAll('.pocket-receipt').length, 1, 'accepted activity host must contain exactly one provenance receipt')
 acceptedActivityHosts[0].querySelector('.pocket-receipt').click()
 assert.match(dockRoot.textContent, /Notes|Edit Note/, 'activity route did not open Pocket safely')
+backendReceiver({ ...firstState, reason: 'host_swipe', state: { ...structuredClone(firstState.state), activities: [] } })
+assert.equal(acceptedActivityHosts[0].isConnected, false, 'swipe projection must remove stale injected provenance surfaces from the previous candidate')
+assert.equal(exactArtifactHost.childElementCount, 0, 'swipe projection must clear mounted inline content from the previous candidate')
+assert.equal(exactArtifactHost.hidden, true, 'stale exact-position anchor must be hidden until the selected swipe supplies its activity')
 tagReceivers.get('lumi-phone')({
   messageId: 'message-a', chatId: 'chat-a', attrs: { action: 'notify', app: 'home', title: 'Ping' },
   content: 'Open the phone', fullMatch: '<lumi-phone>Open the phone</lumi-phone>', isStreaming: false,

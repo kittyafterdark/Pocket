@@ -28,13 +28,13 @@ function actorLine(activity: PocketActivity): string {
 function buildActivityStack(
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
-  options: { includeReceipt?: boolean } = {},
+  options: { includeReceipt?: boolean; includeArtifact?: boolean } = {},
 ): HTMLSpanElement {
   const stack = document.createElement('span')
   stack.className = 'pocket-artifact-stack'
 
   const presentation = activity.presentation
-  if (presentation && (presentation.kind === 'sent' || presentation.kind === 'received' || presentation.kind === 'observed')) {
+  if (options.includeArtifact !== false && presentation && (presentation.kind === 'sent' || presentation.kind === 'received' || presentation.kind === 'observed')) {
     const primary = document.createElement(presentation.kind === 'observed' ? 'div' : 'button')
     if (primary instanceof HTMLButtonElement) primary.type = 'button'
     primary.className = 'pocket-inline-artifact'
@@ -112,7 +112,7 @@ export function renderActivityHost(
   host: Element,
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
-  options: { includeReceipt?: boolean } = {},
+  options: { includeReceipt?: boolean; includeArtifact?: boolean } = {},
 ): Element {
   host.replaceChildren(buildActivityStack(activity, openRoute, options))
   return host
@@ -130,5 +130,5 @@ export function activityReceipt(
   const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', 'beforeend')
   wrapper.classList.add('pocket-receipt-host')
   wrapper.setAttribute('data-pocket-activity-id', activity.id)
-  return renderActivityHost(wrapper, activity, openRoute)
+  return renderActivityHost(wrapper, activity, openRoute, { includeArtifact: false, includeReceipt: true })
 }

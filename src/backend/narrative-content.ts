@@ -8,6 +8,7 @@ const POCKET_ACTION_BLOCK = /<lumi-phone\b[^>]*>[\s\S]*?<\/lumi-phone\s*>/gi
 const POCKET_ACTION_SINGLE = /<lumi-phone\b[^>]*\/\s*>/gi
 const POCKET_ARTIFACT_BLOCK = /<pocket-artifact\b[^>]*>[\s\S]*?<\/pocket-artifact\s*>/gi
 const POCKET_ARTIFACT_SINGLE = /<pocket-artifact\b[^>]*\/\s*>/gi
+const POCKET_INLINE_ANCHOR_BLOCK = /<(span|div)\b[^>]*\bdata-pocket-inline-anchor\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/\1\s*>/gi
 
 function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -39,6 +40,7 @@ function stripMachineWrappers(value: string): string {
       .replace(POCKET_ACTION_SINGLE, '')
       .replace(POCKET_ARTIFACT_BLOCK, '')
       .replace(POCKET_ARTIFACT_SINGLE, '')
+      .replace(POCKET_INLINE_ANCHOR_BLOCK, '')
     if (next === text) break
     text = next
   }
@@ -58,4 +60,13 @@ function stripMachineWrappers(value: string): string {
  */
 export function sanitizeNarrativeContent(value: unknown, max = 4_000): string {
   return stripMachineWrappers(visibleStructuredText(value)).slice(0, Math.max(0, max))
+}
+
+/** Strip Pocket-only display markers from persisted host prose without otherwise
+ * classifying or truncating the surrounding narrative. */
+export function stripPocketPresentationMarkup(value: string): string {
+  return value
+    .replace(POCKET_ARTIFACT_BLOCK, '')
+    .replace(POCKET_ARTIFACT_SINGLE, '')
+    .replace(POCKET_INLINE_ANCHOR_BLOCK, '')
 }
