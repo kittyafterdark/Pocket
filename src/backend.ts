@@ -99,7 +99,7 @@ For a new direct message, use action="message" with payload containing channel="
 
 ONLY when no Pocket Action function/tool is present in the model's available tools, emit hidden machine data using one <lumi-phone> tag per distinct Pocket action (maximum 3):
 <lumi-phone action="message">{"channel":"dm","speaker":"Name","target":"Name","text":"message text"}</lumi-phone>
-The tag is machine data and will be removed from the rendered roleplay. Do not explain it, quote it, wrap it in markdown, or imitate it elsewhere in the response. Other supported actions are conversation, contact, scene, note, event, weather, tracker, camera, notify, and open.
+The tag is machine data. Pocket compiles valid fallback tags through the same canonical action pipeline and rewrites fallback message tags into durable inline anchors automatically; the model does not need an activity id. Do not explain the tag, quote it, wrap it in markdown, or imitate it elsewhere in the response. Other supported actions are conversation, contact, scene, note, event, weather, tracker, camera, notify, and open.
 
 Pocket messages, contacts, notes, calendar events, weather, trackers, and scene state persist separately for this chat and character.`
 
@@ -3777,7 +3777,7 @@ function actionSemanticKey(action: string, input: AnyRecord, payload: AnyRecord)
 
 function reserveCommand(state: PhoneState, input: AnyRecord, action: string, payload: AnyRecord, source: 'model' | 'user' | 'tag'): { accepted: boolean; command: ProcessedPocketCommand } {
   const commandId = text(input.idempotencyKey ?? input.commandId ?? input.command_id ?? input.requestId, 240)
-  const origin = source === 'model' ? candidateOrigin(input.__candidateOrigin) : undefined
+  const origin = source !== 'user' ? candidateOrigin(input.__candidateOrigin) : undefined
   const baseSemanticKey = actionSemanticKey(action, input, payload)
   const semanticKey = origin
     ? `candidate:${origin.chatId}:${origin.hostMessageId}:${origin.swipeId}:${baseSemanticKey}`.slice(0, 4_000)
@@ -4017,7 +4017,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         if (notificationDestinationVisible(state, routeBase, userId, ownerActorId) && !readByActorIds.includes(ownerActorId)) readByActorIds.push(ownerActorId)
       }
       const personaRead = readByActorIds.includes(personaActorId)
-      const actionOrigin = source === 'model' ? candidateOrigin(input.__candidateOrigin, context.chatId) : undefined
+      const actionOrigin = source !== 'user' ? candidateOrigin(input.__candidateOrigin, context.chatId) : undefined
       const message: PhoneMessage = {
         id: id('msg'), sender, senderActorId, recipientActorIds, readByActorIds,
         senderActorKind: sender === 'contact' ? (senderActor!.kind === 'persona' ? undefined : senderActor!.kind) : undefined,
@@ -4662,13 +4662,24 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:model_action': {
         const attrs = isRecord(payload.attrs) ? payload.attrs : {}
+        const hostMessageId = text(payload.messageId, 180)
+        const fullMatch = text(payload.fullMatch, 40_000)
+        const tagOrigin = hostMessageId ? await resolveLegacyTagCandidateOrigin(context.chatId, hostMessageId, userId) : undefined
         const tagPayload = {
           ...parseTagContent(text(payload.content, 40_000)), ...attrs,
           action: text(attrs.action, 40), chat_id: context.chatId, character_id: context.characterId,
-          messageId: text(payload.messageId, 180),
-          idempotencyKey: text(payload.idempotencyKey, 240) || `tag:${text(payload.messageId, 180)}:${text(payload.fullMatch, 1_000)}`,
+          messageId: hostMessageId,
+          idempotencyKey: legacyTagIdempotencyKey(hostMessageId, fullMatch),
+          ...(tagOrigin ? { __candidateOrigin: tagOrigin, __candidateCommitted: true } : {}),
         }
-        await applyAction(tagPayload, userId, 'tag')
+        const result = await applyAction(tagPayload, userId, 'tag')
+        if (tagOrigin && fullMatch) {
+          try {
+            await rewriteCompiledLegacyTag(tagOrigin, fullMatch, text(result.activityId, 180), text(result.action, 40))
+          } catch (error) {
+            spindle.log.warn(`Pocket fallback tag rewrite skipped: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
         break
       }
       case 'lumiphone:composer_state': {
@@ -5243,6 +5254,121 @@ function pocketInlineAnchor(activityId: string): string {
   return `<div class="pocket-inline-anchor" data-pocket-inline-anchor="${escapePocketHtmlAttribute(activityId)}"></div>`
 }
 
+const LEGACY_LUMI_PHONE_TAG_PATTERN = /<lumi-phone\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/lumi-phone\s*>)/gi
+
+function legacyTagAttributes(raw: string): AnyRecord {
+  const attrs: AnyRecord = {}
+  const pattern = /([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+))/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(raw))) {
+    const key = text(match[1], 120)
+    if (key) attrs[key] = match[2] ?? match[3] ?? match[4] ?? ''
+    if (!match[0]) pattern.lastIndex += 1
+  }
+  return attrs
+}
+
+function legacyTagIdempotencyKey(hostMessageId: string, fullMatch: string): string {
+  return `tag:${hostMessageId || 'unknown'}:${compactStableHash(fullMatch)}`.slice(0, 240)
+}
+
+async function resolveLegacyTagCandidateOrigin(chatId: string, hostMessageId: string, userId?: string): Promise<PocketTurnCandidateOrigin | undefined> {
+  if (!chatId || !hostMessageId) return undefined
+  const active = [...activePocketCandidates.values()].find((entry) => entry.userKey === viewKey(userId) && entry.chatId === chatId && entry.hostMessageId === hostMessageId)
+  if (active) return { chatId, hostMessageId, swipeId: active.swipeId, generationId: active.generationId }
+  if (!spindle.permissions.has('chats')) return undefined
+  const messages: any[] = await spindle.chat.getMessages(chatId).catch(() => [])
+  const target = messages.find((message: any) => text(message?.id, 180) === hostMessageId)
+  if (!target) return undefined
+  const rawSwipeId = Number(target?.swipe_id ?? target?.swipeId ?? 0)
+  const swipeId = Number.isInteger(rawSwipeId) && rawSwipeId >= 0 ? rawSwipeId : 0
+  return { chatId, hostMessageId, swipeId }
+}
+
+async function rewriteCompiledLegacyTag(
+  origin: PocketTurnCandidateOrigin,
+  fullMatch: string,
+  activityId: string,
+  action: string,
+): Promise<boolean> {
+  if (!spindle.permissions.has('chat_mutation') || !fullMatch) return false
+  const messages: any[] = await spindle.chat.getMessages(origin.chatId)
+  const target = messages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  if (!target) return false
+  const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
+  const at = candidateContent.indexOf(fullMatch)
+  if (at < 0) return false
+  const replacement = action === 'message' && activityId ? pocketInlineAnchor(activityId) : ''
+  const nextContent = `${candidateContent.slice(0, at)}${replacement}${candidateContent.slice(at + fullMatch.length)}`
+  await updateCandidateHostContent(origin, target, nextContent)
+  return true
+}
+
+async function compileLegacyPhoneTags(
+  characterId: string,
+  origin: PocketTurnCandidateOrigin,
+  userId?: string,
+): Promise<{ compiled: number; messageAnchors: number }> {
+  if (!spindle.permissions.has('chats')) return { compiled: 0, messageAnchors: 0 }
+  const messages: any[] = await spindle.chat.getMessages(origin.chatId).catch(() => [])
+  const target = messages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  if (!target) return { compiled: 0, messageAnchors: 0 }
+  const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
+  if (!candidateContent.includes('<lumi-phone')) return { compiled: 0, messageAnchors: 0 }
+
+  LEGACY_LUMI_PHONE_TAG_PATTERN.lastIndex = 0
+  const matches: Array<{ full: string; attrsRaw: string; body: string; index: number }> = []
+  let match: RegExpExecArray | null
+  while ((match = LEGACY_LUMI_PHONE_TAG_PATTERN.exec(candidateContent))) {
+    matches.push({ full: match[0], attrsRaw: match[1] || '', body: match[2] || '', index: match.index })
+    if (!match[0]) LEGACY_LUMI_PHONE_TAG_PATTERN.lastIndex += 1
+  }
+  if (!matches.length) return { compiled: 0, messageAnchors: 0 }
+
+  let cursor = 0
+  let nextContent = ''
+  let compiled = 0
+  let messageAnchors = 0
+  for (let itemIndex = 0; itemIndex < matches.length; itemIndex += 1) {
+    const item = matches[itemIndex]
+    nextContent += candidateContent.slice(cursor, item.index)
+    cursor = item.index + item.full.length
+    const attrs = legacyTagAttributes(item.attrsRaw)
+    const action = text(attrs.action, 40).toLowerCase()
+    let replacement = ''
+    // Keep the documented fallback bounded. Extra machine tags are stripped
+    // from presentation but cannot create additional side effects.
+    if (action && itemIndex < 3) {
+      try {
+        const tagPayload = {
+          ...parseTagContent(item.body), ...attrs,
+          action, chat_id: origin.chatId, character_id: characterId,
+          messageId: origin.hostMessageId,
+          idempotencyKey: legacyTagIdempotencyKey(origin.hostMessageId, item.full),
+          __candidateOrigin: origin,
+          __candidateCommitted: true,
+        }
+        const result = await applyAction(tagPayload, userId, 'tag')
+        const activityId = text(result.activityId, 180)
+        if (action === 'message' && activityId) {
+          replacement = pocketInlineAnchor(activityId)
+          messageAnchors += 1
+        }
+        compiled += 1
+      } catch (error) {
+        spindle.log.warn(`Pocket could not compile fallback <lumi-phone> action=${action}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    nextContent += replacement
+  }
+  nextContent += candidateContent.slice(cursor)
+  if (spindle.permissions.has('chat_mutation') && nextContent !== candidateContent) {
+    await updateCandidateHostContent(origin, target, nextContent)
+  }
+  if (compiled) spindle.log.info(`Pocket compiled fallback tags: message=${origin.hostMessageId} swipe=${origin.swipeId} actions=${compiled} inline=${messageAnchors}`)
+  return { compiled, messageAnchors }
+}
+
 function activityBelongsToCandidate(state: PhoneState, activity: PocketActivity, origin: PocketTurnCandidateOrigin): boolean {
   const route = activity.route.app === 'messages' ? activity.route : undefined
   if (activity.kind !== 'message' || !route?.messageId) return false
@@ -5761,6 +5887,20 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
           : 'scene_stale'
       await sendState(state, userId, reason)
     })
+
+    const completedOrigin: PocketTurnCandidateOrigin | undefined = messageId && !payload?.error
+      ? endedCandidate
+        ? { chatId: endedCandidate.chatId, hostMessageId: endedCandidate.hostMessageId, swipeId: endedCandidate.swipeId, generationId: endedCandidate.generationId }
+        : await resolveLegacyTagCandidateOrigin(chatId, messageId, userId)
+      : undefined
+    if (completedOrigin && messageId && !payload?.error) {
+      try {
+        await compileLegacyPhoneTags(characterId, completedOrigin, userId)
+      } catch (error) {
+        spindle.log.warn(`Pocket fallback tag compiler skipped: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
     if (generationType === 'normal' && messageId && !payload?.error) {
       send({ type: 'lumiphone:reconciliation_status', status: 'working', generationId, messageId }, userId)
       try {

@@ -2984,6 +2984,12 @@ function activityReceipt(ctx, activity, openRoute) {
 // src/frontend/controller.ts
 var PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>';
 var EMPTY_RESOLVED_IMAGE = { url: "", status: "empty", sourceKind: "none", sourceLabel: "Theme gradient" };
+function pocketDeviceKey(chatId, characterId, deviceOwnerActorId) {
+  return [chatId || "_none", characterId || "_none", deviceOwnerActorId || "_unassigned"].map((value) => encodeURIComponent(value)).join("::");
+}
+function pocketSurfaceId() {
+  return requestId("pocket_surface").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
 var ICONS2 = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
   messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
@@ -3027,6 +3033,7 @@ function iconButton(name, label) {
 
 class PocketController {
   ctx;
+  surfaceId = pocketSurfaceId();
   cleanups = [];
   drawer;
   dockPanel = null;
@@ -3171,6 +3178,7 @@ class PocketController {
     this.customStyle = document.createElement("style");
     this.customStyle.dataset.pocketCustomCss = "true";
     this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle);
+    this.syncSurfaceIdentity();
     this.launcher.addEventListener("pointerdown", (event) => {
       this.launcherPointer = { x: event.clientX, y: event.clientY };
     });
@@ -3400,6 +3408,8 @@ class PocketController {
           continue;
         const row2 = button("", "lumiphone-device-row");
         row2.dataset.selected = String(actorId === selected);
+        row2.dataset.pocketDeviceOwner = actorId;
+        row2.dataset.pocketDeviceKey = pocketDeviceKey(this.state.chatId, this.state.characterId, actorId);
         const identity = el("span", "lumiphone-device-identity");
         identity.append(el("strong", "", actor.name), el("span", "", actorId === personaId ? "Roleplay Persona" : actor.role || "Pocket actor"));
         const meta = el("span", "lumiphone-device-meta");
@@ -3413,6 +3423,7 @@ class PocketController {
         row2.append(identity, meta);
         row2.addEventListener("click", () => {
           this.deviceOwnerActorId = actorId;
+          this.syncSurfaceIdentity();
           this.selectedConversationId = "";
           this.selectedMessageId = "";
           this.currentApp = "home";
@@ -3643,6 +3654,36 @@ class PocketController {
       return this.deviceOwnerActorId;
     return this.deviceOwnerActorId || pocketPersonaActorId(this.state);
   }
+  deviceIdentity() {
+    const context = this.activeContext();
+    const chatId = String(this.state?.chatId || context.chatId || "_lobby");
+    const characterId = String(this.state?.characterId || context.characterId || "_none");
+    const deviceOwnerActorId = this.currentDeviceOwnerActorId() || "_unassigned";
+    const personaActorId = this.state ? pocketPersonaActorId(this.state) : "";
+    const role = personaActorId && deviceOwnerActorId === personaActorId ? "persona" : "actor";
+    return {
+      key: pocketDeviceKey(chatId, characterId, deviceOwnerActorId),
+      chatId,
+      characterId,
+      deviceOwnerActorId,
+      role,
+      inspection: role !== "persona",
+      surfaceId: this.surfaceId
+    };
+  }
+  syncSurfaceIdentity() {
+    const identity = this.deviceIdentity();
+    for (const node of [this.shell, this.handsetHost]) {
+      node.dataset.pocketSurface = identity.surfaceId;
+      node.dataset.pocketDeviceKey = identity.key;
+      node.dataset.pocketChatId = identity.chatId;
+      node.dataset.pocketCharacterId = identity.characterId;
+      node.dataset.pocketDeviceOwner = identity.deviceOwnerActorId;
+      node.dataset.pocketDeviceRole = identity.role;
+      node.dataset.pocketInspection = String(identity.inspection);
+    }
+    return identity;
+  }
   send(type, payload = {}) {
     const context = this.activeContext();
     const id = String(payload.requestId || requestId());
@@ -3827,6 +3868,7 @@ class PocketController {
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state, conversation))]);
       if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId))
         this.deviceOwnerActorId = personaDeviceId;
+      this.syncSurfaceIdentity();
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries : [];
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId);
@@ -4298,7 +4340,8 @@ class PocketController {
   }
   applyAppearance() {
     const settings = this.settingsDraft || this.preferences;
-    const persona2 = this.activePersona ? settings.personaAppearance[this.activePersona.id] : null;
+    const identity = this.syncSurfaceIdentity();
+    const persona2 = identity.role === "persona" && this.activePersona ? settings.personaAppearance[this.activePersona.id] : null;
     const appearance2 = persona2?.enabled ? persona2 : settings;
     this.shell.dataset.theme = appearance2.theme;
     this.shell.style.setProperty("--lp-accent", appearance2.colors.accent);
@@ -4324,7 +4367,8 @@ class PocketController {
     this.shell.dataset.reducedMotion = String(settings.reducedMotion);
     const customCss = [settings.customCss, persona2?.enabled ? persona2.customCss : ""].filter(Boolean).join(`
 `);
-    this.customStyle.textContent = customCss ? `@scope (.lumiphone-shell) { ${customCss} }` : "";
+    const surfaceSelector = `[data-pocket-surface="${identity.surfaceId}"]`;
+    this.customStyle.textContent = customCss ? `@scope (${surfaceSelector}) { ${customCss} }` : "";
   }
   open() {
     if (!this.widget) {

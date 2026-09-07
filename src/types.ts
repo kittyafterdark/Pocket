@@ -89,6 +89,19 @@ export interface PocketResolvedWallpapers {
   personaChat: PocketResolvedImage
 }
 
+/** Frontend identity for one logical Pocket device on one mounted UI surface. */
+export interface PocketDeviceIdentity {
+  /** Stable semantic key for this chat + character + device owner. */
+  key: string
+  chatId: string
+  characterId: string
+  deviceOwnerActorId: string
+  role: 'persona' | 'actor'
+  inspection: boolean
+  /** Ephemeral per-controller mount id used to isolate dynamic CSS and DOM state. */
+  surfaceId: string
+}
+
 export interface PersonaAppearanceOverride {
   enabled: boolean
   theme: PhoneTheme

@@ -19,6 +19,7 @@ import type {
   PocketRoute,
   PocketResolvedImage,
   PocketResolvedWallpapers,
+  PocketDeviceIdentity,
   PhoneState,
   PhoneTracker,
   SwarmVisualProfile,
@@ -51,6 +52,14 @@ type BackendPayload = Record<string, any>
 const PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>'
 
 const EMPTY_RESOLVED_IMAGE: PocketResolvedImage = { url: '', status: 'empty', sourceKind: 'none', sourceLabel: 'Theme gradient' }
+
+function pocketDeviceKey(chatId: string, characterId: string, deviceOwnerActorId: string): string {
+  return [chatId || '_none', characterId || '_none', deviceOwnerActorId || '_unassigned'].map((value) => encodeURIComponent(value)).join('::')
+}
+
+function pocketSurfaceId(): string {
+  return requestId('pocket_surface').replace(/[^a-zA-Z0-9_-]/g, '_')
+}
 
 const ICONS: Record<string, string> = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
@@ -98,6 +107,7 @@ function iconButton(name: string, label: string): HTMLButtonElement {
 
 class PocketController {
   private ctx: SpindleFrontendContext
+  private readonly surfaceId = pocketSurfaceId()
   private cleanups: Cleanup[] = []
   private drawer: SpindleDrawerTabHandle
   private dockPanel: SpindleDockPanelHandle | null = null
@@ -239,6 +249,7 @@ class PocketController {
     this.customStyle = document.createElement('style')
     this.customStyle.dataset.pocketCustomCss = 'true'
     this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle)
+    this.syncSurfaceIdentity()
     this.launcher.addEventListener('pointerdown', (event) => { this.launcherPointer = { x: event.clientX, y: event.clientY } })
     this.launcher.addEventListener('pointermove', (event) => {
       if (!this.launcherPointer) return
@@ -440,6 +451,8 @@ class PocketController {
         if (!actor) continue
         const row = button('', 'lumiphone-device-row')
         row.dataset.selected = String(actorId === selected)
+        row.dataset.pocketDeviceOwner = actorId
+        row.dataset.pocketDeviceKey = pocketDeviceKey(this.state.chatId, this.state.characterId, actorId)
         const identity = el('span', 'lumiphone-device-identity')
         identity.append(el('strong', '', actor.name), el('span', '', actorId === personaId ? 'Roleplay Persona' : actor.role || 'Pocket actor'))
         const meta = el('span', 'lumiphone-device-meta')
@@ -451,6 +464,7 @@ class PocketController {
         row.append(identity, meta)
         row.addEventListener('click', () => {
           this.deviceOwnerActorId = actorId
+          this.syncSurfaceIdentity()
           this.selectedConversationId = ''
           this.selectedMessageId = ''
           this.currentApp = 'home'
@@ -645,6 +659,35 @@ class PocketController {
   private currentDeviceOwnerActorId(): string {
     if (!this.state) return this.deviceOwnerActorId
     return this.deviceOwnerActorId || pocketPersonaActorId(this.state)
+  }
+
+  private deviceIdentity(): PocketDeviceIdentity {
+    const context = this.activeContext()
+    const chatId = String(this.state?.chatId || context.chatId || '_lobby')
+    const characterId = String(this.state?.characterId || context.characterId || '_none')
+    const deviceOwnerActorId = this.currentDeviceOwnerActorId() || '_unassigned'
+    const personaActorId = this.state ? pocketPersonaActorId(this.state) : ''
+    const role: PocketDeviceIdentity['role'] = personaActorId && deviceOwnerActorId === personaActorId ? 'persona' : 'actor'
+    return {
+      key: pocketDeviceKey(chatId, characterId, deviceOwnerActorId),
+      chatId, characterId, deviceOwnerActorId, role,
+      inspection: role !== 'persona',
+      surfaceId: this.surfaceId,
+    }
+  }
+
+  private syncSurfaceIdentity(): PocketDeviceIdentity {
+    const identity = this.deviceIdentity()
+    for (const node of [this.shell, this.handsetHost]) {
+      node.dataset.pocketSurface = identity.surfaceId
+      node.dataset.pocketDeviceKey = identity.key
+      node.dataset.pocketChatId = identity.chatId
+      node.dataset.pocketCharacterId = identity.characterId
+      node.dataset.pocketDeviceOwner = identity.deviceOwnerActorId
+      node.dataset.pocketDeviceRole = identity.role
+      node.dataset.pocketInspection = String(identity.inspection)
+    }
+    return identity
   }
 
   private send(type: string, payload: Record<string, unknown> = {}): string {
@@ -860,6 +903,7 @@ class PocketController {
       const personaDeviceId = pocketPersonaActorId(this.state)
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state!, conversation))])
       if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId)) this.deviceOwnerActorId = personaDeviceId
+      this.syncSurfaceIdentity()
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries as PocketNpcBankEntry[] : []
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
@@ -1269,7 +1313,13 @@ class PocketController {
 
   private applyAppearance(): void {
     const settings = this.settingsDraft || this.preferences
-    const persona = this.activePersona ? settings.personaAppearance[this.activePersona.id] : null
+    const identity = this.syncSurfaceIdentity()
+    // Persona-specific appearance belongs only to the Persona-owned phone.
+    // Inspection surfaces deliberately fall back to the device-wide theme so
+    // the active RP Persona cannot visually bleed onto another actor's phone.
+    const persona = identity.role === 'persona' && this.activePersona
+      ? settings.personaAppearance[this.activePersona.id]
+      : null
     const appearance = persona?.enabled ? persona : settings
     this.shell.dataset.theme = appearance.theme
     this.shell.style.setProperty('--lp-accent', appearance.colors.accent)
@@ -1296,7 +1346,8 @@ class PocketController {
     this.shell.style.setProperty('--lp-animation-ms', `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`)
     this.shell.dataset.reducedMotion = String(settings.reducedMotion)
     const customCss = [settings.customCss, persona?.enabled ? persona.customCss : ''].filter(Boolean).join('\n')
-    this.customStyle.textContent = customCss ? `@scope (.lumiphone-shell) { ${customCss} }` : ''
+    const surfaceSelector = `[data-pocket-surface=\"${identity.surfaceId}\"]`
+    this.customStyle.textContent = customCss ? `@scope (${surfaceSelector}) { ${customCss} }` : ''
   }
 
   private open(): void {

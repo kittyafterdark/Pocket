@@ -19,10 +19,10 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'arrival_handoff', 'commitArrivalHandoff', 'lumiphone:continue_arrival', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
+for (const token of ['phone_action', 'lumi-phone', 'compileLegacyPhoneTags', 'LEGACY_LUMI_PHONE_TAG_PATTERN', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'arrival_handoff', 'commitArrivalHandoff', 'lumiphone:continue_arrival', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
-for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
+for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status', 'pocketDeviceKey', 'pocketSurfaceId', 'pocketDeviceRole', 'pocketInspection']) {
   assert.ok(`${frontendSource}\n${controllerSource}\n${surfaceSource}`.includes(token), `frontend contract missing ${token}`)
 }
 assert.ok(controllerSource.includes('oldThreadNearBottom') && controllerSource.includes('thread.scrollHeight'), 'thread rerenders must preserve/follow the GC scroll anchor intentionally')
@@ -801,6 +801,36 @@ await frontendHandler({
 const tagActivity = storage.get('phones/chat-a__char-a.json').activities.find((activity) => activity.title === 'Journal updated' && activity.source?.messageId === 'host-message-a')
 assert.ok(tagActivity, 'accepted tag did not create a source-scoped activity')
 
+// No-tool models may emit the documented <lumi-phone> fallback. The backend
+// compiler must persist it with candidate provenance and replace the raw tag
+// with the same durable inline anchor used by tool-calling models.
+const legacyFallbackText = 'Confirmed for 9:00 tomorrow. Call me before you leave.'
+const legacyFallbackTag = `<lumi-phone action="message">{"channel":"dm","speaker":"Hoshino","target":"Shoto Todoroki","text":"${legacyFallbackText}"}</lumi-phone>`
+const legacyFallbackContent = `The phone lit up.
+
+${legacyFallbackTag}
+
+He read it twice.`
+const messagesBeforeLegacyFallback = spindle.chat.getMessages
+spindle.chat.getMessages = async () => [{ id: 'legacy-fallback-host', role: 'assistant', content: legacyFallbackContent, swipes: [legacyFallbackContent], swipe_id: 0 }]
+const legacyUpdatesBefore = updatedChatMessages.length
+await backendEvents.get('GENERATION_ENDED')({
+  chatId: 'chat-legacy-fallback', generationId: 'legacy-fallback-gen', generationType: 'regenerate', messageId: 'legacy-fallback-host',
+}, 'user-a')
+const legacyFallbackState = storage.get('phones/chat-legacy-fallback__char-a.json')
+const legacyFallbackMessage = legacyFallbackState.conversations.flatMap((conversation) => conversation.messages).find((message) => message.text === legacyFallbackText)
+assert.ok(legacyFallbackMessage, 'backend fallback compiler did not persist the legacy message action')
+assert.equal(legacyFallbackMessage.candidateCommitState, 'committed', 'fallback message must commit immediately because the final candidate itself carried the action tag')
+assert.equal(legacyFallbackMessage.origin.hostMessageId, 'legacy-fallback-host')
+assert.equal(legacyFallbackMessage.origin.swipeId, 0)
+const legacyFallbackActivity = legacyFallbackState.activities.find((activity) => activity.route?.app === 'messages' && activity.route.messageId === legacyFallbackMessage.id)
+assert.ok(legacyFallbackActivity, 'fallback message did not create its canonical Pocket activity')
+const legacyFallbackUpdate = updatedChatMessages.slice(legacyUpdatesBefore).find((entry) => entry.messageId === 'legacy-fallback-host')
+assert.ok(legacyFallbackUpdate, 'fallback compiler did not rewrite the committed host candidate')
+assert.match(JSON.stringify(legacyFallbackUpdate.patch), new RegExp(`data-pocket-inline-anchor=.{0,80}${legacyFallbackActivity.id}`), 'fallback message tag was not compiled into the durable inline anchor')
+assert.doesNotMatch(JSON.stringify(legacyFallbackUpdate.patch), /<lumi-phone\b/i, 'compiled host candidate must not retain raw fallback action markup')
+spindle.chat.getMessages = messagesBeforeLegacyFallback
+
 await frontendHandler({ type: 'lumiphone:list_contact_sources', requestId: 'sources', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
 const sourceResult = frontendMessages.find((message) => message.type === 'lumiphone:contact_sources' && message.requestId === 'sources')
 assert.ok(sourceResult.sources.some((source) => source.kind === 'character' && source.sourceId === 'char-b'))
@@ -1347,6 +1377,61 @@ launcher.click()
 assert.equal(widgetRoot.querySelector('.lumiphone-shell'), null, 'interactive phone leaked into draggable launcher float')
 assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'), 'phone did not open in the interactive desktop dock')
 assert.equal(dockRequestCount, 1)
+
+// Every handset has a stable logical device key and an isolated per-mount surface id.
+// Persona appearance is legal only on the Persona-owned phone; inspecting an NPC
+// must fall back to device-wide styling without changing the mounted surface id.
+const identityUiState = structuredClone(firstState)
+identityUiState.preferences = structuredClone(firstState.preferences)
+identityUiState.preferences.colors.accent = '#224466'
+identityUiState.preferences.customCss = '.lp-title { letter-spacing: 7px; } /* device-css-marker */'
+identityUiState.preferences.personaAppearance ||= {}
+identityUiState.preferences.personaAppearance['persona-test'] = {
+  enabled: true,
+  theme: identityUiState.preferences.theme,
+  colors: { ...structuredClone(identityUiState.preferences.colors), accent: '#ff00aa' },
+  customCss: '.lp-title { font-weight: 900; } /* persona-css-marker */',
+  homeWallpaper: { source: { kind: 'url', url: 'https://example.test/persona-only.png' }, fit: 'cover', focalX: .5, focalY: .5, scrim: .22 },
+  chatWallpaper: { source: null, fit: 'cover', focalX: .5, focalY: .5, scrim: .22 },
+}
+identityUiState.resolvedWallpapers = {
+  ...structuredClone(firstState.resolvedWallpapers),
+  personaHome: { url: '/persona-only.png', status: 'ready', sourceKind: 'url', sourceLabel: 'Persona-only test' },
+}
+backendReceiver(identityUiState)
+const identityShell = dockRoot.querySelector('.lumiphone-shell')
+const identityStyle = identityShell.querySelector('style[data-pocket-custom-css="true"]')
+const personaSurfaceId = identityShell.dataset.pocketSurface
+const personaDeviceKey = identityShell.dataset.pocketDeviceKey
+assert.ok(personaSurfaceId, 'mounted handset must expose an isolated Pocket surface id')
+assert.ok(personaDeviceKey, 'mounted handset must expose its logical Pocket device key')
+assert.equal(identityShell.dataset.pocketDeviceRole, 'persona')
+assert.equal(identityShell.dataset.pocketInspection, 'false')
+assert.equal(identityShell.style.getPropertyValue('--lp-accent'), '#ff00aa', 'Persona override must apply to the Persona-owned phone')
+assert.match(identityShell.style.getPropertyValue('--lp-wallpaper'), /persona-only\.png/, 'Persona-only wallpaper must apply to the Persona-owned phone')
+assert.match(identityStyle.textContent, new RegExp(`data-pocket-surface=[\\"']?${personaSurfaceId}`), 'dynamic custom CSS must be scoped to this mounted Pocket surface')
+assert.match(identityStyle.textContent, /device-css-marker/)
+assert.match(identityStyle.textContent, /persona-css-marker/)
+assert.doesNotMatch(identityStyle.textContent, /@scope \(\.lumiphone-shell\)/, 'dynamic CSS must never scope against every Pocket shell in the document')
+
+const npcDeviceRow = [...drawerRoot.querySelectorAll('.lumiphone-device-row')].find((node) => node.textContent.includes('Alice') && !node.textContent.includes('Roleplay Persona'))
+assert.ok(npcDeviceRow, 'device selector must expose a non-Persona phone for isolation QA')
+assert.ok(npcDeviceRow.dataset.pocketDeviceKey, 'device selector rows must expose the logical phone id before opening them')
+npcDeviceRow.click()
+assert.equal(identityShell.dataset.pocketSurface, personaSurfaceId, 'inspecting another logical phone must not replace the mounted surface identity')
+assert.notEqual(identityShell.dataset.pocketDeviceKey, personaDeviceKey, 'logical device key must change with the inspected phone owner')
+assert.equal(identityShell.dataset.pocketDeviceRole, 'actor')
+assert.equal(identityShell.dataset.pocketInspection, 'true')
+assert.equal(identityShell.style.getPropertyValue('--lp-accent'), '#224466', 'NPC inspection must not inherit the active Persona accent')
+assert.doesNotMatch(identityShell.style.getPropertyValue('--lp-wallpaper'), /persona-only\.png/, 'NPC inspection must not inherit the active Persona wallpaper')
+assert.match(identityStyle.textContent, /device-css-marker/)
+assert.doesNotMatch(identityStyle.textContent, /persona-css-marker/, 'NPC inspection must not inherit Persona custom CSS')
+
+const personaDeviceRow = [...drawerRoot.querySelectorAll('.lumiphone-device-row')].find((node) => node.textContent.includes('Roleplay Persona'))
+assert.ok(personaDeviceRow)
+personaDeviceRow.click()
+assert.equal(identityShell.dataset.pocketDeviceKey, personaDeviceKey, 'returning to the Persona phone must restore its logical device key')
+assert.equal(identityShell.style.getPropertyValue('--lp-accent'), '#ff00aa')
 const dismissPhone = dockRoot.querySelector('.lumiphone-dismiss')
 dismissPhone.click()
 assert.equal(dockDestroyCount, 1, 'closing Pocket must destroy the dock handle')
