@@ -93,7 +93,7 @@ Pocket Action is an execution step, not an output section. Do not reason about w
 
 When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. One Pocket Action invocation persists exactly one action. Multiple Pocket Action calls in the same assistant turn are expected whenever multiple distinct phone actions occur; a successful first call does NOT cover later messages or phone actions. If another text, reply, call, event, or other phone action happens later in the same scene, invoke Pocket Action again for that later action before continuing past it. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
-After each successful message Pocket Action, Pocket returns two candidate-commit markers: artifactTag and commitTag. The tool mutation is PROVISIONAL until the final assistant candidate carries exactly one returned marker. Every phone message that survives into final canon MUST have exactly one marker in final assistant content. If the phone action is visible/readable/observed in the final scene, place artifactTag exactly ON ITS OWN LINE at that narrative position and do NOT also quote, retype, color, italicize, or otherwise print the message text in prose. If the action truly happens in canon but should remain completely off-screen/unrendered, place commitTag exactly once; Pocket removes it from visible prose. If you invoked Pocket while reasoning and decide that action does NOT belong in the final scene, emit neither marker and Pocket will discard that provisional action at commit. Never emit both markers for one action. Do not assume the tool call itself commits canon; the final marker is the commit receipt.
+After each successful message Pocket Action, Pocket returns two candidate-commit markers: artifactTag and commitTag. The tool mutation is PROVISIONAL until the final assistant candidate carries exactly one returned marker. Every phone message that survives into final canon MUST have exactly one marker in final assistant content. If the phone action is visible/readable/observed in the final scene, place artifactTag exactly ON ITS OWN LINE at that narrative position and do NOT also quote, retype, color, italicize, or otherwise print the message text in prose. artifactTag is already a durable inline HTML anchor; place it verbatim so Pocket can render the phone artifact immediately while the response is still streaming. If the action truly happens in canon but should remain completely off-screen/unrendered, place commitTag exactly once; Pocket removes it from visible prose. If you invoked Pocket while reasoning and decide that action does NOT belong in the final scene, emit neither marker and Pocket will discard that provisional action at commit. Never emit both markers for one action. Do not assume the tool call itself commits canon; the final marker is the commit receipt.
 
 For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. This requirement still applies when the current POV cannot read the screen: if the scene establishes that one NPC actually sends or receives a new message, call Pocket Action with the canonical sender, recipient, and message text you are establishing in-world even if that text is not quoted in prose. A phone lighting up, a visible notification preview, an NPC reacting to a newly arrived message, or prose saying one actor texted another are all phone actions; do not skip them merely because neither participant is the Pocket Persona. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
 
@@ -5109,11 +5109,12 @@ spindle.frontendCapabilities.declare('message_tag_interceptor')
 spindle.onFrontendMessage(handleFrontend)
 function pocketArtifactTag(activityId: unknown, action: unknown): string | undefined {
   const value = text(activityId, 180)
-  return value && text(action, 40) === 'message' ? `<pocket-artifact ref=\"${value}\"></pocket-artifact>` : undefined
+  return value && text(action, 40) === 'message' ? pocketInlineAnchor(value) : undefined
 }
 
 const POCKET_ARTIFACT_TAG_PATTERN = /<pocket-artifact\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-artifact\s*>)/gi
 const POCKET_COMMIT_TAG_PATTERN = /<pocket-commit\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-commit\s*>)/gi
+const POCKET_INLINE_ANCHOR_REF_PATTERN = /\bdata-pocket-inline-anchor\s*=\s*(?:"([^"]+)"|'([^']+)')/gi
 
 function pocketArtifactRef(attrs: string): string {
   const match = /\bref\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(attrs)
@@ -5130,6 +5131,13 @@ function candidateCommitRefs(content: string): Set<string> {
       if (ref) refs.add(ref)
       if (!match[0]) pattern.lastIndex += 1
     }
+  }
+  POCKET_INLINE_ANCHOR_REF_PATTERN.lastIndex = 0
+  let anchorMatch: RegExpExecArray | null
+  while ((anchorMatch = POCKET_INLINE_ANCHOR_REF_PATTERN.exec(content))) {
+    const ref = text(anchorMatch[1] || anchorMatch[2], 180)
+    if (ref) refs.add(ref)
+    if (!anchorMatch[0]) POCKET_INLINE_ANCHOR_REF_PATTERN.lastIndex += 1
   }
   return refs
 }
@@ -5158,20 +5166,27 @@ async function discardCandidateMessages(
   origin: PocketTurnCandidateOrigin,
   userId?: string,
   reason = 'candidate_discarded',
-): Promise<number> {
+): Promise<{ removed: number; activityIds: string[] }> {
   return withStateLock(stateKey(origin.chatId, characterId), async () => {
     const state = await loadState(origin.chatId, characterId, userId)
     let removed = 0
+    const activityIds: string[] = []
     for (const conversation of state.conversations) {
       const deleteIds = conversation.messages
         .filter((message) => message.origin?.chatId === origin.chatId && message.origin.hostMessageId === origin.hostMessageId && message.origin.swipeId === origin.swipeId)
         .map((message) => message.id)
-      for (const messageId of deleteIds) if (removePocketMessageArtifacts(state, conversation.id, messageId)) removed += 1
+      for (const messageId of deleteIds) {
+        const activity = state.activities.find((entry) => entry.kind === 'message' && entry.route?.app === 'messages' && entry.route.messageId === messageId)
+        if (activity?.id) activityIds.push(activity.id)
+        if (removePocketMessageArtifacts(state, conversation.id, messageId)) removed += 1
+      }
     }
-    if (!removed) return 0
+    if (!removed) return { removed: 0, activityIds: [] }
     await saveState(state, userId)
+    const uniqueActivityIds = [...new Set(activityIds)]
+    if (uniqueActivityIds.length) send({ type: 'lumiphone:candidate_activity_discard', activityIds: uniqueActivityIds, origin, reason }, userId)
     await sendState(state, userId, reason)
-    return removed
+    return { removed, activityIds: uniqueActivityIds }
   })
 }
 
@@ -5223,7 +5238,7 @@ async function pruneUncommittedCandidateMessages(
   characterId: string,
   origin: PocketTurnCandidateOrigin,
   userId?: string,
-): Promise<{ removed: number; kept: number; rescuedInline: number }> {
+): Promise<{ removed: number; kept: number; rescuedInline: number; removedActivityIds: string[]; keptActivityIds: string[] }> {
   const hostMessages: any[] = await spindle.chat.getMessages(origin.chatId).catch(() => [])
   const target = hostMessages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
   let candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
@@ -5233,6 +5248,8 @@ async function pruneUncommittedCandidateMessages(
     const state = await loadState(origin.chatId, characterId, userId)
     let removed = 0
     let kept = 0
+    const removedActivityIds: string[] = []
+    const keptActivityIds: string[] = []
     for (const conversation of state.conversations) {
       const candidateRows = conversation.messages.filter((message) => {
         const messageOrigin = message.origin
@@ -5245,6 +5262,7 @@ async function pruneUncommittedCandidateMessages(
         const activity = state.activities.find((entry) => entry.kind === 'message' && entry.route?.app === 'messages' && entry.route.messageId === message.id)
         if (activity?.id && committedRefs.has(activity.id)) {
           if (message.candidateCommitState !== 'committed') message.candidateCommitState = 'committed'
+          keptActivityIds.push(activity.id)
           kept += 1
           continue
         }
@@ -5254,17 +5272,22 @@ async function pruneUncommittedCandidateMessages(
             candidateContent = rescued.content
             committedRefs.add(activity.id)
             message.candidateCommitState = 'committed'
+            keptActivityIds.push(activity.id)
             kept += 1
             rescuedInline += 1
             continue
           }
         }
+        if (activity?.id) removedActivityIds.push(activity.id)
         if (removePocketMessageArtifacts(state, conversation.id, message.id)) removed += 1
       }
     }
     if (removed || kept) await saveState(state, userId)
+    const uniqueRemovedActivityIds = [...new Set(removedActivityIds)]
+    const uniqueKeptActivityIds = [...new Set(keptActivityIds)]
+    if (uniqueRemovedActivityIds.length) send({ type: 'lumiphone:candidate_activity_discard', activityIds: uniqueRemovedActivityIds, origin, reason: 'candidate_uncommitted' }, userId)
     if (removed || kept) await sendState(state, userId, removed ? 'candidate_provisionals_pruned' : 'candidate_committed')
-    return { removed, kept }
+    return { removed, kept, removedActivityIds: uniqueRemovedActivityIds, keptActivityIds: uniqueKeptActivityIds }
   })
   if (rescuedInline && target && candidateContent) await updateCandidateHostContent(origin, target, candidateContent)
   return { ...result, rescuedInline }
@@ -5320,13 +5343,19 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
     } : undefined
     const result = await applyAction(actionCandidateOrigin ? { ...merged, __candidateOrigin: actionCandidateOrigin } : merged, userId, 'model')
     const artifactTag = pocketArtifactTag((result as AnyRecord).activityId, (result as AnyRecord).action)
-    const commitTag = artifactTag ? artifactTag.replace(/^<pocket-artifact\b/i, '<pocket-commit').replace(/<\/pocket-artifact>$/i, '</pocket-commit>') : undefined
+    const activityId = text((result as AnyRecord).activityId, 180)
+    const commitTag = activityId && artifactTag ? `<pocket-commit ref="${escapePocketHtmlAttribute(activityId)}"></pocket-commit>` : undefined
+    if (actionCandidateOrigin && activityId && artifactTag) {
+      const stagedState = await loadState(context.chatId, context.characterId, userId)
+      const stagedActivity = stagedState.activities.find((entry) => entry.id === activityId)
+      if (stagedActivity) send({ type: 'lumiphone:provisional_activity', activity: stagedActivity, origin: actionCandidateOrigin }, userId)
+    }
     return JSON.stringify({
       ...result,
       artifactTag,
       commitTag,
       artifactInstruction: artifactTag
-        ? 'REQUIRED COMMIT RECEIPT: this message is PROVISIONAL until final assistant content contains exactly one returned marker. If visible/readable/observed, put artifactTag EXACTLY ON ITS OWN LINE at that story position and do not print the message text separately. If wholly off-screen, put commitTag exactly once. If this was exploratory reasoning and is absent from the final scene, emit neither. Never emit both. Continue the roleplay normally after placing the required marker.'
+        ? 'REQUIRED COMMIT RECEIPT: this message is PROVISIONAL until final assistant content contains exactly one returned marker. If visible/readable/observed, put artifactTag EXACTLY ON ITS OWN LINE at that story position and do not print the message text separately. artifactTag is the durable inline anchor and lets Pocket render the phone artifact immediately during streaming. If wholly off-screen, put commitTag exactly once. If this was exploratory reasoning and is absent from the final scene, emit neither. Never emit both. Continue the roleplay normally after placing the required marker.'
         : undefined,
       presentation: 'Pocket staged exactly this action provisionally. Continue the roleplay normally. If another distinct phone action occurs later in this turn, call Pocket Action again.',
     })
@@ -5442,6 +5471,7 @@ spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
     await withStateLock(stateKey(chatId, characterId), async () => {
       const state = await loadState(chatId, characterId, userId)
       let changed = false
+      const removedActivityIds: string[] = []
       const action = text(payload?.action, 40).toLowerCase()
       const eventSwipeValue = payload?.swipeId
       const eventSwipeId = Number(eventSwipeValue)
@@ -5454,7 +5484,11 @@ spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
             if (origin.swipeId === eventSwipeId) deleteIds.push(message.id)
             else if (origin.swipeId > eventSwipeId) { origin.swipeId -= 1; changed = true }
           }
-          for (const messageId of deleteIds) changed = removePocketMessageArtifacts(state, conversation.id, messageId) || changed
+          for (const messageId of deleteIds) {
+            const activity = state.activities.find((entry) => entry.kind === 'message' && entry.route?.app === 'messages' && entry.route.messageId === messageId)
+            if (activity?.id) removedActivityIds.push(activity.id)
+            changed = removePocketMessageArtifacts(state, conversation.id, messageId) || changed
+          }
         }
         const beforeClockCount = (state.candidateClocks || []).length
         state.candidateClocks = (state.candidateClocks || []).filter((entry) => !(entry.hostMessageId === hostMessageId && entry.swipeId === eventSwipeId))
@@ -5470,6 +5504,8 @@ spindle.on('MESSAGE_SWIPED', async (payload: any, userId?: string) => {
         changed = restoreClockForSelectedCandidate(state, hostMessageId, selectedSwipeId) || changed
       }
       if (changed) await saveState(state, userId)
+      const uniqueRemovedActivityIds = [...new Set(removedActivityIds)]
+      if (uniqueRemovedActivityIds.length) send({ type: 'lumiphone:candidate_activity_discard', activityIds: uniqueRemovedActivityIds, reason: 'host_swipe_deleted' }, userId)
       // Always republish on host swipe navigation. The host can reuse the same
       // message DOM while changing its selected swipe, so a no-op state delta
       // still needs a fresh projection to evict stale inline/receipt surfaces.
@@ -5519,6 +5555,7 @@ spindle.on('MESSAGE_DELETED', async (payload: any, userId?: string) => {
       }
       if (!changed) return
       await saveState(state, userId)
+      if (removedHostActivityIds.size) send({ type: 'lumiphone:candidate_activity_discard', activityIds: [...removedHostActivityIds], reason: 'host_message_deleted' }, userId)
       await sendState(state, userId, 'host_message_deleted')
     })
   } catch (error) {

@@ -15,6 +15,7 @@ import type {
   PhoneEventSuggestion,
   PocketNpcBankEntry,
   PocketActivity,
+  PocketTurnCandidateOrigin,
   PocketRoute,
   PocketResolvedImage,
   PocketResolvedWallpapers,
@@ -175,6 +176,7 @@ class PocketController {
   private injectedActivities = new Map<string, Element>()
   private pendingActivities = new Map<string, PocketActivity>()
   private knownActivities = new Map<string, PocketActivity>()
+  private provisionalActivities = new Map<string, { activity: PocketActivity; origin: PocketTurnCandidateOrigin }>()
   private inlineArtifactObserver: MutationObserver | null = null
   private inlineMountFrame = 0
   private viewCleanups: Cleanup[] = []
@@ -332,7 +334,7 @@ class PocketController {
     this.installInlineArtifactObserver()
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
-      this.clearActivitySurfaces(true)
+      this.clearActivitySurfaces(true, true)
       this.hideComposerReferencePill()
       this.refresh()
       window.setTimeout(() => this.sweepActivityReceipts(), 0)
@@ -875,7 +877,10 @@ class PocketController {
         else this.renderFirstChatSetupBody()
       }
       this.knownActivities.clear()
-      for (const activity of this.state.activities || []) this.knownActivities.set(activity.id, activity)
+      for (const activity of this.state.activities || []) {
+        this.knownActivities.set(activity.id, activity)
+        this.provisionalActivities.delete(activity.id)
+      }
       this.pruneInactiveActivitySurfaces()
       this.mountInlineArtifacts()
       for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
@@ -926,6 +931,36 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:debug_prompt') {
       this.showOutgoingPromptResult(payload)
+      return
+    }
+    if (payload.type === 'lumiphone:provisional_activity' && payload.activity && payload.origin) {
+      const activity = payload.activity as PocketActivity
+      const origin = payload.origin as PocketTurnCandidateOrigin
+      const active = this.activeContext()
+      if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId || origin.chatId !== active.chatId) return
+      this.provisionalActivities.set(activity.id, { activity, origin })
+      this.mountInlineArtifacts()
+      return
+    }
+    if (payload.type === 'lumiphone:candidate_activity_discard' && Array.isArray(payload.activityIds)) {
+      for (const rawId of payload.activityIds) {
+        const activityId = typeof rawId === 'string' ? rawId : ''
+        if (!activityId) continue
+        this.provisionalActivities.delete(activityId)
+        if (this.knownActivities.has(activityId)) continue
+        for (const host of this.inlineHosts(activityId)) {
+          host.replaceChildren()
+          host.hidden = true
+          delete host.dataset.pocketMounted
+          delete host.dataset.pocketActivityId
+        }
+        const fallback = this.injectedActivities.get(activityId)
+        if (fallback) {
+          this.ctx.dom.uninject(fallback)
+          this.injectedActivities.delete(activityId)
+        }
+        this.pendingActivities.delete(activityId)
+      }
       return
     }
     if (payload.type === 'lumiphone:activity' && payload.activity) {
@@ -1386,10 +1421,16 @@ class PocketController {
 
   private scheduleInlineArtifactMount(): void {
     if (this.inlineMountFrame || this.destroyed) return
-    this.inlineMountFrame = requestAnimationFrame(() => {
+    let firedSynchronously = false
+    const frame = requestAnimationFrame(() => {
+      firedSynchronously = true
       this.inlineMountFrame = 0
       this.mountInlineArtifacts()
     })
+    // Browser RAF is asynchronous, but test hosts/polyfills may invoke the
+    // callback synchronously. Do not overwrite the callback's reset with the
+    // returned handle in that case or future inline mounts will deadlock.
+    if (!firedSynchronously) this.inlineMountFrame = frame
   }
 
   private inlineHosts(activityId: string): HTMLElement[] {
@@ -1397,11 +1438,26 @@ class PocketController {
       .filter((node) => node.dataset.pocketInlineAnchor === activityId)
   }
 
+  private provisionalActivityIsActive(record: { activity: PocketActivity; origin: PocketTurnCandidateOrigin }): boolean {
+    const active = this.activeContext()
+    if (record.activity.scope.chatId !== active.chatId || record.activity.scope.characterId !== active.characterId) return false
+    if (record.origin.chatId !== active.chatId) return false
+    const selection = [...(this.state?.hostSwipeSelections || [])].reverse().find((entry) => entry.hostMessageId === record.origin.hostMessageId)
+    return !selection || selection.swipeId === record.origin.swipeId
+  }
+
+  private inlineActivity(activityId: string): PocketActivity | undefined {
+    const canonical = this.knownActivities.get(activityId)
+    if (canonical) return canonical
+    const provisional = this.provisionalActivities.get(activityId)
+    return provisional && this.provisionalActivityIsActive(provisional) ? provisional.activity : undefined
+  }
+
   private mountInlineArtifacts(): void {
     const active = this.activeContext()
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
       const activityId = host.dataset.pocketInlineAnchor || ''
-      const activity = this.knownActivities.get(activityId)
+      const activity = this.inlineActivity(activityId)
       if (!activity || activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) {
         if (host.dataset.pocketMounted === 'true') host.replaceChildren()
         host.hidden = true
@@ -1426,21 +1482,22 @@ class PocketController {
 
   private pruneInactiveActivitySurfaces(): void {
     for (const [activityId, injected] of this.injectedActivities) {
-      if (this.knownActivities.has(activityId)) continue
+      if (this.inlineActivity(activityId)) continue
       this.ctx.dom.uninject(injected)
       this.injectedActivities.delete(activityId)
       this.pendingActivities.delete(activityId)
     }
     for (const activityId of [...this.pendingActivities.keys()]) {
-      if (!this.knownActivities.has(activityId)) this.pendingActivities.delete(activityId)
+      if (!this.inlineActivity(activityId)) this.pendingActivities.delete(activityId)
     }
   }
 
-  private clearActivitySurfaces(clearKnown = false): void {
+  private clearActivitySurfaces(clearKnown = false, clearProvisional = false): void {
     for (const injected of this.injectedActivities.values()) this.ctx.dom.uninject(injected)
     this.injectedActivities.clear()
     this.pendingActivities.clear()
     if (clearKnown) this.knownActivities.clear()
+    if (clearProvisional) this.provisionalActivities.clear()
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
       host.replaceChildren()
       host.hidden = true

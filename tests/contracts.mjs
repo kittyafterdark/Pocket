@@ -19,7 +19,7 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
+for (const token of ['phone_action', 'lumi-phone', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status']) {
@@ -528,7 +528,7 @@ const personaSendResult = await backendEvents.get('TOOL_INVOCATION')({
 }, 'user-a')
 const personaSendPayload = JSON.parse(personaSendResult)
 assert.equal(personaSendPayload.ok, true)
-assert.equal(personaSendPayload.artifactTag, `<pocket-artifact ref="${personaSendPayload.activityId}"></pocket-artifact>`)
+assert.match(personaSendPayload.artifactTag, /data-pocket-inline-anchor=/, 'message tool result must use the durable inline anchor protocol')
 let deviceState = storage.get('phones/chat-device__char-a.json')
 const devicePersonaId = deviceState.pocketPersonaActorId
 const tylerActor = deviceState.discoveredActors.find((actor) => actor.displayName === 'Tyler')
@@ -552,7 +552,7 @@ const externalResult = await backendEvents.get('TOOL_INVOCATION')({
 }, 'user-a')
 const externalPayload = JSON.parse(externalResult)
 assert.equal(externalPayload.ok, true)
-assert.equal(externalPayload.artifactTag, `<pocket-artifact ref="${externalPayload.activityId}"></pocket-artifact>`)
+assert.match(externalPayload.artifactTag, /data-pocket-inline-anchor=/, 'external message tool result must use the durable inline anchor protocol')
 deviceState = storage.get('phones/chat-device__char-a.json')
 const marcusActor = deviceState.discoveredActors.find((actor) => actor.displayName === 'Marcus')
 const externalDm = deviceState.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona === false && conversation.participantActorIds.includes(marcusActor.id) && conversation.participantActorIds.includes(tylerActor.id))
@@ -577,6 +577,11 @@ const swipeZeroResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'swipe-tool-0', args: { action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { channel: 'dm', speaker: 'Test Persona', target: 'Tyler', text: 'Candidate zero.' } },
 }, 'user-a'))
 assert.match(swipeZeroResult.presentation, /Continue the roleplay normally/i)
+assert.match(swipeZeroResult.artifactTag, /data-pocket-inline-anchor=/, 'visible message tool result must return the durable inline anchor directly')
+assert.doesNotMatch(swipeZeroResult.artifactTag, /<pocket-artifact\b/i, 'new visible marker must not wait for a legacy tag rewrite')
+const swipeZeroProvisionalEvent = frontendMessages.filter((message) => message.type === 'lumiphone:provisional_activity' && message.activity?.id === swipeZeroResult.activityId).at(-1)
+assert.ok(swipeZeroProvisionalEvent, 'provisional message tool call must publish transient render metadata before candidate commit')
+assert.equal(swipeZeroProvisionalEvent.origin.swipeId, 0)
 const swipeZeroActivity = storage.get('phones/chat-a__char-a.json').activities.find((entry) => entry.id === swipeZeroResult.activityId)
 assert.equal(swipeZeroActivity?.source?.messageId, 'host-swipe-message', 'tool-authored message activity must anchor to its host candidate even when TOOL_INVOCATION omits messageId')
 const sameCandidateDuplicate = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
@@ -589,12 +594,9 @@ const candidateZeroHostContent = `Before the phone.\n\n${swipeZeroResult.artifac
 spindle.chat.getMessages = async () => [{ id: 'host-swipe-message', index_in_chat: 1, role: 'assistant', content: candidateZeroHostContent, swipes: [candidateZeroHostContent], swipe_id: 0 }]
 const updatesBeforeInlineFinalize = updatedChatMessages.length
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-a', generationId: 'swipe-gen-0', generationType: 'regenerate', messageId: 'host-swipe-message' }, 'user-a')
-const inlineFinalizeUpdate = updatedChatMessages.slice(updatesBeforeInlineFinalize).find((entry) => entry.messageId === 'host-swipe-message' && Array.isArray(entry.patch?.swipes))
-assert.ok(inlineFinalizeUpdate, 'candidate completion must rewrite the returned Pocket artifact tag into the exact target swipe')
-assert.match(inlineFinalizeUpdate.patch.swipes[0], /data-pocket-inline-anchor=/, 'inline finalizer must persist an exact-position anchor in the candidate swipe')
-assert.doesNotMatch(inlineFinalizeUpdate.patch.swipes[0], /<pocket-artifact\b/i, 'raw display pointer must not survive finalization')
-assert.equal(inlineFinalizeUpdate.patch.swipe_id, 0, 'artifact finalization must not navigate away from the currently selected swipe')
-assert.equal(inlineFinalizeUpdate.patch.skipChunkRebuild, true, 'display-anchor finalization must not rebuild narrative chunks')
+const inlineFinalizeUpdates = updatedChatMessages.slice(updatesBeforeInlineFinalize).filter((entry) => entry.messageId === 'host-swipe-message')
+assert.equal(inlineFinalizeUpdates.length, 0, 'durable inline artifact anchors must not require a GENERATION_ENDED rewrite on the normal path')
+assert.match(candidateZeroHostContent, /data-pocket-inline-anchor=/, 'candidate content must already contain the exact-position anchor before commit')
 spindle.chat.getMessages = getMessagesBeforeInlineFinalize
 await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', characterId: 'char-a', generationId: 'swipe-gen-1', generationType: 'regenerate', targetMessageId: 'host-swipe-message', targetSwipeId: 1 }, 'user-a')
 const swipeOneResult = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({
@@ -653,6 +655,7 @@ assert.equal(ghostProjectedMidGeneration.conversations.flatMap((entry) => entry.
 spindle.chat.getMessages = async () => [{ id: 'ghost-host', role: 'assistant', content: 'Kai considered texting Tyler, then decided against it.', swipes: ['Kai considered texting Tyler, then decided against it.'], swipe_id: 0 }]
 await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-ghost', generationId: 'ghost-gen', generationType: 'regenerate', messageId: 'ghost-host' }, 'user-a')
 assert.equal(storage.get('phones/chat-ghost__char-a.json').conversations.flatMap((entry) => entry.messages).some((entry) => entry.text === 'Reasoning-only ghost.'), false, 'uncommitted reasoning tool calls must not survive the final candidate')
+assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:candidate_activity_discard' && message.activityIds?.includes(ghostTool.activityId)), 'discarded reasoning tool calls must revoke transient inline preview metadata')
 spindle.chat.getMessages = ghostMessagesBefore
 
 // Deleting a host assistant message removes every Pocket side effect owned by that turn.
@@ -1595,6 +1598,22 @@ const inlineMessageActivity = {
   presentation: { kind: 'received', senderName: 'Devon', recipientNames: ['Kai'], conversationTitle: 'Devon' },
   source: { messageId: 'host-message-a', conversationId: 'conversation-inline' },
 }
+const streamingInlineActivity = { ...inlineMessageActivity, id: 'streaming-inline-activity', summary: 'Rendered before the generation ends.' }
+backendReceiver({
+  type: 'lumiphone:provisional_activity', activity: streamingInlineActivity,
+  origin: { chatId: 'chat-a', hostMessageId: 'host-message-a', swipeId: 0, generationId: 'streaming-ui-gen' },
+})
+const streamingArtifactHost = document.createElement('div')
+streamingArtifactHost.className = 'pocket-inline-anchor'
+streamingArtifactHost.dataset.pocketInlineAnchor = streamingInlineActivity.id
+messageBubble.prepend(streamingArtifactHost)
+await new Promise((resolve) => setTimeout(resolve, 24))
+assert.equal(streamingArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'streamed durable anchor must render from provisional activity metadata before any committed state arrives')
+assert.match(streamingArtifactHost.textContent || '', /Rendered before the generation ends\./)
+backendReceiver({ type: 'lumiphone:candidate_activity_discard', activityIds: [streamingInlineActivity.id], origin: { chatId: 'chat-a', hostMessageId: 'host-message-a', swipeId: 0 } })
+assert.equal(streamingArtifactHost.childElementCount, 0, 'discarded provisional activity must evaporate its optimistic inline preview')
+assert.equal(streamingArtifactHost.hidden, true, 'discarded optimistic preview anchor must be hidden')
+
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
 assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 0, 'missing placement tags must degrade to provenance instead of a fake end-of-message phone card')
 assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 1, 'missing placement tag must retain one fallback provenance receipt')
