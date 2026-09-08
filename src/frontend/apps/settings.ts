@@ -57,8 +57,47 @@ function color(label: string, value: string, update: (value: string) => void): H
   const node = row(label)
   node.dataset.setting = label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   const control = el('input', 'lp-color-input'); control.type = 'color'; control.value = /^#[0-9a-f]{6}$/i.test(value) ? value : '#8b7dff'
+  control.setAttribute('aria-label', label)
   control.addEventListener('input', () => update(control.value)); node.appendChild(control)
   return node
+}
+
+/** Both appearance scopes expose the same palette; only the supplied update owns state. */
+function themeColorControls(palette: PhonePalette, update: (key: keyof PhonePalette, value: string) => void) {
+  const inputs = new Map<keyof PhonePalette, HTMLInputElement>()
+  const control = (label: string, key: keyof PhonePalette, accessibleLabel = label) => {
+    const node = color(label, palette[key], value => update(key, value))
+    const input = node.querySelector('input')!
+    input.setAttribute('aria-label', accessibleLabel)
+    node.dataset.setting = accessibleLabel.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    inputs.set(key, input)
+    return node
+  }
+  const accent = control('Accent', 'accent')
+  accent.classList.add('lp-accent-control')
+  const body = el('div', 'lp-palette-sections')
+  const bezel = control('Bezel', 'bezel')
+  bezel.classList.add('lp-palette-bezel')
+  body.append(bezel)
+  const groups: Array<[string, Array<[string, keyof PhonePalette, string]>]> = [
+    ['Interface', [['Background', 'background', 'UI background'], ['Surface', 'surface', 'UI surface'], ['Text', 'text', 'UI text']]],
+    ['Home', [['Top', 'wallpaperPrimary', 'Home top'], ['Bottom', 'wallpaperSecondary', 'Home bottom']]],
+    ['Chat', [['Top', 'chatPrimary', 'Chat top'], ['Bottom', 'chatSecondary', 'Chat bottom']]],
+  ]
+  for (const [label, entries] of groups) {
+    const group = el('section', 'lp-palette-group')
+    group.setAttribute('aria-label', `${label} colors`)
+    const grid = el('div', 'lp-palette-grid')
+    for (const [name, key, accessibleLabel] of entries) grid.append(control(name, key, accessibleLabel))
+    group.append(el('h3', 'lp-palette-heading', label), grid)
+    body.append(group)
+  }
+  const advanced = disclosure('Advanced theme colors', body)
+  advanced.classList.add('lp-palette-disclosure')
+  return {
+    accent, advanced,
+    sync(next: PhonePalette) { for (const [key, input] of inputs) input.value = next[key] },
+  }
 }
 
 function slider(label: string, value: number, min: number, max: number, step: number, format: (value: number) => string, update: (value: number) => void, detail = ''): HTMLLabelElement {
@@ -102,9 +141,7 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
     themeRow.appendChild(dot)
   }
   themes.appendChild(themeRow)
-  const palette = el('div', 'lp-color-grid')
-  const colorControl = (label: string, key: keyof PhonePalette) => color(label, settings.colors[key], (value) => commit((next) => { next.theme = 'custom'; next.colors[key] = value }))
-  palette.append(colorControl('Accent', 'accent'), colorControl('Bezel', 'bezel'), colorControl('UI background', 'background'), colorControl('UI surface', 'surface'), colorControl('UI text', 'text'), colorControl('Home top', 'wallpaperPrimary'), colorControl('Home bottom', 'wallpaperSecondary'), colorControl('Chat top', 'chatPrimary'), colorControl('Chat bottom', 'chatSecondary'))
+  const paletteControls = themeColorControls(settings.colors, (key, value) => commit(next => { next.theme = 'custom'; next.colors[key] = value }))
   const wallpapers = el('section', 'lp-card lp-settings-section')
   wallpapers.append(
     el('div', 'lp-eyebrow', 'Wallpaper images'),
@@ -141,10 +178,11 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
     preview.style.background = host.draft.colors.background
     preview.style.color = host.draft.colors.text
     sample.style.background = outgoingSurface(host.draft.colors.accent)
+    paletteControls.sync(host.draft.colors)
     for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.title === host.draft.theme))
+    themeRow.querySelector<HTMLButtonElement>('button[title="custom"]')?.style.setProperty('--theme-color', host.draft.colors.accent)
   }
-  const accent = palette.firstElementChild!; accent.remove()
-  content.append(preview, themes, accent, wallpapers, disclosure('Advanced colors', palette), scaleCard, motion, disclosure('Custom CSS', custom)); return page
+  content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, disclosure('Custom CSS', custom)); return page
 }
 
 function persona(host: SettingsViewHost): HTMLDivElement {
@@ -237,14 +275,13 @@ function persona(host: SettingsViewHost): HTMLDivElement {
     homeWallpaper: { ...structuredClone(host.draft.homeWallpaper), source: null },
     chatWallpaper: { ...structuredClone(host.draft.chatWallpaper), source: null },
   }
-  const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }) }
+  const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }); paletteControls.sync(value.colors) }
   const card = el('section', 'lp-card lp-settings-section')
   card.append(el('div', 'lp-eyebrow', 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
   const theme = el('select', 'lp-select')
   for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'custom'] as const) { const option = el('option', '', themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
   theme.addEventListener('change', () => commit((item) => { item.theme = theme.value as PhoneSettings['theme']; if (item.theme !== 'custom') item.colors = themePalette(item.theme) }))
-  const colors = el('div', 'lp-color-grid')
-  for (const [label, key] of [['Accent', 'accent'], ['Bezel', 'bezel'], ['Home top', 'wallpaperPrimary'], ['Home bottom', 'wallpaperSecondary'], ['Chat top', 'chatPrimary'], ['Chat bottom', 'chatSecondary']] as Array<[string, keyof PhonePalette]>) colors.appendChild(color(label, current.colors[key], (value) => commit((item) => { item.theme = 'custom'; item.colors[key] = value })))
+  const paletteControls = themeColorControls(current.colors, (key, value) => commit(item => { item.theme = 'custom'; item.colors[key] = value }))
   const personaWallpapers = el('section', 'lp-settings-section')
   personaWallpapers.append(
     wallpaperImageControl(`${active.name} home`, 'persona-home', current.homeWallpaper, host.resolvedWallpapers.personaHome, {
@@ -256,7 +293,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   )
   const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
   const apply = button('Apply persona CSS', 'lp-button'); apply.addEventListener('click', () => commit((item) => { item.customCss = css.value }))
-  card.append(fieldBlock('Theme', theme), disclosure('Advanced Persona colors', colors), personaWallpapers, disclosure('Persona custom CSS', css, apply)); content.appendChild(card); return page
+  card.append(fieldBlock('Theme', theme), paletteControls.accent, paletteControls.advanced, personaWallpapers, disclosure('Persona custom CSS', css, apply)); content.appendChild(card); return page
 }
 
 function messages(host: SettingsViewHost): HTMLDivElement {

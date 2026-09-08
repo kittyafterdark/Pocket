@@ -758,9 +758,51 @@ function color(label, value, update) {
   const control = el("input", "lp-color-input");
   control.type = "color";
   control.value = /^#[0-9a-f]{6}$/i.test(value) ? value : "#8b7dff";
+  control.setAttribute("aria-label", label);
   control.addEventListener("input", () => update(control.value));
   node.appendChild(control);
   return node;
+}
+function themeColorControls(palette, update) {
+  const inputs = new Map;
+  const control = (label, key, accessibleLabel = label) => {
+    const node = color(label, palette[key], (value) => update(key, value));
+    const input = node.querySelector("input");
+    input.setAttribute("aria-label", accessibleLabel);
+    node.dataset.setting = accessibleLabel.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    inputs.set(key, input);
+    return node;
+  };
+  const accent = control("Accent", "accent");
+  accent.classList.add("lp-accent-control");
+  const body = el("div", "lp-palette-sections");
+  const bezel = control("Bezel", "bezel");
+  bezel.classList.add("lp-palette-bezel");
+  body.append(bezel);
+  const groups = [
+    ["Interface", [["Background", "background", "UI background"], ["Surface", "surface", "UI surface"], ["Text", "text", "UI text"]]],
+    ["Home", [["Top", "wallpaperPrimary", "Home top"], ["Bottom", "wallpaperSecondary", "Home bottom"]]],
+    ["Chat", [["Top", "chatPrimary", "Chat top"], ["Bottom", "chatSecondary", "Chat bottom"]]]
+  ];
+  for (const [label, entries] of groups) {
+    const group = el("section", "lp-palette-group");
+    group.setAttribute("aria-label", `${label} colors`);
+    const grid = el("div", "lp-palette-grid");
+    for (const [name, key, accessibleLabel] of entries)
+      grid.append(control(name, key, accessibleLabel));
+    group.append(el("h3", "lp-palette-heading", label), grid);
+    body.append(group);
+  }
+  const advanced = disclosure("Advanced theme colors", body);
+  advanced.classList.add("lp-palette-disclosure");
+  return {
+    accent,
+    advanced,
+    sync(next) {
+      for (const [key, input] of inputs)
+        input.value = next[key];
+    }
+  };
 }
 function slider(label, value, min, max, step, format, update, detail = "") {
   const node = el("label", "lp-slider-setting");
@@ -832,12 +874,10 @@ function appearance(host) {
     themeRow.appendChild(dot);
   }
   themes.appendChild(themeRow);
-  const palette = el("div", "lp-color-grid");
-  const colorControl = (label, key) => color(label, settings.colors[key], (value) => commit((next) => {
+  const paletteControls = themeColorControls(settings.colors, (key, value) => commit((next) => {
     next.theme = "custom";
     next.colors[key] = value;
   }));
-  palette.append(colorControl("Accent", "accent"), colorControl("Bezel", "bezel"), colorControl("UI background", "background"), colorControl("UI surface", "surface"), colorControl("UI text", "text"), colorControl("Home top", "wallpaperPrimary"), colorControl("Home bottom", "wallpaperSecondary"), colorControl("Chat top", "chatPrimary"), colorControl("Chat bottom", "chatSecondary"));
   const wallpapers = el("section", "lp-card lp-settings-section");
   wallpapers.append(el("div", "lp-eyebrow", "Wallpaper images"), wallpaperImageControl("Home wallpaper", "device-home", settings.homeWallpaper, host.resolvedWallpapers.deviceHome, {
     choose: host.chooseImage,
@@ -908,12 +948,12 @@ function appearance(host) {
     preview.style.background = host.draft.colors.background;
     preview.style.color = host.draft.colors.text;
     sample.style.background = outgoingSurface(host.draft.colors.accent);
+    paletteControls.sync(host.draft.colors);
     for (const choice of themeRow.querySelectorAll("button"))
       choice.setAttribute("aria-pressed", String(choice.title === host.draft.theme));
+    themeRow.querySelector('button[title="custom"]')?.style.setProperty("--theme-color", host.draft.colors.accent);
   };
-  const accent = palette.firstElementChild;
-  accent.remove();
-  content.append(preview, themes, accent, wallpapers, disclosure("Advanced colors", palette), scaleCard, motion, disclosure("Custom CSS", custom));
+  content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, disclosure("Custom CSS", custom));
   return page;
 }
 function persona(host) {
@@ -1029,6 +1069,7 @@ function persona(host) {
     mutate(value);
     next.personaAppearance[active.id] = value;
     host.update(next, { persist });
+    paletteControls.sync(value.colors);
   };
   const card = el("section", "lp-card lp-settings-section");
   card.append(el("div", "lp-eyebrow", "Persona appearance"), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => {
@@ -1046,12 +1087,10 @@ function persona(host) {
     if (item.theme !== "custom")
       item.colors = themePalette(item.theme);
   }));
-  const colors = el("div", "lp-color-grid");
-  for (const [label, key] of [["Accent", "accent"], ["Bezel", "bezel"], ["Home top", "wallpaperPrimary"], ["Home bottom", "wallpaperSecondary"], ["Chat top", "chatPrimary"], ["Chat bottom", "chatSecondary"]])
-    colors.appendChild(color(label, current.colors[key], (value) => commit((item) => {
-      item.theme = "custom";
-      item.colors[key] = value;
-    })));
+  const paletteControls = themeColorControls(current.colors, (key, value) => commit((item) => {
+    item.theme = "custom";
+    item.colors[key] = value;
+  }));
   const personaWallpapers = el("section", "lp-settings-section");
   personaWallpapers.append(wallpaperImageControl(`${active.name} home`, "persona-home", current.homeWallpaper, host.resolvedWallpapers.personaHome, {
     choose: host.chooseImage,
@@ -1074,7 +1113,7 @@ function persona(host) {
   apply.addEventListener("click", () => commit((item) => {
     item.customCss = css.value;
   }));
-  card.append(fieldBlock("Theme", theme), disclosure("Advanced Persona colors", colors), personaWallpapers, disclosure("Persona custom CSS", css, apply));
+  card.append(fieldBlock("Theme", theme), paletteControls.accent, paletteControls.advanced, personaWallpapers, disclosure("Persona custom CSS", css, apply));
   content.appendChild(card);
   return page;
 }
@@ -6143,10 +6182,25 @@ var POCKET_DESIGN_SYSTEM = `
   .lp-disclosure { border-radius:var(--lp-radius,16px); background:color-mix(in srgb,var(--lp-text,#fff) 5%,var(--lp-surface,#18171e)); min-width:0; }
   .lp-disclosure > summary { cursor:pointer; min-height:44px; padding:14px; font-size:12px; font-weight:650; }
   .lp-disclosure > :not(summary) { margin:0 12px 12px; }
-  .lp-theme-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-  .lp-theme-preview { min-height:86px; border:2px solid transparent; background:var(--theme-color); color:#fff; border-radius:14px; padding:12px; font-size:12px; font-weight:650; display:grid; align-content:end; text-align:left; text-shadow:0 1px 4px #000; cursor:pointer; }
-  .lp-theme-preview::before { content:''; width:45%; height:12px; border-radius:8px; background:#ffffff70; margin-bottom:10px; }
-  .lp-theme-preview[aria-pressed="true"] { border-color:var(--lp-text); }
+  .lp-theme-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .lp-theme-preview { min-width:0; min-height:60px; border:1px solid transparent; background:transparent; color:var(--lp-text); border-radius:12px; padding:8px 4px; font-size:11px; font-weight:550; display:grid; justify-items:center; align-content:center; gap:6px; cursor:pointer; }
+  .lp-theme-preview::before { content:''; width:24px; height:24px; border-radius:50%; background:var(--theme-color); box-shadow:inset 0 0 0 1px #ffffff30; }
+  .lp-theme-preview[aria-pressed="true"] { border-color:var(--lp-border); background:color-mix(in srgb,var(--lp-text) 7%,transparent); }
+  .lumiphone-shell .lp-accent-control { min-height:56px; padding:6px 14px; border:0; border-radius:var(--lp-radius-control); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
+  .lumiphone-shell .lp-palette-disclosure { padding:2px; }
+  .lp-palette-disclosure > summary { padding:12px; }
+  .lp-palette-disclosure > .lp-palette-sections { margin:0; padding:0 12px 14px; display:grid; gap:12px; }
+  .lp-palette-group { min-width:0; }
+  .lp-palette-heading { margin:0 0 6px; color:var(--lp-muted); font-size:11px; font-weight:600; }
+  .lp-palette-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .lp-palette-grid:has(> :nth-child(2):last-child) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .lumiphone-shell .lp-palette-grid .lp-setting-row { min-width:0; min-height:78px; padding:8px 3px; border:0; border-radius:12px; display:flex; flex-direction:column-reverse; justify-content:center; gap:4px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
+  .lp-palette-grid .lp-setting-row strong { font-size:10px; font-weight:550; overflow-wrap:anywhere; text-align:center; }
+  .lumiphone-shell .lp-palette-bezel { min-height:48px; padding:2px 0 8px; }
+  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input { flex-shrink:0; width:44px; height:44px; padding:5px; border:1px solid var(--lp-border); border-radius:50%; background:transparent; cursor:pointer; overflow:hidden; }
+  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-webkit-color-swatch-wrapper { padding:0; }
+  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-webkit-color-swatch { border:0; border-radius:50%; }
+  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-moz-color-swatch { border:0; border-radius:50%; }
   .lp-theme-live { display:grid; gap:12px; border-radius:22px; padding:20px; min-height:145px; border:1px solid var(--lp-border); }
   .lp-theme-live .lp-message-surface { justify-self:end; }
   .lumiphone-shell .lp-color-grid { grid-template-columns:minmax(0,1fr); }
