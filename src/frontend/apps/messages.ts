@@ -1,6 +1,7 @@
 import type { PhoneMessage, PhoneState, PocketContextReference, PocketConversation, PocketRelay } from '../../types.js'
 import { conversationActorIds, listPocketActors, resolvePocketActor } from '../../domain/actors.js'
 import { counterpartActorIds, conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../../domain/device.js'
+import { avatarColor, showPocketSheet } from '../components/ui.js'
 import { button, el, formatTime, inputValue } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { fieldBlock, identityBlock, sectionBlock } from '../components/ui.js'
@@ -316,7 +317,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     })
     content.classList.add('lp-conversation-list')
     for (const conversation of conversations) {
-      const row = el('div', 'lp-conversation-row')
+      const row = button('', 'lp-conversation-row')
       row.dataset.clickable = 'true'; row.tabIndex = 0; row.setAttribute('role', 'button')
       const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId)
       const members = counterpartActorIds(host.state, conversation, host.deviceOwnerActorId)
@@ -325,10 +326,11 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       if (directActor?.avatarUrl) {
         const image = el('img'); image.src = directActor.avatarUrl; image.alt = ''; avatar.replaceChildren(image)
       }
+      avatar.style.background = avatarColor(members[0] || titleText)
       const latest = conversation.messages.at(-1)
       const description = latest
         ? `${conversation.kind === 'group' && latest.sender === 'contact' ? `${latest.senderName}: ` : ''}${latest.text}`
-        : 'Start a conversation'
+        : ''
       const identity = identityBlock({ name: titleText, meta: latest ? formatTime(latest.createdAt) : '', description })
       row.append(avatar, identity)
       const unread = conversationUnreadForDevice(host.state, conversation, host.deviceOwnerActorId)
@@ -393,8 +395,9 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const conversationRelays = host.readOnlyDevice ? [] : host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== 'dismissed')
   const renderedRelayIds = new Set<string>()
   let priorGroupSpeakerId = ''
+  let priorBurstKey = ''
   for (const message of conversation.messages) {
-    const bubble = el('div', 'lp-bubble')
+    const bubble = el('div', 'lp-bubble lp-message-surface')
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId)
@@ -403,6 +406,9 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     const resolvedAccent = senderActor?.accent || message.senderAccent || directActor?.accent || ''
     if (direction !== 'outbound') bubble.style.setProperty('--message-accent', resolvedAccent)
     const messageActorId = message.senderActorId || message.senderContactId || ''
+    const burstKey = `${bubble.dataset.sender}:${messageActorId}`
+    bubble.dataset.burstContinuation = String(priorBurstKey === burstKey && message.sender !== 'system')
+    priorBurstKey = burstKey
     const continuesRun = conversation.kind === 'group' && direction !== 'outbound' && priorGroupSpeakerId === messageActorId
     if (conversation.kind === 'group' && direction !== 'outbound' && !continuesRun && senderActor) {
       const sender = button(senderActor?.name || message.senderName, 'lp-bubble-sender lp-actor-link')
@@ -414,26 +420,28 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       const tools = el('span', 'lp-bubble-tools')
       if (message.generation && !host.readOnlyDevice) {
         const retry = button('↻', 'lp-bubble-action')
-        retry.type = 'button'; retry.title = 'Retry'
+        retry.textContent = 'Retry message'; retry.type = 'button'; retry.title = 'Retry'
         retry.setAttribute('aria-label', `Retry message from ${message.senderName}`)
         retry.addEventListener('click', () => host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: message.id }))
         tools.appendChild(retry)
       }
       if (message.generation || message.origin) {
         const generationInfo = button('ⓘ', 'lp-bubble-action')
-        generationInfo.type = 'button'; generationInfo.title = 'Generation info'
+        generationInfo.textContent = 'Generation info'; generationInfo.type = 'button'; generationInfo.title = 'Generation info'
         generationInfo.setAttribute('aria-label', 'Generation info')
         generationInfo.addEventListener('click', () => host.showGenerationInfo(message))
         tools.appendChild(generationInfo)
       }
       if (!host.readOnlyDevice) {
         const remove = button('×', 'lp-bubble-action')
-        remove.type = 'button'; remove.title = 'Delete message'
+        remove.textContent = 'Delete message'; remove.type = 'button'; remove.title = 'Delete message'
         remove.setAttribute('aria-label', 'Delete message')
         remove.addEventListener('click', () => host.send('lumiphone:delete', { kind: 'message', conversationId: conversation.id, id: message.id }))
         tools.appendChild(remove)
       }
-      bubble.appendChild(tools)
+      const more = button('⋯', 'lp-message-more'); more.setAttribute('aria-label', 'Message actions')
+      more.addEventListener('click', () => showPocketSheet(more, 'Message actions', tools))
+      bubble.appendChild(more)
     }
     if (message.eventSuggestion && !host.readOnlyDevice) {
       const suggestion = message.eventSuggestion
@@ -482,6 +490,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     for (const relay of conversationRelays.filter((entry) => entry.sourceMessageId === message.id)) {
       bubbles.appendChild(handoffActivity(host, conversation, relay))
       renderedRelayIds.add(relay.id)
+      priorBurstKey = ''
     }
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id))) bubbles.appendChild(handoffActivity(host, conversation, relay))

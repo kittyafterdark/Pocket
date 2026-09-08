@@ -44,22 +44,22 @@ function buildActivityStack(
     chrome.className = 'pocket-inline-artifact-chrome'
     const app = document.createElement('span')
     app.className = 'pocket-inline-artifact-app'
-    app.textContent = presentation.kind === 'received' ? 'Messages' : presentation.kind === 'sent' ? 'Pocket chat' : 'Observed phone'
+    app.textContent = presentation.kind === 'received' ? 'Messages' : presentation.kind === 'sent' ? 'Messages' : 'Messages · observed phone'
     const state = document.createElement('span')
     state.className = 'pocket-inline-artifact-state'
-    state.textContent = presentation.kind === 'received' ? 'now' : presentation.kind === 'sent' ? 'sent' : 'external'
+    state.textContent = presentation.kind === 'received' ? 'now' : presentation.kind === 'sent' ? 'sent' : 'glimpse'
     chrome.append(app, state)
 
     const actors = document.createElement('strong')
     actors.className = 'pocket-inline-artifact-actors'
-    actors.textContent = actorLine(activity) || presentation.conversationTitle || activity.title
+    actors.textContent = (presentation.kind === 'received' ? presentation.senderName : actorLine(activity)) || presentation.conversationTitle || activity.title
     const copy = document.createElement('span')
     copy.className = 'pocket-inline-artifact-copy'
     copy.textContent = activity.summary || ''
 
     if (presentation.kind === 'sent') {
       const bubble = document.createElement('span')
-      bubble.className = 'pocket-inline-chat-bubble'
+      bubble.className = 'pocket-inline-chat-bubble lp-message-surface'
       bubble.append(copy)
       primary.append(chrome, actors, bubble)
     } else {
@@ -91,7 +91,11 @@ function buildActivityStack(
     if (detail) {
       const summary = document.createElement('span')
       summary.textContent = detail
-      copy.appendChild(summary)
+      const details = document.createElement('details'); details.className = 'pocket-receipt-details'
+      const toggle = document.createElement('summary'); toggle.textContent = 'Details'
+      details.append(toggle, summary)
+      // Keep provenance available without nesting interactive controls in a button.
+      stack.appendChild(details)
     }
     const arrow = document.createElement('span')
     arrow.className = 'pocket-receipt-arrow'

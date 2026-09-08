@@ -2,7 +2,7 @@ import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, 
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
-import { actionGroup, controlRow, fieldBlock, identityBlock, sectionBlock, statusBadge } from '../components/ui.js'
+import { actionGroup, controlRow, disclosure, fieldBlock, identityBlock, sectionBlock, statusBadge } from '../components/ui.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
 
@@ -299,7 +299,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
       if (phoneProfile.personality) profileCard.appendChild(el('p', 'lp-copy', `Personality: ${phoneProfile.personality}`))
       if (phoneProfile.appearance) profileCard.appendChild(el('p', 'lp-copy', `Appearance: ${phoneProfile.appearance}`))
       if (phoneProfile.textingStyle) profileCard.appendChild(el('p', 'lp-copy', `Texting: ${phoneProfile.textingStyle}`))
-      content.appendChild(profileCard)
+      content.appendChild(disclosure('Phone voice & appearance', profileCard))
     }
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
     hero.append(el('span', 'lp-eyebrow', `${source} · ${contact.relationship === 'close' ? 'Close connection' : 'Background actor'}`))
@@ -311,13 +311,13 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     )
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
-    content.append(hero, presence)
+    content.prepend(hero); content.append(presence)
     if (contact.source.kind === 'npc') {
       const bankId = contact.source.bankId
       const bankEntry = bankId ? host.npcBank.find((entry) => entry.id === bankId) || null : null
       const { section: bankCard, body: bankBody } = sectionBlock(
         bankEntry ? 'Saved to NPC Bank' : contact.source.bankId ? 'NPC Bank copy missing' : 'Reusable NPC',
-        'NPC Bank stores only this contact’s stable identity, avatar/color, and texting style. Current scene state, relationship, presence, and message history remain local to this roleplay. Existing RP copies are never rewritten automatically.',
+        'Stable identity and texting style saved separately from this story.',
         'lp-card',
       )
       const saveBank = button(bankEntry ? 'Update NPC Bank' : contact.source.bankId ? 'Restore NPC Bank' : 'Save to NPC Bank', 'lp-button lp-button-quiet')
@@ -351,7 +351,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   sync.addEventListener('click', () => host.send('lumiphone:sync_scene_contacts'))
   const snapshot = host.state.sceneSnapshot
   const snapshotStatus = el('p', snapshot?.stale ? 'lp-warning' : 'lp-copy', !snapshot
-    ? 'No scene snapshot yet.'
+    ? 'Refresh to see who is in the scene.'
     : `${snapshot.stale ? 'Scene snapshot is stale' : 'Scene snapshot is current'} · ${snapshot.actors.length} actor${snapshot.actors.length === 1 ? '' : 's'} · source turn ${snapshot.sourceMessageIndex}`)
   const list = el('div', 'lp-contact-list')
   const renderList = (filter: 'all' | 'here' | 'recent' = 'all') => {

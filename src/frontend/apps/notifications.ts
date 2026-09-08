@@ -23,7 +23,8 @@ function notificationRow(host: NotificationsViewHost, notification: PhoneNotific
   const open = button('', 'lp-notification-open')
   const copy = el('span', 'lp-grow')
   copy.append(el('strong', '', notification.title), el('span', 'lp-copy', notification.body), el('time', 'lp-copy', formatTime(notification.createdAt)))
-  open.appendChild(copy)
+  const avatar = el('span', 'lp-notification-avatar', notification.title.slice(0, 1).toUpperCase()); avatar.setAttribute('aria-hidden', 'true')
+  open.append(avatar, copy)
   open.setAttribute('aria-label', `Open ${notification.title}`)
   open.addEventListener('click', () => {
     host.send('lumiphone:notification_mark_read', { notificationId: notification.id })
@@ -39,9 +40,9 @@ function notificationRow(host: NotificationsViewHost, notification: PhoneNotific
 export function renderNotificationsView(host: NotificationsViewHost): HTMLDivElement {
   const notifications = activeNotifications(host.notifications).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
   const unread = notifications.filter((entry) => !entry.read).length
-  const { page, content } = host.page('Notification Center', unread ? `${unread} unread` : 'All caught up', { label: notifications.length ? 'Clear' : '', enabled: Boolean(notifications.length), callback: () => host.send('lumiphone:notifications_clear', { mode: 'all' }) })
+  const { page, content } = host.page('Notification Center', unread ? `${unread} unread` : 'All caught up', { label: notifications.length ? 'Clear' : '', enabled: Boolean(notifications.length), callback: () => { if (window.confirm('Clear all notifications? Messages remain in their apps.')) host.send('lumiphone:notifications_clear', { mode: 'all' }) } })
   if (notifications.some((entry) => entry.read)) {
-    const clearRead = button('Clear read notifications', 'lp-button lp-button-quiet')
+    const clearRead = button('Clear read', 'lp-button lp-button-quiet')
     clearRead.addEventListener('click', () => host.send('lumiphone:notifications_clear', { mode: 'read' }))
     content.appendChild(clearRead)
   }

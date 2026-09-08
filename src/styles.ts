@@ -1,3 +1,4 @@
+import { POCKET_DESIGN_SYSTEM } from './frontend/components/design-system.js'
 export const PHONE_STYLES = `
   .lumiphone-widget-root, .lumiphone-widget-root *, .lumiphone-drawer, .lumiphone-drawer * { box-sizing: border-box; }
   .lumiphone-widget-root {
@@ -837,4 +838,5 @@ export const PHONE_STYLES = `
   .lp-contact-photo-editor .lp-avatar { width:54px; height:54px; font-size:18px; }
   .lp-contact-photo-editor .lp-actions { justify-content:flex-start; }
 
-`
+${POCKET_DESIGN_SYSTEM}`
+

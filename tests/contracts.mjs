@@ -1443,8 +1443,9 @@ assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost
 assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
 const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Settings'))
 settingsIcon.click()
-assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
-dockRoot.querySelector('[data-settings-category="appearance"]').click()
+assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 7, 'Settings root must render category navigation')
+dockRoot.querySelector('[data-settings-category="personalization"]').click()
+;[...dockRoot.querySelectorAll('.lp-settings-category')].find(node => node.textContent.includes('Device appearance')).click()
 const uiScaleInput = [...dockRoot.querySelectorAll('input[type="range"]')].find((node) => node.min === '0.7' && node.max === '1.3')
 assert.ok(uiScaleInput, 'UI density scale control was not rendered')
 const scaleInput = [...dockRoot.querySelectorAll('input[type="range"]')].find((node) => node.min === '0.8' && node.max === '1.25')
@@ -1765,6 +1766,44 @@ tagReceivers.get('lumi-phone')({
   content: 'Open the phone', fullMatch: '<lumi-phone>Open the phone</lumi-phone>', isStreaming: false,
 })
 assert.ok(frontendSends.some((message) => message.type === 'lumiphone:model_action'))
+
+// UI pass: burst grouping and contextual actions preserve the original command payload.
+dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true }
+dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new Event('close')) }
+const burstState = structuredClone(firstState)
+burstState.preferences.colors.accent = '#ffffff'
+burstState.state.conversations[0].messages = Array.from({ length: 5 }, (_, index) => ({
+  id: `burst-${index}`, sender: 'persona', senderName: 'Persona', senderAccent: '#ffffff',
+  text: `Message ${index}`, createdAt: new Date().toISOString(), read: true, status: 'read',
+}))
+backendReceiver(burstState)
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Messages').click()
+dockRoot.querySelector('.lp-conversation-row').click()
+assert.equal(dockRoot.querySelectorAll('[data-burst-continuation="true"]').length, 4)
+const moreAction = dockRoot.querySelector('.lp-message-more')
+moreAction.click()
+assert.equal(dockRoot.querySelectorAll('dialog[open]').length, 1, 'message actions must open an accessible sheet')
+const deleteAction = dockRoot.querySelector('dialog button[aria-label="Delete message"]')
+assert.ok(deleteAction, 'delete remains available in the message sheet')
+deleteAction.click()
+assert.ok(frontendSends.some(payload => payload.type === 'lumiphone:delete' && payload.id === 'burst-0'))
+dockRoot.querySelector('.lp-sheet-close').click()
+assert.equal(dockRoot.querySelector('dialog'), null, 'closing sheets must clean up the modal')
+assert.equal(document.activeElement, moreAction, 'sheet close restores keyboard focus')
+const outgoingHex = dockRoot.querySelector('.lumiphone-shell').style.getPropertyValue('--lp-outgoing')
+const linear = [1,3,5].map(i => parseInt(outgoingHex.slice(i,i+2),16)/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4)
+assert.ok(1.05 / (.05 + linear.reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0)) >= 4.5, 'extreme outgoing accents retain readable white text')
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Weather').click()
+assert.equal(dockRoot.querySelectorAll('.lp-content input').length, 0, 'Weather opens in viewer mode')
+;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'Edit').click()
+assert.ok(dockRoot.querySelectorAll('.lp-content input').length >= 5, 'Weather edit retains all fields')
+
 cleanup()
 
 console.log('Pocket contracts passed.')
+
+
+
+

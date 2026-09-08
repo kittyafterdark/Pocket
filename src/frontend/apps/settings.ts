@@ -1,5 +1,6 @@
 import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
+import { disclosure, fieldBlock, outgoingSurface } from '../components/ui.js'
 import { button, el } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
@@ -34,7 +35,7 @@ export interface SettingsViewHost {
 function clone(value: DevicePreferences): DevicePreferences { return structuredClone(value) }
 
 function row(label: string, detail = ''): HTMLDivElement {
-  const node = el('div', 'lp-row-between')
+  const node = el('div', 'lp-row-between lp-setting-row')
   const copy = el('span'); copy.append(el('strong', '', label)); if (detail) copy.append(el('span', 'lp-copy', detail))
   node.appendChild(copy)
   return node
@@ -71,9 +72,9 @@ function slider(label: string, value: number, min: number, max: number, step: nu
 
 function categories(host: SettingsViewHost): HTMLDivElement {
   const { page, content } = host.page('Settings', 'Device-wide preferences')
+  content.classList.add('lp-settings-list')
   const entries = [
-    ['appearance', 'Appearance', 'Themes, scale, motion, custom CSS'],
-    ['persona', 'Persona & Device', 'Optional appearance for the active persona'],
+    ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
     ['generation', 'Pocket Generation', 'Model source and connection diagnostics'],
     ['camera', 'Camera & Swarm Studio', 'Visual profile and macro diagnostics'],
@@ -91,12 +92,12 @@ function categories(host: SettingsViewHost): HTMLDivElement {
 
 function appearance(host: SettingsViewHost): HTMLDivElement {
   const settings = host.draft
-  const commit = (mutate: (next: DevicePreferences) => void, options?: { persist?: boolean; resize?: boolean }) => { const next = clone(settings); mutate(next); host.update(normalizePreferences(next), options) }
+  const commit = (mutate: (next: DevicePreferences) => void, options?: { persist?: boolean; resize?: boolean }) => { const next = clone(settings); mutate(next); host.update(normalizePreferences(next), options); updatePreview() }
   const { page, content } = host.page('Appearance', 'Device defaults')
   const themes = el('section', 'lp-card lp-settings-section'); themes.append(el('div', 'lp-eyebrow', 'Theme'))
-  const themeRow = el('div', 'lp-row')
+  const themeRow = el('div', 'lp-theme-grid')
   for (const [name, swatch] of [['midnight', '#201a37'], ['porcelain', '#eeeae6'], ['rose', '#7a294e'], ['forest', '#1d5a41'], ['custom', settings.colors.accent]] as const) {
-    const dot = button('', 'lp-theme-dot'); dot.title = name; dot.style.background = swatch; dot.setAttribute('aria-pressed', String(settings.theme === name))
+    const dot = button(name[0].toUpperCase() + name.slice(1), 'lp-theme-preview'); dot.title = name; dot.style.setProperty('--theme-color', swatch); dot.setAttribute('aria-pressed', String(settings.theme === name))
     dot.addEventListener('click', () => commit((next) => { next.theme = name; if (name !== 'custom') next.colors = themePalette(name) }))
     themeRow.appendChild(dot)
   }
@@ -131,7 +132,19 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const css = el('textarea', 'lp-textarea lp-code-input'); css.value = settings.customCss; css.placeholder = '.lp-bubble { border-radius: 12px; }'; css.addEventListener('input', () => commit((next) => { next.customCss = css.value }, { persist: false }))
   const apply = button('Apply custom CSS', 'lp-button'); apply.addEventListener('click', () => commit((next) => { next.customCss = css.value }))
   custom.append(css, apply)
-  content.append(themes, palette, wallpapers, scaleCard, motion, custom); return page
+  const preview = el('div', 'lp-theme-live')
+  preview.style.background = settings.colors.background; preview.style.color = settings.colors.text
+  preview.append(el('span', 'lp-copy', 'Pocket · Preview'), el('strong', '', 'A little more you.'))
+  const sample = el('span', 'lp-message-surface', 'See you soon.'); sample.style.background = outgoingSurface(settings.colors.accent); sample.style.color = '#fff'
+  preview.append(sample)
+  const updatePreview = () => {
+    preview.style.background = host.draft.colors.background
+    preview.style.color = host.draft.colors.text
+    sample.style.background = outgoingSurface(host.draft.colors.accent)
+    for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.title === host.draft.theme))
+  }
+  const accent = palette.firstElementChild!; accent.remove()
+  content.append(preview, themes, accent, wallpapers, disclosure('Advanced colors', palette), scaleCard, motion, disclosure('Custom CSS', custom)); return page
 }
 
 function persona(host: SettingsViewHost): HTMLDivElement {
@@ -153,12 +166,8 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const canAppear = toggle('Can appear as phone participant', profile.canAppear, () => {}, 'Off by default. The active Persona is never imported as a Contact.')
   const fields = el('div', 'lp-fields')
   fields.append(
-    name,
-    pronouns,
-    role,
-    el('div', 'lp-label', 'Personality'), personality,
-    el('div', 'lp-label', 'Minimal appearance'), appearance,
-    el('div', 'lp-label', 'Texting quirks'), textingStyle,
+    fieldBlock('Name', name), fieldBlock('Pronouns', pronouns), fieldBlock('Role', role),
+    fieldBlock('Personality', personality), fieldBlock('Minimal appearance', appearance), fieldBlock('Texting quirks', textingStyle),
     canAppear,
   )
   const syncDisabled = () => {
@@ -247,7 +256,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   )
   const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
   const apply = button('Apply persona CSS', 'lp-button'); apply.addEventListener('click', () => commit((item) => { item.customCss = css.value }))
-  card.append(theme, colors, personaWallpapers, css, apply); content.appendChild(card); return page
+  card.append(fieldBlock('Theme', theme), disclosure('Advanced Persona colors', colors), personaWallpapers, disclosure('Persona custom CSS', css, apply)); content.appendChild(card); return page
 }
 
 function messages(host: SettingsViewHost): HTMLDivElement {
@@ -334,7 +343,7 @@ function camera(host: SettingsViewHost): HTMLDivElement {
   const parameters = el('textarea', 'lp-textarea lp-code-input'); parameters.placeholder = 'Provider parameters JSON'; parameters.value = Object.keys(settings.manualVisualProfile.parameters).length ? JSON.stringify(settings.manualVisualProfile.parameters, null, 2) : ''
   for (const control of [positive, negative, model, connection, loras, parameters]) control.addEventListener('input', () => commit((next) => { next.manualVisualProfile.positive = positive.value; next.manualVisualProfile.negative = negative.value; next.manualVisualProfile.model = model.value; next.manualVisualProfile.connectionId = connection.value }, false))
   const apply = button('Apply manual profile', 'lp-button'); apply.addEventListener('click', () => { let parsed: Record<string, unknown> = {}; try { parsed = parameters.value.trim() ? JSON.parse(parameters.value) : {} } catch { host.showError('Provider parameters must be valid JSON.'); return }; commit((next) => { next.manualVisualProfile.positive = positive.value.trim(); next.manualVisualProfile.negative = negative.value.trim(); next.manualVisualProfile.model = model.value.trim(); next.manualVisualProfile.connectionId = connection.value.trim(); next.manualVisualProfile.loras = loras.value.split('\n').flatMap((line) => { const [name, raw] = line.split('|').map((part) => part.trim()); if (!name) return []; const weight = Number(raw); return [{ name, weight: Number.isFinite(weight) ? weight : 1 }] }); next.manualVisualProfile.parameters = parsed }) })
-  manual.append(positive, negative, model, connection, loras, parameters, apply); content.append(swarm, manual); return page
+  manual.append(positive, negative, model, connection, loras, parameters, apply); content.append(swarm, disclosure('Advanced manual overrides', manual)); return page
 }
 
 function notifications(host: SettingsViewHost): HTMLDivElement {
@@ -362,6 +371,16 @@ function data(host: SettingsViewHost): HTMLDivElement {
 
 export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   if (!host.section) return categories(host)
+  if (host.section === 'personalization') {
+    const { page, content } = host.page('Personalization', 'Make Pocket yours')
+    for (const [id, title, help] of [['appearance', 'Device appearance', 'Theme and wallpapers used by default'], ['persona', 'Persona & phone identity', 'Profile and optional appearance for your own phone']]) {
+      const row = button('', 'lp-card lp-settings-category')
+      const copy = el('span'); copy.append(el('strong', '', title), el('span', 'lp-copy', help))
+      row.append(copy, el('span', 'lp-settings-chevron', '›'))
+      row.addEventListener('click', () => host.navigate(id)); content.append(row)
+    }
+    return page
+  }
   if (host.section === 'appearance') return appearance(host)
   if (host.section === 'persona') return persona(host)
   if (host.section === 'messages') return messages(host)

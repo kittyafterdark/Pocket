@@ -37,6 +37,7 @@ import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
 import { activityReceipt, renderActivityHost } from './activity.js'
 import type { PocketImageTarget } from './components/image-picker.js'
+import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
 import type {
@@ -1323,6 +1324,7 @@ class PocketController {
     const appearance = persona?.enabled ? persona : settings
     this.shell.dataset.theme = appearance.theme
     this.shell.style.setProperty('--lp-accent', appearance.colors.accent)
+    this.shell.style.setProperty('--lp-outgoing', outgoingSurface(appearance.colors.accent))
     this.shell.style.setProperty('--lp-bezel', appearance.colors.bezel)
     this.shell.style.setProperty('--lp-bg', appearance.colors.background)
     this.shell.style.setProperty('--lp-surface', appearance.colors.surface)
@@ -1717,6 +1719,7 @@ class PocketController {
   private appIcon(meta: typeof APP_META[number]): HTMLButtonElement {
     const node = el('button', 'lp-app-icon')
     node.type = 'button'
+    node.setAttribute('aria-label', meta.label)
     const box = el('span', `lp-app-icon-box lp-icon-${meta.icon}`)
     box.appendChild(icon(meta.icon))
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
@@ -2161,16 +2164,21 @@ class PocketController {
       if (!contact.value) { this.showError('Choose a contact first.'); return }
       this.runGalleryAction(setPhoto, 'Applying…', 'lumiphone:set_contact_photo', { contactId: contact.value, imageUrl: item.fullUrl || item.url })
     })
-    actions.append(open, attach, homeWallpaper, chatWallpaper)
+    const uses = el('div', 'lp-sheet-actions')
+    const useAs = button('Use as…', 'lp-button')
+    useAs.addEventListener('click', () => showPocketSheet(useAs, 'Use photo as', uses))
+    actions.append(attach, useAs, open)
+    uses.append(homeWallpaper, chatWallpaper)
     const personaAppearance = this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null
     if (this.activePersona && personaAppearance?.enabled) {
       const personaHome = button(`Set ${this.activePersona.name} home wallpaper`, 'lp-button lp-button-quiet')
       personaHome.addEventListener('click', () => this.runGalleryAction(personaHome, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'home', personaId: this.activePersona!.id }))
       const personaChat = button(`Set ${this.activePersona.name} chat wallpaper`, 'lp-button lp-button-quiet')
       personaChat.addEventListener('click', () => this.runGalleryAction(personaChat, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'chat', personaId: this.activePersona!.id }))
-      actions.append(personaHome, personaChat)
+      uses.append(personaHome, personaChat)
     }
-    if (!(this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId)) actions.append(contact, setPhoto)
+    if (!(this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId)) uses.append(fieldBlock('Contact photo', contact), setPhoto)
+    modal.root.classList.add('lp-media-viewer')
     modal.root.append(image, actions)
   }
 
@@ -2244,7 +2252,7 @@ class PocketController {
       viewfinder.appendChild(image)
     } else {
       const placeholder = el('div', 'lp-camera-placeholder')
-      placeholder.append(icon('camera'), el('div', '', 'Frame an in-world moment. The optional scene planner expands your brief before the image connection develops it.'))
+      placeholder.append(icon('camera'), el('div', '', 'What would you like to capture?'))
       viewfinder.appendChild(placeholder)
     }
     const controls = el('form', 'lp-camera-controls')
@@ -2256,7 +2264,7 @@ class PocketController {
     const enhance = el('input')
     enhance.type = 'checkbox'
     enhance.checked = this.preferences.sceneEnhancer
-    enhanceLabel.append(enhance, el('span', 'lp-copy', 'Scene planner sidecar'))
+    enhanceLabel.append(enhance, el('span', 'lp-copy', 'Enhance scene description'))
     const source = el('span', 'lp-copy', this.swarmProfile?.source === 'swarm_studio' ? 'Swarm Studio' : 'Primitive/manual')
     optionRow.append(enhanceLabel, source)
     const shutterRow = el('div', 'lp-shutter-row')
@@ -2274,11 +2282,15 @@ class PocketController {
     const spacer = el('span')
     shutterRow.append(cancel, shutter, spacer)
     const progress = el('div', 'lp-camera-progress', this.cameraProgress || (!this.caps?.imageGen ? 'Grant Image Generation permission in Settings' : ''))
-    controls.append(prompt, optionRow, shutterRow, progress)
+    const promptDrawer = disclosure('Describe the moment', fieldBlock('Photo description', prompt))
+    const optionsDrawer = disclosure('Camera options', optionRow)
+    controls.append(promptDrawer, optionsDrawer, shutterRow, progress)
+    shutter.setAttribute('aria-label', 'Take photo')
     controls.addEventListener('submit', (event) => {
       event.preventDefault()
       const scene = inputValue(prompt)
-      if (!scene || this.cameraBusy) return
+      if (this.cameraBusy) return
+      if (!scene) { promptDrawer.open = true; prompt.focus(); return }
       this.cameraRequestId = requestId('camera')
       this.cameraBusy = true
       this.cameraProgress = 'Sending scene to camera…'
@@ -2296,14 +2308,14 @@ class PocketController {
     const { page, content } = this.page('Notes', `${state.notes.length} journal entries`, { label: 'New', callback: () => this.openPocket({ app: 'notes', noteId: '__new__' }) })
     const sorted = [...state.notes].sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     for (const note of sorted) {
-      const card = el('div', 'lp-card lp-note-card')
+      const card = button('', 'lp-card lp-note-card')
       card.dataset.clickable = 'true'
       card.dataset.pinned = String(note.pinned)
       const head = el('div', 'lp-row-between')
       head.append(el('h3', 'lp-title', note.title), el('span', 'lp-copy', formatDate(note.updatedAt)))
       const preview = el('p', 'lp-copy lp-note-preview', note.body || 'Empty note')
       card.append(head, preview)
-      card.appendChild(el('span', 'lp-eyebrow', [note.author, note.mood].filter(Boolean).join(' · ')))
+      card.appendChild(el('span', 'lp-eyebrow', [note.pinned ? '◆ Pinned' : '', note.author, note.mood].filter(Boolean).join(' · ')))
       card.addEventListener('click', () => this.openPocket({ app: 'notes', noteId: note.id }))
       content.appendChild(card)
     }
@@ -2320,7 +2332,8 @@ class PocketController {
     mood.placeholder = 'Mood or tag'
     mood.value = note?.mood || ''
     const body = el('textarea', 'lp-textarea')
-    body.style.minHeight = '270px'
+    content.classList.add('lp-note-editor'); title.classList.add('lp-note-title'); body.classList.add('lp-note-body')
+    title.setAttribute('aria-label', 'Title'); mood.setAttribute('aria-label', 'Mood or tag'); body.setAttribute('aria-label', 'Journal entry')
     body.placeholder = 'Write a memory, thought, or journal entry…'
     body.value = note?.body || ''
     const pinRow = el('label', 'lp-row-between lp-card')
@@ -2345,9 +2358,9 @@ class PocketController {
     return page
   }
 
-  private renderWeather(): HTMLDivElement {
+  private renderWeather(editing = false): HTMLDivElement {
     const weather = this.state!.weather
-    const { page, content } = this.page('Weather', weather.location, { label: 'Save', callback: () => save() })
+    const { page, content } = this.page('Weather', weather.location, { label: editing ? 'Save' : 'Edit', callback: () => { if (editing) save(); else page.replaceWith(this.renderWeather(true)) } })
     const hero = el('div', 'lp-weather-hero')
     const top = el('div')
     top.append(el('div', 'lp-weather-condition', weather.condition), el('div', 'lp-copy', weather.location))
@@ -2374,11 +2387,12 @@ class PocketController {
     const details = el('textarea', 'lp-textarea')
     details.placeholder = 'Atmosphere and roleplay weather details…'
     details.value = weather.details
-    content.append(hero, fields, details)
-    const save = () => this.send('lumiphone:action', { action: 'weather', payload: {
+    if (editing) content.append(hero, fields, fieldBlock('Atmosphere', details))
+    else content.append(hero, el('p', 'lp-weather-note', weather.details || 'Enjoy the day.'))
+    const save = () => { this.send('lumiphone:action', { action: 'weather', payload: {
       location: inputValue(location.input), condition: inputValue(condition.input), temperature: Number(temperature.input.value), unit: unit.value,
       high: Number(high.input.value), low: Number(low.input.value), details: details.value,
-    } })
+    } }); this.render() }
     return page
   }
 
@@ -2407,7 +2421,7 @@ class PocketController {
       el('p', 'lp-copy', `${clockSource}${clockPrecision}${clockLabel}`),
       setNow,
     )
-    content.appendChild(nowCard)
+    content.appendChild(disclosure('Story clock · ' + formatTime(state.roleplayNow), nowCard))
     const timeline = el('div', 'lp-timeline')
     const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
     for (const event of events) {
@@ -2415,9 +2429,10 @@ class PocketController {
       row.dataset.completed = String(event.completed)
       const dot = el('span', 'lp-event-dot')
       dot.style.setProperty('--event-color', event.color)
-      const card = el('div', 'lp-card')
+      const card = button('', 'lp-card lp-event-card')
       card.dataset.clickable = 'true'
       card.append(el('div', 'lp-eyebrow', `${event.lane} · ${event.whenText || formatDate(event.start, true)}`), el('h3', 'lp-title', event.title))
+      if (event.completed) card.appendChild(el('span', 'lp-status-badge', '✓ Completed'))
       if (event.description) card.appendChild(el('p', 'lp-copy', event.description))
       card.addEventListener('click', () => this.openPocket({ app: 'calendar', eventId: event.id }))
       row.append(dot, card)

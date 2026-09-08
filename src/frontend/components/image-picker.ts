@@ -1,5 +1,6 @@
 import type { PocketResolvedImage, PocketWallpaper } from '../../types.js'
 import { button, el } from '../shared.js'
+import { disclosure } from './ui.js'
 
 export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' | 'persona-chat' | 'contact-avatar'
 
@@ -59,6 +60,6 @@ export function wallpaperImageControl(
     range('Vertical focus', wallpaper.focalY, (value) => host.change({ ...wallpaper, focalY: value })),
     range('Scrim', wallpaper.scrim, (value) => host.change({ ...wallpaper, scrim: value })),
   )
-  card.append(heading, preview, actions, fit, focal)
+  card.append(heading, preview, actions, disclosure('Adjust wallpaper', fit, focal))
   return card
 }
