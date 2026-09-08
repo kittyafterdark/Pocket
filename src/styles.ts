@@ -398,7 +398,8 @@ export const PHONE_STYLES = `
   .lumiphone-device-rp,.lumiphone-device-unread { min-width:24px; padding:3px 6px; border-radius:999px; background:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 18%,transparent); font-size:9px; font-weight:800; text-align:center; }
   .lumiphone-device-unread { background:#d84f68; color:#fff; }
 
-  .lumiphone-sync-indicator { position:absolute; z-index:44; top:37px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); padding:5px 9px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .lumiphone-sync-indicator { position:absolute; z-index:44; top:104px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); min-height:22px; padding:5px 10px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .lumiphone-shell:has(.lp-home) .lumiphone-sync-indicator { top:42px; }
   .lumiphone-sync-indicator[hidden] { display:none; }
   .lumiphone-sync-indicator[data-status="complete"] { color:var(--lp-text); }
   .lumiphone-sync-indicator[data-status="error"] { border-color:color-mix(in srgb,#ff6a80 50%,var(--lp-border)); color:#ff9dac; }

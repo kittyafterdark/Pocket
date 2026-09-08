@@ -3036,81 +3036,122 @@ function actorLine(activity) {
     return `${sender} → ${recipients}`;
   return sender || recipients || presentation.conversationTitle || "";
 }
+function recipientLine(activity) {
+  const presentation = activity.presentation;
+  if (!presentation)
+    return "";
+  const recipients = presentation.recipientNames?.filter(Boolean) || [];
+  if (recipients.length === 1)
+    return recipients[0];
+  if (recipients.length > 1)
+    return presentation.conversationTitle || recipients.join(", ");
+  return presentation.conversationTitle || "";
+}
+function observedDeviceLine(activity) {
+  const recipient = recipientLine(activity);
+  return recipient ? `${recipient}'s phone` : "Another phone";
+}
+function messageChrome(stateText = "now") {
+  const chrome = document.createElement("span");
+  chrome.className = "pocket-inline-artifact-chrome";
+  const app = document.createElement("span");
+  app.className = "pocket-inline-artifact-app";
+  app.textContent = "Messages";
+  const state = document.createElement("span");
+  state.className = "pocket-inline-artifact-state";
+  state.textContent = stateText;
+  chrome.append(app, state);
+  return chrome;
+}
+function buildMessageArtifact(activity, openRoute) {
+  const presentation = activity.presentation;
+  if (!presentation || !["sent", "received", "observed"].includes(presentation.kind))
+    return null;
+  const primary = document.createElement(presentation.kind === "observed" ? "div" : "button");
+  if (primary instanceof HTMLButtonElement)
+    primary.type = "button";
+  primary.className = "pocket-inline-artifact";
+  primary.dataset.kind = presentation.kind;
+  const copy = document.createElement("span");
+  copy.className = "pocket-inline-artifact-copy";
+  copy.textContent = activity.summary || "";
+  if (presentation.kind === "sent") {
+    const recipient = document.createElement("span");
+    recipient.className = "pocket-inline-artifact-recipient";
+    const recipientName = recipientLine(activity);
+    recipient.textContent = recipientName ? `To ${recipientName}` : "Sent message";
+    const bubble = document.createElement("span");
+    bubble.className = "pocket-inline-chat-bubble lp-message-surface";
+    bubble.append(copy);
+    const status = document.createElement("span");
+    status.className = "pocket-inline-sent-status";
+    status.textContent = "sent";
+    primary.append(recipient, bubble, status);
+  } else {
+    if (presentation.kind === "observed") {
+      const device = document.createElement("span");
+      device.className = "pocket-inline-artifact-device";
+      device.textContent = observedDeviceLine(activity);
+      primary.appendChild(device);
+    }
+    primary.appendChild(messageChrome("now"));
+    const sender = document.createElement("strong");
+    sender.className = "pocket-inline-artifact-actors";
+    sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title;
+    primary.append(sender, copy);
+  }
+  if (primary instanceof HTMLButtonElement) {
+    primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title} in Pocket`);
+    primary.addEventListener("click", () => openRoute(activity.route));
+  } else {
+    primary.setAttribute("aria-label", `Message visible on ${observedDeviceLine(activity)}`);
+  }
+  return primary;
+}
 function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
   stack.className = "pocket-artifact-stack";
-  const presentation = activity.presentation;
-  if (options.includeArtifact !== false && presentation && (presentation.kind === "sent" || presentation.kind === "received" || presentation.kind === "observed")) {
-    const primary = document.createElement(presentation.kind === "observed" ? "div" : "button");
-    if (primary instanceof HTMLButtonElement)
-      primary.type = "button";
-    primary.className = "pocket-inline-artifact";
-    primary.dataset.kind = presentation.kind;
-    const chrome = document.createElement("span");
-    chrome.className = "pocket-inline-artifact-chrome";
-    const app = document.createElement("span");
-    app.className = "pocket-inline-artifact-app";
-    app.textContent = presentation.kind === "received" ? "Messages" : presentation.kind === "sent" ? "Messages" : "Messages · observed phone";
-    const state = document.createElement("span");
-    state.className = "pocket-inline-artifact-state";
-    state.textContent = presentation.kind === "received" ? "now" : presentation.kind === "sent" ? "sent" : "glimpse";
-    chrome.append(app, state);
-    const actors = document.createElement("strong");
-    actors.className = "pocket-inline-artifact-actors";
-    actors.textContent = (presentation.kind === "received" ? presentation.senderName : actorLine(activity)) || presentation.conversationTitle || activity.title;
-    const copy = document.createElement("span");
-    copy.className = "pocket-inline-artifact-copy";
-    copy.textContent = activity.summary || "";
-    if (presentation.kind === "sent") {
-      const bubble = document.createElement("span");
-      bubble.className = "pocket-inline-chat-bubble lp-message-surface";
-      bubble.append(copy);
-      primary.append(chrome, actors, bubble);
-    } else {
-      primary.append(chrome, actors, copy);
-    }
-    if (primary instanceof HTMLButtonElement) {
-      primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title} in Pocket`);
-      primary.addEventListener("click", () => openRoute(activity.route));
-    } else {
-      primary.setAttribute("aria-label", "Observed external Pocket communication");
-    }
-    stack.appendChild(primary);
+  if (options.includeArtifact !== false) {
+    const artifact = buildMessageArtifact(activity, openRoute);
+    if (artifact)
+      stack.appendChild(artifact);
   }
   if (options.includeReceipt !== false) {
-    const receipt = document.createElement(activity.presentation?.kind === "observed" ? "span" : "button");
+    const interactive = activity.presentation?.kind !== "observed";
+    const receipt = document.createElement(interactive ? "button" : "span");
     if (receipt instanceof HTMLButtonElement)
       receipt.type = "button";
     receipt.className = "pocket-receipt";
     const label = document.createElement("span");
     label.className = "pocket-receipt-kind";
-    label.textContent = `Pocket · ${presentationLabel(activity)}`;
+    label.textContent = "Pocket";
     const copy = document.createElement("span");
     copy.className = "pocket-receipt-copy";
     const title = document.createElement("strong");
-    title.textContent = presentation?.conversationTitle || activity.title;
+    const conversation = activity.presentation?.conversationTitle || activity.title;
+    title.textContent = conversation ? `${presentationLabel(activity)} · ${conversation}` : presentationLabel(activity);
     copy.appendChild(title);
-    const detail2 = actorLine(activity) || activity.summary;
-    if (detail2) {
-      const summary = document.createElement("span");
-      summary.textContent = detail2;
-      const details = document.createElement("details");
-      details.className = "pocket-receipt-details";
-      const toggle3 = document.createElement("summary");
-      toggle3.textContent = "Details";
-      details.append(toggle3, summary);
-      stack.appendChild(details);
-    }
     const arrow = document.createElement("span");
     arrow.className = "pocket-receipt-arrow";
     arrow.setAttribute("aria-hidden", "true");
     arrow.textContent = receipt instanceof HTMLButtonElement ? "›" : "·";
     receipt.append(label, copy, arrow);
     if (receipt instanceof HTMLButtonElement) {
-      receipt.setAttribute("aria-label", `Open ${presentation?.conversationTitle || activity.title} in Pocket`);
+      receipt.setAttribute("aria-label", `Open ${activity.presentation?.conversationTitle || activity.title} in Pocket`);
       receipt.addEventListener("click", () => openRoute(activity.route));
     }
     stack.appendChild(receipt);
+    const detail2 = actorLine(activity) || activity.summary;
+    if (detail2) {
+      const details = document.createElement("details");
+      details.className = "pocket-receipt-details";
+      const toggle3 = document.createElement("summary");
+      toggle3.textContent = "Provenance";
+      const summary = document.createElement("span");
+      summary.textContent = detail2;
+      details.append(toggle3, summary);
+      stack.appendChild(details);
+    }
   }
   return stack;
 }
@@ -4082,12 +4123,14 @@ class PocketController {
       const status = String(payload.status || "");
       this.syncIndicator.dataset.status = status;
       if (status === "working") {
-        this.syncIndicator.textContent = "Pocket · Reconciling world…";
+        this.syncIndicator.textContent = "Pocket syncing…";
+        this.syncIndicator.title = "Pocket is reconciling roleplay state.";
         this.syncIndicator.hidden = false;
         this.launcher.dataset.sync = "working";
       } else if (status === "complete") {
         const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean).join(", ") : "";
-        this.syncIndicator.textContent = `Pocket · Synced${domains ? ` · ${domains}` : ""}`;
+        this.syncIndicator.textContent = domains ? `Synced · ${domains}` : "Pocket synced";
+        this.syncIndicator.title = domains ? `Pocket synced: ${domains}` : "Pocket synced.";
         this.syncIndicator.hidden = false;
         this.launcher.dataset.sync = "complete";
         this.syncIndicatorTimer = window.setTimeout(() => {
@@ -4095,7 +4138,9 @@ class PocketController {
           delete this.launcher.dataset.sync;
         }, 1800);
       } else {
-        this.syncIndicator.textContent = `Pocket · Sync issue${payload.error ? ` · ${String(payload.error).slice(0, 120)}` : ""}`;
+        const detail2 = payload.error ? String(payload.error).slice(0, 240) : "";
+        this.syncIndicator.textContent = "Pocket sync issue";
+        this.syncIndicator.title = detail2 || "Pocket could not reconcile roleplay state.";
         this.syncIndicator.hidden = false;
         this.launcher.dataset.sync = "error";
         this.syncIndicatorTimer = window.setTimeout(() => {
@@ -6263,17 +6308,31 @@ var POCKET_DESIGN_SYSTEM = `
   .lp-media-viewer { --lp-text:#f7f5ff; --lp-bg:#141319; --lp-muted:#b9b5c5; --lp-border:#ffffff22; }
   .lp-media-viewer .lp-gallery-actions { display:flex; flex-wrap:wrap; justify-content:space-around; gap:8px; padding:16px 0; }
   .lp-media-viewer .lp-button { min-height:44px; font-size:13px; color:var(--lp-text); background:#ffffff0b; }
-  .pocket-inline-artifact { max-width:480px; padding:16px; gap:8px; border:0; border-radius:20px; }
-  .pocket-inline-artifact-copy { display:block; overflow:visible; font-size:14px; line-height:1.55; opacity:1; }
-  .pocket-inline-artifact-actors { white-space:normal; font-size:13px; }
-  .pocket-inline-artifact-app { font-size:11px; font-weight:600; color:inherit; opacity:.7; }
-  .pocket-inline-artifact[data-kind="observed"] { border:1px solid #ffffff20; opacity:1; }
-  .pocket-inline-chat-bubble { background:#423c62; color:#fff; border-radius:18px 18px 7px 18px; }
-  .pocket-inline-artifact[data-kind="sent"] .pocket-inline-artifact-chrome { order:3; justify-content:flex-end; }
-  .pocket-inline-artifact[data-kind="sent"] .pocket-inline-artifact-app { display:none; }
-  .pocket-receipt { padding:3px 6px; box-shadow:none; background:transparent; opacity:.72; }
-  .pocket-receipt-details { font-size:10px; opacity:.65; order:3; }
-  .pocket-receipt-details summary { cursor:pointer; }
+  .pocket-inline-anchor { margin:14px 0; }
+  .pocket-artifact-stack { gap:4px; }
+  .pocket-inline-artifact { width:min(100%,480px); min-height:0; padding:12px 13px; gap:6px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 14%,transparent); border-radius:18px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 88%,transparent); color:var(--lumiverse-text,#f7f5ff); box-shadow:0 10px 30px #0000001f; backdrop-filter:blur(18px) saturate(1.12); }
+  .pocket-inline-artifact[data-kind="received"] { background:linear-gradient(180deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 86%,white 5%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 94%,transparent)); }
+  .pocket-inline-artifact[data-kind="observed"] { width:min(100%,460px); opacity:1; border-style:solid; background:linear-gradient(180deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,white 3%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); }
+  .pocket-inline-artifact-chrome { min-height:18px; gap:10px; }
+  .pocket-inline-artifact-app { display:inline-flex; align-items:center; gap:6px; font-size:10px; font-weight:650; color:inherit; opacity:.72; letter-spacing:0; }
+  .pocket-inline-artifact-app::before { content:''; width:14px; height:14px; border-radius:4px; background:linear-gradient(145deg,#4ee580,#12aa4b); box-shadow:inset 0 1px #ffffff35; }
+  .pocket-inline-artifact-state { font-size:9px; text-transform:none; letter-spacing:0; opacity:.48; }
+  .pocket-inline-artifact-device { display:block; margin-bottom:1px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; font-weight:600; opacity:.55; }
+  .pocket-inline-artifact-actors { display:block; margin-top:1px; white-space:normal; font-size:13px; line-height:1.3; font-weight:720; }
+  .pocket-inline-artifact-copy { display:block; overflow:visible; font-size:13px; line-height:1.5; opacity:.94; -webkit-line-clamp:unset; }
+  .pocket-inline-artifact[data-kind="sent"] { width:min(88%,420px); margin-left:auto; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; backdrop-filter:none; gap:4px; }
+  .pocket-inline-artifact-recipient { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; text-align:right; opacity:.58; }
+  .pocket-inline-chat-bubble { justify-self:end; width:auto; max-width:100%; padding:10px 12px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; border-radius:18px 18px 6px 18px; box-shadow:none; }
+  .pocket-inline-chat-bubble .pocket-inline-artifact-copy { font-size:13px; line-height:1.48; opacity:1; }
+  .pocket-inline-sent-status { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:9px; text-align:right; opacity:.42; }
+  .pocket-receipt { min-height:22px; padding:2px 3px; grid-template-columns:auto minmax(0,1fr) auto; gap:5px; border-radius:6px; box-shadow:none; background:transparent; opacity:.48; }
+  button.pocket-receipt:hover { opacity:.8; background:transparent; }
+  .pocket-receipt-kind { padding:0; background:transparent; font-size:8px; font-weight:750; }
+  .pocket-receipt-copy strong { font-size:8px; font-weight:600; }
+  .pocket-receipt-arrow { font-size:11px; opacity:.4; }
+  .pocket-receipt-details { margin:0 2px; font-size:9px; opacity:.42; order:3; }
+  .pocket-receipt-details summary { width:max-content; cursor:pointer; }
+  .pocket-receipt-details > span { display:block; margin-top:3px; max-width:460px; line-height:1.35; }
   @container (max-width:360px) {
     .lumiphone-shell .lp-content { padding-inline:12px; }
     .lumiphone-shell .lp-nav { padding-inline:8px; gap:4px; }
@@ -6684,7 +6743,8 @@ var PHONE_STYLES = `
   .lumiphone-device-rp,.lumiphone-device-unread { min-width:24px; padding:3px 6px; border-radius:999px; background:color-mix(in srgb,var(--lumiverse-primary,#7866e8) 18%,transparent); font-size:9px; font-weight:800; text-align:center; }
   .lumiphone-device-unread { background:#d84f68; color:#fff; }
 
-  .lumiphone-sync-indicator { position:absolute; z-index:44; top:37px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); padding:5px 9px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .lumiphone-sync-indicator { position:absolute; z-index:44; top:104px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); min-height:22px; padding:5px 10px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .lumiphone-shell:has(.lp-home) .lumiphone-sync-indicator { top:42px; }
   .lumiphone-sync-indicator[hidden] { display:none; }
   .lumiphone-sync-indicator[data-status="complete"] { color:var(--lp-text); }
   .lumiphone-sync-indicator[data-status="error"] { border-color:color-mix(in srgb,#ff6a80 50%,var(--lp-border)); color:#ff9dac; }

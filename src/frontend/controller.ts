@@ -957,17 +957,21 @@ class PocketController {
       const status = String(payload.status || '')
       this.syncIndicator.dataset.status = status
       if (status === 'working') {
-        this.syncIndicator.textContent = 'Pocket · Reconciling world…'
+        this.syncIndicator.textContent = 'Pocket syncing…'
+        this.syncIndicator.title = 'Pocket is reconciling roleplay state.'
         this.syncIndicator.hidden = false
         this.launcher.dataset.sync = 'working'
       } else if (status === 'complete') {
         const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean).join(', ') : ''
-        this.syncIndicator.textContent = `Pocket · Synced${domains ? ` · ${domains}` : ''}`
+        this.syncIndicator.textContent = domains ? `Synced · ${domains}` : 'Pocket synced'
+        this.syncIndicator.title = domains ? `Pocket synced: ${domains}` : 'Pocket synced.'
         this.syncIndicator.hidden = false
         this.launcher.dataset.sync = 'complete'
         this.syncIndicatorTimer = window.setTimeout(() => { this.syncIndicator.hidden = true; delete this.launcher.dataset.sync }, 1800)
       } else {
-        this.syncIndicator.textContent = `Pocket · Sync issue${payload.error ? ` · ${String(payload.error).slice(0, 120)}` : ''}`
+        const detail = payload.error ? String(payload.error).slice(0, 240) : ''
+        this.syncIndicator.textContent = 'Pocket sync issue'
+        this.syncIndicator.title = detail || 'Pocket could not reconcile roleplay state.'
         this.syncIndicator.hidden = false
         this.launcher.dataset.sync = 'error'
         this.syncIndicatorTimer = window.setTimeout(() => { this.syncIndicator.hidden = true; delete this.launcher.dataset.sync }, 5000)

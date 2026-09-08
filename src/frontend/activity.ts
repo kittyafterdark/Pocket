@@ -25,6 +25,88 @@ function actorLine(activity: PocketActivity): string {
   return sender || recipients || presentation.conversationTitle || ''
 }
 
+function recipientLine(activity: PocketActivity): string {
+  const presentation = activity.presentation
+  if (!presentation) return ''
+  const recipients = presentation.recipientNames?.filter(Boolean) || []
+  if (recipients.length === 1) return recipients[0]
+  if (recipients.length > 1) return presentation.conversationTitle || recipients.join(', ')
+  return presentation.conversationTitle || ''
+}
+
+function observedDeviceLine(activity: PocketActivity): string {
+  const recipient = recipientLine(activity)
+  return recipient ? `${recipient}'s phone` : 'Another phone'
+}
+
+function messageChrome(stateText = 'now'): HTMLSpanElement {
+  const chrome = document.createElement('span')
+  chrome.className = 'pocket-inline-artifact-chrome'
+  const app = document.createElement('span')
+  app.className = 'pocket-inline-artifact-app'
+  app.textContent = 'Messages'
+  const state = document.createElement('span')
+  state.className = 'pocket-inline-artifact-state'
+  state.textContent = stateText
+  chrome.append(app, state)
+  return chrome
+}
+
+function buildMessageArtifact(
+  activity: PocketActivity,
+  openRoute: (route: PocketRoute) => void,
+): HTMLElement | null {
+  const presentation = activity.presentation
+  if (!presentation || !['sent', 'received', 'observed'].includes(presentation.kind)) return null
+
+  const primary = document.createElement(presentation.kind === 'observed' ? 'div' : 'button')
+  if (primary instanceof HTMLButtonElement) primary.type = 'button'
+  primary.className = 'pocket-inline-artifact'
+  primary.dataset.kind = presentation.kind
+
+  const copy = document.createElement('span')
+  copy.className = 'pocket-inline-artifact-copy'
+  copy.textContent = activity.summary || ''
+
+  if (presentation.kind === 'sent') {
+    const recipient = document.createElement('span')
+    recipient.className = 'pocket-inline-artifact-recipient'
+    const recipientName = recipientLine(activity)
+    recipient.textContent = recipientName ? `To ${recipientName}` : 'Sent message'
+
+    const bubble = document.createElement('span')
+    bubble.className = 'pocket-inline-chat-bubble lp-message-surface'
+    bubble.append(copy)
+
+    const status = document.createElement('span')
+    status.className = 'pocket-inline-sent-status'
+    status.textContent = 'sent'
+    primary.append(recipient, bubble, status)
+  } else {
+    if (presentation.kind === 'observed') {
+      const device = document.createElement('span')
+      device.className = 'pocket-inline-artifact-device'
+      device.textContent = observedDeviceLine(activity)
+      primary.appendChild(device)
+    }
+
+    primary.appendChild(messageChrome('now'))
+
+    const sender = document.createElement('strong')
+    sender.className = 'pocket-inline-artifact-actors'
+    sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title
+    primary.append(sender, copy)
+  }
+
+  if (primary instanceof HTMLButtonElement) {
+    primary.setAttribute('aria-label', `Open ${presentation.conversationTitle || activity.title} in Pocket`)
+    primary.addEventListener('click', () => openRoute(activity.route))
+  } else {
+    primary.setAttribute('aria-label', `Message visible on ${observedDeviceLine(activity)}`)
+  }
+  return primary
+}
+
 function buildActivityStack(
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
@@ -33,80 +115,51 @@ function buildActivityStack(
   const stack = document.createElement('span')
   stack.className = 'pocket-artifact-stack'
 
-  const presentation = activity.presentation
-  if (options.includeArtifact !== false && presentation && (presentation.kind === 'sent' || presentation.kind === 'received' || presentation.kind === 'observed')) {
-    const primary = document.createElement(presentation.kind === 'observed' ? 'div' : 'button')
-    if (primary instanceof HTMLButtonElement) primary.type = 'button'
-    primary.className = 'pocket-inline-artifact'
-    primary.dataset.kind = presentation.kind
-
-    const chrome = document.createElement('span')
-    chrome.className = 'pocket-inline-artifact-chrome'
-    const app = document.createElement('span')
-    app.className = 'pocket-inline-artifact-app'
-    app.textContent = presentation.kind === 'received' ? 'Messages' : presentation.kind === 'sent' ? 'Messages' : 'Messages · observed phone'
-    const state = document.createElement('span')
-    state.className = 'pocket-inline-artifact-state'
-    state.textContent = presentation.kind === 'received' ? 'now' : presentation.kind === 'sent' ? 'sent' : 'glimpse'
-    chrome.append(app, state)
-
-    const actors = document.createElement('strong')
-    actors.className = 'pocket-inline-artifact-actors'
-    actors.textContent = (presentation.kind === 'received' ? presentation.senderName : actorLine(activity)) || presentation.conversationTitle || activity.title
-    const copy = document.createElement('span')
-    copy.className = 'pocket-inline-artifact-copy'
-    copy.textContent = activity.summary || ''
-
-    if (presentation.kind === 'sent') {
-      const bubble = document.createElement('span')
-      bubble.className = 'pocket-inline-chat-bubble lp-message-surface'
-      bubble.append(copy)
-      primary.append(chrome, actors, bubble)
-    } else {
-      primary.append(chrome, actors, copy)
-    }
-
-    if (primary instanceof HTMLButtonElement) {
-      primary.setAttribute('aria-label', `Open ${presentation.conversationTitle || activity.title} in Pocket`)
-      primary.addEventListener('click', () => openRoute(activity.route))
-    } else {
-      primary.setAttribute('aria-label', 'Observed external Pocket communication')
-    }
-    stack.appendChild(primary)
+  if (options.includeArtifact !== false) {
+    const artifact = buildMessageArtifact(activity, openRoute)
+    if (artifact) stack.appendChild(artifact)
   }
 
   if (options.includeReceipt !== false) {
-    const receipt = document.createElement(activity.presentation?.kind === 'observed' ? 'span' : 'button')
+    const interactive = activity.presentation?.kind !== 'observed'
+    const receipt = document.createElement(interactive ? 'button' : 'span')
     if (receipt instanceof HTMLButtonElement) receipt.type = 'button'
     receipt.className = 'pocket-receipt'
+
     const label = document.createElement('span')
     label.className = 'pocket-receipt-kind'
-    label.textContent = `Pocket · ${presentationLabel(activity)}`
+    label.textContent = 'Pocket'
+
     const copy = document.createElement('span')
     copy.className = 'pocket-receipt-copy'
     const title = document.createElement('strong')
-    title.textContent = presentation?.conversationTitle || activity.title
+    const conversation = activity.presentation?.conversationTitle || activity.title
+    title.textContent = conversation ? `${presentationLabel(activity)} · ${conversation}` : presentationLabel(activity)
     copy.appendChild(title)
-    const detail = actorLine(activity) || activity.summary
-    if (detail) {
-      const summary = document.createElement('span')
-      summary.textContent = detail
-      const details = document.createElement('details'); details.className = 'pocket-receipt-details'
-      const toggle = document.createElement('summary'); toggle.textContent = 'Details'
-      details.append(toggle, summary)
-      // Keep provenance available without nesting interactive controls in a button.
-      stack.appendChild(details)
-    }
+
     const arrow = document.createElement('span')
     arrow.className = 'pocket-receipt-arrow'
     arrow.setAttribute('aria-hidden', 'true')
     arrow.textContent = receipt instanceof HTMLButtonElement ? '›' : '·'
     receipt.append(label, copy, arrow)
+
     if (receipt instanceof HTMLButtonElement) {
-      receipt.setAttribute('aria-label', `Open ${presentation?.conversationTitle || activity.title} in Pocket`)
+      receipt.setAttribute('aria-label', `Open ${activity.presentation?.conversationTitle || activity.title} in Pocket`)
       receipt.addEventListener('click', () => openRoute(activity.route))
     }
     stack.appendChild(receipt)
+
+    const detail = actorLine(activity) || activity.summary
+    if (detail) {
+      const details = document.createElement('details')
+      details.className = 'pocket-receipt-details'
+      const toggle = document.createElement('summary')
+      toggle.textContent = 'Provenance'
+      const summary = document.createElement('span')
+      summary.textContent = detail
+      details.append(toggle, summary)
+      stack.appendChild(details)
+    }
   }
 
   return stack

@@ -1749,6 +1749,35 @@ assert.equal(exactArtifactHost.querySelectorAll('.pocket-inline-artifact[data-ki
 assert.match(exactArtifactHost.textContent || '', /Messages.*Devon.*He is awake and on his way\./s)
 assert.equal(exactArtifactHost.querySelectorAll('.pocket-receipt').length, 0, 'inline story artifact must not carry the diagnostic receipt underneath it')
 assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"]').length, 1, 'inline placement must replace the fallback receipt rather than duplicate it')
+const observedInlineActivity = {
+  ...inlineMessageActivity,
+  id: 'observed-inline-activity',
+  summary: 'Todoroki. I am sitting in a budget review. Please tell me you are okay.',
+  presentation: { kind: 'observed', senderName: 'Izuku Midoriya', recipientNames: ['Shoto Todoroki'], conversationTitle: 'Shoto Todoroki' },
+}
+const observedArtifactHost = document.createElement('div')
+observedArtifactHost.className = 'pocket-inline-anchor'
+observedArtifactHost.dataset.pocketInlineAnchor = observedInlineActivity.id
+messageBubble.prepend(observedArtifactHost)
+backendReceiver({ type: 'lumiphone:activity', activity: observedInlineActivity })
+assert.equal(observedArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="observed"]').length, 1, 'observed communication must render as a phone notification glimpse')
+assert.match(observedArtifactHost.textContent || '', /Shoto Todoroki's phone.*Messages.*Izuku Midoriya.*budget review/s)
+assert.doesNotMatch(observedArtifactHost.textContent || '', /observed phone|glimpse|Izuku Midoriya\s*→\s*Shoto Todoroki/i, 'diegetic observed UI must not expose debug/event-card language')
+
+const sentInlineActivity = {
+  ...inlineMessageActivity,
+  id: 'sent-inline-activity',
+  summary: 'Bring some food when you come over.',
+  presentation: { kind: 'sent', senderName: 'Kai', recipientNames: ['Shoto Todoroki'], conversationTitle: 'Shoto Todoroki' },
+}
+const sentArtifactHost = document.createElement('div')
+sentArtifactHost.className = 'pocket-inline-anchor'
+sentArtifactHost.dataset.pocketInlineAnchor = sentInlineActivity.id
+messageBubble.prepend(sentArtifactHost)
+backendReceiver({ type: 'lumiphone:activity', activity: sentInlineActivity })
+assert.equal(sentArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="sent"] .pocket-inline-chat-bubble').length, 1, 'sent inline communication must use the chat-bubble primitive')
+assert.match(sentArtifactHost.textContent || '', /To Shoto Todoroki.*Bring some food when you come over\..*sent/s)
+assert.doesNotMatch(sentArtifactHost.textContent || '', /Pocket chat|Kai\s*→\s*Shoto Todoroki/i, 'sent diegetic UI must avoid middleware-style sender arrows')
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
 backendReceiver({ type: 'lumiphone:activity', activity })
