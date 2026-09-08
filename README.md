@@ -25,7 +25,7 @@ Each visible phone now has two explicit frontend identities. Its logical device 
 With `tools` permission, Pocket registers `phone_action` with these actions:
 
 ```text
-message | contact | scene | note | event | weather | tracker | camera | notify | open
+message | message_batch | contact | scene | note | event | weather | tracker | camera | notify | open
 ```
 
 The prompt interceptor adds a compact phone snapshot (pinned notes, in-scene/pinned contact briefs, timeline, weather, and model-visible trackers) to the current generation. It deliberately excludes arbitrary direct-message history; reply generation receives only the selected conversation's bounded recent thread. If the active provider/path does not expose extension tools, the same actions can be emitted as a hidden message tag:
@@ -40,11 +40,19 @@ Structured content is supported:
 <lumi-phone action="event" app="calendar">{"title":"Train arrives","start":"2026-09-01T20:00:00Z","lane":"Main timeline"}</lumi-phone>
 ```
 
+Busy group chats can use one transport batch instead of rationing dialogue around fallback/tool overhead:
+
+```xml
+<lumi-phone action="message_batch">{"channel":"gc","conversation":"Class 3-A","participants":["Mina Ashido","Denki Kaminari","Izuku Midoriya"],"messages":[{"speaker":"Mina Ashido","text":"YOU COUNTED THE SECONDS????"},{"speaker":"Denki Kaminari","text":"BROOOOOOOOO"},{"speaker":"Izuku Midoriya","text":"Technically the timestamps do support—"}]}</lumi-phone>
+```
+
+`message_batch` is transport compression only: Pocket still stores every row as an ordinary canonical `PhoneMessage`, with normal actor/device projection and candidate provenance. One batch activity renders the burst as a compact inline mini-chat (up to eight visible rows before a `+ N more` affordance). A missing GC may be ensured during `message`/`message_batch` when explicit participants are supplied; deliberate membership edits and renames still use the `conversation` action. The fallback limit remains three **actions**, not three messages—a batch can carry up to 24 GC messages.
+
 A cooperating main model may also provide a bounded structured scene update with `<lumi-phone action="scene">`. Natural-language narration is never regex-parsed into scene state.
 
 The frontend removes these tags from rendered prose. Frontend actions, model tools, and tags converge on one backend action path with durable request-id deduplication plus a short semantic duplicate window, so a tool/tag retry does not produce two entries. Settings control whether model actions also open the phone and whether to send rate-limited OS push notifications.
 
-The fallback tag path is also a compatibility compiler for providers/models without reliable tool calling. On a committed assistant candidate, Pocket regex-parses only its own explicit `<lumi-phone>` protocol, persists each valid action through the canonical backend command path, binds message actions to the host `(chatId, messageId, swipeId)` candidate, and rewrites each raw message tag into the same durable inline activity anchor used by tool calls. Non-message fallback tags are removed after successful compilation. This is protocol parsing only; Pocket still never infers actions from ordinary narrative English. The frontend tag interceptor remains as a race-safe backup, and both paths share the same idempotency key so a backend/frontend double delivery cannot duplicate the action.
+The fallback tag path is also a compatibility compiler for providers/models without reliable tool calling. On a committed assistant candidate, Pocket regex-parses only its own explicit `<lumi-phone>` protocol, persists each valid action through the canonical backend command path, binds message and message-batch actions to the host `(chatId, messageId, swipeId)` candidate, and rewrites each raw message tag into the same durable inline activity anchor used by tool calls. Non-message fallback tags are removed after successful compilation. This is protocol parsing only; Pocket still never infers actions from ordinary narrative English. The frontend tag interceptor remains as a race-safe backup, and both paths share the same idempotency key so a backend/frontend double delivery cannot duplicate the action.
 
 When a Pocket Action message call succeeds inside a host generation, its side effect is **provisional** until the final assistant candidate commits it. The tool result provides both an `artifactTag` that is already a durable `<div class="pocket-inline-anchor" data-pocket-inline-anchor="activity_123"></div>` and a hidden `commitTag`. Visible/readable/observed phone actions place the `artifactTag` exactly where the artifact belongs; genuinely off-screen actions use the `commitTag`; reasoning-only tool calls use neither and are deleted at candidate commit. Provisional messages are excluded from Pocket projection and model-facing phone context, so refreshing Pocket mid-generation cannot make exploratory tool calls canon.
 

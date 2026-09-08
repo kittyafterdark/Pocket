@@ -776,7 +776,14 @@ export interface PhoneNotification {
   action?: string
 }
 
-export type PocketActivityPresentationKind = 'sent' | 'received' | 'observed' | 'referenced' | 'generic'
+export type PocketActivityPresentationKind = 'sent' | 'received' | 'observed' | 'referenced' | 'generic' | 'batch'
+export interface PocketActivityBatchMessage {
+  messageId: string
+  senderActorId?: string
+  senderName: string
+  text: string
+  direction: 'sent' | 'received' | 'observed'
+}
 export interface PocketActivityPresentation {
   kind: PocketActivityPresentationKind
   senderActorId?: string
@@ -784,6 +791,7 @@ export interface PocketActivityPresentation {
   senderName?: string
   recipientNames?: string[]
   conversationTitle?: string
+  batchMessages?: PocketActivityBatchMessage[]
 }
 
 export interface PocketActivity {
@@ -804,6 +812,8 @@ export interface PocketActivity {
     eventId?: string
     noteId?: string
     imageId?: string
+    /** Batch transport may attach one inline activity to several canonical messages. */
+    messageIds?: string[]
   }
 }
 

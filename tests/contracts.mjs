@@ -19,7 +19,7 @@ for (const permission of ['generation', 'interceptor', 'tools', 'chats', 'chat_m
   assert.ok(manifest.permissions.includes(permission), `missing ${permission} permission`)
 }
 
-for (const token of ['phone_action', 'lumi-phone', 'compileLegacyPhoneTags', 'LEGACY_LUMI_PHONE_TAG_PATTERN', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'arrival_handoff', 'commitArrivalHandoff', 'lumiphone:continue_arrival', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
+for (const token of ['phone_action', 'lumi-phone', 'message_batch', 'compileLegacyPhoneTags', 'LEGACY_LUMI_PHONE_TAG_PATTERN', 'pocket-artifact', 'pocket-commit', 'artifactTag', 'commitTag', 'lumiphone:provisional_activity', 'candidate_activity_discard', 'data-pocket-inline-anchor', 'registerInterceptor', 'resolveSwarmProfile', 'generateStream', 'owner_chat_id', 'PocketActivity', 'materializeTracker', 'syncSceneContacts', 'resolveContactProfile', 'ensureDiscoveredActor', 'ensureExternalDirectConversation', 'actorReferenceIsPocketPersona', "action === 'conversation'", 'Pocket automatically renders successfully persisted phone actions', 'Pocket Action is an execution step', 'Multiple Pocket Action calls in the same assistant turn are expected', 'do not skip them merely because neither participant is the Pocket Persona', 'post-turn-audit', 'arrival_handoff', 'commitArrivalHandoff', 'lumiphone:continue_arrival', 'hostClockBaselines', 'candidateClocks', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'targetSwipeId']) {
   assert.ok(backendSource.includes(token), `backend contract missing ${token}`)
 }
 for (const token of ['createFloatWidget', 'requestDockPanel', 'setFullscreen', 'registerTagInterceptor', 'registerInputBarAction', 'spindle:desktop-widget-returned', 'handsetScale', 'activityReceipt', 'renderContactsView', 'Pocket devices', 'lumiphone:reconciliation_status', 'pocketDeviceKey', 'pocketSurfaceId', 'pocketDeviceRole', 'pocketInspection']) {
@@ -829,6 +829,51 @@ const legacyFallbackUpdate = updatedChatMessages.slice(legacyUpdatesBefore).find
 assert.ok(legacyFallbackUpdate, 'fallback compiler did not rewrite the committed host candidate')
 assert.match(JSON.stringify(legacyFallbackUpdate.patch), new RegExp(`data-pocket-inline-anchor=.{0,80}${legacyFallbackActivity.id}`), 'fallback message tag was not compiled into the durable inline anchor')
 assert.doesNotMatch(JSON.stringify(legacyFallbackUpdate.patch), /<lumi-phone\b/i, 'compiled host candidate must not retain raw fallback action markup')
+spindle.chat.getMessages = messagesBeforeLegacyFallback
+
+// A no-tool model must be able to let a busy GC actually be busy. One fallback
+// batch creates/ensures the group, materializes named participants, persists
+// every message individually, and compiles to one coherent inline artifact.
+const legacyBatchRows = [
+  { speaker: 'Mina Ashido', text: 'YOU COUNTED THE SECONDS????' },
+  { speaker: 'Denki Kaminari', text: 'BROOOOOOOOO' },
+  { speaker: 'Eijiro Kirishima', text: 'WAIT LET HIM EXPLAIN' },
+  { speaker: 'Izuku Midoriya', text: 'Technically the timestamps do support—' },
+  { speaker: 'Shoto Todoroki', text: 'I am not participating in this analysis.' },
+  { speaker: 'Yuga Aoyama', text: 'romance' },
+  { speaker: 'Momo Yaoyorozu', text: 'Please stop yelling in the class chat.' },
+]
+const legacyBatchTag = `<lumi-phone action="message_batch">${JSON.stringify({
+  channel: 'gc', conversation: 'Class 3-A',
+  participants: ['Mina Ashido', 'Denki Kaminari', 'Eijiro Kirishima', 'Izuku Midoriya', 'Shōto Todoroki', 'Yuga Aoyama', 'Momo Yaoyorozu'],
+  messages: legacyBatchRows,
+})}</lumi-phone>`
+const legacyBatchContent = `They opened the class chat together.
+
+${legacyBatchTag}
+
+It was, predictably, a disaster.`
+spindle.chat.getMessages = async () => [{ id: 'legacy-batch-host', role: 'assistant', content: legacyBatchContent, swipes: [legacyBatchContent], swipe_id: 0 }]
+const legacyBatchUpdatesBefore = updatedChatMessages.length
+await backendEvents.get('GENERATION_ENDED')({
+  chatId: 'chat-legacy-batch', generationId: 'legacy-batch-gen', generationType: 'regenerate', messageId: 'legacy-batch-host',
+}, 'user-a')
+const legacyBatchState = storage.get('phones/chat-legacy-batch__char-a.json')
+const classChat = legacyBatchState.conversations.find((conversation) => conversation.kind === 'group' && conversation.title === 'Class 3-A')
+assert.ok(classChat, 'message_batch must implicitly ensure a missing named group when participants are supplied')
+assert.equal(classChat.messages.length, legacyBatchRows.length, 'message_batch must persist every authored GC message instead of summarizing the riot')
+assert.deepEqual(classChat.messages.map((message) => message.text), legacyBatchRows.map((row) => row.text))
+assert.ok(classChat.messages.every((message) => message.origin?.hostMessageId === 'legacy-batch-host' && message.origin?.swipeId === 0), 'batched messages must retain host-candidate provenance')
+const shotoActors = legacyBatchState.discoveredActors.filter((actor) => actor.normalizedName === 'shoto todoroki')
+assert.equal(shotoActors.length, 1, 'diacritic variants Shoto/Shōto must resolve to one lightweight actor identity')
+const legacyBatchActivity = legacyBatchState.activities.find((activity) => activity.presentation?.kind === 'batch' && activity.presentation?.conversationTitle === 'Class 3-A')
+assert.ok(legacyBatchActivity, 'message_batch must create one coherent batch activity')
+assert.equal(legacyBatchActivity.presentation.batchMessages.length, legacyBatchRows.length)
+assert.equal(legacyBatchActivity.source.messageIds.length, legacyBatchRows.length)
+const legacyBatchUpdate = updatedChatMessages.slice(legacyBatchUpdatesBefore).find((entry) => entry.messageId === 'legacy-batch-host')
+assert.ok(legacyBatchUpdate, 'message_batch fallback compiler did not rewrite the host candidate')
+assert.match(JSON.stringify(legacyBatchUpdate.patch), new RegExp(`data-pocket-inline-anchor=.{0,80}${legacyBatchActivity.id}`), 'message_batch must compile to one durable inline anchor')
+assert.doesNotMatch(JSON.stringify(legacyBatchUpdate.patch), /<lumi-phone\b/i, 'compiled batch candidate must not retain raw fallback markup')
 spindle.chat.getMessages = messagesBeforeLegacyFallback
 
 await frontendHandler({ type: 'lumiphone:list_contact_sources', requestId: 'sources', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
@@ -1778,6 +1823,29 @@ backendReceiver({ type: 'lumiphone:activity', activity: sentInlineActivity })
 assert.equal(sentArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="sent"] .pocket-inline-chat-bubble').length, 1, 'sent inline communication must use the chat-bubble primitive')
 assert.match(sentArtifactHost.textContent || '', /To Shoto Todoroki.*Bring some food when you come over\..*sent/s)
 assert.doesNotMatch(sentArtifactHost.textContent || '', /Pocket chat|Kai\s*→\s*Shoto Todoroki/i, 'sent diegetic UI must avoid middleware-style sender arrows')
+const batchInlineActivity = {
+  ...inlineMessageActivity,
+  id: 'batch-inline-activity',
+  title: 'Class 3-A', summary: '7 messages',
+  route: { app: 'messages', conversationId: 'class-3a', messageId: 'batch-msg-7' },
+  presentation: {
+    kind: 'batch', conversationTitle: 'Class 3-A',
+    batchMessages: legacyBatchRows.map((row, index) => ({
+      messageId: `batch-msg-${index + 1}`, senderName: row.speaker, text: row.text,
+      direction: row.speaker === 'Katsuki Bakugo' ? 'sent' : 'received',
+    })),
+  },
+  source: { messageId: 'host-message-a', conversationId: 'class-3a', messageIds: legacyBatchRows.map((_, index) => `batch-msg-${index + 1}`) },
+}
+const batchArtifactHost = document.createElement('div')
+batchArtifactHost.className = 'pocket-inline-anchor'
+batchArtifactHost.dataset.pocketInlineAnchor = batchInlineActivity.id
+messageBubble.prepend(batchArtifactHost)
+backendReceiver({ type: 'lumiphone:activity', activity: batchInlineActivity })
+assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-chat-transcript').length, 1, 'group message_batch must render as one coherent mini chat transcript')
+assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row').length, legacyBatchRows.length, 'bounded seven-person GC riot should surface every authored bubble inline')
+assert.match(batchArtifactHost.textContent || '', /Class 3-A.*Mina Ashido.*YOU COUNTED THE SECONDS.*Denki Kaminari.*BROOOOOOOOO/s)
+
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
 backendReceiver({ type: 'lumiphone:activity', activity })

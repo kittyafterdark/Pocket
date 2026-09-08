@@ -5,7 +5,7 @@ import { calculatePhoneSurface } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
-import { ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
+import { ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, normalizeActorName, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
 import { activeNotifications, clearNotifications, destinationIsVisible, dismissNotification } from '../src/domain/notifications.js'
 import { ambientEligibleContacts, contactCooldownReady } from '../src/domain/messaging.js'
 import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, upsertActorMemory } from '../src/domain/actor-memory.js'
@@ -52,6 +52,13 @@ describe('device preference schema', () => {
       source: { kind: 'asset', assetId: 'asset-1' }, fit: 'cover', focalX: 1, focalY: 0, scrim: .4,
     })
     expect(JSON.stringify(migrated)).not.toContain('data:image')
+  })
+})
+
+describe('actor name matching', () => {
+  test('matches diacritic variants without changing display spelling', () => {
+    expect(normalizeActorName('Shōto Todoroki')).toBe('shoto todoroki')
+    expect(normalizeActorName('Shoto Todoroki')).toBe('shoto todoroki')
   })
 })
 

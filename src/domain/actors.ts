@@ -18,7 +18,13 @@ export interface PocketActorPresentation {
 
 export function normalizeActorName(value: unknown): string {
   return typeof value === 'string'
-    ? value.trim().replace(/\s+/g, ' ').toLocaleLowerCase().slice(0, 160)
+    ? value
+      .normalize('NFKD')
+      .replace(/\p{M}+/gu, '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLocaleLowerCase()
+      .slice(0, 160)
     : ''
 }
 

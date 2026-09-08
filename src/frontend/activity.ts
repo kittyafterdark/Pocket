@@ -12,6 +12,7 @@ function presentationLabel(activity: PocketActivity): string {
     case 'received': return 'Received'
     case 'observed': return 'Observed'
     case 'referenced': return 'Referenced'
+    case 'batch': return 'Chat'
     default: return ICONS[activity.kind]
   }
 }
@@ -50,6 +51,55 @@ function messageChrome(stateText = 'now'): HTMLSpanElement {
   state.textContent = stateText
   chrome.append(app, state)
   return chrome
+}
+
+function buildBatchArtifact(
+  activity: PocketActivity,
+  openRoute: (route: PocketRoute) => void,
+): HTMLElement | null {
+  const presentation = activity.presentation
+  if (presentation?.kind !== 'batch' || !presentation.batchMessages?.length) return null
+
+  const primary = document.createElement('button')
+  primary.type = 'button'
+  primary.className = 'pocket-inline-artifact pocket-inline-chat-transcript'
+  primary.dataset.kind = 'batch'
+  primary.appendChild(messageChrome(`${presentation.batchMessages.length} messages`))
+
+  const title = document.createElement('strong')
+  title.className = 'pocket-inline-transcript-title'
+  title.textContent = presentation.conversationTitle || activity.title || 'Group chat'
+  primary.appendChild(title)
+
+  const transcript = document.createElement('span')
+  transcript.className = 'pocket-inline-transcript'
+  const visible = presentation.batchMessages.slice(0, 8)
+  for (const item of visible) {
+    const row = document.createElement('span')
+    row.className = 'pocket-inline-transcript-row'
+    row.dataset.direction = item.direction
+
+    const sender = document.createElement('strong')
+    sender.className = 'pocket-inline-transcript-sender'
+    sender.textContent = item.senderName
+
+    const bubble = document.createElement('span')
+    bubble.className = 'pocket-inline-transcript-bubble lp-message-surface'
+    bubble.textContent = item.text
+
+    row.append(sender, bubble)
+    transcript.appendChild(row)
+  }
+  if (presentation.batchMessages.length > visible.length) {
+    const more = document.createElement('span')
+    more.className = 'pocket-inline-transcript-more'
+    more.textContent = `+ ${presentation.batchMessages.length - visible.length} more message${presentation.batchMessages.length - visible.length === 1 ? '' : 's'}`
+    transcript.appendChild(more)
+  }
+  primary.appendChild(transcript)
+  primary.setAttribute('aria-label', `Open ${presentation.conversationTitle || activity.title || 'group chat'} in Pocket`)
+  primary.addEventListener('click', () => openRoute(activity.route))
+  return primary
 }
 
 function buildMessageArtifact(
@@ -116,7 +166,7 @@ function buildActivityStack(
   stack.className = 'pocket-artifact-stack'
 
   if (options.includeArtifact !== false) {
-    const artifact = buildMessageArtifact(activity, openRoute)
+    const artifact = buildBatchArtifact(activity, openRoute) || buildMessageArtifact(activity, openRoute)
     if (artifact) stack.appendChild(artifact)
   }
 

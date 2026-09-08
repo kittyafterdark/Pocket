@@ -91,15 +91,18 @@ Pocket reference blocks are read-only history. Their messages already happened. 
 
 Pocket Action is an execution step, not an output section. Do not reason about where the tool call or its result belongs in the written response, whether the user can see it, or how to compensate for it. Invoke it when the phone action occurs, then continue the roleplay normally. After a successful Pocket Action, do not ask the user to click, continue, confirm, or complete anything; Pocket owns persistence and UI presentation.
 
-When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. One Pocket Action invocation persists exactly one action. Multiple Pocket Action calls in the same assistant turn are expected whenever multiple distinct phone actions occur; a successful first call does NOT cover later messages or phone actions. If another text, reply, call, event, or other phone action happens later in the same scene, invoke Pocket Action again for that later action before continuing past it. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
+When this request exposes a Pocket Action function/tool, CALL that tool for every newly-created phone action that should persist in Pocket, especially a message sent or received during the generated scene. One Pocket Action invocation persists exactly one action, except message_batch which intentionally carries one coherent burst of multiple messages from the SAME group chat. Multiple Pocket Action calls in the same assistant turn are expected whenever distinct phone actions occur; a successful first call does NOT cover later unrelated actions. Do not reduce, summarize, or omit meaningful group-chat participants merely to save Pocket calls: when several newly-authored messages belong to one GC burst, use message_batch and let the gremlins gremlin. If another separate text, reply, call, event, or other phone action happens later in the same scene, invoke Pocket Action again for that later action before continuing past it. Do not write the tool name, arguments, JSON, or a fake tool result into narrative prose. Do not substitute markdown, inline code, custom typography, colors, labels, or preset-specific text styling for a Pocket message. Pocket owns the persisted message payload and its visual presentation.
 A newly-authored phone message MUST NOT exist only as quoted dialogue, lock-screen text, notification text, or narrated message content in prose. Persist it through Pocket Action first; if and only if the tool is unavailable, use the hidden <lumi-phone> fallback.
 After each successful message Pocket Action, Pocket returns two candidate-commit markers: artifactTag and commitTag. The tool mutation is PROVISIONAL until the final assistant candidate carries exactly one returned marker. Every phone message that survives into final canon MUST have exactly one marker in final assistant content. If the phone action is visible/readable/observed in the final scene, place artifactTag exactly ON ITS OWN LINE at that narrative position and do NOT also quote, retype, color, italicize, or otherwise print the message text in prose. artifactTag is already a durable inline HTML anchor; place it verbatim so Pocket can render the phone artifact immediately while the response is still streaming. If the action truly happens in canon but should remain completely off-screen/unrendered, place commitTag exactly once; Pocket removes it from visible prose. If you invoked Pocket while reasoning and decide that action does NOT belong in the final scene, emit neither marker and Pocket will discard that provisional action at commit. Never emit both markers for one action. Do not assume the tool call itself commits canon; the final marker is the commit receipt.
 
-For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. This requirement still applies when the current POV cannot read the screen: if the scene establishes that one NPC actually sends or receives a new message, call Pocket Action with the canonical sender, recipient, and message text you are establishing in-world even if that text is not quoted in prose. A phone lighting up, a visible notification preview, an NPC reacting to a newly arrived message, or prose saying one actor texted another are all phone actions; do not skip them merely because neither participant is the Pocket Persona. For a group message, use channel="gc", an existing group/conversation, a speaker who is already a member, and text. A new named DM actor may be lightweight; Pocket can persist them without a full profile. Creating or changing group membership requires action="conversation".
+For a new direct message, use action="message" with payload containing channel="dm", speaker, target or conversationId, and text. If speaker names the configured Pocket Persona, Pocket canonicalizes it as an outbound Persona message; sender="persona" is only an optional shortcut. For NPC-to-NPC direct messages, provide both speaker and target. Pocket stores the communication canonically and projects it only onto participating characters' devices. This requirement still applies when the current POV cannot read the screen: if the scene establishes that one NPC actually sends or receives a new message, call Pocket Action with the canonical sender, recipient, and message text you are establishing in-world even if that text is not quoted in prose. A phone lighting up, a visible notification preview, an NPC reacting to a newly arrived message, or prose saying one actor texted another are all phone actions; do not skip them merely because neither participant is the Pocket Persona.
+For one group message, use action="message" with channel="gc", conversation/exact title or conversationId, speaker, and text. If the GC is not in Pocket yet, supply participants and Pocket may create/ensure the group while sending. For a burst of several newly-authored messages in the SAME GC, prefer action="message_batch" with channel="gc", conversation/title, participants when known, and messages:[{"speaker":"Name","text":"..."}, ...]. Pocket may materialize lightweight named actors and ensure those speakers are group members; explicit conversation actions remain for deliberate membership edits/renames outside the message burst. A batch persists every underlying message individually and returns one inline/commit marker for the coherent burst.
+A new named actor may be lightweight; Pocket can persist them without a full profile. A message already supplied verbatim in Pocket reference/history is historical and MUST NOT be recreated. A message whose exact text YOU invent in this response is newly-authored canon even if the story says it was sent earlier; persist it rather than summarizing it away.
 
-ONLY when no Pocket Action function/tool is present in the model's available tools, emit hidden machine data using one <lumi-phone> tag per distinct Pocket action (maximum 3):
+ONLY when no Pocket Action function/tool is present in the model's available tools, emit hidden machine data using at most 3 <lumi-phone> action tags. The three-tag limit is an ACTION limit, not a dialogue limit: one message_batch tag may carry up to 24 newly-authored messages from the same GC. Do not summarize or omit meaningful speakers merely to stay under the tag limit.
 <lumi-phone action="message">{"channel":"dm","speaker":"Name","target":"Name","text":"message text"}</lumi-phone>
-The tag is machine data. Pocket compiles valid fallback tags through the same canonical action pipeline and rewrites fallback message tags into durable inline anchors automatically; the model does not need an activity id. Do not explain the tag, quote it, wrap it in markdown, or imitate it elsewhere in the response. Other supported actions are conversation, contact, scene, note, event, weather, tracker, camera, notify, and open.
+<lumi-phone action="message_batch">{"channel":"gc","conversation":"Class 3-A","participants":["Katsuki Bakugo","Mina Ashido","Izuku Midoriya"],"messages":[{"speaker":"Mina Ashido","text":"..."},{"speaker":"Izuku Midoriya","text":"..."}]}</lumi-phone>
+The tag is machine data. Pocket compiles valid fallback tags through the same canonical action pipeline and rewrites fallback message/message_batch tags into durable inline anchors automatically; the model does not need an activity id. Do not explain the tag, quote it, wrap it in markdown, or imitate it elsewhere in the response. Other supported actions are conversation, contact, scene, note, event, weather, tracker, camera, notify, and open.
 
 Pocket messages, contacts, notes, calendar events, weather, trackers, and scene state persist separately for this chat and character.`
 
@@ -325,7 +328,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     if (!title) return []
     const source = isRecord(item.source) ? item.source : {}
     const presentation = isRecord(item.presentation) ? item.presentation : null
-    const presentationKind = presentation && (presentation.kind === 'sent' || presentation.kind === 'received' || presentation.kind === 'observed' || presentation.kind === 'referenced' || presentation.kind === 'generic') ? presentation.kind : undefined
+    const presentationKind = presentation && (presentation.kind === 'sent' || presentation.kind === 'received' || presentation.kind === 'observed' || presentation.kind === 'referenced' || presentation.kind === 'generic' || presentation.kind === 'batch') ? presentation.kind : undefined
     return [{
       id: text(item.id, 160) || id('act'),
       kind: item.kind === 'message' || item.kind === 'contact' || item.kind === 'tracker-change' || item.kind === 'timeline' || item.kind === 'note' || item.kind === 'image' || item.kind === 'weather' ? item.kind : 'system',
@@ -337,6 +340,19 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
         senderName: text(presentation?.senderName, 120) || undefined,
         recipientNames: (Array.isArray(presentation?.recipientNames) ? presentation.recipientNames : []).map((entry) => text(entry, 120)).filter(Boolean).slice(0, 16),
         conversationTitle: text(presentation?.conversationTitle, 120) || undefined,
+        batchMessages: (Array.isArray(presentation?.batchMessages) ? presentation.batchMessages : []).slice(0, 24).flatMap((entry) => {
+          if (!isRecord(entry)) return []
+          const senderName = text(entry.senderName, 120)
+          const messageText = text(entry.text, 12_000)
+          if (!senderName || !messageText) return []
+          return [{
+            messageId: text(entry.messageId, 180),
+            senderActorId: text(entry.senderActorId, 180) || undefined,
+            senderName,
+            text: messageText,
+            direction: entry.direction === 'sent' || entry.direction === 'observed' ? entry.direction : 'received',
+          }]
+        }),
       } : undefined,
       createdAt: text(item.createdAt, 40) || nowIso(), scope: { chatId, characterId },
       source: {
@@ -345,6 +361,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
         conversationId: text(source.conversationId, 180) || undefined,
         eventId: text(source.eventId, 180) || undefined, noteId: text(source.noteId, 180) || undefined,
         imageId: text(source.imageId, 180) || undefined,
+        messageIds: (Array.isArray(source.messageIds) ? source.messageIds : []).map((entry) => text(entry, 180)).filter(Boolean).slice(0, 24),
       },
     }]
   })
@@ -1064,9 +1081,30 @@ function removePocketMessageArtifacts(state: PhoneState, conversationId: string,
   if (conversation.messages.length === before) return false
   state.actorMemories = removeActorMemoryByMessageId(state.actorMemories, messageId)
   state.notifications = state.notifications.filter((entry) => !(entry.route?.app === 'messages' && entry.route.messageId === messageId))
-  const removedActivityIds = new Set(state.activities.filter((entry) => entry.route?.app === 'messages' && entry.route.messageId === messageId).map((entry) => entry.id))
-  state.activities = state.activities.filter((entry) => !(entry.route?.app === 'messages' && entry.route.messageId === messageId))
-  if (removedActivityIds.size) state.processedCommands = state.processedCommands.filter((entry) => !entry.activityId || !removedActivityIds.has(entry.activityId))
+  const removedActivityIds = new Set<string>()
+  for (const entry of state.activities) {
+    if (entry.route?.app !== 'messages') continue
+    const batchIds = entry.source?.messageIds || []
+    if (batchIds.includes(messageId)) {
+      const remaining = batchIds.filter((entryId) => entryId !== messageId)
+      if (remaining.length) {
+        if (entry.source) entry.source.messageIds = remaining
+        if (entry.route.messageId === messageId) entry.route.messageId = remaining.at(-1)
+        if (entry.presentation?.kind === 'batch') {
+          entry.presentation.batchMessages = (entry.presentation.batchMessages || []).filter((item) => item.messageId !== messageId)
+          entry.summary = `${remaining.length} message${remaining.length === 1 ? '' : 's'}`
+        }
+        continue
+      }
+      removedActivityIds.add(entry.id)
+      continue
+    }
+    if (entry.route.messageId === messageId) removedActivityIds.add(entry.id)
+  }
+  if (removedActivityIds.size) {
+    state.activities = state.activities.filter((entry) => !removedActivityIds.has(entry.id))
+    state.processedCommands = state.processedCommands.filter((entry) => !entry.activityId || !removedActivityIds.has(entry.activityId))
+  }
   if (conversation.outgoingBurst) {
     conversation.outgoingBurst.messageIds = conversation.outgoingBurst.messageIds.filter((entry) => entry !== messageId)
     if (!conversation.outgoingBurst.messageIds.length) conversation.outgoingBurst = undefined
@@ -1719,6 +1757,88 @@ function resolveActorReference(state: PhoneState, value: unknown, allowedIds?: s
   const matches = matchingActorIds(state, ref.name, allowedIds)
   if (matches.length > 1) throw new Error(`Actor name “${ref.name}” is ambiguous; use a stable actor or contact id.`)
   return matches.length ? resolvePocketActor(state, matches[0]) : null
+}
+
+function ensureGroupConversationForMessaging(
+  state: PhoneState,
+  payload: AnyRecord,
+  source: 'model' | 'user' | 'tag',
+  extraParticipantRefs: unknown[] = [],
+): PocketConversation {
+  const requestedId = text(payload.conversationId ?? payload.conversation_id, 180)
+  const title = text(payload.conversation ?? payload.conversationTitle ?? payload.conversation_title ?? payload.title ?? payload.target, 120)
+  let conversation = requestedId ? state.conversations.find((entry) => entry.id === requestedId && entry.kind === 'group') : undefined
+  if (requestedId && !conversation) throw new Error('That group conversation no longer exists.')
+  if (!conversation && title) {
+    const normalized = title.toLocaleLowerCase()
+    const matches = state.conversations.filter((entry) => entry.kind === 'group' && entry.title.trim().toLocaleLowerCase() === normalized)
+    if (matches.length > 1) throw new Error(`Group title “${title}” is ambiguous; use its stable conversation id.`)
+    conversation = matches[0]
+  }
+
+  const explicitRefs = Array.isArray(payload.participants) ? payload.participants.slice(0, 16) : []
+  const refs = [...explicitRefs, ...extraParticipantRefs].slice(0, 24)
+  if (!conversation && !title) throw new Error('A new group message needs a conversation title when no existing conversation id is available.')
+  if (!conversation && !refs.length) throw new Error(`Group “${title}” does not exist. Supply participants so Pocket can create it.`)
+
+  const participantActorIds = conversation ? [...conversationActorIds(conversation)] : []
+  let includesPocketPersona = conversation?.includesPocketPersona ?? false
+  for (const value of refs) {
+    if (actorReferenceIsPocketPersona(state, value)) {
+      includesPocketPersona = true
+      continue
+    }
+    const ref = actorRefParts(value)
+    let actor = resolveActorReference(state, value)
+    if (!actor && ref.name) {
+      const discovered = ensureDiscoveredActor(state, {
+        name: ref.name,
+        source: 'group-chat',
+        relationship: ref.relationship,
+        now: nowIso(),
+        makeId: id,
+      })
+      actor = resolvePocketActor(state, discovered.id)
+    }
+    if (!actor || actor.kind === 'persona') throw new Error('Every group participant needs a valid id or name.')
+    if (ref.relationship === 'close') {
+      if (actor.contact) actor.contact.relationship = 'close'
+      if (actor.discovered) actor.discovered.relationship = 'close'
+    }
+    if (!participantActorIds.includes(actor.actorId)) participantActorIds.push(actor.actorId)
+  }
+
+  const totalParticipants = participantActorIds.length + (includesPocketPersona ? 1 : 0)
+  if (totalParticipants < 2) throw new Error('A group conversation needs at least two participants.')
+  const participantContactIds = participantActorIds
+    .flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || [])
+    .filter((entry, index, all) => all.indexOf(entry) === index)
+  const changedAt = nowIso()
+  if (conversation) {
+    conversation.participantActorIds = participantActorIds.slice(0, 24)
+    conversation.includesPocketPersona = includesPocketPersona
+    conversation.participantContactIds = participantContactIds
+    if (title) conversation.title = title
+    conversation.updatedAt = changedAt
+    return conversation
+  }
+
+  const names = participantActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean)
+  const created: PocketConversation = {
+    id: id('conversation'),
+    kind: 'group',
+    title: title || names.join(', ').slice(0, 120) || 'Group',
+    participantActorIds: participantActorIds.slice(0, 24),
+    includesPocketPersona,
+    participantContactIds,
+    messages: [],
+    unread: 0,
+    availability: { state: 'remote' },
+    createdAt: changedAt,
+    updatedAt: changedAt,
+  }
+  state.conversations.push(created)
+  return created
 }
 
 function exactGroupConversation(state: PhoneState, payload: AnyRecord): PocketConversation {
@@ -3801,7 +3921,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
   const action = text(input.action, 40).toLowerCase()
   const key = stateKey(context.chatId, context.characterId)
   const payload = isRecord(input.payload) ? input.payload : input
-  const candidateMessageProvisional = source === 'model' && action === 'message' && Boolean(candidateOrigin(input.__candidateOrigin, context.chatId)) && !bool(input.__candidateCommitted)
+  const candidateMessageProvisional = source === 'model' && (action === 'message' || action === 'message_batch') && Boolean(candidateOrigin(input.__candidateOrigin, context.chatId)) && !bool(input.__candidateCommitted)
   if (action === 'camera') {
     const reserved = await withStateLock(key, async () => {
       const state = await loadState(context.chatId, context.characterId, userId)
@@ -3935,6 +4055,127 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       }
       result = { ...result, conversationId: conversation.id, participantActorIds: [...conversation.participantActorIds], includesPocketPersona: conversation.includesPocketPersona }
       activity = addActivity(state, { kind: 'message', title: conversation.title, summary: `${totalParticipants} participants`, route: { app: 'messages', conversationId: conversation.id }, source: { conversationId: conversation.id } }, command)
+    } else if (action === 'message_batch') {
+      const rawMessages = Array.isArray(payload.messages) ? payload.messages.slice(0, 24) : []
+      const rows = rawMessages.flatMap((entry) => {
+        if (!isRecord(entry)) return []
+        const messageText = text(entry.text ?? entry.message ?? entry.content, 12_000)
+        const speaker = entry.speaker ?? entry.speakerRef ?? entry.speaker_ref ?? entry.sender
+        if (!messageText || !speaker) return []
+        return [{ raw: entry, speaker, messageText }]
+      })
+      if (!rows.length) throw new Error('A message batch needs at least one message with speaker and text.')
+      const channel = text(payload.channel, 20).toLowerCase()
+      if (channel && channel !== 'gc' && channel !== 'group') throw new Error('message_batch currently supports group chats only.')
+
+      const conversation = ensureGroupConversationForMessaging(state, { ...payload, channel: 'gc' }, source, rows.map((entry) => entry.speaker))
+      const personaActorId = pocketPersonaActorId(state)
+      const communicationActors = conversationDeviceActorIds(state, conversation)
+      const actionOrigin = source !== 'user' ? candidateOrigin(input.__candidateOrigin, context.chatId) : undefined
+      const createdMessages: PhoneMessage[] = []
+      const batchPresentation: NonNullable<PocketActivity['presentation']>['batchMessages'] = []
+      const pendingNotifications = new Map<string, { title: string; body: string; route: PocketRoute }>()
+
+      for (const row of rows) {
+        const speakerIsPersona = actorReferenceIsPocketPersona(state, row.speaker)
+        const sender: PhoneMessage['sender'] = speakerIsPersona || row.raw.sender === 'persona' || row.raw.sender === 'user'
+          ? 'persona'
+          : row.raw.sender === 'system' ? 'system' : 'contact'
+        let senderActor = sender === 'persona' ? resolvePocketActor(state, personaActorId) : null
+        if (sender === 'contact') {
+          senderActor = resolveActorReference(state, row.speaker, conversationDeviceActorIds(state, conversation))
+          if (!senderActor || senderActor.kind === 'persona') throw new Error('Every batched group-message sender must resolve to a current group participant.')
+        }
+
+        const senderActorId = sender === 'persona' ? personaActorId : sender === 'contact' ? senderActor!.actorId : undefined
+        const senderContact = sender === 'contact' ? senderActor!.contact : undefined
+        const recipientActorIds = senderActorId ? communicationActors.filter((actorId) => actorId !== senderActorId) : communicationActors
+        const readByActorIds = senderActorId ? [senderActorId] : []
+        const routeBase: PocketRoute = { app: 'messages', conversationId: conversation.id }
+        for (const ownerActorId of recipientActorIds) {
+          if (notificationDestinationVisible(state, routeBase, userId, ownerActorId) && !readByActorIds.includes(ownerActorId)) readByActorIds.push(ownerActorId)
+        }
+        const personaRead = readByActorIds.includes(personaActorId)
+        const message: PhoneMessage = {
+          id: id('msg'),
+          sender,
+          senderActorId,
+          recipientActorIds,
+          readByActorIds,
+          senderActorKind: sender === 'contact' ? (senderActor!.kind === 'persona' ? undefined : senderActor!.kind) : undefined,
+          senderContactId: senderContact?.id,
+          senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
+          senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
+          text: row.messageText,
+          createdAt: phoneMessageTimestamp(state),
+          read: personaRead,
+          status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
+          origin: actionOrigin,
+          candidateCommitState: actionOrigin ? (candidateMessageProvisional ? 'provisional' : 'committed') : undefined,
+        }
+        conversation.messages.push(message)
+        createdMessages.push(message)
+
+        const direction = messageDirection(state, conversation, message, personaActorId)
+        batchPresentation?.push({
+          messageId: message.id,
+          senderActorId,
+          senderName: message.senderName,
+          text: row.messageText,
+          direction: direction === 'outbound' ? 'sent' : direction === 'inbound' ? 'received' : 'observed',
+        })
+
+        if (sender !== 'system' && preferences.notifyMessages) {
+          const route: PocketRoute = { app: 'messages', conversationId: conversation.id, messageId: message.id }
+          for (const ownerActorId of recipientActorIds) {
+            if (readByActorIds.includes(ownerActorId)) continue
+            pendingNotifications.set(ownerActorId, {
+              title: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : senderActor!.name,
+              body: preferences.notificationPreviews ? row.messageText.slice(0, 220) : 'New message',
+              route,
+            })
+          }
+        }
+      }
+
+      conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
+      conversation.updatedAt = createdMessages.at(-1)?.createdAt || nowIso()
+      conversation.unread = conversationUnreadForDevice(state, conversation, personaActorId)
+      for (const [ownerActorId, pending] of pendingNotifications) {
+        const ownerNotification = addNotification(state, {
+          app: 'messages',
+          title: pending.title,
+          body: pending.body,
+          route: pending.route,
+          source: source === 'user' ? 'system' : 'model',
+          severity: 'important',
+          deviceOwnerActorId: ownerActorId,
+        }, userId)
+        if (ownerActorId === personaActorId) notification = ownerNotification
+      }
+
+      const lastMessage = createdMessages.at(-1)!
+      const route: PocketRoute = { app: 'messages', conversationId: conversation.id, messageId: lastMessage.id }
+      const messageIds = createdMessages.map((entry) => entry.id)
+      result = { ...result, conversationId: conversation.id, messageIds, messageId: lastMessage.id, count: createdMessages.length }
+      if (source !== 'user') activity = addActivity(state, {
+        kind: 'message',
+        title: conversation.title,
+        summary: `${createdMessages.length} message${createdMessages.length === 1 ? '' : 's'}`,
+        route,
+        presentation: {
+          kind: 'batch',
+          conversationTitle: conversation.title,
+          recipientActorIds: conversationDeviceActorIds(state, conversation),
+          recipientNames: conversationDeviceActorIds(state, conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === personaActorId ? state.pocketPersona.displayName : 'Unknown')).filter(Boolean),
+          batchMessages: batchPresentation,
+        },
+        source: {
+          messageId: text(input.messageId, 180) || actionOrigin?.hostMessageId || undefined,
+          conversationId: conversation.id,
+          messageIds,
+        },
+      }, command)
     } else if (action === 'message') {
       const messageText = text(payload.text ?? payload.message ?? payload.content, 12_000)
       if (!messageText) throw new Error('A phone message needs text.')
@@ -3954,13 +4195,16 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       let senderActor: ReturnType<typeof resolvePocketActor> = sender === 'persona' ? resolvePocketActor(state, pocketPersonaActorId(state)) : null
 
       if (groupMessage) {
-        conversation = exactGroupConversation(state, payload)
+        const participantRefs = Array.isArray(payload.participants) ? payload.participants : []
+        conversation = participantRefs.length
+          ? ensureGroupConversationForMessaging(state, payload, source, rawSpeaker ? [rawSpeaker] : [])
+          : exactGroupConversation(state, payload)
         const allowed = conversationDeviceActorIds(state, conversation)
         if (sender === 'persona') {
-          if (!conversation.includesPocketPersona) throw new Error('The Pocket Persona is not a member of this group. Change membership explicitly before they can speak.')
+          if (!conversation.includesPocketPersona) throw new Error('The Pocket Persona is not a member of this group. Supply participants to establish membership or change it explicitly before they can speak.')
         } else if (sender === 'contact') {
           senderActor = resolveActorReference(state, rawSpeaker, allowed)
-          if (!senderActor || senderActor.kind === 'persona') throw new Error('The named sender is not a participant in this group. Change membership explicitly before they can speak.')
+          if (!senderActor || senderActor.kind === 'persona') throw new Error('The named sender is not a participant in this group. Supply participants to establish membership or change it explicitly before they can speak.')
         }
       } else if (foundConversation) {
         conversation = foundConversation
@@ -5086,16 +5330,16 @@ function registerTool(): void {
   spindle.registerTool({
     name: 'phone_action',
     display_name: 'Pocket Action',
-    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. Message calls are provisional: the tool call alone does NOT commit canon. Every message that survives into the final assistant response MUST include exactly one returned commit marker. Use artifactTag on its own line at the exact story position when the action is visible/readable/observed and DO NOT also quote or style the message text. Use commitTag exactly once when the action truly occurs but should remain wholly off-screen/unrendered. If a call happened only during reasoning and is not part of the final scene, emit neither marker so Pocket discards it. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied in a Pocket reference are historical and MUST NOT be resent. Named DM actors may be lightweight and need no full profile. Group messages must target an existing group and a current member; change membership with the conversation action. State persists per chat and character.',
+    description: 'Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. message_batch may carry one coherent burst of multiple newly-authored messages from the SAME group chat so busy GCs do not need to be summarized or artificially limited. Message/message_batch calls are provisional: the tool call alone does NOT commit canon. Every surviving message action MUST include exactly one returned commit marker. Use artifactTag on its own line at the exact story position when the action is visible/readable/observed and DO NOT also quote or style the message text. Use commitTag exactly once when the action truly occurs but should remain wholly off-screen/unrendered. If a call happened only during reasoning and is not part of the final scene, emit neither marker so Pocket discards it. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied verbatim in Pocket reference/history are historical and MUST NOT be resent; text invented now is newly-authored canon even when narrated as older chat history. Named actors may be lightweight and need no full profile. GC messages may ensure a missing group when participants are supplied; message_batch can also materialize named speakers and ensure them as members. Explicit conversation actions remain for deliberate membership edits/renames. State persists per chat and character.',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['message', 'conversation', 'contact', 'scene', 'note', 'event', 'weather', 'tracker', 'camera', 'notify', 'open'] },
+        action: { type: 'string', enum: ['message', 'message_batch', 'conversation', 'contact', 'scene', 'note', 'event', 'weather', 'tracker', 'camera', 'notify', 'open'] },
         chat_id: { type: 'string', description: 'Current chat id when known.' },
         character_id: { type: 'string', description: 'Current character id when known.' },
         payload: {
           type: 'object',
-          description: 'Action data. Messages accept channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or an existing conversation id/exact group title. Unknown named DM senders become lightweight discovered actors. Unknown GC senders are rejected unless an explicit conversation action first establishes membership. conversation uses kind=group, title, and participants as names or actor/contact refs; participant relationship may be close or background. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.',
+          description: 'Action data. message accepts channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or a conversation id/exact group title. GC messages may include participants to ensure/create the group and establish membership. message_batch is GC-only and accepts conversation/title, optional participants, and messages:[{speaker,text}, ...] (max 24); Pocket persists each row as an individual canonical message while returning one batch artifact. Named actors can become lightweight discovered actors. conversation uses kind=group, title, and participants as names or actor/contact refs for explicit membership edits/renames. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.',
           additionalProperties: true,
         },
       },
@@ -5213,7 +5457,8 @@ spindle.frontendCapabilities.declare('message_tag_interceptor')
 spindle.onFrontendMessage(handleFrontend)
 function pocketArtifactTag(activityId: unknown, action: unknown): string | undefined {
   const value = text(activityId, 180)
-  return value && text(action, 40) === 'message' ? pocketInlineAnchor(value) : undefined
+  const actionName = text(action, 40)
+  return value && (actionName === 'message' || actionName === 'message_batch') ? pocketInlineAnchor(value) : undefined
 }
 
 const POCKET_ARTIFACT_TAG_PATTERN = /<pocket-artifact\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-artifact\s*>)/gi
@@ -5298,7 +5543,7 @@ async function rewriteCompiledLegacyTag(
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
   const at = candidateContent.indexOf(fullMatch)
   if (at < 0) return false
-  const replacement = action === 'message' && activityId ? pocketInlineAnchor(activityId) : ''
+  const replacement = (action === 'message' || action === 'message_batch') && activityId ? pocketInlineAnchor(activityId) : ''
   const nextContent = `${candidateContent.slice(0, at)}${replacement}${candidateContent.slice(at + fullMatch.length)}`
   await updateCandidateHostContent(origin, target, nextContent)
   return true
@@ -5350,7 +5595,7 @@ async function compileLegacyPhoneTags(
         }
         const result = await applyAction(tagPayload, userId, 'tag')
         const activityId = text(result.activityId, 180)
-        if (action === 'message' && activityId) {
+        if ((action === 'message' || action === 'message_batch') && activityId) {
           replacement = pocketInlineAnchor(activityId)
           messageAnchors += 1
         }
@@ -5478,14 +5723,16 @@ async function pruneUncommittedCandidateMessages(
           && messageOrigin.swipeId === origin.swipeId)
       })
       for (const message of candidateRows) {
-        const activity = state.activities.find((entry) => entry.kind === 'message' && entry.route?.app === 'messages' && entry.route.messageId === message.id)
+        const activity = state.activities.find((entry) => entry.kind === 'message' && entry.route?.app === 'messages' && (
+          entry.route.messageId === message.id || entry.source?.messageIds?.includes(message.id)
+        ))
         if (activity?.id && committedRefs.has(activity.id)) {
           if (message.candidateCommitState !== 'committed') message.candidateCommitState = 'committed'
           keptActivityIds.push(activity.id)
           kept += 1
           continue
         }
-        if (activity?.id) {
+        if (activity?.id && activity.presentation?.kind !== 'batch') {
           const rescued = replacePlaintextMessageWithInlineAnchor(candidateContent, message.text, activity.id)
           if (rescued.changed) {
             candidateContent = rescued.content
@@ -5574,7 +5821,7 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
       artifactTag,
       commitTag,
       artifactInstruction: artifactTag
-        ? 'REQUIRED COMMIT RECEIPT: this message is PROVISIONAL until final assistant content contains exactly one returned marker. If visible/readable/observed, put artifactTag EXACTLY ON ITS OWN LINE at that story position and do not print the message text separately. artifactTag is the durable inline anchor and lets Pocket render the phone artifact immediately during streaming. If wholly off-screen, put commitTag exactly once. If this was exploratory reasoning and is absent from the final scene, emit neither. Never emit both. Continue the roleplay normally after placing the required marker.'
+        ? 'REQUIRED COMMIT RECEIPT: this message action (or whole GC batch) is PROVISIONAL until final assistant content contains exactly one returned marker. If visible/readable/observed, put artifactTag EXACTLY ON ITS OWN LINE at that story position and do not print the message text separately. For message_batch, the one artifactTag represents the whole coherent burst. artifactTag is the durable inline anchor and lets Pocket render the phone artifact immediately during streaming. If wholly off-screen, put commitTag exactly once. If this was exploratory reasoning and is absent from the final scene, emit neither. Never emit both. Continue the roleplay normally after placing the required marker.'
         : undefined,
       presentation: 'Pocket staged exactly this action provisionally. Continue the roleplay normally. If another distinct phone action occurs later in this turn, call Pocket Action again.',
     })

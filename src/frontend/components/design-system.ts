@@ -152,6 +152,16 @@ export const POCKET_DESIGN_SYSTEM = `
   .pocket-inline-chat-bubble { justify-self:end; width:auto; max-width:100%; padding:10px 12px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; border-radius:18px 18px 6px 18px; box-shadow:none; }
   .pocket-inline-chat-bubble .pocket-inline-artifact-copy { font-size:13px; line-height:1.48; opacity:1; }
   .pocket-inline-sent-status { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:9px; text-align:right; opacity:.42; }
+  .pocket-inline-chat-transcript { width:min(100%,500px); padding:12px 13px 14px; gap:8px; cursor:pointer; }
+  .pocket-inline-transcript-title { display:block; font-size:13px; line-height:1.3; font-weight:760; }
+  .pocket-inline-transcript { display:grid; gap:7px; margin-top:2px; }
+  .pocket-inline-transcript-row { display:grid; gap:3px; justify-items:start; max-width:86%; }
+  .pocket-inline-transcript-row[data-direction="sent"] { justify-self:end; justify-items:end; }
+  .pocket-inline-transcript-row[data-direction="observed"] { opacity:.82; }
+  .pocket-inline-transcript-sender { padding:0 5px; font-size:9px; line-height:1.2; font-weight:650; opacity:.58; }
+  .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 76%,white 5%); color:var(--lumiverse-text,#f7f5ff); font-size:12px; line-height:1.42; text-align:left; }
+  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; }
+  .pocket-inline-transcript-more { display:block; padding:5px 4px 0; border-top:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 10%,transparent); font-size:9px; opacity:.48; text-align:center; }
   .pocket-receipt { min-height:22px; padding:2px 3px; grid-template-columns:auto minmax(0,1fr) auto; gap:5px; border-radius:6px; box-shadow:none; background:transparent; opacity:.48; }
   button.pocket-receipt:hover { opacity:.8; background:transparent; }
   .pocket-receipt-kind { padding:0; background:transparent; font-size:8px; font-weight:750; }

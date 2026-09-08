@@ -326,7 +326,7 @@ function contactAccent(contact) {
 
 // src/domain/actors.ts
 function normalizeActorName(value) {
-  return typeof value === "string" ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase().slice(0, 160) : "";
+  return typeof value === "string" ? value.normalize("NFKD").replace(/\p{M}+/gu, "").trim().replace(/\s+/g, " ").toLocaleLowerCase().slice(0, 160) : "";
 }
 function conversationActorIds(conversation) {
   return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds;
@@ -3022,6 +3022,8 @@ function presentationLabel(activity) {
       return "Observed";
     case "referenced":
       return "Referenced";
+    case "batch":
+      return "Chat";
     default:
       return ICONS[activity.kind];
   }
@@ -3062,6 +3064,46 @@ function messageChrome(stateText = "now") {
   state.textContent = stateText;
   chrome.append(app, state);
   return chrome;
+}
+function buildBatchArtifact(activity, openRoute) {
+  const presentation = activity.presentation;
+  if (presentation?.kind !== "batch" || !presentation.batchMessages?.length)
+    return null;
+  const primary = document.createElement("button");
+  primary.type = "button";
+  primary.className = "pocket-inline-artifact pocket-inline-chat-transcript";
+  primary.dataset.kind = "batch";
+  primary.appendChild(messageChrome(`${presentation.batchMessages.length} messages`));
+  const title = document.createElement("strong");
+  title.className = "pocket-inline-transcript-title";
+  title.textContent = presentation.conversationTitle || activity.title || "Group chat";
+  primary.appendChild(title);
+  const transcript = document.createElement("span");
+  transcript.className = "pocket-inline-transcript";
+  const visible = presentation.batchMessages.slice(0, 8);
+  for (const item of visible) {
+    const row2 = document.createElement("span");
+    row2.className = "pocket-inline-transcript-row";
+    row2.dataset.direction = item.direction;
+    const sender = document.createElement("strong");
+    sender.className = "pocket-inline-transcript-sender";
+    sender.textContent = item.senderName;
+    const bubble = document.createElement("span");
+    bubble.className = "pocket-inline-transcript-bubble lp-message-surface";
+    bubble.textContent = item.text;
+    row2.append(sender, bubble);
+    transcript.appendChild(row2);
+  }
+  if (presentation.batchMessages.length > visible.length) {
+    const more = document.createElement("span");
+    more.className = "pocket-inline-transcript-more";
+    more.textContent = `+ ${presentation.batchMessages.length - visible.length} more message${presentation.batchMessages.length - visible.length === 1 ? "" : "s"}`;
+    transcript.appendChild(more);
+  }
+  primary.appendChild(transcript);
+  primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title || "group chat"} in Pocket`);
+  primary.addEventListener("click", () => openRoute(activity.route));
+  return primary;
 }
 function buildMessageArtifact(activity, openRoute) {
   const presentation = activity.presentation;
@@ -3112,7 +3154,7 @@ function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
   stack.className = "pocket-artifact-stack";
   if (options.includeArtifact !== false) {
-    const artifact = buildMessageArtifact(activity, openRoute);
+    const artifact = buildBatchArtifact(activity, openRoute) || buildMessageArtifact(activity, openRoute);
     if (artifact)
       stack.appendChild(artifact);
   }
@@ -6325,6 +6367,16 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-inline-chat-bubble { justify-self:end; width:auto; max-width:100%; padding:10px 12px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; border-radius:18px 18px 6px 18px; box-shadow:none; }
   .pocket-inline-chat-bubble .pocket-inline-artifact-copy { font-size:13px; line-height:1.48; opacity:1; }
   .pocket-inline-sent-status { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:9px; text-align:right; opacity:.42; }
+  .pocket-inline-chat-transcript { width:min(100%,500px); padding:12px 13px 14px; gap:8px; cursor:pointer; }
+  .pocket-inline-transcript-title { display:block; font-size:13px; line-height:1.3; font-weight:760; }
+  .pocket-inline-transcript { display:grid; gap:7px; margin-top:2px; }
+  .pocket-inline-transcript-row { display:grid; gap:3px; justify-items:start; max-width:86%; }
+  .pocket-inline-transcript-row[data-direction="sent"] { justify-self:end; justify-items:end; }
+  .pocket-inline-transcript-row[data-direction="observed"] { opacity:.82; }
+  .pocket-inline-transcript-sender { padding:0 5px; font-size:9px; line-height:1.2; font-weight:650; opacity:.58; }
+  .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 76%,white 5%); color:var(--lumiverse-text,#f7f5ff); font-size:12px; line-height:1.42; text-align:left; }
+  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; }
+  .pocket-inline-transcript-more { display:block; padding:5px 4px 0; border-top:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 10%,transparent); font-size:9px; opacity:.48; text-align:center; }
   .pocket-receipt { min-height:22px; padding:2px 3px; grid-template-columns:auto minmax(0,1fr) auto; gap:5px; border-radius:6px; box-shadow:none; background:transparent; opacity:.48; }
   button.pocket-receipt:hover { opacity:.8; background:transparent; }
   .pocket-receipt-kind { padding:0; background:transparent; font-size:8px; font-weight:750; }
@@ -6790,6 +6842,14 @@ var PHONE_STYLES = `
   .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; opacity:.84; font-size:11px; line-height:1.38; }
   .pocket-inline-chat-bubble { justify-self:end; max-width:100%; padding:8px 10px; border-radius:15px 15px 4px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 54%,var(--lumiverse-fill,#17151d)); box-shadow:0 7px 18px rgba(0,0,0,.14); }
   .pocket-inline-chat-bubble .pocket-inline-artifact-copy { opacity:.96; }
+  .pocket-inline-chat-transcript { width:min(100%,500px); padding:11px 12px 13px; }
+  .pocket-inline-transcript { display:grid; gap:7px; }
+  .pocket-inline-transcript-row { display:grid; gap:3px; justify-items:start; max-width:86%; }
+  .pocket-inline-transcript-row[data-direction="sent"] { justify-self:end; justify-items:end; }
+  .pocket-inline-transcript-sender { padding-inline:5px; font-size:9px; opacity:.6; }
+  .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 80%,white 4%); font-size:12px; line-height:1.42; }
+  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 56%,var(--lumiverse-fill,#17151d)); color:#fff; }
+  .pocket-inline-transcript-more { display:block; padding-top:5px; font-size:9px; text-align:center; opacity:.5; }
   .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
   button.pocket-receipt { cursor:pointer; }
   button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }

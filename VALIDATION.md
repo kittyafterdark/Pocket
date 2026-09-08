@@ -1,27 +1,25 @@
-# Validation
+# Pocket v14 validation
 
-Performed in the sandbox:
+Performed in this container:
 
-- `node --check tests/contracts.mjs` — passed.
-- TypeScript parser/transpile sanity passed for:
-  - `src/frontend/activity.ts`
-  - `src/frontend/components/design-system.ts`
-  - `src/frontend/controller.ts`
-  - `src/styles.ts`
-- `tsc --noEmit` comparison against the uploaded post-Kylie baseline:
-  - baseline diagnostics: 23
-  - v13 diagnostics: 23
-  - normalized diagnostic sets: identical
-  - these are the existing local sandbox diagnostics caused by the unavailable `lumiverse-spindle-types` package / its downstream implicit-any cascade.
-- Modified source files preserve the uploaded repository's line-ending conventions (CRLF where the source was CRLF; LF for the Kylie design-system module; the existing mixed first-line convention in `src/styles.ts`).
+- `node --check tests/contracts.mjs` ✅
+- TypeScript syntax parse (`typescript.transpileModule`) for all touched TS files ✅
+- `tsc --noEmit` comparison against the v13 baseline:
+  - v13: 23 diagnostics
+  - v14: 23 diagnostics
+  - normalized diagnostic sets: identical ✅
+  - all diagnostics are the existing missing-local-`lumiverse-spindle-types` / derivative implicit-any baseline in this environment.
 
-Not available in this sandbox:
+Not runnable here:
 
-- Bun
-- JSDOM dependency used by the full contracts harness
+- `bun run verify` — Bun is not installed in this container.
+- Full JSDOM contract execution — `jsdom` is not installed in this container.
 
-Final local gate remains:
+New local contracts are designed to prove:
 
-```powershell
-bun run verify
-```
+1. one no-tool `<lumi-phone action="message_batch">` can create/ensure a missing GC;
+2. seven authored messages persist as seven ordinary `PhoneMessage`s;
+3. all batch messages keep host-message/swipe provenance;
+4. `Shōto Todoroki` and `Shoto Todoroki` resolve to one lightweight actor identity;
+5. the raw fallback tag is replaced by one durable inline anchor;
+6. the inline renderer shows the bounded seven-message riot as one coherent mini-chat surface.

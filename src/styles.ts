@@ -445,6 +445,14 @@ export const PHONE_STYLES = `
   .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; opacity:.84; font-size:11px; line-height:1.38; }
   .pocket-inline-chat-bubble { justify-self:end; max-width:100%; padding:8px 10px; border-radius:15px 15px 4px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 54%,var(--lumiverse-fill,#17151d)); box-shadow:0 7px 18px rgba(0,0,0,.14); }
   .pocket-inline-chat-bubble .pocket-inline-artifact-copy { opacity:.96; }
+  .pocket-inline-chat-transcript { width:min(100%,500px); padding:11px 12px 13px; }
+  .pocket-inline-transcript { display:grid; gap:7px; }
+  .pocket-inline-transcript-row { display:grid; gap:3px; justify-items:start; max-width:86%; }
+  .pocket-inline-transcript-row[data-direction="sent"] { justify-self:end; justify-items:end; }
+  .pocket-inline-transcript-sender { padding-inline:5px; font-size:9px; opacity:.6; }
+  .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 80%,white 4%); font-size:12px; line-height:1.42; }
+  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 56%,var(--lumiverse-fill,#17151d)); color:#fff; }
+  .pocket-inline-transcript-more { display:block; padding-top:5px; font-size:9px; text-align:center; opacity:.5; }
   .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
   button.pocket-receipt { cursor:pointer; }
   button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }
