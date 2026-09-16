@@ -13,6 +13,7 @@
     "mount:local": "node scripts/mount-local.mjs --enable"
   },
   "devDependencies": {
+    "jsdom": "^30.0.1",
     "lumiverse-spindle-types": "^0.6.29",
     "typescript": "^5.8.3"
   }

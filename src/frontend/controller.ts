@@ -2364,7 +2364,15 @@ class PocketController {
 
   private renderWeather(editing = false): HTMLDivElement {
     const weather = this.state!.weather
-    const { page, content } = this.page('Weather', weather.location, { label: editing ? 'Save' : 'Edit', callback: () => { if (editing) save(); else page.replaceWith(this.renderWeather(true)) } })
+    const { page, content } = this.page('Weather', weather.location, { label: editing ? 'Save' : 'Edit', callback: () => {
+      if (editing) save()
+      else {
+        const editor = this.renderWeather(true)
+        editor.classList.add('lumiphone-app-view')
+        editor.dataset.pocketApp = 'weather'
+        page.replaceWith(editor)
+      }
+    } })
     const hero = el('div', 'lp-weather-hero')
     const top = el('div')
     top.append(el('div', 'lp-weather-condition', weather.condition), el('div', 'lp-copy', weather.location))

@@ -3303,11 +3303,10 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
     if (activeBatch) throw new Error('This group already has a reply burst in progress.')
     const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
     const sourceBurstId = text(input.sourceBurstId, 180) || conversation.outgoingBurst?.id
-    const manualOverride = bool(input.manualOverride)
     const eligible = conversationActorIds(conversation)
       .map((actorId) => resolvePocketActor(state, actorId))
       .filter((entry): entry is NonNullable<ReturnType<typeof resolvePocketActor>> => Boolean(entry && (!entry.contact || (
-        entry.contact.generationPolicy.relevant && (manualOverride || (entry.contact.messagingPolicy.remoteEligible && !entry.contact.presence.inScene))
+        entry.contact.generationPolicy.relevant && entry.contact.messagingPolicy.remoteEligible && !entry.contact.presence.inScene
       ))))
     if (!eligible.length) {
       send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, conversationId, phase: 'done' }, userId)

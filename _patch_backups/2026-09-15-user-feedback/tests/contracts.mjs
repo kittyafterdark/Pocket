@@ -938,8 +938,8 @@ assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:error' 
 const groupBatchState = storage.get('phones/chat-a__char-a.json')
 for (const contactId of groupBatchState.conversations.find((entry) => entry.id === groupId).participantContactIds) {
   const contact = groupBatchState.contacts.find((entry) => entry.id === contactId)
-  contact.presence.inScene = true
-  contact.messagingPolicy.remoteEligible = false
+  contact.presence.inScene = false
+  contact.messagingPolicy.remoteEligible = true
 }
 storage.set('phones/chat-a__char-a.json', groupBatchState)
 const groupBatchQuiet = spindle.generate.quiet
@@ -969,14 +969,6 @@ assert.equal(groupBatchResult.groupBatches.at(-1).status, 'completed')
 assert.ok(groupBatchResult.groupBatches.at(-1).messages.every((entry) => entry.state === 'delivered'))
 assert.match(quietRequests.at(-1).messages[0].content, /later messages may directly react to earlier generated messages/i)
 assert.match(quietRequests.at(-1).messages[1].content, /talkativeness=/)
-assert.ok(groupBatchResult.groupBatches.at(-1).eligibleActorIds.length >= 2, 'manual Auto speaker must honor the explicit user override even when participants are in-scene or remote-disabled')
-const autonomousGroupState = storage.get('phones/chat-a__char-a.json')
-for (const contactId of autonomousGroupState.conversations.find((entry) => entry.id === groupId).participantContactIds) {
-  const contact = autonomousGroupState.contacts.find((entry) => entry.id === contactId)
-  contact.presence.inScene = false
-  contact.messagingPolicy.remoteEligible = true
-}
-storage.set('phones/chat-a__char-a.json', autonomousGroupState)
 await frontendHandler({ type: 'lumiphone:save_preferences', requestId: 'group-auto-on', chatId: 'chat-a', characterId: 'char-a', preferences: { autoReplyAfterSend: true, replyCadence: 'instant' } }, 'user-a')
 const callsBeforeAutomaticGroup = groupBatchCalls
 const messagesBeforeAutomaticGroup = storage.get('phones/chat-a__char-a.json').conversations.find((entry) => entry.id === groupId).messages.length
@@ -1718,11 +1710,6 @@ const contactsIconForDraft = [...dockRoot.querySelectorAll('.lp-app-icon')].find
 contactsIconForDraft.click()
 const addContactForDraft = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Add')
 addContactForDraft.click()
-const addContactSearch = dockRoot.querySelector('input[type="search"][aria-label="Search contacts to add"]')
-assert.ok(addContactSearch, 'Add Contact must expose search for saved/importable contacts')
-addContactSearch.value = 'definitely-not-a-pocket-contact'
-addContactSearch.dispatchEvent(new Event('input', { bubbles: true }))
-assert.equal(dockRoot.querySelector('[data-contact-search-empty="true"]').hidden, false, 'Add Contact search must surface an empty result state')
 backendReceiver({ type: 'lumiphone:contact_draft', requestId: 'ui-draft-one', draft: draftOne })
 assert.match(dockRoot.textContent, /Unsaved preview/)
 assert.match(dockRoot.textContent, /Draft One/)
@@ -1909,7 +1896,6 @@ dockRoot.querySelector('.lumiphone-homebar button').click()
 assert.equal(dockRoot.querySelectorAll('.lp-content input').length, 0, 'Weather opens in viewer mode')
 ;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'Edit').click()
 assert.ok(dockRoot.querySelectorAll('.lp-content input').length >= 5, 'Weather edit retains all fields')
-assert.ok(dockRoot.querySelector('.lumiphone-app-view[data-pocket-app="weather"]'), 'Weather edit must remain inside the scrollable app-view container')
 
 cleanup()
 

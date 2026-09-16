@@ -2640,16 +2640,6 @@ function contactEditor(host, contact, draft = null) {
 }
 function importView(host) {
   const { page, content } = host.page("Add Contact", "Character, Council, or Pocket NPC");
-  const search = el("input", "lp-input");
-  search.type = "search";
-  search.placeholder = "Search saved or importable contacts";
-  search.setAttribute("aria-label", "Search contacts to add");
-  const searchableRows = [];
-  const searchableSections = [];
-  const noMatches = el("p", "lp-copy", "No matching saved or importable contacts.");
-  noMatches.dataset.contactSearchEmpty = "true";
-  noMatches.hidden = true;
-  content.appendChild(search);
   const { section: manual, body: manualBody } = sectionBlock("Pocket NPC", "Generate a compact NPC seed or create one manually.", "lp-card lp-contact-import");
   const description = el("textarea", "lp-textarea");
   description.placeholder = "Describe someone; Pocket will generate one compact contact profile.";
@@ -2702,7 +2692,6 @@ function importView(host) {
   }
   content.appendChild(manual);
   const { section: bank, body: bankBody } = sectionBlock("NPC Bank", "Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.", "lp-contact-source-section");
-  const bankRows = [];
   if (!host.npcBank.length) {
     bankBody.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
   } else {
@@ -2744,18 +2733,14 @@ function importView(host) {
       actions.append(edit, add, forget);
       row2.append(identity, actions);
       bankBody.appendChild(row2);
-      bankRows.push(row2);
-      searchableRows.push({ node: row2, terms: `${entry.name} ${entry.role || "Pocket NPC"} npc bank`.toLocaleLowerCase() });
     }
   }
   content.appendChild(bank);
-  searchableSections.push({ section: bank, rows: bankRows });
   const grouped = new Map;
   for (const option of host.sources)
     grouped.set(option.kind, [...grouped.get(option.kind) || [], option]);
   for (const [kind, sources] of grouped) {
     const { section, body } = sectionBlock(kind === "character" ? "Lumiverse Characters" : "Active Council", "", "lp-contact-source-section");
-    const sourceRows = [];
     for (const source of sources) {
       const row2 = el("div", "lp-card lp-list-row");
       const identity = identityBlock({ name: source.name, meta: source.role });
@@ -2769,28 +2754,11 @@ function importView(host) {
       }
       row2.append(identity, trailing);
       body.appendChild(row2);
-      sourceRows.push(row2);
-      searchableRows.push({ node: row2, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() });
     }
     content.appendChild(section);
-    searchableSections.push({ section, rows: sourceRows });
   }
   if (!host.sources.length)
     content.appendChild(el("p", "lp-copy", "No importable Characters or active Council members were returned. Manual NPC contacts remain available."));
-  const applySearch = () => {
-    const query = search.value.trim().toLocaleLowerCase();
-    let visible = 0;
-    for (const entry of searchableRows) {
-      entry.node.hidden = Boolean(query && !entry.terms.includes(query));
-      if (!entry.node.hidden)
-        visible += 1;
-    }
-    for (const entry of searchableSections)
-      entry.section.hidden = Boolean(query && !entry.rows.some((row2) => !row2.hidden));
-    noMatches.hidden = !query || visible > 0;
-  };
-  search.addEventListener("input", applySearch);
-  content.appendChild(noMatches);
   return page;
 }
 function renderContactsView(host) {
@@ -5727,12 +5695,8 @@ ${body}`;
     const { page, content } = this.page("Weather", weather.location, { label: editing ? "Save" : "Edit", callback: () => {
       if (editing)
         save();
-      else {
-        const editor = this.renderWeather(true);
-        editor.classList.add("lumiphone-app-view");
-        editor.dataset.pocketApp = "weather";
-        page.replaceWith(editor);
-      }
+      else
+        page.replaceWith(this.renderWeather(true));
     } });
     const hero = el("div", "lp-weather-hero");
     const top = el("div");

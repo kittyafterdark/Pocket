@@ -159,6 +159,17 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
 
 function importView(host: ContactsViewHost): HTMLDivElement {
   const { page, content } = host.page('Add Contact', 'Character, Council, or Pocket NPC')
+  const search = el('input', 'lp-input')
+  search.type = 'search'
+  search.placeholder = 'Search saved or importable contacts'
+  search.setAttribute('aria-label', 'Search contacts to add')
+  const searchableRows: Array<{ node: HTMLElement; terms: string }> = []
+  const searchableSections: Array<{ section: HTMLElement; rows: HTMLElement[] }> = []
+  const noMatches = el('p', 'lp-copy', 'No matching saved or importable contacts.')
+  noMatches.dataset.contactSearchEmpty = 'true'
+  noMatches.hidden = true
+  content.appendChild(search)
+
   const { section: manual, body: manualBody } = sectionBlock(
     'Pocket NPC',
     'Generate a compact NPC seed or create one manually.',
@@ -212,6 +223,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
     'Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.',
     'lp-contact-source-section',
   )
+  const bankRows: HTMLElement[] = []
   if (!host.npcBank.length) {
     bankBody.appendChild(el('div', 'lp-card lp-copy', 'No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”.'))
   } else {
@@ -254,14 +266,18 @@ function importView(host: ContactsViewHost): HTMLDivElement {
       actions.append(edit, add, forget)
       row.append(identity, actions)
       bankBody.appendChild(row)
+      bankRows.push(row)
+      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || 'Pocket NPC'} npc bank`.toLocaleLowerCase() })
     }
   }
   content.appendChild(bank)
+  searchableSections.push({ section: bank, rows: bankRows })
 
   const grouped = new Map<string, PocketContactSourceOption[]>()
   for (const option of host.sources) grouped.set(option.kind, [...(grouped.get(option.kind) || []), option])
   for (const [kind, sources] of grouped) {
     const { section, body } = sectionBlock(kind === 'character' ? 'Lumiverse Characters' : 'Active Council', '', 'lp-contact-source-section')
+    const sourceRows: HTMLElement[] = []
     for (const source of sources) {
       const row = el('div', 'lp-card lp-list-row')
       const identity = identityBlock({ name: source.name, meta: source.role })
@@ -274,10 +290,26 @@ function importView(host: ContactsViewHost): HTMLDivElement {
       }
       row.append(identity, trailing)
       body.appendChild(row)
+      sourceRows.push(row)
+      searchableRows.push({ node: row, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() })
     }
     content.appendChild(section)
+    searchableSections.push({ section, rows: sourceRows })
   }
   if (!host.sources.length) content.appendChild(el('p', 'lp-copy', 'No importable Characters or active Council members were returned. Manual NPC contacts remain available.'))
+
+  const applySearch = () => {
+    const query = search.value.trim().toLocaleLowerCase()
+    let visible = 0
+    for (const entry of searchableRows) {
+      entry.node.hidden = Boolean(query && !entry.terms.includes(query))
+      if (!entry.node.hidden) visible += 1
+    }
+    for (const entry of searchableSections) entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden))
+    noMatches.hidden = !query || visible > 0
+  }
+  search.addEventListener('input', applySearch)
+  content.appendChild(noMatches)
   return page
 }
 

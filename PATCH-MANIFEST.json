@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-15",
+  "purpose": "Real-user feedback fixes: Add Contact search, Weather edit scrolling, GC Auto speaker manual override.",
+  "modified": [
+    "src/frontend/apps/contacts.ts",
+    "src/frontend/controller.ts",
+    "src/backend.ts",
+    "tests/contracts.mjs",
+    "dist/frontend.js",
+    "dist/backend.js"
+  ],
+  "backups": "_patch_backups/2026-09-15-user-feedback",
+  "notes": "PATCH-NOTES.md",
+  "validation": {
+    "syntax_checks": "passed",
+    "bun_verify": "not run: bun unavailable",
+    "contracts": "not run: jsdom unavailable",
+    "tsc": "blocked by missing lumiverse-spindle-types dependency",
+    "dist_sync": "manual source-equivalent edits applied and node --check passed"
+  }
+}
