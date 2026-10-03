@@ -850,6 +850,7 @@ export const PHONE_STYLES = `
 ${POCKET_DESIGN_SYSTEM}
 
   /* Recipient columns follow the actual avatar, including profile overrides. */
+  .lumiphone-shell, .lumiphone-screen { overflow:clip; }
   .lp-message-picker-row { grid-template-columns:max-content minmax(0,1fr) auto; column-gap:14px; }
   .lp-message-picker-row .lp-identity-line,
   .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }

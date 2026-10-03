@@ -1796,7 +1796,7 @@ Recovering`;
   const visible = el("input");
   visible.type = "checkbox";
   visible.checked = source.visibleToModel;
-  const visibleField = fieldBlock("Include in model context", visible, "Story updates allow the model to change this tracker. Other modes keep it read-only.");
+  const visibleField = controlRow("Include in model context", visible, "Story updates allow the model to change this tracker. Other modes keep it read-only.");
   const valueField = fieldBlock("Starting value", value);
   const stateFields = el("div", "lp-tracker-config-fields");
   stateFields.append(fieldBlock("Allowed states", states, "One state per line."), state.field);
@@ -7783,6 +7783,7 @@ var PHONE_STYLES = `
 ${POCKET_DESIGN_SYSTEM}
 
   /* Recipient columns follow the actual avatar, including profile overrides. */
+  .lumiphone-shell, .lumiphone-screen { overflow:clip; }
   .lp-message-picker-row { grid-template-columns:max-content minmax(0,1fr) auto; column-gap:14px; }
   .lp-message-picker-row .lp-identity-line,
   .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }

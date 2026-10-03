@@ -2,7 +2,7 @@ import type { PhoneTracker, TrackerTarget, TrackerKind } from '../../types.js'
 import { normalizeTracker, TRACKER_TEMPLATES, trackerKey, validateTrackerConfig } from '../../domain/trackers.js'
 import { listPocketActors } from '../../domain/actors.js'
 import { button, el } from '../shared.js'
-import { disclosure, fieldBlock, sectionBlock } from '../components/ui.js'
+import { controlRow, disclosure, fieldBlock, sectionBlock } from '../components/ui.js'
 import type { TrackerViewHost } from './trackers.js'
 
 function choice(label: string, values: Array<[string, string]>, value: string) {
@@ -54,7 +54,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const state = choice('Current state', [], source.kind === 'state' ? source.state : '')
   const mode = choice('Updates', [['manual', 'By hand'], ['model', 'With the story'], ['automatic', 'Over time']], source.updateMode)
   const visible = el('input'); visible.type = 'checkbox'; visible.checked = source.visibleToModel
-  const visibleField = fieldBlock('Include in model context', visible, 'Story updates allow the model to change this tracker. Other modes keep it read-only.')
+  const visibleField = controlRow('Include in model context', visible, 'Story updates allow the model to change this tracker. Other modes keep it read-only.')
   const valueField = fieldBlock('Starting value', value)
   const stateFields = el('div', 'lp-tracker-config-fields'); stateFields.append(fieldBlock('Allowed states', states, 'One state per line.'), state.field)
   const basic = sectionBlock('The essentials')
