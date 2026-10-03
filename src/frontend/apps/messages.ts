@@ -14,7 +14,12 @@ export interface MessagesViewHost {
   deviceOwnerActorId: string
   readOnlyDevice: boolean
   selectedMessageId: string
-  selectedView: 'thread' | 'new-group' | 'group-detail'
+  selectedView: 'thread' | 'new-group' | 'group-editor' | 'group-detail'
+  groupDraft: { title: string; participants: string[] } | undefined
+  updateGroupDraft(draft: { title: string; participants: string[] }): void
+  groupSaving: boolean
+  saveGroup(type: string, payload: Record<string, unknown>): void
+  openContacts(): void
   generationAvailable: boolean
   busyConversations: Map<string, { speakerContactId: string; phase: 'checking' | 'pending' }>
   selectedGroupSpeakerId: string
@@ -23,7 +28,7 @@ export interface MessagesViewHost {
   page(title: string, subtitle?: string, action?: PageAction): Page
   empty(title: string, copy: string): HTMLDivElement
   iconButton(name: string, label: string): HTMLButtonElement
-  selectConversation(conversationId: string, view?: 'thread' | 'new-group' | 'group-detail'): void
+  selectConversation(conversationId: string, view?: 'thread' | 'new-group' | 'group-editor' | 'group-detail'): void
   openActor(actorId: string): void
   openDirect(contactId: string): void
   send(type: string, payload?: Record<string, unknown>): void
@@ -71,6 +76,12 @@ function conversationTitle(state: PhoneState, conversation: PocketConversation, 
 function newConversationView(host: MessagesViewHost): HTMLDivElement {
   if (host.readOnlyDevice) return host.empty('Inspection mode', 'Switch back to the roleplay Persona device to create or send conversations.')
   const { page, content } = host.page('New Message', 'Choose a contact or start a group')
+  const search = el('input', 'lp-input')
+  search.type = 'search'; search.placeholder = 'Who are we texting?'; search.setAttribute('aria-label', 'Search recipients')
+  const startGroup = button('＋ New group', 'lp-button lp-button-primary')
+  startGroup.disabled = listPocketActors(host.state).length < 2
+  startGroup.addEventListener('click', () => host.selectConversation('', 'group-editor'))
+  content.append(search, startGroup)
 
   const { section: directSection, body: directBody } = sectionBlock(
     'Direct message',
@@ -92,18 +103,29 @@ function newConversationView(host: MessagesViewHost): HTMLDivElement {
       el('span', 'lp-message-picker-chevron', '›'),
     )
     row.addEventListener('click', () => host.openDirect(contact.id))
+    row.dataset.search = `${contact.name} ${contact.role}`.toLocaleLowerCase()
     directBody.appendChild(row)
   }
   if (!contacts.length) directBody.appendChild(el('p', 'lp-copy', 'No contacts are available yet.'))
 
   const { section: groupSection, body: groupBody } = sectionBlock(
-    'Group chat',
-    'Create a conversation with two or more Pocket actors.',
+    'Someone missing?',
+    'Bring another person into your Pocket.',
   )
-  const startGroup = button('Create a group', 'lp-button lp-button-quiet')
-  startGroup.disabled = listPocketActors(host.state).length < 2
-  startGroup.addEventListener('click', () => page.replaceWith(groupEditor(host, null)))
-  groupBody.appendChild(startGroup)
+  const addContact = button('＋ Add a contact', 'lp-button lp-button-quiet')
+  addContact.addEventListener('click', () => host.openContacts())
+  groupBody.appendChild(addContact)
+  const noMatches = el('p', 'lp-copy', 'Nobody by that name yet. Try another search or add a contact.')
+  noMatches.hidden = true
+  search.addEventListener('input', () => {
+    let count = 0
+    for (const row of directBody.querySelectorAll<HTMLElement>('[data-search]')) {
+      row.hidden = !row.dataset.search!.includes(search.value.trim().toLocaleLowerCase())
+      if (!row.hidden) count++
+    }
+    noMatches.hidden = count > 0 || !search.value.trim()
+  })
+  directBody.appendChild(noMatches)
 
   content.append(directSection, groupSection)
   return page
@@ -115,9 +137,19 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
   const { page, content } = host.page(conversation ? 'Group Details' : 'New Group', 'Choose at least two contacts', { label: 'Save', callback: () => saveGroup() })
   const title = el('input', 'lp-input')
   title.placeholder = 'Group name'
-  title.value = conversation?.title || ''
+  title.value = host.groupDraft?.title ?? conversation?.title ?? ''
   const choices = el('div', 'lp-contact-checklist lp-participant-picker')
-  const selected = new Set(conversation ? conversationActorIds(conversation) : [])
+  const selected = new Set(host.groupDraft?.participants ?? (conversation ? conversationActorIds(conversation) : []))
+  const count = el('p', 'lp-copy')
+  const save = page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!
+  const remember = () => {
+    const participants = [...choices.querySelectorAll<HTMLInputElement>('input:checked')].map(entry => entry.value)
+    host.updateGroupDraft({ title: title.value, participants })
+    count.textContent = `${participants.length} selected · choose at least two people`
+    save.disabled = participants.length < 2 || host.groupSaving
+    if (host.groupSaving) save.textContent = 'Saving…'
+  }
+  title.addEventListener('input', remember)
 
   for (const actor of listPocketActors(host.state)) {
     const row = el('label', 'lp-picker-row')
@@ -139,6 +171,7 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
     const check = el('span', 'lp-picker-check', '✓')
     const sync = () => { row.dataset.selected = String(checkbox.checked) }
     checkbox.addEventListener('change', sync)
+    checkbox.addEventListener('change', remember)
     sync()
     row.append(avatar, identity, checkbox, check)
     choices.appendChild(row)
@@ -147,12 +180,15 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
   saveGroup = () => {
     const participantActorIds = [...choices.querySelectorAll<HTMLInputElement>('input:checked')].map((entry) => entry.value)
     if (participantActorIds.length < 2) return
-    host.send(conversation ? 'lumiphone:update_conversation' : 'lumiphone:create_conversation', {
+    save.disabled = true; save.textContent = 'Creating…'
+    if (host.groupSaving) return
+    host.saveGroup(conversation ? 'lumiphone:update_conversation' : 'lumiphone:create_conversation', {
       conversationId: conversation?.id, title: title.value.trim(), participantActorIds,
     })
   }
 
-  content.append(fieldBlock('Group name', title), choices)
+  content.append(fieldBlock('Group name', title), count, choices)
+  remember()
   if (conversation) {
     const remove = button('Delete group', 'lp-button lp-button-danger')
     remove.addEventListener('click', () => host.send('lumiphone:delete', { kind: 'conversation', id: conversation.id }))
@@ -308,12 +344,13 @@ function referenceAttachment(host: MessagesViewHost, reference: PocketContextRef
 export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId && conversationVisibleOnDevice(host.state, item, host.deviceOwnerActorId)) || null
   if (host.selectedView === 'new-group') return newConversationView(host)
+  if (host.selectedView === 'group-editor') return groupEditor(host, null)
   if (selectedConversation?.kind === 'group' && host.selectedView === 'group-detail') return groupEditor(host, selectedConversation)
 
   if (!selectedConversation) {
     const conversations = host.state.conversations.filter((conversation) => conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const { page, content } = host.page('Messages', `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`, {
-      label: host.readOnlyDevice ? '' : 'New', callback: () => host.selectConversation('', 'new-group'), enabled: !host.readOnlyDevice && host.state.contacts.length > 0,
+      label: host.readOnlyDevice ? '' : 'New', callback: () => host.selectConversation('', 'new-group'), enabled: !host.readOnlyDevice,
     })
     content.classList.add('lp-conversation-list')
     for (const conversation of conversations) {

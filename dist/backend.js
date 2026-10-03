@@ -186,10 +186,10 @@ function normalizePreferences(value) {
   });
   const rawPersonaAppearance = record(raw.personaAppearance);
   const personaAppearance = {};
-  for (const [personaId, value2] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
+  for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
     if (!personaId || personaId.length > 180)
       continue;
-    const item = record(value2);
+    const item = record(value);
     const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
     const overrideColors = record(item.colors);
     const overridePreset = themePalette(overrideTheme);
@@ -284,8 +284,8 @@ function finite(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 function iso(value, fallback) {
-  const text2 = clean(value, 80);
-  return Number.isFinite(Date.parse(text2)) ? text2 : fallback;
+  const text = clean(value, 80);
+  return Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 function trackerId(prefix = "trk") {
   return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
@@ -293,6 +293,58 @@ function trackerId(prefix = "trk") {
 function trackerKey(value, fallback = "tracker") {
   const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return key || fallback;
+}
+function uniqueTrackerKey(label, trackers) {
+  const base = trackerKey(label);
+  const used = new Set(trackers.map((entry) => entry.key));
+  let key = base;
+  for (let suffix = 2;used.has(key); suffix++)
+    key = `${base.slice(0, 110)}_${suffix}`;
+  return key;
+}
+function validateTrackerConfig(value) {
+  if (!clean(value.label, 120))
+    throw new Error("Give your tracker a name.");
+  if (!KINDS.has(value.kind))
+    throw new Error("Choose a tracker type.");
+  const allowed = value.kind === "state" ? ["state", "compact"] : value.kind === "counter" ? ["counter", "compact"] : value.kind === "timer" ? ["timer", "compact"] : ["meter", "vitals", "relationship", "segmented", "compact"];
+  if (!allowed.includes(String(value.presentation)))
+    throw new Error("Choose a display that matches this tracker type.");
+  if (value.kind === "state") {
+    const states = Array.isArray(value.states) ? value.states.map((entry) => clean(entry, 80)).filter(Boolean) : [];
+    if (!states.length || !states.includes(String(value.state)))
+      throw new Error("Choose a current state from the allowed states.");
+    if (value.updateMode === "automatic")
+      throw new Error("States use manual or story updates.");
+    if (value.initialState && !states.includes(String(value.initialState)))
+      throw new Error("Keep the reset state in the allowed states.");
+  } else {
+    for (const key of ["value", "initialValue", "min", "max", "ratePerHour"]) {
+      if (!Number.isFinite(Number(value[key])))
+        throw new Error("Tracker numbers must be finite.");
+    }
+    if (Number(value.max) <= Number(value.min))
+      throw new Error("Maximum must be greater than minimum.");
+    for (const key of ["value", "initialValue"])
+      if (Number(value[key]) < Number(value.min) || Number(value[key]) > Number(value.max))
+        throw new Error("Starting and reset values must fit the range.");
+    if (value.kind === "counter" && !(Number(value.step) > 0))
+      throw new Error("Counter step must be positive.");
+    if (value.kind === "timer" && !["up", "down"].includes(String(value.direction)))
+      throw new Error("Choose a timer direction.");
+  }
+  if (!MODES.has(value.updateMode))
+    throw new Error("Choose how this tracker updates.");
+  if (value.updateMode === "automatic" && !Number(value.ratePerHour))
+    throw new Error("Choose a non-zero change per hour for time updates.");
+  if (value.updateMode === "model" && value.allowModelWrite !== true)
+    throw new Error("Story updates require model changes to be enabled.");
+  if (!record2(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
+    throw new Error("Choose who or what this tracker belongs to.");
+  for (const band of Array.isArray(value.bands) ? value.bands : []) {
+    if (!record2(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
+      throw new Error("Each band needs a label and a valid range inside the tracker range.");
+  }
 }
 function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
   if (!record2(value))
@@ -406,16 +458,16 @@ function applyTrackerOperation(tracker, input) {
   if (tracker.kind === "state") {
     if (input.operation !== "set_state" && input.operation !== "reset")
       throw new Error("State trackers accept set_state or reset.");
-    const next2 = input.operation === "reset" ? tracker.initialState : clean(input.state, 80);
-    if (!next2)
+    const next = input.operation === "reset" ? tracker.initialState : clean(input.state, 80);
+    if (!next)
       throw new Error("set_state requires a state value.");
-    if (tracker.states.length && !tracker.states.includes(next2))
+    if (tracker.states.length && !tracker.states.includes(next))
       throw new Error(`State must be one of: ${tracker.states.join(", ")}`);
-    if (next2 === tracker.state)
+    if (next === tracker.state)
       return tracker;
-    return addHistory({ ...tracker, state: next2, updatedAt: now }, {
+    return addHistory({ ...tracker, state: next, updatedAt: now }, {
       previous: tracker.state,
-      next: next2,
+      next,
       operation: input.operation,
       reason: clean(input.reason, 300),
       source: input.source,
@@ -451,13 +503,13 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
     return { tracker: { ...tracker, pausedReason }, changed: tracker.pausedReason !== pausedReason };
   }
   if (!Number.isFinite(previous)) {
-    const anchor2 = new Date(current).toISOString();
+    const anchor = new Date(current).toISOString();
     return {
       tracker: {
         ...tracker,
         pausedReason: "",
-        lastUpdated: tracker.clock === "real" ? anchor2 : tracker.lastUpdated,
-        lastRoleplayAt: tracker.clock === "roleplay" ? anchor2 : tracker.lastRoleplayAt
+        lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
+        lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
       },
       changed: true
     };
@@ -551,7 +603,7 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
     const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
     const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
     const band = tracker.kind === "state" ? "" : trackerBand(tracker)?.label || "";
-    return `${tracker.label.slice(0, 120)} [${target}] = ${value}${band ? ` (${band})` : ""}`;
+    return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}`;
   });
   const upcoming = state.events.filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
   return serializeWithinBudget({
@@ -581,8 +633,8 @@ var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes"
 function shortId(value) {
   if (typeof value !== "string")
     return;
-  const clean2 = value.trim().slice(0, 180);
-  return clean2 || undefined;
+  const clean = value.trim().slice(0, 180);
+  return clean || undefined;
 }
 function normalizePocketRoute(value, fallback = { app: "home" }) {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -595,13 +647,13 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
       conversationId: shortId(raw.conversationId),
       contactId: shortId(raw.contactId),
       messageId: shortId(raw.messageId),
-      view: raw.view === "new-group" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
+      view: raw.view === "new-group" || raw.view === "group-editor" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
     };
   if (app === "contacts")
     return {
       app,
       contactId: shortId(raw.contactId),
-      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
+      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "quick-gen" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -1021,7 +1073,7 @@ function activeContact(context) {
   };
 }
 function ensureDirectConversation(state, contactId, now, makeId) {
-  const existing = state.conversations.find((conversation2) => conversation2.kind === "direct" && conversation2.includesPocketPersona !== false && (conversation2.participantActorIds?.[0] || conversation2.participantContactIds[0]) === contactId);
+  const existing = state.conversations.find((conversation) => conversation.kind === "direct" && conversation.includesPocketPersona !== false && (conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId);
   if (existing)
     return existing;
   const contact = state.contacts.find((entry) => entry.id === contactId);
@@ -1193,7 +1245,7 @@ function upsertNpcBankFromContact(bank, contact, now, makeId) {
   if (contact.source.kind !== "npc")
     throw new Error("Only Pocket NPC contacts can be saved to NPC Bank.");
   const sourceBankId = contact.source.bankId || "";
-  const byId = sourceBankId ? bank.entries.find((entry2) => entry2.id === sourceBankId) : undefined;
+  const byId = sourceBankId ? bank.entries.find((entry) => entry.id === sourceBankId) : undefined;
   const byName = findNpcBankMatch(bank, contact.name);
   const existing = byId || byName || undefined;
   const name = contact.name.trim().replace(/\s+/g, " ").slice(0, 120);
@@ -1310,8 +1362,8 @@ function normalizeDiscoveredActors(value, chatId, now) {
   });
 }
 function validDate(value, fallback) {
-  const text2 = typeof value === "string" ? value.trim().slice(0, 40) : "";
-  return Number.isFinite(Date.parse(text2)) ? text2 : fallback;
+  const text = typeof value === "string" ? value.trim().slice(0, 40) : "";
+  return Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 function conversationActorIds(conversation) {
   return conversation.participantActorIds?.length ? conversation.participantActorIds : conversation.participantContactIds;
@@ -1409,7 +1461,7 @@ function ensureDiscoveredActor(state, options) {
   return actor;
 }
 function ensureDirectActorConversation(state, actorId, now, makeId) {
-  const existing = state.conversations.find((conversation2) => conversation2.kind === "direct" && conversation2.includesPocketPersona !== false && conversationActorIds(conversation2)[0] === actorId);
+  const existing = state.conversations.find((conversation) => conversation.kind === "direct" && conversation.includesPocketPersona !== false && conversationActorIds(conversation)[0] === actorId);
   if (existing)
     return existing;
   const actor = resolvePocketActor(state, actorId);
@@ -1436,7 +1488,7 @@ function ensureExternalDirectConversation(state, leftActorId, rightActorId, now,
   if (!leftActorId || !rightActorId || leftActorId === rightActorId)
     throw new Error("An external direct conversation needs two distinct actors.");
   const wanted = [leftActorId, rightActorId].sort();
-  const existing = state.conversations.find((conversation2) => conversation2.kind === "direct" && conversation2.includesPocketPersona === false && [...conversationActorIds(conversation2)].sort().join("\x00") === wanted.join("\x00"));
+  const existing = state.conversations.find((conversation) => conversation.kind === "direct" && conversation.includesPocketPersona === false && [...conversationActorIds(conversation)].sort().join("\x00") === wanted.join("\x00"));
   if (existing)
     return existing;
   const actors = wanted.map((actorId) => resolvePocketActor(state, actorId));
@@ -1664,10 +1716,10 @@ function normalizeActorMemories(value) {
     const id = clean5(item.id, 180);
     const messageId = clean5(item.messageId, 180);
     const conversationId = clean5(item.conversationId, 180);
-    const text2 = clean5(item.text, 700);
+    const text = clean5(item.text, 700);
     const speakerActorId = clean5(item.speakerActorId, 180);
     const speakerName = clean5(item.speakerName, 120);
-    if (!id || !messageId || !conversationId || !text2 || !speakerActorId || !speakerName)
+    if (!id || !messageId || !conversationId || !text || !speakerActorId || !speakerName)
       return [];
     return [{
       id,
@@ -1677,7 +1729,7 @@ function normalizeActorMemories(value) {
       messageId,
       speakerActorId,
       speakerName,
-      text: text2,
+      text,
       knownByActorIds: stringList(item.knownByActorIds),
       knownByNames: stringList(item.knownByNames),
       createdAt: clean5(item.createdAt, 80)
@@ -1969,14 +2021,14 @@ function visibleStructuredText(value) {
   return "";
 }
 function stripMachineWrappers(value) {
-  let text2 = value;
+  let text = value;
   for (let pass = 0;pass < 3; pass += 1) {
-    const next = text2.replace(FENCED_BLOCK, "").replace(WRAPPED_BLOCK, "").replace(POCKET_ACTION_BLOCK, "").replace(POCKET_ACTION_SINGLE, "").replace(POCKET_ARTIFACT_BLOCK, "").replace(POCKET_ARTIFACT_SINGLE, "").replace(POCKET_COMMIT_BLOCK, "").replace(POCKET_COMMIT_SINGLE, "").replace(POCKET_INLINE_ANCHOR_BLOCK, "");
-    if (next === text2)
+    const next = text.replace(FENCED_BLOCK, "").replace(WRAPPED_BLOCK, "").replace(POCKET_ACTION_BLOCK, "").replace(POCKET_ACTION_SINGLE, "").replace(POCKET_ARTIFACT_BLOCK, "").replace(POCKET_ARTIFACT_SINGLE, "").replace(POCKET_COMMIT_BLOCK, "").replace(POCKET_COMMIT_SINGLE, "").replace(POCKET_INLINE_ANCHOR_BLOCK, "");
+    if (next === text)
       break;
-    text2 = next;
+    text = next;
   }
-  return text2.replace(OPEN_ENDED_BLOCK, "").replace(/\n[ \t]+\n/g, `
+  return text.replace(OPEN_ENDED_BLOCK, "").replace(/\n[ \t]+\n/g, `
 
 `).replace(/\n{3,}/g, `
 
@@ -2400,12 +2452,12 @@ async function resolveRemoteUrl(api, source, userId) {
   if (!api.permissions.has("cors_proxy"))
     throw new Error("CORS Proxy permission is required to verify and cache a remote image.");
   const cache = await loadUrlCache(api, userId);
-  const cached = [...cache.entries].reverse().find((entry2) => entry2.sourceUrl === source.url);
+  const cached = [...cache.entries].reverse().find((entry) => entry.sourceUrl === source.url);
   if (cached) {
-    const resolved2 = await getStoredImage(api, { kind: "asset", assetId: cached.assetId }, userId).catch(() => null);
-    if (resolved2)
-      return { ...resolved2, sourceKind: "url", sourceLabel: SOURCE_LABELS.url };
-    cache.entries = cache.entries.filter((entry2) => entry2 !== cached);
+    const resolved = await getStoredImage(api, { kind: "asset", assetId: cached.assetId }, userId).catch(() => null);
+    if (resolved)
+      return { ...resolved, sourceKind: "url", sourceLabel: SOURCE_LABELS.url };
+    cache.entries = cache.entries.filter((entry) => entry !== cached);
   }
   const response = await api.cors(source.url, { method: "GET", responseType: "arraybuffer", mediaType: "image" });
   if (!response || Number(response.status) < 200 || Number(response.status) >= 300) {
@@ -3044,17 +3096,17 @@ function normalizeState(value, chatId, characterId, characterName) {
     const messages = (Array.isArray(item.messages) ? item.messages : []).slice(0, 4).flatMap((message) => {
       if (!isRecord2(message))
         return [];
-      const id2 = text2(message.id, 180);
+      const id = text2(message.id, 180);
       const speakerId = text2(message.speakerId, 180);
       const body = text2(message.text, 8000);
-      if (!id2 || !speakerId || !body)
+      if (!id || !speakerId || !body)
         return [];
       const messageState = message.state === "delivered" || message.state === "cancelled" ? message.state : "queued";
       return [{
-        id: id2,
+        id,
         speakerId,
         text: body,
-        eventSuggestion: normalizeEventSuggestion(message.eventSuggestion, (prefix) => `${prefix}_${id2}`),
+        eventSuggestion: normalizeEventSuggestion(message.eventSuggestion, (prefix) => `${prefix}_${id}`),
         state: messageState,
         deliveredMessageId: text2(message.deliveredMessageId, 180) || undefined,
         deliveredAt: text2(message.deliveredAt, 40) || undefined
@@ -3292,11 +3344,11 @@ function conversationMemoryAudience(state, conversation) {
   const personaIds = conversation.includesPocketPersona ? [personaMemoryActorId(state)] : [];
   const personaNames = conversation.includesPocketPersona ? [state.pocketPersona.displayName] : [];
   const ids = [...personaIds, ...conversationActorIds(conversation)].filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
-  const names2 = [
+  const names = [
     ...personaNames,
     ...conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || "")
   ].map((entry) => text2(entry, 120)).filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
-  return { ids, names: names2 };
+  return { ids, names };
 }
 function rememberPhoneMessage(state, conversation, message) {
   if (message.sender === "system")
@@ -3579,8 +3631,8 @@ function restoreClockForSelectedCandidate(state, hostMessageId, swipeId) {
   const baseline = [...state.hostClockBaselines || []].reverse().find((entry) => entry.hostMessageId === hostMessageId);
   return baseline ? applyRoleplayClockSnapshot(state, baseline) : false;
 }
-function formatRoleplayClockLabel(iso2, timezoneOffsetMinutes) {
-  const parsed = new Date(iso2);
+function formatRoleplayClockLabel(iso, timezoneOffsetMinutes) {
+  const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime()))
     return "";
   const offset = Number.isFinite(Number(timezoneOffsetMinutes)) ? Number(timezoneOffsetMinutes) : 0;
@@ -4414,7 +4466,7 @@ function ensureGroupConversationForMessaging(state, payload, source, extraPartic
     throw new Error("A new group message needs a conversation title when no existing conversation id is available.");
   if (!conversation && !refs.length)
     throw new Error(`Group \u201C${title}\u201D does not exist. Supply participants so Pocket can create it.`);
-  const participantActorIds2 = conversation ? [...conversationActorIds(conversation)] : [];
+  const participantActorIds = conversation ? [...conversationActorIds(conversation)] : [];
   let includesPocketPersona = conversation?.includesPocketPersona ?? false;
   for (const value of refs) {
     if (actorReferenceIsPocketPersona(state, value)) {
@@ -4441,16 +4493,16 @@ function ensureGroupConversationForMessaging(state, payload, source, extraPartic
       if (actor.discovered)
         actor.discovered.relationship = "close";
     }
-    if (!participantActorIds2.includes(actor.actorId))
-      participantActorIds2.push(actor.actorId);
+    if (!participantActorIds.includes(actor.actorId))
+      participantActorIds.push(actor.actorId);
   }
-  const totalParticipants = participantActorIds2.length + (includesPocketPersona ? 1 : 0);
+  const totalParticipants = participantActorIds.length + (includesPocketPersona ? 1 : 0);
   if (totalParticipants < 2)
     throw new Error("A group conversation needs at least two participants.");
-  const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+  const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
   const changedAt = nowIso();
   if (conversation) {
-    conversation.participantActorIds = participantActorIds2.slice(0, 24);
+    conversation.participantActorIds = participantActorIds.slice(0, 24);
     conversation.includesPocketPersona = includesPocketPersona;
     conversation.participantContactIds = participantContactIds;
     if (title)
@@ -4458,12 +4510,12 @@ function ensureGroupConversationForMessaging(state, payload, source, extraPartic
     conversation.updatedAt = changedAt;
     return conversation;
   }
-  const names2 = participantActorIds2.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
+  const names = participantActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
   const created = {
     id: id("conversation"),
     kind: "group",
-    title: title || names2.join(", ").slice(0, 120) || "Group",
-    participantActorIds: participantActorIds2.slice(0, 24),
+    title: title || names.join(", ").slice(0, 120) || "Group",
+    participantActorIds: participantActorIds.slice(0, 24),
     includesPocketPersona,
     participantContactIds,
     messages: [],
@@ -4812,14 +4864,14 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
     if (!isRecord2(entry))
       return [];
     const body = text2(entry.text ?? entry.fact, 360);
-    const actors2 = seedStringList(entry.actors);
-    if (!body || !actors2.length)
+    const actors = seedStringList(entry.actors);
+    if (!body || !actors.length)
       return [];
     return [{
       text: body,
       visibility: seedVisibility(entry.visibility),
       knownBy: seedStringList(entry.knownBy ?? entry.known_by),
-      actors: actors2,
+      actors,
       ttl: seedTtl(entry.ttl)
     }];
   });
@@ -4849,8 +4901,8 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
     if (!title)
       return [];
     const scope = entry.scope === "world" ? "world" : "actor";
-    const actors2 = seedStringList(entry.actors, 8);
-    if (scope === "actor" && !actors2.length)
+    const actors = seedStringList(entry.actors, 8);
+    if (scope === "actor" && !actors.length)
       return [];
     const whenKind = entry.whenKind === "exact" || entry.whenKind === "approximate" || entry.whenKind === "relative" ? entry.whenKind : "unscheduled";
     return [{
@@ -4859,7 +4911,7 @@ function normalizeNarrativeSeed(value, sourceKey = "", sourceMessageIds = []) {
       description: text2(entry.description, 500),
       whenText: text2(entry.whenText ?? entry.when, 180) || "Unscheduled",
       whenKind,
-      actors: scope === "world" ? [] : actors2,
+      actors: scope === "world" ? [] : actors,
       completed: entry.completed === true,
       visibility: seedVisibility(entry.visibility),
       knownBy: seedStringList(entry.knownBy ?? entry.known_by)
@@ -4920,7 +4972,7 @@ function narrativeSeedContext(seed, speakerName = "", participantNames = []) {
   const participants = new Set(participantNames.map(normalizeActorName).filter(Boolean));
   if (speaker)
     participants.add(speaker);
-  const intersectsParticipants = (actors2) => actors2.some((name) => participants.has(normalizeActorName(name)));
+  const intersectsParticipants = (actors) => actors.some((name) => participants.has(normalizeActorName(name)));
   const facts = seed.facts.filter((entry) => {
     if (!intersectsParticipants(entry.actors))
       return false;
@@ -4954,8 +5006,8 @@ function narrativeSeedContext(seed, speakerName = "", participantNames = []) {
   ].filter((entry, index, all) => Boolean(entry) || index > 0 && index < all.length - 1).join(`
 `).slice(0, 2800);
 }
-function seedActorContactIds(state, names2) {
-  const wanted = new Set(names2.map(normalizeActorName).filter(Boolean));
+function seedActorContactIds(state, names) {
+  const wanted = new Set(names.map(normalizeActorName).filter(Boolean));
   return state.contacts.filter((contact) => wanted.has(normalizeActorName(contact.name))).map((contact) => contact.id).slice(0, 8);
 }
 function narrativeClockIso(state, clock) {
@@ -5183,11 +5235,11 @@ ${currentNarrative}` }
   }
 }
 function resolveEventParticipants(state, rawNames) {
-  const names2 = (Array.isArray(rawNames) ? rawNames : []).map((entry) => text2(entry, 120).replace(/\s+/g, " ")).filter((entry, index, all) => Boolean(entry) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(entry)) === index).slice(0, 16);
+  const names = (Array.isArray(rawNames) ? rawNames : []).map((entry) => text2(entry, 120).replace(/\s+/g, " ")).filter((entry, index, all) => Boolean(entry) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(entry)) === index).slice(0, 16);
   const actorIds = [];
   const contactIds = [];
   const now = nowIso();
-  for (const name of names2) {
+  for (const name of names) {
     if (normalizeActorName(name) === normalizeActorName(state.pocketPersona.displayName)) {
       const personaId = personaMemoryActorId(state);
       if (!actorIds.includes(personaId))
@@ -5207,7 +5259,7 @@ function resolveEventParticipants(state, rawNames) {
     if (actor?.contact && !contactIds.includes(actor.contact.id))
       contactIds.push(actor.contact.id);
   }
-  return { actorIds, contactIds, names: names2 };
+  return { actorIds, contactIds, names };
 }
 function messageSuggestion(conversation, messageId) {
   const message = conversation.messages.find((entry) => entry.id === messageId);
@@ -5261,7 +5313,7 @@ function applyNarrativeActorPresence(state, actors, updatedAt) {
 function applyNarrativeTrackerDeltas(state, deltas, updatedAt) {
   let changed = false;
   for (const delta of deltas) {
-    const index = state.trackers.findIndex((tracker2) => tracker2.key === delta.key && tracker2.allowModelWrite && tracker2.updateMode === "model");
+    const index = state.trackers.findIndex((tracker) => tracker.key === delta.key && tracker.allowModelWrite && tracker.updateMode === "model");
     if (index < 0)
       continue;
     const tracker = state.trackers[index];
@@ -5577,7 +5629,7 @@ async function generateMessage(input, userId) {
     const generationState = generationPersona === state.pocketPersona ? state : { ...state, pocketPersona: generationPersona };
     const conversation = resolveConversation(state, input);
     const participantActors = conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)).filter((entry) => Boolean(entry));
-    const participants = participantActors.map((actor2) => ({ actor: actor2, contact: actorAsGenerationContact(actor2, nowIso()) }));
+    const participants = participantActors.map((actor) => ({ actor, contact: actorAsGenerationContact(actor, nowIso()) }));
     if (!participants.length)
       throw new Error("This conversation has no available contact participants.");
     let contact;
@@ -6186,8 +6238,8 @@ Behavior: ${profile.behavior}` }
     userId
   }, userId);
   const identityBrief = text2(parsed.identityBrief, 500);
-  const phoneProfile2 = generatedPhoneProfile(parsed.phoneProfile);
-  if (!identityBrief && !phoneProfile2)
+  const phoneProfile = generatedPhoneProfile(parsed.phoneProfile);
+  if (!identityBrief && !phoneProfile)
     throw new Error("Profile refresh returned no usable phone profile.");
   await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     const latest = await loadState(context.chatId, context.characterId, userId);
@@ -6200,8 +6252,8 @@ Behavior: ${profile.behavior}` }
       target.identityBrief = identityBrief;
       target.description = identityBrief;
     }
-    if (phoneProfile2)
-      target.phoneProfile = phoneProfile2;
+    if (phoneProfile)
+      target.phoneProfile = phoneProfile;
     target.updatedAt = nowIso();
     await saveState(latest, userId);
     await sendState(latest, userId, "contact_profile");
@@ -6214,16 +6266,16 @@ function sceneKeyFor(name) {
 function actorName(value) {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
-function uniqueAliasMatch(candidate, names2) {
+function uniqueAliasMatch(candidate, names) {
   const normalized = actorName(candidate);
   if (!normalized)
     return null;
-  const exact = names2.find((name) => actorName(name) === normalized);
+  const exact = names.find((name) => actorName(name) === normalized);
   if (exact)
     return exact;
   if (normalized.includes(" "))
     return null;
-  const matches = names2.filter((name) => actorName(name).split(" ").includes(normalized));
+  const matches = names.filter((name) => actorName(name).split(" ").includes(normalized));
   return matches.length === 1 ? matches[0] : null;
 }
 async function syncSceneContacts(input, userId) {
@@ -6463,7 +6515,7 @@ async function maybeReplyAfterSend(chatId, characterId, conversationId, userId, 
 Channel: ${conversation.availability.state}
 Presence: ${contact.presence.inScene ? "physically in the active scene" : "off-scene"}
 Remote eligible: ${contact.messagingPolicy.remoteEligible}
-Scene snapshot: ${(state.sceneSnapshot?.actors || []).map((actor2) => `${state.contacts.find((entry) => entry.id === actor2.contactId)?.name || actor2.contactId}: ${actor2.sceneBrief}`).join(" | ") || "none"}
+Scene snapshot: ${(state.sceneSnapshot?.actors || []).map((actor) => `${state.contacts.find((entry) => entry.id === actor.contactId)?.name || actor.contactId}: ${actor.sceneBrief}`).join(" | ") || "none"}
 Recent DM:
 ${conversation.messages.slice(-8).map((message) => `${message.senderName}: ${message.text.slice(0, 700)}`).join(`
 `)}
@@ -6552,7 +6604,7 @@ async function considerAmbientMessage(chatId, characterId, opportunity, userId) 
     const state = await loadState(chatId, characterId, userId);
     if (preferences.ambientMessaging === "off")
       return;
-    const candidates = ambientEligibleContacts(state.contacts).filter((contact2) => contact2.generationPolicy.relevant && contactCooldownReady(contact2, preferences.ambientMessaging, state.roleplayNow)).slice(0, 16);
+    const candidates = ambientEligibleContacts(state.contacts).filter((contact) => contact.generationPolicy.relevant && contactCooldownReady(contact, preferences.ambientMessaging, state.roleplayNow)).slice(0, 16);
     if (!candidates.length)
       return;
     const requestId = id("ambient_decision");
@@ -6561,7 +6613,7 @@ async function considerAmbientMessage(chatId, characterId, opportunity, userId) 
       messages: [
         { role: "system", content: 'Choose at most one conservative fictional off-scene phone-message opportunity. Most opportunities should be none. Return strict JSON only: {"action":"none"} or {"action":"message","contactId":"exact id","direction":"short reason or topic"}. Never select an actor marked in-scene. Do not write the actual message.' },
         { role: "user", content: `Opportunity: ${opportunity}. Roleplay time: ${state.roleplayNow}. Candidates:
-${candidates.map((contact2) => `${contact2.id} | ${contact2.name} | ${contact2.role} | ${contact2.description.slice(0, 240)}`).join(`
+${candidates.map((contact) => `${contact.id} | ${contact.name} | ${contact.role} | ${contact.description.slice(0, 240)}`).join(`
 `)}` }
       ],
       parameters: { temperature: 0.35, max_tokens: 120 },
@@ -6750,7 +6802,7 @@ async function applyAction(input, userId, source = "model") {
         conversation = matches[0];
       }
       const refs = Array.isArray(payload.participants) ? payload.participants.slice(0, 16) : [];
-      const participantActorIds2 = [];
+      const participantActorIds = [];
       let includesPocketPersona = conversation?.includesPocketPersona ?? source === "user";
       for (const value of refs) {
         if (actorReferenceIsPocketPersona(state, value)) {
@@ -6777,32 +6829,32 @@ async function applyAction(input, userId, source = "model") {
           if (actor.discovered)
             actor.discovered.relationship = "close";
         }
-        if (!participantActorIds2.includes(actor.actorId))
-          participantActorIds2.push(actor.actorId);
+        if (!participantActorIds.includes(actor.actorId))
+          participantActorIds.push(actor.actorId);
       }
       if (!refs.length && conversation) {
-        participantActorIds2.push(...conversationActorIds(conversation));
+        participantActorIds.push(...conversationActorIds(conversation));
         includesPocketPersona = conversation.includesPocketPersona;
       }
-      const totalParticipants = participantActorIds2.length + (includesPocketPersona ? 1 : 0);
+      const totalParticipants = participantActorIds.length + (includesPocketPersona ? 1 : 0);
       if (totalParticipants < 2)
         throw new Error("A group conversation needs at least two explicit participants.");
-      const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+      const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
       const changedAt = nowIso();
       if (conversation) {
-        conversation.participantActorIds = participantActorIds2;
+        conversation.participantActorIds = participantActorIds;
         conversation.includesPocketPersona = includesPocketPersona;
         conversation.participantContactIds = participantContactIds;
         if (title)
           conversation.title = title;
         conversation.updatedAt = changedAt;
       } else {
-        const names2 = participantActorIds2.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
+        const names = participantActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name).filter(Boolean);
         conversation = {
           id: id("conversation"),
           kind: "group",
-          title: title || names2.join(", ").slice(0, 120) || "Group",
-          participantActorIds: participantActorIds2,
+          title: title || names.join(", ").slice(0, 120) || "Group",
+          participantActorIds,
           includesPocketPersona,
           participantContactIds,
           messages: [],
@@ -6885,14 +6937,14 @@ async function applyAction(input, userId, source = "model") {
           direction: direction === "outbound" ? "sent" : direction === "inbound" ? "received" : "observed"
         });
         if (sender !== "system" && preferences.notifyMessages) {
-          const route2 = { app: "messages", conversationId: conversation.id, messageId: message.id };
+          const route = { app: "messages", conversationId: conversation.id, messageId: message.id };
           for (const ownerActorId of recipientActorIds) {
             if (readByActorIds.includes(ownerActorId))
               continue;
             pendingNotifications.set(ownerActorId, {
               title: sender === "persona" ? state.pocketPersona.displayName || "You" : senderActor.name,
               body: preferences.notificationPreviews ? row.messageText.slice(0, 220) : "New message",
-              route: route2
+              route
             });
           }
         }
@@ -7238,12 +7290,21 @@ async function applyAction(input, userId, source = "model") {
       notification = source !== "user" ? addNotification(state, { app: "weather", title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route, source: "model", severity: "info" }, userId) : null;
       activity = addActivity(state, { kind: "weather", title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
     } else if (action === "tracker") {
-      const trackerId2 = text2(payload.trackerId ?? payload.tracker_id ?? payload.id, 120);
+      const trackerCommand = text2(payload.command, 30);
+      if (trackerCommand && !["create", "configure", "update"].includes(trackerCommand))
+        throw new Error("Unknown tracker command.");
+      if (trackerCommand === "create") {
+        if (source !== "user")
+          throw new Error("Tracker creation requires a user request.");
+        payload.id = id("trk");
+        payload.key = uniqueTrackerKey(payload.key || payload.label, state.trackers);
+      }
+      const trackerId = text2(payload.trackerId ?? payload.tracker_id ?? payload.id, 120);
       const requestedKey = trackerKey(payload.key, "");
-      let existing = trackerId2 ? state.trackers.find((item) => item.id === trackerId2) : undefined;
-      if (!existing && requestedKey)
+      let existing = trackerId ? state.trackers.find((item) => item.id === trackerId) : undefined;
+      if (!existing && requestedKey && trackerCommand !== "create")
         existing = state.trackers.find((item) => item.key === requestedKey);
-      if (!existing && !trackerId2 && !requestedKey && text2(payload.label, 120)) {
+      if (!existing && !trackerId && !requestedKey && text2(payload.label, 120)) {
         const matches = state.trackers.filter((item) => item.label.toLocaleLowerCase() === text2(payload.label, 120).toLocaleLowerCase());
         if (matches.length > 1)
           throw new Error("Tracker label is ambiguous; use trackerId or key.");
@@ -7253,6 +7314,18 @@ async function applyAction(input, userId, source = "model") {
         throw new Error(`Tracker ${existing.label} does not allow model updates.`);
       }
       const operation = text2(payload.operation ?? payload.op, 30);
+      if ((trackerCommand === "configure" || trackerCommand === "update" || operation) && !existing)
+        throw new Error("That tracker no longer exists.");
+      if (trackerCommand === "configure" && source !== "user")
+        throw new Error("Only you can change tracker settings.");
+      if (trackerCommand === "configure" && state.trackers.some((entry) => entry.id !== existing?.id && entry.key === trackerKey(payload.key)))
+        throw new Error("That tracker key is already used.");
+      if (trackerCommand === "create" || trackerCommand === "configure")
+        validateTrackerConfig({ ...existing || {}, ...payload });
+      if (trackerCommand === "update" && !operation)
+        throw new Error("Choose a tracker operation.");
+      if (operation && existing?.kind !== "state" && operation !== "reset" && !Number.isFinite(Number(payload.amount ?? payload.value)))
+        throw new Error("Enter a valid amount.");
       let next;
       if (existing && operation) {
         next = applyTrackerOperation(existing, {
@@ -7267,7 +7340,7 @@ async function applyAction(input, userId, source = "model") {
         const candidate = normalizeTracker({
           ...existing || {},
           ...payload,
-          id: existing?.id || trackerId2 || id("trk"),
+          id: existing?.id || trackerId || id("trk"),
           key: text2(payload.key, 120) || existing?.key || text2(payload.label, 120),
           label: text2(payload.label, 120) || existing?.label || "Tracker",
           color: text2(payload.color, 40) || existing?.color || preferences.colors.accent,
@@ -7278,6 +7351,12 @@ async function applyAction(input, userId, source = "model") {
         if (!candidate)
           throw new Error("Tracker configuration is invalid.");
         next = candidate;
+        if (trackerCommand === "configure" && existing && existing.kind === candidate.kind) {
+          if (candidate.kind === "state" && existing.kind === "state" && candidate.state !== existing.state)
+            next = applyTrackerOperation({ ...candidate, state: existing.state }, { operation: "set_state", state: candidate.state, reason: "Changed in tracker settings", source, roleplayNow: state.roleplayNow });
+          else if (candidate.kind !== "state" && candidate.value !== existing.value)
+            next = applyTrackerOperation({ ...candidate, value: existing.value }, { operation: "set", amount: candidate.value, reason: "Changed in tracker settings", source, roleplayNow: state.roleplayNow });
+        }
       }
       if (existing)
         state.trackers[state.trackers.indexOf(existing)] = next;
@@ -7539,16 +7618,16 @@ async function handleFrontend(payload, userId) {
       case "lumiphone:create_conversation": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
-          const participantActorIds2 = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
-          if (participantActorIds2.length < 2)
+          const participantActorIds = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : []).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
+          if (participantActorIds.length < 2)
             throw new Error("A group conversation needs at least two participants.");
-          const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+          const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
           const createdAt = nowIso();
           const conversation = {
             id: id("conversation"),
             kind: "group",
-            title: text2(payload.title, 120) || participantActorIds2.map((entry) => resolvePocketActor(state, entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group",
-            participantActorIds: participantActorIds2,
+            title: text2(payload.title, 120) || participantActorIds.map((entry) => resolvePocketActor(state, entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group",
+            participantActorIds,
             includesPocketPersona: true,
             participantContactIds,
             messages: [],
@@ -7570,16 +7649,17 @@ async function handleFrontend(payload, userId) {
           const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
           if (!conversation || conversation.kind !== "group")
             throw new Error("That group conversation no longer exists.");
-          const participantActorIds2 = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversationActorIds(conversation)).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
-          if (participantActorIds2.length < 2)
+          const participantActorIds = [...new Set((Array.isArray(payload.participantActorIds) ? payload.participantActorIds : Array.isArray(payload.participantContactIds) ? payload.participantContactIds : conversationActorIds(conversation)).map((entry) => text2(entry, 180)).filter((entry) => Boolean(resolvePocketActor(state, entry))))].slice(0, 16);
+          if (participantActorIds.length < 2)
             throw new Error("A group conversation needs at least two participants.");
-          const participantContactIds = participantActorIds2.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
-          conversation.participantActorIds = participantActorIds2;
+          const participantContactIds = participantActorIds.flatMap((actorId) => resolvePocketActor(state, actorId)?.contact?.id || []).filter((entry, index, all) => all.indexOf(entry) === index);
+          conversation.participantActorIds = participantActorIds;
           conversation.participantContactIds = participantContactIds;
           conversation.title = text2(payload.title, 120) || conversation.title;
           conversation.updatedAt = nowIso();
           await saveState(state, userId);
           await sendState(state, userId, "conversation");
+          send({ type: "lumiphone:conversation_opened", requestId, conversationId: conversation.id }, userId);
         });
         break;
       }

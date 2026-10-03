@@ -847,5 +847,40 @@ export const PHONE_STYLES = `
   .lp-contact-photo-editor .lp-avatar { width:54px; height:54px; font-size:18px; }
   .lp-contact-photo-editor .lp-actions { justify-content:flex-start; }
 
-${POCKET_DESIGN_SYSTEM}`
+${POCKET_DESIGN_SYSTEM}
 
+  /* Recipient columns follow the actual avatar, including profile overrides. */
+  .lp-message-picker-row { grid-template-columns:max-content minmax(0,1fr) auto; column-gap:14px; }
+  .lp-message-picker-row .lp-identity-line,
+  .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }
+  .lp-message-picker-row .lp-identity-name { line-height:1.4; }
+  .lp-message-picker-row[hidden], .lp-section[hidden], .lp-field[hidden], .lp-tracker-config-fields[hidden] { display:none; }
+  .lp-template-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  .lp-template-card { appearance:none; padding:18px 12px; border:1px solid var(--lp-border); border-radius:20px; display:grid; justify-items:start; gap:7px; background:var(--lp-surface); color:var(--lp-text); text-align:left; cursor:pointer; }
+  .lp-template-card:hover { border-color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 9%,var(--lp-surface)); }
+  .lp-template-mark { width:38px; height:38px; display:grid; place-items:center; border-radius:13px; color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 12%,transparent); font-size:24px; }
+  .lp-template-card small { color:var(--lp-muted); }
+  .lp-tracker-preview { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 14px; padding:22px; border-radius:22px; border:1px solid color-mix(in srgb,var(--tracker-color) 35%,var(--lp-border)); background:linear-gradient(135deg,color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)),var(--lp-surface)); }
+  .lp-tracker-preview .lp-eyebrow { grid-column:1/-1; }
+  .lp-preview-name { font-size:18px; overflow-wrap:anywhere; }
+  .lp-preview-value { color:var(--tracker-color); font-size:24px; font-weight:750; overflow-wrap:anywhere; }
+  .lp-tracker-preview small { grid-column:1/-1; color:var(--lp-muted); }
+  .lp-band-list { display:grid; gap:8px; }
+  .lp-band-editor { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,.65fr) minmax(0,.65fr) 28px 28px; gap:5px; align-items:center; }
+  .lp-band-editor .lp-input { min-width:0; padding:8px; }
+  .lp-band-editor .lp-color-input { width:28px; }
+  .lp-tracker-config-fields { display:grid; gap:12px; }
+  .lp-npc-camera .lp-content { display:grid; gap:12px; }
+  .lp-npc-viewfinder { position:relative; min-height:280px; border-radius:24px; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:46px 22px 22px; background:radial-gradient(ellipse at 50% 38%,#353038,#101014 72%); color:#fff; border:1px solid #ffffff16; }
+  .lp-npc-viewfinder::before { content:''; position:absolute; inset:0; background:linear-gradient(to right,transparent 33%,#ffffff0b 33%,#ffffff0b 33.3%,transparent 33.3%,transparent 66.6%,#ffffff0b 66.6%,#ffffff0b 66.9%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff0b 33%,#ffffff0b 33.3%,transparent 33.3%,transparent 66.6%,#ffffff0b 66.6%,#ffffff0b 66.9%,transparent 66.9%); pointer-events:none; }
+  .lp-camera-mode { position:absolute; top:15px; left:18px; right:18px; display:flex; justify-content:space-between; font-size:9px; letter-spacing:.09em; font-weight:750; color:#fff9; }
+  .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }
+  .lp-npc-camera-mark { font-size:38px; font-weight:650; }
+  .lp-npc-camera-copy { position:relative; text-align:center; margin-top:24px; max-width:320px; }
+  .lp-npc-camera-copy strong { font-size:16px; }
+  .lp-npc-camera-copy p { font-size:11px; line-height:1.6; color:#fff9; }
+  .lp-quick-controls { display:grid; grid-template-columns:1fr 68px 1fr; align-items:center; padding:8px 0 16px; }
+  .lp-npc-camera .lp-shutter { background:#17171c; }
+  .lp-npc-camera .lp-shutter::after { background:#f7e8b2; }
+  .lp-npc-camera .lp-shutter:focus-visible { outline:3px solid var(--lp-accent); outline-offset:5px; }
+`

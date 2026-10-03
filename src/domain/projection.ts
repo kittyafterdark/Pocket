@@ -69,7 +69,7 @@ export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BU
       const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || 'unassigned'}`
       const value = tracker.kind === 'state' ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`
       const band = tracker.kind === 'state' ? '' : trackerBand(tracker)?.label || ''
-      return `${tracker.label.slice(0, 120)} [${target}] = ${value}${band ? ` (${band})` : ''}`
+      return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ''} · ${tracker.updateMode === 'model' && tracker.allowModelWrite ? 'model-writable' : 'read-only'}`
     })
   const upcoming = state.events
     .filter((event) => !event.completed)

@@ -9,7 +9,9 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export interface ContactsViewHost {
   state: PhoneState
   selectedContactId: string
-  selectedView: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft'
+  selectedView: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft'
+  generationBrief: string
+  updateGenerationBrief(brief: string): void
   npcDraft: PocketContactDraft | null
   previousNpcDraft: PocketContactDraft | null
   sources: PocketContactSourceOption[]
@@ -18,7 +20,7 @@ export interface ContactsViewHost {
   operations: Map<string, PocketOperationProgress>
   page(title: string, subtitle?: string, action?: PageAction): Page
   empty(title: string, copy: string): HTMLDivElement
-  select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft', replace?: boolean): void
+  select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft', replace?: boolean): void
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
   choosePhoto(contactId: string): void
@@ -176,12 +178,13 @@ function importView(host: ContactsViewHost): HTMLDivElement {
     'lp-card lp-contact-import',
   )
   const description = el('textarea', 'lp-textarea'); description.placeholder = 'Describe someone; Pocket will generate one compact contact profile.'; description.maxLength = 2_000
+  description.value = host.generationBrief
+  description.addEventListener('input', () => host.updateGenerationBrief(description.value))
   const npcOperation = [...host.operations.values()].find((entry) => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
   const generate = button(npcOperation ? 'Generating…' : 'Generate NPC')
   generate.disabled = !host.capabilities?.generation || Boolean(npcOperation)
   generate.addEventListener('click', () => {
-    if (!description.value.trim()) { host.showError('Describe the NPC first.'); return }
-    host.send('lumiphone:generate_contact', { description: description.value.trim() })
+    host.select('', 'quick-gen')
   })
   const primitive = button('Create manually', 'lp-button lp-button-quiet')
   primitive.addEventListener('click', () => host.select('', 'new'))
@@ -313,7 +316,42 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   return page
 }
 
+function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
+  const active = [...host.operations.values()].find(entry => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
+  const { page, content } = host.page('Quick Generate', 'A new face for your little world')
+  page.classList.add('lp-npc-camera')
+  const finder = el('div', 'lp-npc-viewfinder')
+  const mode = el('div', 'lp-camera-mode', '✦ AUTO'); mode.append(el('span', '', 'POCKET PORTRAIT'))
+  const focus = el('div', 'lp-focus-frame')
+  const draft = host.npcDraft
+  const mark = el('div', 'lp-npc-camera-mark', draft ? draft.name.slice(0, 1).toUpperCase() : '✿')
+  focus.append(mark)
+  const copy = el('div', 'lp-npc-camera-copy')
+  copy.append(el('strong', '', active ? 'Meeting someone new…' : draft?.name || 'Someone lovely is out there'), el('p', '', active?.message || draft?.identityBrief || 'Describe them below, then tap the shutter.'))
+  finder.append(mode, focus, copy)
+  const brief = el('textarea', 'lp-textarea'); brief.placeholder = 'A sleepy florist with a sharp wit and a soft spot for stray cats…'; brief.maxLength = 2000; brief.rows = 3; brief.value = host.generationBrief
+  brief.addEventListener('input', () => host.updateGenerationBrief(brief.value))
+  const caption = el('p', 'lp-copy', 'PROFILE · Unsaved until you choose Use')
+  const controls = el('div', 'lp-quick-controls')
+  const manual = button('Manual', 'lp-nav-action'); manual.addEventListener('click', () => host.select('', 'new'))
+  const shutter = button('', 'lp-shutter'); shutter.setAttribute('aria-label', draft ? 'Generate another NPC' : 'Generate NPC'); shutter.disabled = Boolean(active) || !host.capabilities?.generation
+  shutter.addEventListener('click', () => { if (!brief.value.trim()) { brief.focus(); host.showError('Describe someone first.'); return }; shutter.disabled = true; host.send('lumiphone:generate_contact', { description: brief.value.trim() }) })
+  const edit = button('Edit', 'lp-nav-action'); edit.disabled = !draft || Boolean(active); edit.addEventListener('click', () => host.select('', 'draft'))
+  controls.append(manual, shutter, edit)
+  content.append(finder, fieldBlock('Who are we meeting?', brief), caption, controls)
+  if (draft) {
+    const actions = actionGroup('lp-draft-actions')
+    const use = button(`Use ${draft.name}`, 'lp-button lp-button-primary'); use.disabled = Boolean(active); use.addEventListener('click', () => { use.disabled = true; host.send('lumiphone:save_contact', { contact: draftPayload(draft) }) })
+    actions.append(use)
+    if (host.previousNpcDraft) { const undo = button('Previous', 'lp-button lp-button-quiet'); undo.addEventListener('click', () => host.restorePreviousNpcDraft()); actions.append(undo) }
+    content.append(actions)
+  }
+  if (!host.capabilities?.generation) content.append(el('p', 'lp-warning', 'Enable text generation in Settings to meet a new NPC.'))
+  return page
+}
+
 export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
+  if (host.selectedView === 'quick-gen') return quickGenerateView(host)
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null
   if (host.selectedView === 'import') { host.requestSources(); return importView(host) }
   if (host.selectedView === 'draft' && host.npcDraft) return contactEditor(host, null, host.npcDraft)

@@ -38,7 +38,7 @@ import type {
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
 import { projectPhoneContext } from './domain/projection.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
-import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey } from './domain/trackers.js'
+import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
 import { applyNpcBankProfile, contactFromNpcBank, findNpcBankMatch, isFutureNpcBank, normalizeNpcBank, normalizeNpcBankName, NPC_BANK_PATH, removeNpcBankEntry, upsertNpcBankFromContact } from './domain/npc-bank.js'
 import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
@@ -4450,10 +4450,17 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       notification = source !== 'user' ? addNotification(state, { app: 'weather', title: state.weather.location, body: `${state.weather.condition}, ${state.weather.temperature}°${state.weather.unit}`, route, source: 'model', severity: 'info' }, userId) : null
       activity = addActivity(state, { kind: 'weather', title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}°${state.weather.unit}`, route, source: { messageId: text(input.messageId, 180) || undefined } }, command)
     } else if (action === 'tracker') {
+      const trackerCommand = text(payload.command, 30)
+      if (trackerCommand && !['create', 'configure', 'update'].includes(trackerCommand)) throw new Error('Unknown tracker command.')
+      if (trackerCommand === 'create') {
+        if (source !== 'user') throw new Error('Tracker creation requires a user request.')
+        payload.id = id('trk')
+        payload.key = uniqueTrackerKey(payload.key || payload.label, state.trackers)
+      }
       const trackerId = text(payload.trackerId ?? payload.tracker_id ?? payload.id, 120)
       const requestedKey = trackerKey(payload.key, '')
       let existing = trackerId ? state.trackers.find((item) => item.id === trackerId) : undefined
-      if (!existing && requestedKey) existing = state.trackers.find((item) => item.key === requestedKey)
+      if (!existing && requestedKey && trackerCommand !== 'create') existing = state.trackers.find((item) => item.key === requestedKey)
       if (!existing && !trackerId && !requestedKey && text(payload.label, 120)) {
         const matches = state.trackers.filter((item) => item.label.toLocaleLowerCase() === text(payload.label, 120).toLocaleLowerCase())
         if (matches.length > 1) throw new Error('Tracker label is ambiguous; use trackerId or key.')
@@ -4463,6 +4470,12 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         throw new Error(`Tracker ${existing.label} does not allow model updates.`)
       }
       const operation = text(payload.operation ?? payload.op, 30) as import('./types.js').TrackerOperation
+      if ((trackerCommand === 'configure' || trackerCommand === 'update' || operation) && !existing) throw new Error('That tracker no longer exists.')
+      if (trackerCommand === 'configure' && source !== 'user') throw new Error('Only you can change tracker settings.')
+      if (trackerCommand === 'configure' && state.trackers.some(entry => entry.id !== existing?.id && entry.key === trackerKey(payload.key))) throw new Error('That tracker key is already used.')
+      if (trackerCommand === 'create' || trackerCommand === 'configure') validateTrackerConfig({ ...(existing || {}), ...payload })
+      if (trackerCommand === 'update' && !operation) throw new Error('Choose a tracker operation.')
+      if (operation && existing?.kind !== 'state' && operation !== 'reset' && !Number.isFinite(Number(payload.amount ?? payload.value))) throw new Error('Enter a valid amount.')
       let next: PhoneTracker
       if (existing && operation) {
         next = applyTrackerOperation(existing, {
@@ -4480,6 +4493,10 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         }, { roleplayNow: state.roleplayNow, characterId: state.characterId, characterName: state.characterName })
         if (!candidate) throw new Error('Tracker configuration is invalid.')
         next = candidate
+        if (trackerCommand === 'configure' && existing && existing.kind === candidate.kind) {
+          if (candidate.kind === 'state' && existing.kind === 'state' && candidate.state !== existing.state) next = applyTrackerOperation({ ...candidate, state: existing.state }, { operation: 'set_state', state: candidate.state, reason: 'Changed in tracker settings', source, roleplayNow: state.roleplayNow })
+          else if (candidate.kind !== 'state' && candidate.value !== existing.value) next = applyTrackerOperation({ ...candidate, value: existing.value }, { operation: 'set', amount: candidate.value, reason: 'Changed in tracker settings', source, roleplayNow: state.roleplayNow })
+        }
       }
       if (existing) state.trackers[state.trackers.indexOf(existing)] = next
       else state.trackers.push(next)
@@ -4743,6 +4760,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           conversation.updatedAt = nowIso()
           await saveState(state, userId)
           await sendState(state, userId, 'conversation')
+          send({ type: 'lumiphone:conversation_opened', requestId, conversationId: conversation.id }, userId)
         })
         break
       }

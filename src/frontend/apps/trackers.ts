@@ -1,6 +1,7 @@
 import type { PhoneState, PhoneTracker, TrackerKind, TrackerPresentation, TrackerTarget, TrackerUpdateMode } from '../../types.js'
 import { materializeTracker, TRACKER_TEMPLATES, trackerBand, trackerKey } from '../../domain/trackers.js'
 import { button, el } from '../shared.js'
+import { trackerEditor, trackerTemplates } from './tracker-editor.js'
 import type { PageAction } from '../shared.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
@@ -10,6 +11,10 @@ export interface TrackerViewHost {
   state: PhoneState
   selectedId: string
   selectedView: 'detail' | 'config'
+  draft: Record<string, unknown> | undefined
+  updateDraft(draft: Record<string, unknown>): void
+  saving: boolean
+  save(payload: Record<string, unknown>): void
   accent: string
   page(title: string, subtitle?: string, action?: PageAction): Page
   field(label: string, value?: string, type?: string): Field
@@ -93,7 +98,7 @@ function renderPresentation(tracker: PhoneTracker, roleplayNow: string): HTMLDiv
 }
 
 function dashboard(host: TrackerViewHost): HTMLDivElement {
-  const { page, content } = host.page('Trackers', 'Live roleplay state', { label: 'Add', callback: () => host.select('__template:9', 'config') })
+  const { page, content } = host.page('Trackers', 'Live roleplay state', { label: 'Add', callback: () => host.select('__templates', 'config') })
   const filters = el('div', 'lp-tracker-filters')
   const all = button('All', 'lp-chip'); all.setAttribute('aria-pressed', 'true')
   filters.appendChild(all)
@@ -190,78 +195,11 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
   return page
 }
 
-function config(host: TrackerViewHost, current: PhoneTracker | null, templateIndex = 9): HTMLDivElement {
-  const template = TRACKER_TEMPLATES[Math.max(0, Math.min(TRACKER_TEMPLATES.length - 1, templateIndex))]
-  const source = current || template.values
-  const templateTarget: TrackerTarget = template.group === 'Character'
-    ? { type: 'character', id: host.state.characterId, label: host.state.characterName }
-    : template.group === 'Scene' ? { type: 'scene', id: '', label: 'Current scene' }
-      : template.group === 'World' ? { type: 'world', id: '', label: 'Current world' }
-        : { type: 'custom', id: '', label: 'Unassigned' }
-  const selectedTarget = source.target || templateTarget
-  let saveTracker = () => {}
-  const { page, content } = host.page(current ? 'Tracker Settings' : 'New Tracker', 'Configuration', { label: 'Save', callback: () => saveTracker() })
-  if (!current) {
-    const templateField = selectField('Template', TRACKER_TEMPLATES.map((entry, index) => [String(index), `${entry.group} · ${entry.name}`]), String(templateIndex))
-    templateField.select.addEventListener('change', () => host.select(`__template:${templateField.select.value}`, 'config', true))
-    content.appendChild(templateField.label)
-  }
-  const label = host.field('Label', String(source.label || ''))
-  const key = host.field('Stable key', String(source.key || trackerKey(source.label)))
-  const kind = selectField('Type', [['meter', 'Meter'], ['counter', 'Counter'], ['state', 'State'], ['timer', 'Timer']], String(source.kind || 'meter'))
-  const presentation = selectField('Presentation', ['relationship', 'meter', 'vitals', 'segmented', 'counter', 'timer', 'state', 'compact'].map((value) => [value, value[0].toUpperCase() + value.slice(1)]), String(source.presentation || source.kind || 'meter'))
-  const value = host.field('Current value', String(source.value ?? 0), 'number')
-  const initial = host.field('Reset value', String(source.initialValue ?? source.value ?? 0), 'number')
-  const min = host.field('Minimum', String(source.min ?? 0), 'number')
-  const max = host.field('Maximum', String(source.max ?? 100), 'number')
-  const unit = host.field('Unit', String(source.unit || ''))
-  const state = host.field('Current state', source.kind === 'state' ? String(source.state || '') : '')
-  const states = el('textarea', 'lp-textarea'); states.placeholder = 'Allowed states, one per line'; states.value = source.kind === 'state' ? (source.states || []).join('\n') : ''
-  const targetType = selectField('Target', ['character', 'persona', 'relationship', 'scene', 'world', 'custom'].map((value) => [value, value[0].toUpperCase() + value.slice(1)]), selectedTarget.type)
-  const targetId = host.field('Target ID', selectedTarget.id)
-  const targetName = host.field('Target label', selectedTarget.label)
-  const mode = selectField('Update mode', [['manual', 'Manual'], ['model', 'Model-directed'], ['automatic', 'Automatic']], source.updateMode || (source.ratePerHour ? 'automatic' : 'manual'))
-  const clock = selectField('Automatic clock', [['real', 'Human time (real clock)'], ['roleplay', 'Roleplay time (timeline clock)']], source.clock || 'roleplay')
-  const rate = host.field('Change per hour', String(source.ratePerHour ?? 0), 'number')
-  const color = el('input', 'lp-color-input'); color.type = 'color'; color.value = /^#[0-9a-f]{6}$/i.test(String(source.color || '')) ? String(source.color) : host.accent
-  const colorRow = el('label', 'lp-card lp-row-between'); colorRow.append(el('span', 'lp-title', 'Tracker color'), color)
-  const bands = el('textarea', 'lp-textarea')
-  bands.placeholder = 'Semantic bands: min | max | label | #color'
-  bands.value = (source.bands || []).map((band) => `${band.min} | ${band.max} | ${band.label} | ${band.color}`).join('\n')
-  const visible = toggle('Visible in model context', source.visibleToModel !== false)
-  const writable = toggle('Allow model changes', source.allowModelWrite === true)
-  const configFields = el('div', 'lp-tracker-config-fields')
-  configFields.append(label.label, key.label, kind.label, presentation.label, value.label, initial.label, min.label, max.label, unit.label, state.label, states, targetType.label, targetId.label, targetName.label, mode.label, clock.label, rate.label, colorRow, bands, visible.row, writable.row)
-  content.appendChild(configFields)
-  saveTracker = () => {
-    const parsedBands = bands.value.split('\n').flatMap((line) => {
-      const [rawMin, rawMax, bandLabel, bandColor] = line.split('|').map((part) => part.trim())
-      if (!bandLabel || !Number.isFinite(Number(rawMin)) || !Number.isFinite(Number(rawMax))) return []
-      return [{ min: Number(rawMin), max: Number(rawMax), label: bandLabel, color: /^#[0-9a-f]{6}$/i.test(bandColor) ? bandColor : color.value }]
-    })
-    host.send('lumiphone:action', { action: 'tracker', payload: {
-      id: current?.id, label: label.input.value.trim(), key: key.input.value.trim(), kind: kind.select.value as TrackerKind,
-      presentation: presentation.select.value as TrackerPresentation, value: Number(value.input.value), initialValue: Number(initial.input.value),
-      min: Number(min.input.value), max: Number(max.input.value), unit: unit.input.value.trim(), color: color.value,
-      state: state.input.value.trim(), initialState: current?.kind === 'state' ? current.initialState : state.input.value.trim(),
-      states: states.value.split('\n').map((entry) => entry.trim()).filter(Boolean),
-      target: { type: targetType.select.value as TrackerTarget['type'], id: targetId.input.value.trim(), label: targetName.input.value.trim() },
-      updateMode: mode.select.value as TrackerUpdateMode, clock: clock.select.value, ratePerHour: Number(rate.input.value), bands: parsedBands,
-      visibleToModel: visible.button.getAttribute('aria-pressed') === 'true', allowModelWrite: writable.button.getAttribute('aria-pressed') === 'true',
-    } })
-  }
-  if (current) {
-    const remove = button('Delete tracker', 'lp-button lp-button-danger')
-    remove.addEventListener('click', () => { host.send('lumiphone:delete', { kind: 'tracker', id: current.id }); host.back() })
-    content.appendChild(remove)
-  }
-  return page
-}
-
 export function renderTrackersView(host: TrackerViewHost): HTMLDivElement {
+  if (host.selectedId === '__templates') return trackerTemplates(host)
   const selected = host.state.trackers.find((tracker) => tracker.id === host.selectedId) || null
-  if (selected && host.selectedView === 'config') return config(host, selected)
+  if (selected && host.selectedView === 'config') return trackerEditor(host, selected)
   if (selected) return detail(host, selected)
-  if (host.selectedId.startsWith('__template:')) return config(host, null, Number(host.selectedId.split(':')[1]))
+  if (host.selectedId.startsWith('__template:')) return trackerEditor(host, null, Number(host.selectedId.split(':')[1]))
   return dashboard(host)
 }

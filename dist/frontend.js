@@ -184,10 +184,10 @@ function normalizePreferences(value) {
   });
   const rawPersonaAppearance = record(raw.personaAppearance);
   const personaAppearance = {};
-  for (const [personaId, value2] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
+  for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
     if (!personaId || personaId.length > 180)
       continue;
-    const item = record(value2);
+    const item = record(value);
     const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
     const overrideColors = record(item.colors);
     const overridePreset = themePalette(overrideTheme);
@@ -282,13 +282,13 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
       conversationId: shortId(raw.conversationId),
       contactId: shortId(raw.contactId),
       messageId: shortId(raw.messageId),
-      view: raw.view === "new-group" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
+      view: raw.view === "new-group" || raw.view === "group-editor" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
     };
   if (app === "contacts")
     return {
       app,
       contactId: shortId(raw.contactId),
-      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
+      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "quick-gen" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -705,8 +705,8 @@ function wallpaperImageControl(label, target, wallpaper, resolved, host) {
   preview.style.backgroundPosition = `${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%`;
   preview.textContent = resolved.url ? "" : resolved.error || "Theme background";
   const actions = el("div", "lp-wallpaper-actions");
-  for (const [mode, text2] of [["gallery", "Gallery"], ["upload", "Upload"], ["url", "Image URL"]]) {
-    const choose = button(text2, "lp-button lp-button-quiet");
+  for (const [mode, text] of [["gallery", "Gallery"], ["upload", "Upload"], ["url", "Image URL"]]) {
+    const choose = button(text, "lp-button lp-button-quiet");
     choose.addEventListener("click", () => host.choose(target, mode));
     actions.appendChild(choose);
   }
@@ -981,15 +981,15 @@ function persona(host) {
   const personality = el("textarea", "lp-textarea");
   personality.placeholder = "Personality — stable traits that shape conversation";
   personality.value = phoneProfile.personality;
-  const appearance2 = el("textarea", "lp-textarea");
-  appearance2.placeholder = "Minimal appearance — only recognizable details worth texting about";
-  appearance2.value = phoneProfile.appearance;
+  const appearance = el("textarea", "lp-textarea");
+  appearance.placeholder = "Minimal appearance — only recognizable details worth texting about";
+  appearance.value = phoneProfile.appearance;
   const textingStyle = el("textarea", "lp-textarea");
   textingStyle.placeholder = "Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, message length…";
   textingStyle.value = phoneProfile.textingStyle;
   const canAppear = toggle("Can appear as phone participant", profile.canAppear, () => {}, "Off by default. The active Persona is never imported as a Contact.");
   const fields = el("div", "lp-fields");
-  fields.append(fieldBlock("Name", name), fieldBlock("Pronouns", pronouns), fieldBlock("Role", role), fieldBlock("Personality", personality), fieldBlock("Minimal appearance", appearance2), fieldBlock("Texting quirks", textingStyle), canAppear);
+  fields.append(fieldBlock("Name", name), fieldBlock("Pronouns", pronouns), fieldBlock("Role", role), fieldBlock("Personality", personality), fieldBlock("Minimal appearance", appearance), fieldBlock("Texting quirks", textingStyle), canAppear);
   const syncDisabled = () => {
     const disabled = source.value === "lumiverse";
     for (const control of [name, pronouns, role])
@@ -1003,10 +1003,10 @@ function persona(host) {
   const describe = button(personaOperation ? "Enriching…" : "Enrich with LLM", "lp-button lp-button-quiet");
   describe.disabled = !host.capabilities?.generation || Boolean(personaOperation);
   let personaProgress = null;
-  const mountPersonaProgress = (requestId2, message = "Enriching phone profile…") => {
+  const mountPersonaProgress = (requestId, message = "Enriching phone profile…") => {
     personaProgress?.remove();
     personaProgress = el("div", "lp-operation-progress");
-    personaProgress.dataset.operationRequest = requestId2;
+    personaProgress.dataset.operationRequest = requestId;
     personaProgress.dataset.phase = "generating";
     personaProgress.setAttribute("role", "status");
     const label = el("strong", "", message);
@@ -1017,8 +1017,8 @@ function persona(host) {
   describe.addEventListener("click", () => {
     describe.disabled = true;
     describe.textContent = "Enriching…";
-    const requestId2 = host.send("lumiphone:generate_pocket_persona");
-    mountPersonaProgress(requestId2);
+    const requestId = host.send("lumiphone:generate_pocket_persona");
+    mountPersonaProgress(requestId);
   });
   const save = button("Save profile", "lp-button");
   save.addEventListener("click", () => host.send("lumiphone:save_pocket_persona", {
@@ -1031,7 +1031,7 @@ function persona(host) {
       role: role.value.trim(),
       phoneProfile: {
         personality: personality.value.trim(),
-        appearance: appearance2.value.trim(),
+        appearance: appearance.value.trim(),
         textingStyle: textingStyle.value.trim()
       },
       canAppear: canAppear.querySelector("button")?.getAttribute("aria-pressed") === "true"
@@ -1310,9 +1310,9 @@ function camera(host) {
   diagnostics.appendChild(el("summary", "", "Macro diagnostics"));
   for (const name of ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect"]) {
     const field = host.swarmProfile?.fields?.[name];
-    const row2 = el("div", "lp-generation-run", `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`);
-    row2.dataset.pocketSwarmMacro = name;
-    diagnostics.appendChild(row2);
+    const row = el("div", "lp-generation-run", `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`);
+    row.dataset.pocketSwarmMacro = name;
+    diagnostics.appendChild(row);
   }
   swarm.append(status, refresh, diagnostics);
   const manual = el("section", "lp-card lp-settings-section");
@@ -1460,12 +1460,12 @@ function renderSettingsView(host) {
   if (host.section === "personalization") {
     const { page, content } = host.page("Personalization", "Make Pocket yours");
     for (const [id, title, help] of [["appearance", "Device appearance", "Theme and wallpapers used by default"], ["persona", "Persona & phone identity", "Profile and optional appearance for your own phone"]]) {
-      const row2 = button("", "lp-card lp-settings-category");
+      const row = button("", "lp-card lp-settings-category");
       const copy = el("span");
       copy.append(el("strong", "", title), el("span", "lp-copy", help));
-      row2.append(copy, el("span", "lp-settings-chevron", "›"));
-      row2.addEventListener("click", () => host.navigate(id));
-      content.append(row2);
+      row.append(copy, el("span", "lp-settings-chevron", "›"));
+      row.addEventListener("click", () => host.navigate(id));
+      content.append(row);
     }
     return page;
   }
@@ -1495,8 +1495,19 @@ var CLOCKS = new Set(["real", "roleplay"]);
 var MODES = new Set(["manual", "model", "automatic"]);
 var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
 var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
+function record2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 function clean(value, max = 160) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function finite(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function iso(value, fallback) {
+  const text = clean(value, 80);
+  return Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 function trackerId(prefix = "trk") {
   return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
@@ -1504,6 +1515,151 @@ function trackerId(prefix = "trk") {
 function trackerKey(value, fallback = "tracker") {
   const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return key || fallback;
+}
+function validateTrackerConfig(value) {
+  if (!clean(value.label, 120))
+    throw new Error("Give your tracker a name.");
+  if (!KINDS.has(value.kind))
+    throw new Error("Choose a tracker type.");
+  const allowed = value.kind === "state" ? ["state", "compact"] : value.kind === "counter" ? ["counter", "compact"] : value.kind === "timer" ? ["timer", "compact"] : ["meter", "vitals", "relationship", "segmented", "compact"];
+  if (!allowed.includes(String(value.presentation)))
+    throw new Error("Choose a display that matches this tracker type.");
+  if (value.kind === "state") {
+    const states = Array.isArray(value.states) ? value.states.map((entry) => clean(entry, 80)).filter(Boolean) : [];
+    if (!states.length || !states.includes(String(value.state)))
+      throw new Error("Choose a current state from the allowed states.");
+    if (value.updateMode === "automatic")
+      throw new Error("States use manual or story updates.");
+    if (value.initialState && !states.includes(String(value.initialState)))
+      throw new Error("Keep the reset state in the allowed states.");
+  } else {
+    for (const key of ["value", "initialValue", "min", "max", "ratePerHour"]) {
+      if (!Number.isFinite(Number(value[key])))
+        throw new Error("Tracker numbers must be finite.");
+    }
+    if (Number(value.max) <= Number(value.min))
+      throw new Error("Maximum must be greater than minimum.");
+    for (const key of ["value", "initialValue"])
+      if (Number(value[key]) < Number(value.min) || Number(value[key]) > Number(value.max))
+        throw new Error("Starting and reset values must fit the range.");
+    if (value.kind === "counter" && !(Number(value.step) > 0))
+      throw new Error("Counter step must be positive.");
+    if (value.kind === "timer" && !["up", "down"].includes(String(value.direction)))
+      throw new Error("Choose a timer direction.");
+  }
+  if (!MODES.has(value.updateMode))
+    throw new Error("Choose how this tracker updates.");
+  if (value.updateMode === "automatic" && !Number(value.ratePerHour))
+    throw new Error("Choose a non-zero change per hour for time updates.");
+  if (value.updateMode === "model" && value.allowModelWrite !== true)
+    throw new Error("Story updates require model changes to be enabled.");
+  if (!record2(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
+    throw new Error("Choose who or what this tracker belongs to.");
+  for (const band of Array.isArray(value.bands) ? value.bands : []) {
+    if (!record2(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
+      throw new Error("Each band needs a label and a valid range inside the tracker range.");
+  }
+}
+function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
+  if (!record2(value))
+    return fallback;
+  const type = TARGETS.has(value.type) ? value.type : fallback.type;
+  return { type, id: clean(value.id, 180), label: clean(value.label, 160) || fallback.label };
+}
+function normalizeBands(value, min, max, color) {
+  const bands = (Array.isArray(value) ? value : []).flatMap((item) => {
+    if (!record2(item))
+      return [];
+    const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
+    const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
+    const label = clean(item.label, 80);
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color }] : [];
+  }).slice(0, 12);
+  if (bands.length || max <= min)
+    return bands;
+  const span = max - min;
+  return [
+    { min, max: min + span * 0.33, label: "Low", color: "#ef6b73" },
+    { min: min + span * 0.33, max: min + span * 0.67, label: "Steady", color },
+    { min: min + span * 0.67, max, label: "High", color: "#62c994" }
+  ];
+}
+function normalizeHistory(value) {
+  return (Array.isArray(value) ? value : []).flatMap((item) => {
+    if (!record2(item))
+      return [];
+    const operation = ["set", "add", "subtract", "reset", "set_state", "automatic"].includes(String(item.operation)) ? item.operation : "set";
+    const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" ? item.source : "user";
+    const createdAt = iso(item.createdAt, new Date().toISOString());
+    return [{
+      id: clean(item.id, 160) || trackerId("hist"),
+      previous: typeof item.previous === "string" ? clean(item.previous, 160) : finite(item.previous, 0),
+      next: typeof item.next === "string" ? clean(item.next, 160) : finite(item.next, 0),
+      operation,
+      amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
+      reason: clean(item.reason, 300),
+      source,
+      createdAt,
+      roleplayAt: clean(item.roleplayAt, 80) || undefined
+    }];
+  }).slice(-TRACKER_HISTORY_LIMIT);
+}
+function normalizeTracker(value, context = {}) {
+  if (!record2(value))
+    return null;
+  const now = context.now || new Date().toISOString();
+  const label = clean(value.label, 120);
+  if (!label)
+    return null;
+  const legacy = !KINDS.has(value.kind);
+  const kind = legacy ? "meter" : value.kind;
+  const min = finite(value.min, kind === "counter" ? 0 : 0);
+  const max = Math.max(min, finite(value.max, kind === "counter" ? 999999 : 100));
+  const numeric = Math.max(min, Math.min(max, finite(value.value, min)));
+  const initialValue = Math.max(min, Math.min(max, finite(value.initialValue, numeric)));
+  const color = clean(value.color, 40) || "#8b7dff";
+  const ratePerHour = Math.max(-1e5, Math.min(1e5, finite(value.ratePerHour, 0)));
+  const target = legacy ? { type: "custom", id: "", label: "Unassigned" } : normalizeTrackerTarget(value.target, context.characterId ? { type: "character", id: context.characterId, label: context.characterName || "Character" } : { type: "custom", id: "", label: "Unassigned" });
+  const clock = legacy ? "real" : CLOCKS.has(value.clock) ? value.clock : "real";
+  const updateMode = MODES.has(value.updateMode) ? value.updateMode : ratePerHour ? "automatic" : "manual";
+  const presentation = PRESENTATIONS.has(value.presentation) ? value.presentation : kind === "counter" ? "counter" : kind === "timer" ? "timer" : kind === "state" ? "state" : "meter";
+  const base = {
+    id: clean(value.id, 120) || trackerId(),
+    key: trackerKey(value.key || label),
+    label,
+    kind,
+    value: numeric,
+    initialValue,
+    min,
+    max,
+    unit: clean(value.unit, 40),
+    color,
+    target,
+    updateMode,
+    clock,
+    allowModelWrite: legacy ? false : value.allowModelWrite === true,
+    presentation,
+    bands: normalizeBands(value.bands, min, max, color),
+    history: normalizeHistory(value.history),
+    ratePerHour,
+    lastUpdated: iso(value.lastUpdated, now),
+    lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
+    pausedReason: clean(value.pausedReason, 240),
+    visibleToModel: value.visibleToModel !== false,
+    createdAt: iso(value.createdAt, now),
+    updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
+  };
+  if (kind === "state") {
+    const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean(entry, 80)).filter(Boolean).slice(0, 24);
+    const initialState = clean(value.initialState, 80) || states[0] || "Unknown";
+    const state = clean(value.state, 80) || initialState;
+    return { ...base, kind, state, initialState, states: states.includes(state) ? states : [...states, state].slice(0, 24) };
+  }
+  if (kind === "counter")
+    return { ...base, kind, step: Math.max(0.0001, Math.abs(finite(value.step, 1))) };
+  if (kind === "timer")
+    return { ...base, kind, direction: value.direction === "up" ? "up" : "down" };
+  return { ...base, kind };
 }
 var TRACKER_TEMPLATES = [
   { group: "Character", name: "Health", values: { kind: "meter", label: "Health", key: "health", value: 100, initialValue: 100, min: 0, max: 100, unit: "%", presentation: "vitals" } },
@@ -1533,13 +1689,13 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
     return { tracker: { ...tracker, pausedReason }, changed: tracker.pausedReason !== pausedReason };
   }
   if (!Number.isFinite(previous)) {
-    const anchor2 = new Date(current).toISOString();
+    const anchor = new Date(current).toISOString();
     return {
       tracker: {
         ...tracker,
         pausedReason: "",
-        lastUpdated: tracker.clock === "real" ? anchor2 : tracker.lastUpdated,
-        lastRoleplayAt: tracker.clock === "roleplay" ? anchor2 : tracker.lastRoleplayAt
+        lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
+        lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
       },
       changed: true
     };
@@ -1570,6 +1726,261 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
   return { tracker: next, changed: true };
 }
 
+// src/frontend/apps/tracker-editor.ts
+function choice(label, values, value) {
+  const control = el("select", "lp-select");
+  for (const [id, name] of values) {
+    const option = el("option", "", name);
+    option.value = id;
+    option.selected = id === value;
+    control.append(option);
+  }
+  return { control, field: fieldBlock(label, control) };
+}
+function trackerTemplates(host) {
+  const { page, content } = host.page("New Tracker", "A little dashboard for your story");
+  content.append(el("p", "lp-copy", "Pick a starting point. You can make it yours next."));
+  const grid = el("div", "lp-template-grid");
+  const marks = ["♡", "◔", "✿", "♥", "ϟ", "▥", "◈", "◷", "✧", "＋"];
+  TRACKER_TEMPLATES.forEach((template, index) => {
+    const card = button("", "lp-template-card");
+    card.append(el("span", "lp-template-mark", marks[index]), el("strong", "", template.name), el("small", "", template.group));
+    card.addEventListener("click", () => host.select(`__template:${index}`, "config"));
+    grid.append(card);
+  });
+  content.append(grid);
+  return page;
+}
+function trackerEditor(host, current, templateIndex = 9) {
+  const template = TRACKER_TEMPLATES[templateIndex] || TRACKER_TEMPLATES[9];
+  const target = template.values.target || { type: "character", id: host.state.characterId, label: host.state.characterName };
+  const seed = normalizeTracker({ ...template.values, target, color: host.accent }, { roleplayNow: host.state.roleplayNow });
+  const source = { ...current || seed, ...host.draft };
+  let commit = () => {};
+  const { page, content } = host.page(current ? "Edit Tracker" : template.name, "Make room for the little things", { label: host.saving ? "Saving…" : "Save", enabled: !host.saving, callback: () => commit() });
+  const preview = el("div", "lp-tracker-preview");
+  const error = el("p", "lp-warning");
+  error.setAttribute("role", "alert");
+  error.hidden = true;
+  const name = el("input", "lp-input");
+  name.value = source.label;
+  const kind = choice("Track", [["meter", "A value"], ["counter", "A quantity"], ["state", "A state"], ["timer", "A timer"]], source.kind);
+  const targets = [
+    { type: "character", id: host.state.characterId, label: host.state.characterName },
+    { type: "persona", id: host.state.pocketPersonaActorId, label: host.state.pocketPersona.displayName || "You" },
+    ...listPocketActors(host.state).map((actor) => ({ type: "character", id: actor.actorId, label: actor.name })),
+    ...listPocketActors(host.state).map((actor) => ({ type: "relationship", id: actor.actorId, label: `You & ${actor.name}` })),
+    { type: "scene", id: "", label: "Current scene" },
+    { type: "world", id: "", label: "World" },
+    { type: "custom", id: "", label: "Something else" }
+  ].filter((entry, index, all) => all.findIndex((other) => other.type === entry.type && other.id === entry.id) === index);
+  if (!targets.some((entry) => entry.type === source.target.type && entry.id === source.target.id))
+    targets.unshift(source.target);
+  const targetIndex = targets.findIndex((entry) => entry.type === source.target.type && entry.id === source.target.id);
+  const belongs = choice("For", targets.map((entry, index) => [String(index), entry.label]), String(targetIndex));
+  const custom = el("input", "lp-input");
+  custom.value = source.target.label;
+  custom.placeholder = "What are we tracking?";
+  const customField = fieldBlock("Target name", custom);
+  const value = el("input", "lp-input");
+  value.type = "number";
+  value.step = "any";
+  value.value = String(source.value);
+  const states = el("textarea", "lp-textarea");
+  states.value = source.kind === "state" ? source.states.join(`
+`) : `Stable
+Wounded
+Recovering`;
+  const state = choice("Current state", [], source.kind === "state" ? source.state : "");
+  const mode = choice("Updates", [["manual", "By hand"], ["model", "With the story"], ["automatic", "Over time"]], source.updateMode);
+  const visible = el("input");
+  visible.type = "checkbox";
+  visible.checked = source.visibleToModel;
+  const visibleField = fieldBlock("Include in model context", visible, "Story updates allow the model to change this tracker. Other modes keep it read-only.");
+  const valueField = fieldBlock("Starting value", value);
+  const stateFields = el("div", "lp-tracker-config-fields");
+  stateFields.append(fieldBlock("Allowed states", states, "One state per line."), state.field);
+  const basic = sectionBlock("The essentials");
+  basic.body.append(fieldBlock("Name", name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, visibleField);
+  const clock = choice("Clock", [["roleplay", "Story time"], ["real", "Real time"]], source.clock);
+  const rate = el("input", "lp-input");
+  rate.type = "number";
+  rate.step = "any";
+  rate.value = String(source.ratePerHour);
+  const direction = choice("Direction", [["down", "Count down"], ["up", "Count up"]], source.kind === "timer" ? source.direction : "down");
+  const automatic = sectionBlock("Passing time", "Story time waits when the scene clock is uncertain.");
+  automatic.body.append(clock.field, direction.field, fieldBlock("Change per hour", rate, "Positive adds; negative subtracts. Timers use their chosen direction."));
+  const min = el("input", "lp-input");
+  min.type = "number";
+  min.step = "any";
+  min.value = String(source.min);
+  const max = el("input", "lp-input");
+  max.type = "number";
+  max.step = "any";
+  max.value = String(source.max);
+  const initial = el("input", "lp-input");
+  initial.type = "number";
+  initial.step = "any";
+  initial.value = String(source.initialValue);
+  const unit = el("input", "lp-input");
+  unit.value = source.unit;
+  const step = el("input", "lp-input");
+  step.type = "number";
+  step.step = "any";
+  step.value = String(source.kind === "counter" ? source.step : 1);
+  const stepField = fieldBlock("Step size", step);
+  const key = el("input", "lp-input");
+  key.value = source.key;
+  const color = el("input", "lp-color-input");
+  color.type = "color";
+  color.value = /^#[0-9a-f]{6}$/i.test(source.color) ? source.color : host.accent;
+  const presentation = choice("Display", [], source.presentation);
+  const range = el("div", "lp-tracker-config-fields");
+  range.append(fieldBlock("Minimum", min), fieldBlock("Maximum", max), fieldBlock("Reset value", initial), fieldBlock("Unit", unit), stepField);
+  const bandList = el("div", "lp-band-list");
+  const bandRows = [];
+  const addBand = (band) => {
+    const row = el("div", "lp-band-editor");
+    const low = el("input", "lp-input");
+    low.type = "number";
+    low.step = "any";
+    low.value = String(band.min);
+    low.setAttribute("aria-label", "Band minimum");
+    const high = el("input", "lp-input");
+    high.type = "number";
+    high.step = "any";
+    high.value = String(band.max);
+    high.setAttribute("aria-label", "Band maximum");
+    const label = el("input", "lp-input");
+    label.value = band.label;
+    label.placeholder = "Band name";
+    label.setAttribute("aria-label", "Band name");
+    const hue = el("input", "lp-color-input");
+    hue.type = "color";
+    hue.value = /^#[0-9a-f]{6}$/i.test(band.color) ? band.color : host.accent;
+    hue.setAttribute("aria-label", "Band color");
+    const remove = button("×", "lp-button lp-button-quiet");
+    remove.setAttribute("aria-label", "Remove band");
+    const entry = { row, min: low, max: high, label, color: hue };
+    bandRows.push(entry);
+    remove.addEventListener("click", () => {
+      bandRows.splice(bandRows.indexOf(entry), 1);
+      row.remove();
+      remember();
+    });
+    row.append(label, low, high, hue, remove);
+    bandList.append(row);
+  };
+  for (const band of source.bands)
+    addBand(band);
+  const bands = sectionBlock("Meaningful ranges", "Name what each range means. High does not always mean good.");
+  const add = button("＋ Add a range", "lp-button lp-button-quiet");
+  add.addEventListener("click", () => {
+    addBand({ min: Number(min.value), max: Number(max.value), label: "New range", color: color.value });
+    remember();
+  });
+  bands.body.append(bandList, add);
+  const advanced = disclosure("Fine tuning", presentation.field, range, fieldBlock("Color", color), bands.section, fieldBlock("Stable key", key, "Used by model tools. New trackers receive a unique key."));
+  const allowed = { meter: ["meter", "vitals", "relationship", "segmented", "compact"], counter: ["counter", "compact"], state: ["state", "compact"], timer: ["timer", "compact"] };
+  const collect = () => {
+    const kindValue = kind.control.value;
+    const selected = targets[Number(belongs.control.value)];
+    return {
+      label: name.value.trim(),
+      key: trackerKey(key.value || name.value),
+      kind: kindValue,
+      presentation: presentation.control.value,
+      target: { ...selected, label: selected.type === "custom" ? custom.value.trim() : selected.label },
+      value: Number(value.value),
+      initialValue: Number(initial.value),
+      min: Number(min.value),
+      max: Number(max.value),
+      unit: unit.value,
+      state: state.control.value,
+      initialState: current?.kind === "state" ? current.initialState : state.control.value,
+      states: [...new Set(states.value.split(`
+`).map((entry) => entry.trim()).filter(Boolean))],
+      step: Number(step.value),
+      direction: direction.control.value,
+      color: color.value,
+      updateMode: mode.control.value,
+      allowModelWrite: mode.control.value === "model",
+      visibleToModel: visible.checked,
+      clock: clock.control.value,
+      ratePerHour: kindValue === "timer" ? Math.abs(Number(rate.value)) * (direction.control.value === "down" ? -1 : 1) : Number(rate.value),
+      bands: kindValue === "state" ? [] : bandRows.map((entry) => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value }))
+    };
+  };
+  const refreshFields = () => {
+    const kindValue = kind.control.value;
+    customField.hidden = targets[Number(belongs.control.value)].type !== "custom";
+    valueField.hidden = kindValue === "state";
+    stateFields.hidden = kindValue !== "state";
+    range.hidden = kindValue === "state";
+    bands.section.hidden = kindValue === "state";
+    stepField.hidden = kindValue !== "counter";
+    automatic.section.hidden = mode.control.value !== "automatic";
+    direction.field.hidden = kindValue !== "timer";
+    const autoOption = mode.control.querySelector('option[value="automatic"]');
+    autoOption.disabled = kindValue === "state";
+    if (kindValue === "state" && mode.control.value === "automatic")
+      mode.control.value = "manual";
+    const display = presentation.control.value || source.presentation;
+    presentation.control.replaceChildren();
+    for (const id of allowed[kindValue]) {
+      const option = el("option", "", id[0].toUpperCase() + id.slice(1));
+      option.value = id;
+      presentation.control.append(option);
+    }
+    presentation.control.value = allowed[kindValue].includes(display) ? display : allowed[kindValue][0];
+    const previous = state.control.value || (source.kind === "state" ? source.state : "");
+    state.control.replaceChildren();
+    for (const label of [...new Set(states.value.split(`
+`).map((entry) => entry.trim()).filter(Boolean))]) {
+      const option = el("option", "", label);
+      option.value = label;
+      state.control.append(option);
+    }
+    if ([...state.control.options].some((option) => option.value === previous))
+      state.control.value = previous;
+  };
+  const remember = () => {
+    refreshFields();
+    const draft = collect();
+    host.updateDraft(draft);
+    preview.replaceChildren(el("span", "lp-eyebrow", draft.target.label), el("strong", "lp-preview-name", draft.label || "Your tracker"), el("span", "lp-preview-value", draft.kind === "state" ? draft.state || "Choose a state" : `${draft.value}${draft.unit}`), el("small", "", draft.updateMode === "model" ? "Changes with the story ✦" : draft.updateMode === "automatic" ? "A little timekeeper ◷" : "Made for your story ♡"));
+    preview.style.setProperty("--tracker-color", draft.color);
+  };
+  content.append(preview, error, basic.section, automatic.section, advanced);
+  content.addEventListener("input", remember);
+  content.addEventListener("change", remember);
+  refreshFields();
+  remember();
+  commit = () => {
+    const draft = collect();
+    try {
+      validateTrackerConfig(draft);
+    } catch (failure) {
+      error.textContent = failure instanceof Error ? failure.message : String(failure);
+      error.hidden = false;
+      error.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (host.saving)
+      return;
+    const save = page.querySelector(".lp-nav-action:last-child");
+    save.disabled = true;
+    save.textContent = "Saving…";
+    host.save({ ...draft, id: current?.id, command: current ? "configure" : "create" });
+  };
+  if (current) {
+    const remove = button("Delete tracker", "lp-button lp-button-danger");
+    remove.addEventListener("click", () => host.send("lumiphone:delete", { kind: "tracker", id: current.id }));
+    content.append(remove);
+  }
+  return page;
+}
+
 // src/frontend/apps/trackers.ts
 function selectField(labelText, options, selected) {
   const label = el("label", "lp-label", labelText);
@@ -1582,17 +1993,6 @@ function selectField(labelText, options, selected) {
   }
   label.appendChild(select);
   return { label, select };
-}
-function toggle2(labelText, initial) {
-  const row2 = el("div", "lp-card lp-row-between");
-  const copy = el("div");
-  copy.appendChild(el("div", "lp-title", labelText));
-  const control = button("", "lp-toggle");
-  control.setAttribute("aria-pressed", String(initial));
-  control.setAttribute("aria-label", labelText);
-  control.addEventListener("click", () => control.setAttribute("aria-pressed", String(control.getAttribute("aria-pressed") !== "true")));
-  row2.append(copy, control);
-  return { row: row2, button: control };
 }
 function displayValue(tracker) {
   return tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit}`;
@@ -1635,7 +2035,7 @@ function renderPresentation(tracker, roleplayNow) {
   return card;
 }
 function dashboard(host) {
-  const { page, content } = host.page("Trackers", "Live roleplay state", { label: "Add", callback: () => host.select("__template:9", "config") });
+  const { page, content } = host.page("Trackers", "Live roleplay state", { label: "Add", callback: () => host.select("__templates", "config") });
   const filters = el("div", "lp-tracker-filters");
   const all = button("All", "lp-chip");
   all.setAttribute("aria-pressed", "true");
@@ -1714,126 +2114,39 @@ function detail(host, tracker) {
     amount.step = "any";
     amount.value = tracker.kind === "counter" ? String(tracker.step) : "1";
     amount.setAttribute("aria-label", "Tracker amount");
-    const row2 = el("div", "lp-tracker-operation-row");
+    const row = el("div", "lp-tracker-operation-row");
     for (const [operation, label] of [["subtract", "−"], ["add", "+"], ["set", "Set"]]) {
       const control = button(label);
       control.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation, amount: Number(amount.value), reason: "Changed in Pocket" } }));
-      row2.appendChild(control);
+      row.appendChild(control);
     }
     const reset = button("Reset", "lp-button lp-button-quiet");
     reset.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "reset", reason: "Reset in Pocket" } }));
-    operations.append(amount, row2, reset);
+    operations.append(amount, row, reset);
   }
   content.appendChild(operations);
   const history = el("section", "lp-tracker-history");
   history.appendChild(el("div", "lp-eyebrow", `History · last ${tracker.history.length}`));
   for (const entry of [...tracker.history].reverse()) {
-    const row2 = el("div", "lp-card lp-history-row");
-    row2.append(el("strong", "", `${entry.previous} → ${entry.next}`), el("span", "lp-copy", `${entry.operation} · ${entry.source}${entry.reason ? ` · ${entry.reason}` : ""}`), el("time", "lp-copy", entry.roleplayAt || entry.createdAt));
-    history.appendChild(row2);
+    const row = el("div", "lp-card lp-history-row");
+    row.append(el("strong", "", `${entry.previous} → ${entry.next}`), el("span", "lp-copy", `${entry.operation} · ${entry.source}${entry.reason ? ` · ${entry.reason}` : ""}`), el("time", "lp-copy", entry.roleplayAt || entry.createdAt));
+    history.appendChild(row);
   }
   if (!tracker.history.length)
     history.appendChild(el("p", "lp-copy", "No changes recorded yet."));
   content.appendChild(history);
   return page;
 }
-function config(host, current, templateIndex = 9) {
-  const template = TRACKER_TEMPLATES[Math.max(0, Math.min(TRACKER_TEMPLATES.length - 1, templateIndex))];
-  const source = current || template.values;
-  const templateTarget = template.group === "Character" ? { type: "character", id: host.state.characterId, label: host.state.characterName } : template.group === "Scene" ? { type: "scene", id: "", label: "Current scene" } : template.group === "World" ? { type: "world", id: "", label: "Current world" } : { type: "custom", id: "", label: "Unassigned" };
-  const selectedTarget = source.target || templateTarget;
-  let saveTracker = () => {};
-  const { page, content } = host.page(current ? "Tracker Settings" : "New Tracker", "Configuration", { label: "Save", callback: () => saveTracker() });
-  if (!current) {
-    const templateField = selectField("Template", TRACKER_TEMPLATES.map((entry, index) => [String(index), `${entry.group} · ${entry.name}`]), String(templateIndex));
-    templateField.select.addEventListener("change", () => host.select(`__template:${templateField.select.value}`, "config", true));
-    content.appendChild(templateField.label);
-  }
-  const label = host.field("Label", String(source.label || ""));
-  const key = host.field("Stable key", String(source.key || trackerKey(source.label)));
-  const kind = selectField("Type", [["meter", "Meter"], ["counter", "Counter"], ["state", "State"], ["timer", "Timer"]], String(source.kind || "meter"));
-  const presentation = selectField("Presentation", ["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"].map((value2) => [value2, value2[0].toUpperCase() + value2.slice(1)]), String(source.presentation || source.kind || "meter"));
-  const value = host.field("Current value", String(source.value ?? 0), "number");
-  const initial = host.field("Reset value", String(source.initialValue ?? source.value ?? 0), "number");
-  const min = host.field("Minimum", String(source.min ?? 0), "number");
-  const max = host.field("Maximum", String(source.max ?? 100), "number");
-  const unit = host.field("Unit", String(source.unit || ""));
-  const state = host.field("Current state", source.kind === "state" ? String(source.state || "") : "");
-  const states = el("textarea", "lp-textarea");
-  states.placeholder = "Allowed states, one per line";
-  states.value = source.kind === "state" ? (source.states || []).join(`
-`) : "";
-  const targetType = selectField("Target", ["character", "persona", "relationship", "scene", "world", "custom"].map((value2) => [value2, value2[0].toUpperCase() + value2.slice(1)]), selectedTarget.type);
-  const targetId = host.field("Target ID", selectedTarget.id);
-  const targetName = host.field("Target label", selectedTarget.label);
-  const mode = selectField("Update mode", [["manual", "Manual"], ["model", "Model-directed"], ["automatic", "Automatic"]], source.updateMode || (source.ratePerHour ? "automatic" : "manual"));
-  const clock = selectField("Automatic clock", [["real", "Human time (real clock)"], ["roleplay", "Roleplay time (timeline clock)"]], source.clock || "roleplay");
-  const rate = host.field("Change per hour", String(source.ratePerHour ?? 0), "number");
-  const color2 = el("input", "lp-color-input");
-  color2.type = "color";
-  color2.value = /^#[0-9a-f]{6}$/i.test(String(source.color || "")) ? String(source.color) : host.accent;
-  const colorRow = el("label", "lp-card lp-row-between");
-  colorRow.append(el("span", "lp-title", "Tracker color"), color2);
-  const bands = el("textarea", "lp-textarea");
-  bands.placeholder = "Semantic bands: min | max | label | #color";
-  bands.value = (source.bands || []).map((band) => `${band.min} | ${band.max} | ${band.label} | ${band.color}`).join(`
-`);
-  const visible = toggle2("Visible in model context", source.visibleToModel !== false);
-  const writable = toggle2("Allow model changes", source.allowModelWrite === true);
-  const configFields = el("div", "lp-tracker-config-fields");
-  configFields.append(label.label, key.label, kind.label, presentation.label, value.label, initial.label, min.label, max.label, unit.label, state.label, states, targetType.label, targetId.label, targetName.label, mode.label, clock.label, rate.label, colorRow, bands, visible.row, writable.row);
-  content.appendChild(configFields);
-  saveTracker = () => {
-    const parsedBands = bands.value.split(`
-`).flatMap((line) => {
-      const [rawMin, rawMax, bandLabel, bandColor] = line.split("|").map((part) => part.trim());
-      if (!bandLabel || !Number.isFinite(Number(rawMin)) || !Number.isFinite(Number(rawMax)))
-        return [];
-      return [{ min: Number(rawMin), max: Number(rawMax), label: bandLabel, color: /^#[0-9a-f]{6}$/i.test(bandColor) ? bandColor : color2.value }];
-    });
-    host.send("lumiphone:action", { action: "tracker", payload: {
-      id: current?.id,
-      label: label.input.value.trim(),
-      key: key.input.value.trim(),
-      kind: kind.select.value,
-      presentation: presentation.select.value,
-      value: Number(value.input.value),
-      initialValue: Number(initial.input.value),
-      min: Number(min.input.value),
-      max: Number(max.input.value),
-      unit: unit.input.value.trim(),
-      color: color2.value,
-      state: state.input.value.trim(),
-      initialState: current?.kind === "state" ? current.initialState : state.input.value.trim(),
-      states: states.value.split(`
-`).map((entry) => entry.trim()).filter(Boolean),
-      target: { type: targetType.select.value, id: targetId.input.value.trim(), label: targetName.input.value.trim() },
-      updateMode: mode.select.value,
-      clock: clock.select.value,
-      ratePerHour: Number(rate.input.value),
-      bands: parsedBands,
-      visibleToModel: visible.button.getAttribute("aria-pressed") === "true",
-      allowModelWrite: writable.button.getAttribute("aria-pressed") === "true"
-    } });
-  };
-  if (current) {
-    const remove = button("Delete tracker", "lp-button lp-button-danger");
-    remove.addEventListener("click", () => {
-      host.send("lumiphone:delete", { kind: "tracker", id: current.id });
-      host.back();
-    });
-    content.appendChild(remove);
-  }
-  return page;
-}
 function renderTrackersView(host) {
+  if (host.selectedId === "__templates")
+    return trackerTemplates(host);
   const selected = host.state.trackers.find((tracker) => tracker.id === host.selectedId) || null;
   if (selected && host.selectedView === "config")
-    return config(host, selected);
+    return trackerEditor(host, selected);
   if (selected)
     return detail(host, selected);
   if (host.selectedId.startsWith("__template:"))
-    return config(host, null, Number(host.selectedId.split(":")[1]));
+    return trackerEditor(host, null, Number(host.selectedId.split(":")[1]));
   return dashboard(host);
 }
 
@@ -1858,11 +2171,19 @@ function newConversationView(host) {
   if (host.readOnlyDevice)
     return host.empty("Inspection mode", "Switch back to the roleplay Persona device to create or send conversations.");
   const { page, content } = host.page("New Message", "Choose a contact or start a group");
+  const search = el("input", "lp-input");
+  search.type = "search";
+  search.placeholder = "Who are we texting?";
+  search.setAttribute("aria-label", "Search recipients");
+  const startGroup = button("＋ New group", "lp-button lp-button-primary");
+  startGroup.disabled = listPocketActors(host.state).length < 2;
+  startGroup.addEventListener("click", () => host.selectConversation("", "group-editor"));
+  content.append(search, startGroup);
   const { section: directSection, body: directBody } = sectionBlock("Direct message", "Start or reopen a private Pocket conversation.");
   const contacts = [...host.state.contacts].sort((a, b) => a.name.localeCompare(b.name));
   for (const contact of contacts) {
-    const row2 = button("", "lp-message-picker-row");
-    row2.type = "button";
+    const row = button("", "lp-message-picker-row");
+    row.type = "button";
     const actor = resolvePocketActor(host.state, contact.id);
     const avatar = el("span", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
     if (actor?.accent)
@@ -1873,17 +2194,29 @@ function newConversationView(host) {
       image.alt = "";
       avatar.replaceChildren(image);
     }
-    row2.append(avatar, identityBlock({ name: contact.name, meta: contact.role }), el("span", "lp-message-picker-chevron", "›"));
-    row2.addEventListener("click", () => host.openDirect(contact.id));
-    directBody.appendChild(row2);
+    row.append(avatar, identityBlock({ name: contact.name, meta: contact.role }), el("span", "lp-message-picker-chevron", "›"));
+    row.addEventListener("click", () => host.openDirect(contact.id));
+    row.dataset.search = `${contact.name} ${contact.role}`.toLocaleLowerCase();
+    directBody.appendChild(row);
   }
   if (!contacts.length)
     directBody.appendChild(el("p", "lp-copy", "No contacts are available yet."));
-  const { section: groupSection, body: groupBody } = sectionBlock("Group chat", "Create a conversation with two or more Pocket actors.");
-  const startGroup = button("Create a group", "lp-button lp-button-quiet");
-  startGroup.disabled = listPocketActors(host.state).length < 2;
-  startGroup.addEventListener("click", () => page.replaceWith(groupEditor(host, null)));
-  groupBody.appendChild(startGroup);
+  const { section: groupSection, body: groupBody } = sectionBlock("Someone missing?", "Bring another person into your Pocket.");
+  const addContact = button("＋ Add a contact", "lp-button lp-button-quiet");
+  addContact.addEventListener("click", () => host.openContacts());
+  groupBody.appendChild(addContact);
+  const noMatches = el("p", "lp-copy", "Nobody by that name yet. Try another search or add a contact.");
+  noMatches.hidden = true;
+  search.addEventListener("input", () => {
+    let count = 0;
+    for (const row of directBody.querySelectorAll("[data-search]")) {
+      row.hidden = !row.dataset.search.includes(search.value.trim().toLocaleLowerCase());
+      if (!row.hidden)
+        count++;
+    }
+    noMatches.hidden = count > 0 || !search.value.trim();
+  });
+  directBody.appendChild(noMatches);
   content.append(directSection, groupSection);
   return page;
 }
@@ -1894,11 +2227,22 @@ function groupEditor(host, conversation) {
   const { page, content } = host.page(conversation ? "Group Details" : "New Group", "Choose at least two contacts", { label: "Save", callback: () => saveGroup() });
   const title = el("input", "lp-input");
   title.placeholder = "Group name";
-  title.value = conversation?.title || "";
+  title.value = host.groupDraft?.title ?? conversation?.title ?? "";
   const choices = el("div", "lp-contact-checklist lp-participant-picker");
-  const selected = new Set(conversation ? conversationActorIds(conversation) : []);
+  const selected = new Set(host.groupDraft?.participants ?? (conversation ? conversationActorIds(conversation) : []));
+  const count = el("p", "lp-copy");
+  const save = page.querySelector(".lp-nav-action:last-child");
+  const remember = () => {
+    const participants = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
+    host.updateGroupDraft({ title: title.value, participants });
+    count.textContent = `${participants.length} selected · choose at least two people`;
+    save.disabled = participants.length < 2 || host.groupSaving;
+    if (host.groupSaving)
+      save.textContent = "Saving…";
+  };
+  title.addEventListener("input", remember);
   for (const actor of listPocketActors(host.state)) {
-    const row2 = el("label", "lp-picker-row");
+    const row = el("label", "lp-picker-row");
     const checkbox = el("input", "lp-visually-hidden");
     checkbox.type = "checkbox";
     checkbox.value = actor.actorId;
@@ -1917,24 +2261,30 @@ function groupEditor(host, conversation) {
     });
     const check = el("span", "lp-picker-check", "✓");
     const sync = () => {
-      row2.dataset.selected = String(checkbox.checked);
+      row.dataset.selected = String(checkbox.checked);
     };
     checkbox.addEventListener("change", sync);
+    checkbox.addEventListener("change", remember);
     sync();
-    row2.append(avatar, identity, checkbox, check);
-    choices.appendChild(row2);
+    row.append(avatar, identity, checkbox, check);
+    choices.appendChild(row);
   }
   saveGroup = () => {
     const participantActorIds = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
     if (participantActorIds.length < 2)
       return;
-    host.send(conversation ? "lumiphone:update_conversation" : "lumiphone:create_conversation", {
+    save.disabled = true;
+    save.textContent = "Creating…";
+    if (host.groupSaving)
+      return;
+    host.saveGroup(conversation ? "lumiphone:update_conversation" : "lumiphone:create_conversation", {
       conversationId: conversation?.id,
       title: title.value.trim(),
       participantActorIds
     });
   };
-  content.append(fieldBlock("Group name", title), choices);
+  content.append(fieldBlock("Group name", title), count, choices);
+  remember();
   if (conversation) {
     const remove = button("Delete group", "lp-button lp-button-danger");
     remove.addEventListener("click", () => host.send("lumiphone:delete", { kind: "conversation", id: conversation.id }));
@@ -1996,13 +2346,13 @@ function handoffActivity(host, conversation, relay) {
     timeline.addEventListener("click", () => host.openTimeline(relay.timelineEventId));
     secondary.appendChild(timeline);
   }
-  const permissions2 = continuation.permissions ? `chat mutation ${continuation.permissions.chatMutation ? "granted" : "missing"} · generation ${continuation.permissions.generation ? "granted" : "missing"}` : "not checked";
+  const permissions = continuation.permissions ? `chat mutation ${continuation.permissions.chatMutation ? "granted" : "missing"} · generation ${continuation.permissions.generation ? "granted" : "missing"}` : "not checked";
   const diagnostics = el("div", "lp-handoff-diagnostics");
-  for (const row2 of [
+  for (const row of [
     `Relay: ${relay.id}`,
     `State: ${continuation.state}`,
     `Invoked: ${continuation.invokedAt || "not yet"}`,
-    `Permissions: ${permissions2}`,
+    `Permissions: ${permissions}`,
     `Method: ${continuation.method || "not called"}`,
     `Host accepted: ${continuation.hostAcceptedAt || "no"}`,
     `Generation event: ${continuation.generationStartedAt || "not observed"}`,
@@ -2016,7 +2366,7 @@ function handoffActivity(host, conversation, relay) {
     relay.injectionError ? `Injection error: ${relay.injectionError}` : "",
     continuation.error ? `Error: ${continuation.error}` : ""
   ].filter(Boolean))
-    diagnostics.appendChild(el("span", "lp-copy", row2));
+    diagnostics.appendChild(el("span", "lp-copy", row));
   const decision = conversation.lastDecision;
   if (decision?.relayId === relay.id)
     diagnostics.appendChild(el("span", "lp-copy", `Channel decision: ${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
@@ -2062,7 +2412,7 @@ function referenceAttachment(host, reference) {
   node.appendChild(el("p", "lp-reference-safety", reference.status === "injected" ? "Pocket supplied this as context only; participant scene presence was not changed." : reference.status === "failed" ? reference.error || "The reference remains available to attach again." : "Pocket will wait for your RP message. This does not move any participant into the scene."));
   const diagnostics = el("details", "lp-reference-diagnostics");
   const body = el("div", "lp-handoff-diagnostics");
-  for (const row2 of [
+  for (const row of [
     `Reference: ${reference.id}`,
     `Status: ${reference.status}`,
     `Scope: ${reference.scope}`,
@@ -2073,7 +2423,7 @@ function referenceAttachment(host, reference) {
     `Serialized reference: ${reference.serializedReferenceChars || 0} chars`,
     reference.error ? `Error: ${reference.error}` : ""
   ].filter(Boolean))
-    body.appendChild(el("span", "lp-copy", row2));
+    body.appendChild(el("span", "lp-copy", row));
   if (reference.serializedReference) {
     const serialized = el("details", "lp-channel-diagnostic");
     serialized.append(el("summary", "", "View serialized reference"), el("pre", "lp-code-block", reference.serializedReference));
@@ -2087,52 +2437,54 @@ function renderMessagesView(host) {
   const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId && conversationVisibleOnDevice(host.state, item, host.deviceOwnerActorId)) || null;
   if (host.selectedView === "new-group")
     return newConversationView(host);
+  if (host.selectedView === "group-editor")
+    return groupEditor(host, null);
   if (selectedConversation?.kind === "group" && host.selectedView === "group-detail")
     return groupEditor(host, selectedConversation);
   if (!selectedConversation) {
-    const conversations = host.state.conversations.filter((conversation2) => conversationVisibleOnDevice(host.state, conversation2, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-    const { page: page2, content } = host.page("Messages", `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}`, {
+    const conversations = host.state.conversations.filter((conversation) => conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const { page, content } = host.page("Messages", `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}`, {
       label: host.readOnlyDevice ? "" : "New",
       callback: () => host.selectConversation("", "new-group"),
-      enabled: !host.readOnlyDevice && host.state.contacts.length > 0
+      enabled: !host.readOnlyDevice
     });
     content.classList.add("lp-conversation-list");
-    for (const conversation2 of conversations) {
-      const row2 = button("", "lp-conversation-row");
-      row2.dataset.clickable = "true";
-      row2.tabIndex = 0;
-      row2.setAttribute("role", "button");
-      const titleText2 = conversationTitle(host.state, conversation2, host.deviceOwnerActorId);
-      const members = counterpartActorIds(host.state, conversation2, host.deviceOwnerActorId);
-      const avatar = el("div", "lp-avatar", conversation2.kind === "group" ? String(members.length) : titleText2.slice(0, 1).toUpperCase());
-      const directActor2 = conversation2.kind === "direct" ? resolvePocketActor(host.state, members[0]) : null;
-      if (directActor2?.avatarUrl) {
+    for (const conversation of conversations) {
+      const row = button("", "lp-conversation-row");
+      row.dataset.clickable = "true";
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId);
+      const members = counterpartActorIds(host.state, conversation, host.deviceOwnerActorId);
+      const avatar = el("div", "lp-avatar", conversation.kind === "group" ? String(members.length) : titleText.slice(0, 1).toUpperCase());
+      const directActor = conversation.kind === "direct" ? resolvePocketActor(host.state, members[0]) : null;
+      if (directActor?.avatarUrl) {
         const image = el("img");
-        image.src = directActor2.avatarUrl;
+        image.src = directActor.avatarUrl;
         image.alt = "";
         avatar.replaceChildren(image);
       }
-      avatar.style.background = avatarColor(members[0] || titleText2);
-      const latest = conversation2.messages.at(-1);
-      const description = latest ? `${conversation2.kind === "group" && latest.sender === "contact" ? `${latest.senderName}: ` : ""}${latest.text}` : "";
-      const identity = identityBlock({ name: titleText2, meta: latest ? formatTime(latest.createdAt) : "", description });
-      row2.append(avatar, identity);
-      const unread = conversationUnreadForDevice(host.state, conversation2, host.deviceOwnerActorId);
+      avatar.style.background = avatarColor(members[0] || titleText);
+      const latest = conversation.messages.at(-1);
+      const description = latest ? `${conversation.kind === "group" && latest.sender === "contact" ? `${latest.senderName}: ` : ""}${latest.text}` : "";
+      const identity = identityBlock({ name: titleText, meta: latest ? formatTime(latest.createdAt) : "", description });
+      row.append(avatar, identity);
+      const unread = conversationUnreadForDevice(host.state, conversation, host.deviceOwnerActorId);
       if (unread)
-        row2.appendChild(el("span", "lp-unread", String(unread)));
-      const open = () => host.selectConversation(conversation2.id);
-      row2.addEventListener("click", open);
-      row2.addEventListener("keydown", (event) => {
+        row.appendChild(el("span", "lp-unread", String(unread)));
+      const open = () => host.selectConversation(conversation.id);
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           open();
         }
       });
-      content.appendChild(row2);
+      content.appendChild(row);
     }
     if (!conversations.length)
       content.appendChild(host.empty("No conversations yet", "Open Contacts to message a character, Council member, or Pocket NPC."));
-    return page2;
+    return page;
   }
   const conversation = selectedConversation;
   const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId);
@@ -2272,9 +2624,9 @@ function renderMessagesView(host) {
       bubble.appendChild(suggestionBox);
     }
     if (conversation.kind === "group" && direction !== "outbound" && senderActor) {
-      const row2 = el("div", "lp-group-message");
-      row2.style.setProperty("--message-accent", resolvedAccent);
-      row2.dataset.continuation = String(continuesRun);
+      const row = el("div", "lp-group-message");
+      row.style.setProperty("--message-accent", resolvedAccent);
+      row.dataset.continuation = String(continuesRun);
       const avatar = participantAvatar(senderActor, continuesRun);
       if (!continuesRun) {
         avatar.dataset.clickable = "true";
@@ -2286,8 +2638,8 @@ function renderMessagesView(host) {
             host.openActor(messageActorId);
         });
       }
-      row2.append(avatar, bubble);
-      bubbles.appendChild(row2);
+      row.append(avatar, bubble);
+      bubbles.appendChild(row);
       priorGroupSpeakerId = messageActorId;
     } else {
       bubbles.appendChild(bubble);
@@ -2488,10 +2840,10 @@ function contactEditor(host, contact, draft = null) {
   personality.placeholder = "Personality — stable traits that shape conversation";
   personality.maxLength = 600;
   personality.value = phoneProfile.personality;
-  const appearance2 = el("textarea", "lp-textarea");
-  appearance2.placeholder = "Minimal appearance — only a few recognizable details";
-  appearance2.maxLength = 360;
-  appearance2.value = phoneProfile.appearance;
+  const appearance = el("textarea", "lp-textarea");
+  appearance.placeholder = "Minimal appearance — only a few recognizable details";
+  appearance.maxLength = 360;
+  appearance.value = phoneProfile.appearance;
   const textingStyle = el("textarea", "lp-textarea");
   textingStyle.placeholder = "Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, fragmentation…";
   textingStyle.maxLength = 600;
@@ -2600,7 +2952,7 @@ function contactEditor(host, contact, draft = null) {
       description: description.value.trim(),
       phoneProfile: {
         personality: personality.value.trim(),
-        appearance: appearance2.value.trim(),
+        appearance: appearance.value.trim(),
         textingStyle: textingStyle.value.trim()
       },
       sceneNote: sceneNote.value.trim(),
@@ -2622,7 +2974,7 @@ function contactEditor(host, contact, draft = null) {
   };
   if (photoCard)
     content.appendChild(photoCard);
-  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance2, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
@@ -2654,15 +3006,13 @@ function importView(host) {
   const description = el("textarea", "lp-textarea");
   description.placeholder = "Describe someone; Pocket will generate one compact contact profile.";
   description.maxLength = 2000;
+  description.value = host.generationBrief;
+  description.addEventListener("input", () => host.updateGenerationBrief(description.value));
   const npcOperation = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && entry.phase !== "complete" && entry.phase !== "error");
   const generate = button(npcOperation ? "Generating…" : "Generate NPC");
   generate.disabled = !host.capabilities?.generation || Boolean(npcOperation);
   generate.addEventListener("click", () => {
-    if (!description.value.trim()) {
-      host.showError("Describe the NPC first.");
-      return;
-    }
-    host.send("lumiphone:generate_contact", { description: description.value.trim() });
+    host.select("", "quick-gen");
   });
   const primitive = button("Create manually", "lp-button lp-button-quiet");
   primitive.addEventListener("click", () => host.select("", "new"));
@@ -2707,10 +3057,10 @@ function importView(host) {
     bankBody.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
   } else {
     for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row2 = el("div", "lp-card");
-      row2.style.display = "grid";
-      row2.style.gap = "10px";
-      row2.style.minWidth = "0";
+      const row = el("div", "lp-card");
+      row.style.display = "grid";
+      row.style.gap = "10px";
+      row.style.minWidth = "0";
       const identity = identityBlock({ name: entry.name, meta: entry.role || "Pocket NPC" });
       const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
       const actions = actionGroup();
@@ -2742,10 +3092,10 @@ function importView(host) {
         action.style.minWidth = "0";
       }
       actions.append(edit, add, forget);
-      row2.append(identity, actions);
-      bankBody.appendChild(row2);
-      bankRows.push(row2);
-      searchableRows.push({ node: row2, terms: `${entry.name} ${entry.role || "Pocket NPC"} npc bank`.toLocaleLowerCase() });
+      row.append(identity, actions);
+      bankBody.appendChild(row);
+      bankRows.push(row);
+      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || "Pocket NPC"} npc bank`.toLocaleLowerCase() });
     }
   }
   content.appendChild(bank);
@@ -2757,7 +3107,7 @@ function importView(host) {
     const { section, body } = sectionBlock(kind === "character" ? "Lumiverse Characters" : "Active Council", "", "lp-contact-source-section");
     const sourceRows = [];
     for (const source of sources) {
-      const row2 = el("div", "lp-card lp-list-row");
+      const row = el("div", "lp-card lp-list-row");
       const identity = identityBlock({ name: source.name, meta: source.role });
       let trailing;
       if (source.importedContactId)
@@ -2767,10 +3117,10 @@ function importView(host) {
         add.addEventListener("click", () => host.send("lumiphone:import_contact", { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }));
         trailing = add;
       }
-      row2.append(identity, trailing);
-      body.appendChild(row2);
-      sourceRows.push(row2);
-      searchableRows.push({ node: row2, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() });
+      row.append(identity, trailing);
+      body.appendChild(row);
+      sourceRows.push(row);
+      searchableRows.push({ node: row, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() });
     }
     content.appendChild(section);
     searchableSections.push({ section, rows: sourceRows });
@@ -2786,14 +3136,77 @@ function importView(host) {
         visible += 1;
     }
     for (const entry of searchableSections)
-      entry.section.hidden = Boolean(query && !entry.rows.some((row2) => !row2.hidden));
+      entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden));
     noMatches.hidden = !query || visible > 0;
   };
   search.addEventListener("input", applySearch);
   content.appendChild(noMatches);
   return page;
 }
+function quickGenerateView(host) {
+  const active = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && entry.phase !== "complete" && entry.phase !== "error");
+  const { page, content } = host.page("Quick Generate", "A new face for your little world");
+  page.classList.add("lp-npc-camera");
+  const finder = el("div", "lp-npc-viewfinder");
+  const mode = el("div", "lp-camera-mode", "✦ AUTO");
+  mode.append(el("span", "", "POCKET PORTRAIT"));
+  const focus = el("div", "lp-focus-frame");
+  const draft = host.npcDraft;
+  const mark = el("div", "lp-npc-camera-mark", draft ? draft.name.slice(0, 1).toUpperCase() : "✿");
+  focus.append(mark);
+  const copy = el("div", "lp-npc-camera-copy");
+  copy.append(el("strong", "", active ? "Meeting someone new…" : draft?.name || "Someone lovely is out there"), el("p", "", active?.message || draft?.identityBrief || "Describe them below, then tap the shutter."));
+  finder.append(mode, focus, copy);
+  const brief = el("textarea", "lp-textarea");
+  brief.placeholder = "A sleepy florist with a sharp wit and a soft spot for stray cats…";
+  brief.maxLength = 2000;
+  brief.rows = 3;
+  brief.value = host.generationBrief;
+  brief.addEventListener("input", () => host.updateGenerationBrief(brief.value));
+  const caption = el("p", "lp-copy", "PROFILE · Unsaved until you choose Use");
+  const controls = el("div", "lp-quick-controls");
+  const manual = button("Manual", "lp-nav-action");
+  manual.addEventListener("click", () => host.select("", "new"));
+  const shutter = button("", "lp-shutter");
+  shutter.setAttribute("aria-label", draft ? "Generate another NPC" : "Generate NPC");
+  shutter.disabled = Boolean(active) || !host.capabilities?.generation;
+  shutter.addEventListener("click", () => {
+    if (!brief.value.trim()) {
+      brief.focus();
+      host.showError("Describe someone first.");
+      return;
+    }
+    shutter.disabled = true;
+    host.send("lumiphone:generate_contact", { description: brief.value.trim() });
+  });
+  const edit = button("Edit", "lp-nav-action");
+  edit.disabled = !draft || Boolean(active);
+  edit.addEventListener("click", () => host.select("", "draft"));
+  controls.append(manual, shutter, edit);
+  content.append(finder, fieldBlock("Who are we meeting?", brief), caption, controls);
+  if (draft) {
+    const actions = actionGroup("lp-draft-actions");
+    const use = button(`Use ${draft.name}`, "lp-button lp-button-primary");
+    use.disabled = Boolean(active);
+    use.addEventListener("click", () => {
+      use.disabled = true;
+      host.send("lumiphone:save_contact", { contact: draftPayload(draft) });
+    });
+    actions.append(use);
+    if (host.previousNpcDraft) {
+      const undo = button("Previous", "lp-button lp-button-quiet");
+      undo.addEventListener("click", () => host.restorePreviousNpcDraft());
+      actions.append(undo);
+    }
+    content.append(actions);
+  }
+  if (!host.capabilities?.generation)
+    content.append(el("p", "lp-warning", "Enable text generation in Settings to meet a new NPC."));
+  return page;
+}
 function renderContactsView(host) {
+  if (host.selectedView === "quick-gen")
+    return quickGenerateView(host);
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null;
   if (host.selectedView === "import") {
     host.requestSources();
@@ -2806,7 +3219,7 @@ function renderContactsView(host) {
   if (contact && host.selectedView === "config")
     return contactEditor(host, contact);
   if (contact && host.selectedView === "detail") {
-    const { page: page2, content: content2 } = host.page(contact.name, contact.role, { label: "Edit", callback: () => host.select(contact.id, "config") });
+    const { page, content } = host.page(contact.name, contact.role, { label: "Edit", callback: () => host.select(contact.id, "config") });
     const hero = el("div", "lp-card lp-contact-detail");
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || "No compact identity brief.", prominent: true, centered: true }));
     if (contact.sceneNote)
@@ -2821,7 +3234,7 @@ function renderContactsView(host) {
         profileCard.appendChild(el("p", "lp-copy", `Appearance: ${phoneProfile.appearance}`));
       if (phoneProfile.textingStyle)
         profileCard.appendChild(el("p", "lp-copy", `Texting: ${phoneProfile.textingStyle}`));
-      content2.appendChild(disclosure("Phone voice & appearance", profileCard));
+      content.appendChild(disclosure("Phone voice & appearance", profileCard));
     }
     const source = contact.source.kind === "character" ? "Linked Character" : contact.source.kind === "council" ? "Linked Council member" : `Pocket NPC · ${contact.source.origin}`;
     hero.append(el("span", "lp-eyebrow", `${source} · ${contact.relationship === "close" ? "Close connection" : "Background actor"}`));
@@ -2829,8 +3242,8 @@ function renderContactsView(host) {
     presence.append(el("div", "lp-title", contact.presence.inScene ? "Here now" : "Not in current scene"), el("p", "lp-copy", `${contact.contextPolicy.pinned ? "Pinned to model context" : "Included only while in scene"}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ""}`), el("p", "lp-copy", `${contact.generationPolicy.relevant ? "Generation-relevant" : "Excluded from Pocket generation"} · ${contact.messagingPolicy.remoteEligible ? "Remote-message eligible" : "No remote messages"}${contact.messagingPolicy.allowAmbientInScene ? " · ambient override while here" : ""}`));
     const message = button("Message");
     message.addEventListener("click", () => host.openDirect(contact.id));
-    content2.prepend(hero);
-    content2.append(presence);
+    content.prepend(hero);
+    content.append(presence);
     if (contact.source.kind === "npc") {
       const bankId = contact.source.bankId;
       const bankEntry = bankId ? host.npcBank.find((entry) => entry.id === bankId) || null : null;
@@ -2838,14 +3251,14 @@ function renderContactsView(host) {
       const saveBank = button(bankEntry ? "Update NPC Bank" : contact.source.bankId ? "Restore NPC Bank" : "Save to NPC Bank", "lp-button lp-button-quiet");
       saveBank.addEventListener("click", () => host.send("lumiphone:npc_bank_save", { contactId: contact.id }));
       bankBody.appendChild(saveBank);
-      content2.appendChild(bankCard);
+      content.appendChild(bankCard);
     }
     if (contact.source.kind !== "npc" || contact.source.origin === "discovered") {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === "profile-refresh" && entry.phase !== "complete" && entry.phase !== "error");
       const refresh = button(profileOperation ? contact.source.kind === "npc" ? "Describing…" : "Refreshing…" : contact.source.kind === "npc" ? "Describe from RP ✦" : "Refresh compact profile ✦", "lp-button lp-button-quiet");
       refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation);
       refresh.addEventListener("click", () => host.send("lumiphone:refresh_contact_profile", { contactId: contact.id }));
-      content2.appendChild(refresh);
+      content.appendChild(refresh);
       if (profileOperation) {
         const progress = el("div", "lp-operation-progress");
         progress.dataset.operationRequest = profileOperation.requestId;
@@ -2854,11 +3267,11 @@ function renderContactsView(host) {
         const progressMessage = el("strong", "", profileOperation.message);
         progressMessage.dataset.operationMessage = "true";
         progress.append(el("span", "lp-indeterminate"), progressMessage);
-        content2.appendChild(progress);
+        content.appendChild(progress);
       }
     }
-    content2.append(message);
-    return page2;
+    content.append(message);
+    return page;
   }
   const { page, content } = host.page("Contacts", `${host.state.contacts.length} people`, { label: "Add", callback: () => host.select("", "import") });
   const search = el("input", "lp-input");
@@ -2890,11 +3303,11 @@ function renderContactsView(host) {
       return true;
     }).sort((a, b) => Number(b.presence.inScene) - Number(a.presence.inScene) || Date.parse(b.presence.lastSceneAt || "0") - Date.parse(a.presence.lastSceneAt || "0"));
     for (const entry of contacts) {
-      const row2 = button("", "lp-card lp-contact-row");
+      const row = button("", "lp-card lp-contact-row");
       const identity = identityBlock({ name: entry.name, meta: entry.role, className: "lp-grow" });
-      row2.append(avatar(entry), identity, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
-      row2.addEventListener("click", () => host.select(entry.id, "detail"));
-      list.appendChild(row2);
+      row.append(avatar(entry), identity, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
+      row.addEventListener("click", () => host.select(entry.id, "detail"));
+      list.appendChild(row);
     }
     if (!contacts.length)
       list.appendChild(host.empty("No matching contacts", "Try another search or sync the current scene."));
@@ -2927,8 +3340,8 @@ function renderContactsView(host) {
 }
 
 // src/domain/notifications.ts
-function activeNotifications(notifications2) {
-  return notifications2.filter((entry) => !entry.dismissedAt);
+function activeNotifications(notifications) {
+  return notifications.filter((entry) => !entry.dismissedAt);
 }
 
 // src/frontend/apps/notifications.ts
@@ -2936,15 +3349,15 @@ function sameDay(left, right) {
   return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate();
 }
 function notificationRow(host, notification) {
-  const row2 = el("div", "lp-card lp-notification-row");
-  row2.dataset.read = String(notification.read);
-  row2.dataset.severity = notification.severity || "info";
+  const row = el("div", "lp-card lp-notification-row");
+  row.dataset.read = String(notification.read);
+  row.dataset.severity = notification.severity || "info";
   const open = button("", "lp-notification-open");
   const copy = el("span", "lp-grow");
   copy.append(el("strong", "", notification.title), el("span", "lp-copy", notification.body), el("time", "lp-copy", formatTime(notification.createdAt)));
-  const avatar2 = el("span", "lp-notification-avatar", notification.title.slice(0, 1).toUpperCase());
-  avatar2.setAttribute("aria-hidden", "true");
-  open.append(avatar2, copy);
+  const avatar = el("span", "lp-notification-avatar", notification.title.slice(0, 1).toUpperCase());
+  avatar.setAttribute("aria-hidden", "true");
+  open.append(avatar, copy);
   open.setAttribute("aria-label", `Open ${notification.title}`);
   open.addEventListener("click", () => {
     host.send("lumiphone:notification_mark_read", { notificationId: notification.id });
@@ -2953,17 +3366,17 @@ function notificationRow(host, notification) {
   const dismiss = button("×", "lp-notification-dismiss");
   dismiss.setAttribute("aria-label", `Dismiss ${notification.title}`);
   dismiss.addEventListener("click", () => host.send("lumiphone:notification_dismiss", { notificationId: notification.id }));
-  row2.append(open, dismiss);
-  return row2;
+  row.append(open, dismiss);
+  return row;
 }
 function renderNotificationsView(host) {
-  const notifications2 = activeNotifications(host.notifications).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const unread = notifications2.filter((entry) => !entry.read).length;
-  const { page, content } = host.page("Notification Center", unread ? `${unread} unread` : "All caught up", { label: notifications2.length ? "Clear" : "", enabled: Boolean(notifications2.length), callback: () => {
+  const notifications = activeNotifications(host.notifications).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const unread = notifications.filter((entry) => !entry.read).length;
+  const { page, content } = host.page("Notification Center", unread ? `${unread} unread` : "All caught up", { label: notifications.length ? "Clear" : "", enabled: Boolean(notifications.length), callback: () => {
     if (window.confirm("Clear all notifications? Messages remain in their apps."))
       host.send("lumiphone:notifications_clear", { mode: "all" });
   } });
-  if (notifications2.some((entry) => entry.read)) {
+  if (notifications.some((entry) => entry.read)) {
     const clearRead = button("Clear read", "lp-button lp-button-quiet");
     clearRead.addEventListener("click", () => host.send("lumiphone:notifications_clear", { mode: "read" }));
     content.appendChild(clearRead);
@@ -2971,7 +3384,7 @@ function renderNotificationsView(host) {
   const today = [];
   const earlier = [];
   const now = new Date;
-  for (const entry of notifications2)
+  for (const entry of notifications)
     (sameDay(new Date(entry.createdAt), now) ? today : earlier).push(entry);
   for (const [label, entries] of [["Today", today], ["Earlier", earlier]]) {
     if (!entries.length)
@@ -2982,7 +3395,7 @@ function renderNotificationsView(host) {
       group.appendChild(notificationRow(host, entry));
     content.appendChild(group);
   }
-  if (!notifications2.length)
+  if (!notifications.length)
     content.appendChild(el("p", "lp-notification-empty", "No notifications. Messages, trackers, notes, and timeline data remain in their apps."));
   return page;
 }
@@ -3114,17 +3527,17 @@ function buildBatchArtifact(activity, openRoute) {
   transcript.className = "pocket-inline-transcript";
   const visible = presentation.batchMessages.slice(0, 8);
   for (const item of visible) {
-    const row2 = document.createElement("span");
-    row2.className = "pocket-inline-transcript-row";
-    row2.dataset.direction = item.direction;
+    const row = document.createElement("span");
+    row.className = "pocket-inline-transcript-row";
+    row.dataset.direction = item.direction;
     const sender = document.createElement("strong");
     sender.className = "pocket-inline-transcript-sender";
     sender.textContent = item.senderName;
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-transcript-bubble lp-message-surface";
     bubble.textContent = item.text;
-    row2.append(sender, bubble);
-    transcript.appendChild(row2);
+    row.append(sender, bubble);
+    transcript.appendChild(row);
   }
   if (presentation.batchMessages.length > visible.length) {
     const more = document.createElement("span");
@@ -3215,15 +3628,15 @@ function buildActivityStack(activity, openRoute, options = {}) {
       receipt.addEventListener("click", () => openRoute(activity.route));
     }
     stack.appendChild(receipt);
-    const detail2 = actorLine(activity) || activity.summary;
-    if (detail2) {
+    const detail = actorLine(activity) || activity.summary;
+    if (detail) {
       const details = document.createElement("details");
       details.className = "pocket-receipt-details";
-      const toggle3 = document.createElement("summary");
-      toggle3.textContent = "Provenance";
+      const toggle = document.createElement("summary");
+      toggle.textContent = "Provenance";
       const summary = document.createElement("span");
-      summary.textContent = detail2;
-      details.append(toggle3, summary);
+      summary.textContent = detail;
+      details.append(toggle, summary);
       stack.appendChild(details);
     }
   }
@@ -3340,6 +3753,8 @@ class PocketController {
   pendingContactPhotoId = "";
   selectedContactId = "";
   selectedContactView = "list";
+  npcBriefs = new Map;
+  contactFormDrafts = new Map;
   npcDraft = null;
   previousNpcDraft = null;
   selectedConversationId = "";
@@ -3347,6 +3762,13 @@ class PocketController {
   syncIndicator;
   syncIndicatorTimer = 0;
   selectedConversationView = "thread";
+  groupDrafts = new Map;
+  groupSaveRequest = "";
+  groupSaveDraftKey = "";
+  trackerDrafts = new Map;
+  trackerSaveRequest = "";
+  trackerSaveDraftKey = "";
+  cameraDraft = { scene: "", enhance: undefined };
   selectedMessageId = "";
   selectedNoteId = "";
   selectedEventId = "";
@@ -3554,8 +3976,8 @@ class PocketController {
       window.setTimeout(() => this.sweepActivityReceipts(), 0);
     }));
     const returned = (event) => {
-      const detail2 = event.detail;
-      if (detail2?.extensionId === "lumiphone")
+      const detail = event.detail;
+      if (detail?.extensionId === "lumiphone")
         this.refresh();
     };
     window.addEventListener("spindle:desktop-widget-returned", returned);
@@ -3671,10 +4093,10 @@ class PocketController {
         const actor = resolvePocketActor(this.state, actorId);
         if (!actor)
           continue;
-        const row2 = button("", "lumiphone-device-row");
-        row2.dataset.selected = String(actorId === selected);
-        row2.dataset.pocketDeviceOwner = actorId;
-        row2.dataset.pocketDeviceKey = pocketDeviceKey(this.state.chatId, this.state.characterId, actorId);
+        const row = button("", "lumiphone-device-row");
+        row.dataset.selected = String(actorId === selected);
+        row.dataset.pocketDeviceOwner = actorId;
+        row.dataset.pocketDeviceKey = pocketDeviceKey(this.state.chatId, this.state.characterId, actorId);
         const identity = el("span", "lumiphone-device-identity");
         identity.append(el("strong", "", actor.name), el("span", "", actorId === personaId ? "Roleplay Persona" : actor.role || "Pocket actor"));
         const meta = el("span", "lumiphone-device-meta");
@@ -3685,8 +4107,8 @@ class PocketController {
         const unread = Math.max(messageUnread, notificationUnread);
         if (unread)
           meta.appendChild(el("span", "lumiphone-device-unread", unread > 99 ? "99+" : String(unread)));
-        row2.append(identity, meta);
-        row2.addEventListener("click", () => {
+        row.append(identity, meta);
+        row.addEventListener("click", () => {
           this.deviceOwnerActorId = actorId;
           this.syncSurfaceIdentity();
           this.selectedConversationId = "";
@@ -3701,7 +4123,7 @@ class PocketController {
           else
             this.mountPhoneInDrawer();
         });
-        list.appendChild(row2);
+        list.appendChild(row);
       }
       card.appendChild(list);
     } else {
@@ -4077,13 +4499,13 @@ class PocketController {
     const clear = pill.querySelector(".pocket-composer-reference-clear");
     const message = reference.messages.at(-1);
     const messageText = message?.text?.replace(/\s+/g, " ").trim() || "";
-    const conversationTitle2 = reference.conversationTitle || (reference.conversationKind === "group" ? "Group chat" : "Conversation");
+    const conversationTitle = reference.conversationTitle || (reference.conversationKind === "group" ? "Group chat" : "Conversation");
     const fallback = `${reference.messages.length} message${reference.messages.length === 1 ? "" : "s"}`;
     const statusLabel = reference.status === "injected" ? "Pocket applying" : reference.status === "failed" ? "Pocket attach failed" : "Pocket attached";
     if (status)
       status.textContent = statusLabel;
     if (conversation)
-      conversation.textContent = conversationTitle2;
+      conversation.textContent = conversationTitle;
     if (count) {
       const messageCount = reference.messages.length;
       count.hidden = messageCount <= 1;
@@ -4100,7 +4522,7 @@ class PocketController {
       }
     }
     if (open)
-      open.setAttribute("aria-label", `Open attached Pocket reference from ${conversationTitle2}`);
+      open.setAttribute("aria-label", `Open attached Pocket reference from ${conversationTitle}`);
     if (clear) {
       clear.hidden = reference.status === "injected";
       clear.disabled = reference.status === "injected";
@@ -4128,6 +4550,15 @@ class PocketController {
       const previousUnread = this.unreadCount();
       if (payload.reason === "host_swipe")
         this.clearActivitySurfaces(true);
+      if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
+        this.cameraDraft = { scene: "", enhance: undefined };
+        this.cameraPreview = "";
+        this.cameraProgress = "";
+        this.cameraBusy = false;
+        this.cameraRequestId = "";
+        this.npcDraft = null;
+        this.previousNpcDraft = null;
+      }
       this.state = payload.state;
       const personaDeviceId = pocketPersonaActorId(this.state);
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state, conversation))]);
@@ -4212,9 +4643,9 @@ class PocketController {
           delete this.launcher.dataset.sync;
         }, 1800);
       } else {
-        const detail2 = payload.error ? String(payload.error).slice(0, 240) : "";
+        const detail = payload.error ? String(payload.error).slice(0, 240) : "";
         this.syncIndicator.textContent = "Pocket sync issue";
-        this.syncIndicator.title = detail2 || "Pocket could not reconcile roleplay state.";
+        this.syncIndicator.title = detail || "Pocket could not reconcile roleplay state.";
         this.syncIndicator.hidden = false;
         this.launcher.dataset.sync = "error";
         this.syncIndicatorTimer = window.setTimeout(() => {
@@ -4288,8 +4719,11 @@ class PocketController {
         this.render(false);
       return;
     }
-    if (payload.type === "lumiphone:action_done" && payload.result?.trackerId && this.currentApp === "trackers" && this.selectedTrackerView === "config") {
-      this.openPocket({ app: "trackers", trackerId: String(payload.result.trackerId), view: "detail" }, false);
+    if (payload.type === "lumiphone:action_done" && payload.result?.trackerId && payload.requestId === this.trackerSaveRequest) {
+      this.trackerDrafts.delete(this.trackerSaveDraftKey);
+      this.trackerSaveRequest = "";
+      if (this.currentApp === "trackers" && this.selectedTrackerView === "config")
+        this.openPocket(this.router.settle({ app: "trackers", trackerId: String(payload.result.trackerId), view: "detail" }), false);
       return;
     }
     if (payload.type === "lumiphone:pocket_persona_preview" && payload.persona) {
@@ -4380,8 +4814,12 @@ class PocketController {
       if (this.npcDraft)
         this.previousNpcDraft = structuredClone(this.npcDraft);
       this.npcDraft = structuredClone(payload.draft);
-      if (this.currentApp === "contacts")
-        this.openPocket({ app: "contacts", view: "import" }, false);
+      if (this.currentApp === "contacts") {
+        if (this.selectedContactView === "quick-gen")
+          this.render(false);
+        else
+          this.openPocket({ app: "contacts", view: "import" }, false);
+      }
       return;
     }
     if (payload.type === "lumiphone:reference_armed") {
@@ -4389,10 +4827,18 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:conversation_opened" && payload.conversationId) {
-      this.openPocket({ app: "messages", conversationId: payload.conversationId, view: "thread" });
+      if (payload.requestId === this.groupSaveRequest) {
+        this.groupDrafts.delete(this.groupSaveDraftKey);
+        this.groupSaveRequest = "";
+        this.openPocket(this.router.settle({ app: "messages", conversationId: payload.conversationId, view: "thread" }), false);
+      } else
+        this.openPocket({ app: "messages", conversationId: payload.conversationId, view: "thread" });
       return;
     }
     if ((payload.type === "lumiphone:contact_created" || payload.type === "lumiphone:contact_saved") && payload.contactId) {
+      for (const key of this.contactFormDrafts.keys())
+        if (key.startsWith(`${this.state?.chatId}:${this.state?.characterId}:`))
+          this.contactFormDrafts.delete(key);
       this.contactSourcesRequested = false;
       this.npcDraft = null;
       this.previousNpcDraft = null;
@@ -4484,6 +4930,10 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      if (payload.requestId === this.groupSaveRequest)
+        this.groupSaveRequest = "";
+      if (payload.requestId === this.trackerSaveRequest)
+        this.trackerSaveRequest = "";
       if (payload.requestId === this.cameraRequestId)
         this.cameraBusy = false;
       this.messageRequests.delete(payload.requestId);
@@ -4505,9 +4955,9 @@ class PocketController {
     if (!this.state)
       return 0;
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
-    const notifications2 = this.state.notifications.filter((item) => !item.read && !item.dismissedAt && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
-    const messages2 = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0);
-    return Math.min(999, Math.max(notifications2, messages2));
+    const notifications = this.state.notifications.filter((item) => !item.read && !item.dismissedAt && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
+    const messages = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0);
+    return Math.min(999, Math.max(notifications, messages));
   }
   updateBadge() {
     const unread = this.unreadCount();
@@ -4519,10 +4969,10 @@ class PocketController {
     this.notificationIsland.dataset.unread = String(notificationUnread > 0);
     this.notificationIsland.setAttribute("aria-label", notificationUnread ? `Open Notification Center, ${notificationUnread} unread` : "Open Notification Center");
   }
-  updateOperationProgress(operation, requestId2 = operation?.requestId || "") {
-    if (!requestId2)
+  updateOperationProgress(operation, requestId = operation?.requestId || "") {
+    if (!requestId)
       return false;
-    const selector = `[data-operation-request="${CSS.escape(requestId2)}"]`;
+    const selector = `[data-operation-request="${CSS.escape(requestId)}"]`;
     const node = this.screen.querySelector(selector) || this.setupModalBody?.querySelector(selector) || null;
     if (!node)
       return false;
@@ -4550,22 +5000,22 @@ class PocketController {
     if (effectiveNode) {
       const effective = this.generation?.effective;
       const title = effectiveNode.querySelector("strong");
-      const detail2 = effectiveNode.querySelector("span");
+      const detail = effectiveNode.querySelector("span");
       if (title)
         title.textContent = effective?.name || "No effective connection";
       const model = this.settingsDraft?.generationMode === "sidecar" && this.settingsDraft.sidecarModelOverride || effective?.model || "model not set";
-      if (detail2)
-        detail2.textContent = effective ? `${effective.provider} · ${model}` : "Configure a Lumiverse LLM connection.";
+      if (detail)
+        detail.textContent = effective ? `${effective.provider} · ${model}` : "Configure a Lumiverse LLM connection.";
     }
     const swarmNode = this.screen.querySelector("[data-pocket-swarm-status]");
     if (swarmNode && this.swarmProfile) {
       swarmNode.dataset.status = this.swarmProfile.status;
       swarmNode.textContent = this.swarmProfile.status === "connected" ? `Connected · ${this.swarmProfile.checkpoint || "profile macros resolved"}` : this.swarmProfile.status === "disabled" ? "Swarm profile sync is disabled." : this.swarmProfile.status === "error" ? `Error · ${this.swarmProfile.error}` : "Swarm Studio macros were not detected for this character/persona.";
     }
-    for (const row2 of this.screen.querySelectorAll("[data-pocket-swarm-macro]")) {
-      const name = row2.dataset.pocketSwarmMacro;
+    for (const row of this.screen.querySelectorAll("[data-pocket-swarm-macro]")) {
+      const name = row.dataset.pocketSwarmMacro;
       const field = this.swarmProfile?.fields?.[name];
-      row2.textContent = `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`;
+      row.textContent = `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`;
     }
   }
   updatePreferences(next, options = {}) {
@@ -4610,21 +5060,21 @@ class PocketController {
   applyAppearance() {
     const settings = this.settingsDraft || this.preferences;
     const identity = this.syncSurfaceIdentity();
-    const persona2 = identity.role === "persona" && this.activePersona ? settings.personaAppearance[this.activePersona.id] : null;
-    const appearance2 = persona2?.enabled ? persona2 : settings;
-    this.shell.dataset.theme = appearance2.theme;
-    this.shell.style.setProperty("--lp-accent", appearance2.colors.accent);
-    this.shell.style.setProperty("--lp-outgoing", outgoingSurface(appearance2.colors.accent));
-    this.shell.style.setProperty("--lp-bezel", appearance2.colors.bezel);
-    this.shell.style.setProperty("--lp-bg", appearance2.colors.background);
-    this.shell.style.setProperty("--lp-surface", appearance2.colors.surface);
-    this.shell.style.setProperty("--lp-text", appearance2.colors.text);
-    const homeWallpaper = wallpaperCss(appearance2.colors.wallpaperPrimary, appearance2.colors.wallpaperSecondary);
-    const chatWallpaper = wallpaperCss(appearance2.colors.chatPrimary, appearance2.colors.chatSecondary);
-    const homeSetting = persona2?.enabled && persona2.homeWallpaper.source ? persona2.homeWallpaper : settings.homeWallpaper;
-    const chatSetting = persona2?.enabled && persona2.chatWallpaper.source ? persona2.chatWallpaper : settings.chatWallpaper;
-    const homeImage = (persona2?.enabled && persona2.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url;
-    const chatImage = (persona2?.enabled && persona2.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url;
+    const persona = identity.role === "persona" && this.activePersona ? settings.personaAppearance[this.activePersona.id] : null;
+    const appearance = persona?.enabled ? persona : settings;
+    this.shell.dataset.theme = appearance.theme;
+    this.shell.style.setProperty("--lp-accent", appearance.colors.accent);
+    this.shell.style.setProperty("--lp-outgoing", outgoingSurface(appearance.colors.accent));
+    this.shell.style.setProperty("--lp-bezel", appearance.colors.bezel);
+    this.shell.style.setProperty("--lp-bg", appearance.colors.background);
+    this.shell.style.setProperty("--lp-surface", appearance.colors.surface);
+    this.shell.style.setProperty("--lp-text", appearance.colors.text);
+    const homeWallpaper = wallpaperCss(appearance.colors.wallpaperPrimary, appearance.colors.wallpaperSecondary);
+    const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary);
+    const homeSetting = persona?.enabled && persona.homeWallpaper.source ? persona.homeWallpaper : settings.homeWallpaper;
+    const chatSetting = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : settings.chatWallpaper;
+    const homeImage = (persona?.enabled && persona.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url;
+    const chatImage = (persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url;
     const imageLayer = (url, setting, gradient) => url ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}` : gradient;
     this.shell.style.setProperty("--lp-wallpaper", imageLayer(homeImage, homeSetting, homeWallpaper));
     this.shell.style.setProperty("--lp-chat-wallpaper", imageLayer(chatImage, chatSetting, chatWallpaper));
@@ -4635,7 +5085,7 @@ class PocketController {
     this.shell.style.setProperty("--pocket-ui-scale", String(settings.uiScale));
     this.shell.style.setProperty("--lp-animation-ms", `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`);
     this.shell.dataset.reducedMotion = String(settings.reducedMotion);
-    const customCss = [settings.customCss, persona2?.enabled ? persona2.customCss : ""].filter(Boolean).join(`
+    const customCss = [settings.customCss, persona?.enabled ? persona.customCss : ""].filter(Boolean).join(`
 `);
     const surfaceSelector = `[data-pocket-surface="${identity.surfaceId}"]`;
     this.customStyle.textContent = customCss ? `@scope (${surfaceSelector}) { ${customCss} }` : "";
@@ -4726,7 +5176,7 @@ class PocketController {
       this.send("lumiphone:mark_read", { app: "contacts" });
     } else if (route.app === "trackers") {
       const tracker = route.trackerId ? this.state.trackers.find((entry) => entry.id === route.trackerId) : null;
-      this.selectedTrackerId = tracker?.id || (route.trackerId?.startsWith("__template:") ? route.trackerId : "");
+      this.selectedTrackerId = tracker?.id || (route.trackerId?.startsWith("__template") ? route.trackerId : "");
       this.selectedTrackerView = route.view || "detail";
       this.send("lumiphone:mark_read", { app: "trackers" });
     } else if (route.app === "calendar") {
@@ -4771,14 +5221,14 @@ class PocketController {
   inlineHosts(activityId) {
     return [...document.querySelectorAll("[data-pocket-inline-anchor]")].filter((node) => node.dataset.pocketInlineAnchor === activityId);
   }
-  provisionalActivityIsActive(record2) {
+  provisionalActivityIsActive(record) {
     const active = this.activeContext();
-    if (record2.activity.scope.chatId !== active.chatId || record2.activity.scope.characterId !== active.characterId)
+    if (record.activity.scope.chatId !== active.chatId || record.activity.scope.characterId !== active.characterId)
       return false;
-    if (record2.origin.chatId !== active.chatId)
+    if (record.origin.chatId !== active.chatId)
       return false;
-    const selection = [...this.state?.hostSwipeSelections || []].reverse().find((entry) => entry.hostMessageId === record2.origin.hostMessageId);
-    return !selection || selection.swipeId === record2.origin.swipeId;
+    const selection = [...this.state?.hostSwipeSelections || []].reverse().find((entry) => entry.hostMessageId === record.origin.hostMessageId);
+    return !selection || selection.swipeId === record.origin.swipeId;
   }
   inlineActivity(activityId) {
     const canonical = this.knownActivities.get(activityId);
@@ -4907,6 +5357,21 @@ class PocketController {
     this.applyAppearance();
     const view = this.currentApp === "home" ? this.renderHome() : this.currentApp === "messages" ? this.renderMessages() : this.currentApp === "contacts" ? this.renderContacts() : this.currentApp === "gallery" ? this.renderGallery() : this.currentApp === "camera" ? this.renderCamera() : this.currentApp === "notes" ? this.renderNotes() : this.currentApp === "weather" ? this.renderWeather() : this.currentApp === "calendar" ? this.renderCalendar() : this.currentApp === "trackers" ? this.renderTrackers() : this.currentApp === "notifications" ? this.renderNotifications() : this.renderSettings();
     view.classList.add("lumiphone-app-view");
+    if (this.currentApp === "contacts" && ["config", "new", "draft"].includes(this.selectedContactView)) {
+      const key = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactId}:${this.selectedContactView}`;
+      const fields = [...view.querySelectorAll("input, textarea, select")];
+      const draft = this.contactFormDrafts.get(key);
+      fields.forEach((field, index) => {
+        if (draft?.[index]) {
+          field.value = draft[index].value;
+          if (field instanceof HTMLInputElement)
+            field.checked = draft[index].checked;
+        }
+      });
+      const remember = () => this.contactFormDrafts.set(key, fields.map((field) => ({ value: field.value, checked: field instanceof HTMLInputElement && field.checked })));
+      view.addEventListener("input", remember);
+      view.addEventListener("change", remember);
+    }
     view.dataset.pocketApp = this.currentApp;
     const animation = this.preferences.reducedMotion ? "none" : this.preferences.animation;
     if (transition && animation !== "none") {
@@ -5019,6 +5484,18 @@ class PocketController {
       readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
+      groupDraft: this.groupDrafts.get(`${this.state.chatId}:${this.state.characterId}:${this.selectedConversationId || "new"}`),
+      updateGroupDraft: (draft) => {
+        this.groupDrafts.set(`${this.state.chatId}:${this.state.characterId}:${this.selectedConversationId || "new"}`, draft);
+      },
+      groupSaving: Boolean(this.groupSaveRequest),
+      saveGroup: (type, payload) => {
+        if (this.groupSaveRequest)
+          return;
+        this.groupSaveDraftKey = `${this.state.chatId}:${this.state.characterId}:${this.selectedConversationId || "new"}`;
+        this.groupSaveRequest = this.send(type, payload);
+      },
+      openContacts: () => this.openPocket({ app: "contacts", view: "import" }),
       generationAvailable: Boolean(this.caps?.generation),
       busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || "auto",
@@ -5129,9 +5606,9 @@ class PocketController {
         ["Candidate state", selectedSwipe === undefined || selectedSwipe === message.origin.swipeId ? "active" : "inactive"],
         ["Generation ID", message.origin.generationId || "not recorded"]
       ]) {
-        const row2 = el("div", "lp-row-between");
-        row2.append(el("strong", "", label), el("span", "lp-copy", value));
-        content.appendChild(row2);
+        const row = el("div", "lp-row-between");
+        row.append(el("strong", "", label), el("span", "lp-copy", value));
+        content.appendChild(row);
       }
       content.appendChild(el("p", "lp-copy", "This message was authored by the main RP model and persisted through Pocket Action. Retry is intentionally not offered here because rewriting only the phone bubble would diverge from the source RP swipe."));
     } else if (!info) {
@@ -5150,15 +5627,15 @@ class PocketController {
         ["Phone thread", `${info.threadCount} messages · ${info.threadChars} chars`],
         ["Generation", `${info.generationMode} · ${info.connectionName} · ${info.model}`]
       ]) {
-        const row2 = el("div", "lp-row-between");
-        row2.append(el("strong", "", label), el("span", "lp-copy", value));
-        content.appendChild(row2);
+        const row = el("div", "lp-row-between");
+        row.append(el("strong", "", label), el("span", "lp-copy", value));
+        content.appendChild(row);
       }
       if (info.replyDecision) {
         const decision = info.replyDecision;
-        const row2 = el("div", "lp-row-between");
-        row2.append(el("strong", "", "Channel decision"), el("span", "lp-copy", `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
-        content.appendChild(row2);
+        const row = el("div", "lp-row-between");
+        row.append(el("strong", "", "Channel decision"), el("span", "lp-copy", `${decision.rawAction} → ${decision.normalizedAction}${decision.reason ? ` · ${decision.reason}` : ""}${decision.normalizationReason ? ` · ${decision.normalizationReason}` : ""}`));
+        content.appendChild(row);
       }
       if (info.groupBatch) {
         for (const [label, value] of [
@@ -5166,9 +5643,9 @@ class PocketController {
           ["Batch position", `${info.groupBatch.position} of ${info.groupBatch.size}`],
           ["Eligible contacts", String(info.groupBatch.eligibleCount)]
         ]) {
-          const row2 = el("div", "lp-row-between");
-          row2.append(el("strong", "", label), el("span", "lp-copy", value));
-          content.appendChild(row2);
+          const row = el("div", "lp-row-between");
+          row.append(el("strong", "", label), el("span", "lp-copy", value));
+          content.appendChild(row);
         }
       }
     }
@@ -5190,7 +5667,7 @@ class PocketController {
       attach.disabled = scope === "selected_messages" && !messageInputs.some((input) => input.checked);
     };
     const addScope = (value, label, description) => {
-      const row2 = el("label", "lp-reference-scope");
+      const row = el("label", "lp-reference-scope");
       const input = el("input");
       input.type = "radio";
       input.name = `reference-scope-${conversation.id}`;
@@ -5205,15 +5682,15 @@ class PocketController {
       });
       const copy = el("span", "lp-grow");
       copy.append(el("strong", "", label), el("span", "lp-copy", description));
-      row2.append(input, copy);
-      content.appendChild(row2);
+      row.append(input, copy);
+      content.appendChild(row);
     };
     addScope("conversation", "Current conversation", "Conversation state, participants, and up to 8 recent messages.");
     addScope("recent_messages", "Recent messages", "Only the last 6 messages and minimal conversation context.");
     addScope("selected_messages", "Selected messages", "Choose the exact bubbles Pocket should attach.");
     const choices = el("div", "lp-reference-message-list");
     for (const message of conversation.messages.filter((entry) => entry.sender !== "system").slice(-12)) {
-      const row2 = el("label", "lp-reference-message-choice");
+      const row = el("label", "lp-reference-message-choice");
       const input = el("input");
       input.type = "checkbox";
       input.value = message.id;
@@ -5222,8 +5699,8 @@ class PocketController {
       input.addEventListener("change", update);
       const copy = el("span", "lp-grow");
       copy.append(el("strong", "", message.senderName), el("span", "lp-copy", message.text.slice(0, 180)));
-      row2.append(input, copy);
-      choices.appendChild(row2);
+      row.append(input, copy);
+      choices.appendChild(row);
       messageInputs.push(input);
     }
     content.appendChild(choices);
@@ -5254,12 +5731,12 @@ class PocketController {
       ["Captured", String(debug.capturedAt || "unknown")],
       ["Message", String(payload.messageId || "unknown")]
     ]) {
-      const row2 = el("div", "lp-row-between");
-      row2.append(el("strong", "", label), el("span", "lp-copy", value));
-      content.appendChild(row2);
+      const row = el("div", "lp-row-between");
+      row.append(el("strong", "", label), el("span", "lp-copy", value));
+      content.appendChild(row);
     }
-    const messages2 = Array.isArray(debug.messages) ? debug.messages : [];
-    const fullPrompt = messages2.map((message, index) => {
+    const messages = Array.isArray(debug.messages) ? debug.messages : [];
+    const fullPrompt = messages.map((message, index) => {
       const role = String(message?.role || "unknown");
       const body = String(message?.content || "");
       return `[${index + 1}] ${role.toUpperCase()}
@@ -5282,18 +5759,18 @@ ${body}`;
       }
     });
     content.appendChild(copy);
-    if (!messages2.length) {
+    if (!messages.length) {
       content.appendChild(el("p", "lp-copy", "The captured request contained no message array."));
     } else {
-      messages2.forEach((message, index) => {
+      messages.forEach((message, index) => {
         const block = el("details", "lp-channel-diagnostic");
         if (index === 0)
           block.open = true;
         block.appendChild(el("summary", "", `[${index + 1}] ${String(message?.role || "unknown").toUpperCase()}`));
-        const pre2 = el("pre", "lp-code-block", String(message?.content || ""));
-        pre2.style.whiteSpace = "pre-wrap";
-        pre2.style.overflowWrap = "anywhere";
-        block.appendChild(pre2);
+        const pre = el("pre", "lp-code-block", String(message?.content || ""));
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.overflowWrap = "anywhere";
+        block.appendChild(pre);
         content.appendChild(block);
       });
     }
@@ -5326,14 +5803,14 @@ ${body}`;
       ["Generated messages", String(conversation.messages.filter((message) => message.generation).length)],
       ["Latest reference", reference ? `${reference.id} · ${reference.status}` : "none"]
     ]) {
-      const row2 = el("div", "lp-row-between");
-      row2.append(el("strong", "", label), el("span", "lp-copy", value));
-      content.appendChild(row2);
+      const row = el("div", "lp-row-between");
+      row.append(el("strong", "", label), el("span", "lp-copy", value));
+      content.appendChild(row);
     }
     if (reference) {
       const referenceDetails = el("details", "lp-channel-diagnostic");
-      const detail2 = el("div", "lp-handoff-diagnostics");
-      for (const row2 of [
+      const detail = el("div", "lp-handoff-diagnostics");
+      for (const row of [
         `Scope: ${reference.scope}`,
         `Messages: ${reference.messages.length}`,
         `Bound user message: ${reference.boundUserMessageId || "none"}`,
@@ -5343,19 +5820,19 @@ ${body}`;
         `Consumed message: ${reference.consumedMessageId || "none"}`,
         reference.error ? `Error: ${reference.error}` : ""
       ].filter(Boolean))
-        detail2.appendChild(el("span", "lp-copy", row2));
+        detail.appendChild(el("span", "lp-copy", row));
       if (reference.serializedReference)
-        detail2.appendChild(el("pre", "lp-code-block", reference.serializedReference));
-      referenceDetails.append(el("summary", "", "Reference diagnostics"), detail2);
+        detail.appendChild(el("pre", "lp-code-block", reference.serializedReference));
+      referenceDetails.append(el("summary", "", "Reference diagnostics"), detail);
       content.appendChild(referenceDetails);
     }
     for (const message of generated) {
-      const row2 = button(`${message.senderName} · ${formatTime(message.createdAt)}`, "lp-button lp-button-quiet");
-      row2.addEventListener("click", () => {
+      const row = button(`${message.senderName} · ${formatTime(message.createdAt)}`, "lp-button lp-button-quiet");
+      row.addEventListener("click", () => {
         modal.dismiss();
         this.showMessageGenerationInfo(message);
       });
-      content.appendChild(row2);
+      content.appendChild(row);
     }
     if (!generated.length)
       content.appendChild(el("p", "lp-copy", "No generated Pocket bubbles have diagnostics yet."));
@@ -5376,6 +5853,10 @@ ${body}`;
       state: this.state,
       selectedContactId: this.selectedContactId,
       selectedView: this.selectedContactView,
+      generationBrief: this.npcBriefs.get(`${this.state.chatId}:${this.state.characterId}`) || "",
+      updateGenerationBrief: (brief) => {
+        this.npcBriefs.set(`${this.state.chatId}:${this.state.characterId}`, brief);
+      },
       sources: this.contactSources,
       npcBank: this.npcBank,
       capabilities: this.caps,
@@ -5615,11 +6096,18 @@ ${body}`;
     const prompt = el("textarea", "lp-textarea");
     prompt.placeholder = "Describe the photo or moment…";
     prompt.rows = 2;
+    prompt.value = this.cameraDraft.scene;
+    prompt.addEventListener("input", () => {
+      this.cameraDraft.scene = prompt.value;
+    });
     const optionRow = el("div", "lp-row-between");
     const enhanceLabel = el("label", "lp-row");
     const enhance = el("input");
     enhance.type = "checkbox";
-    enhance.checked = this.preferences.sceneEnhancer;
+    enhance.checked = this.cameraDraft.enhance ?? this.preferences.sceneEnhancer;
+    enhance.addEventListener("change", () => {
+      this.cameraDraft.enhance = enhance.checked;
+    });
     enhanceLabel.append(enhance, el("span", "lp-copy", "Enhance scene description"));
     const source = el("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Primitive/manual");
     optionRow.append(enhanceLabel, source);
@@ -5802,8 +6290,8 @@ ${body}`;
     const timeline = el("div", "lp-timeline");
     const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
     for (const event of events) {
-      const row2 = el("div", "lp-event");
-      row2.dataset.completed = String(event.completed);
+      const row = el("div", "lp-event");
+      row.dataset.completed = String(event.completed);
       const dot = el("span", "lp-event-dot");
       dot.style.setProperty("--event-color", event.color);
       const card = button("", "lp-card lp-event-card");
@@ -5814,8 +6302,8 @@ ${body}`;
       if (event.description)
         card.appendChild(el("p", "lp-copy", event.description));
       card.addEventListener("click", () => this.openPocket({ app: "calendar", eventId: event.id }));
-      row2.append(dot, card);
-      timeline.appendChild(row2);
+      row.append(dot, card);
+      timeline.appendChild(row);
     }
     content.appendChild(timeline);
     if (!events.length)
@@ -5864,7 +6352,7 @@ ${body}`;
       ...event?.participantNames || []
     ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index);
     for (const name of candidateNames) {
-      const row2 = el("label", "lp-contact-check");
+      const row = el("label", "lp-contact-check");
       const input = el("input");
       input.type = "checkbox";
       input.checked = [...selectedParticipantNames].some((entry) => normalizeActorName(entry) === normalizeActorName(name));
@@ -5877,8 +6365,8 @@ ${body}`;
           selectedParticipantNames.add(name);
       });
       const known = normalizeActorName(name) === normalizeActorName(this.state.pocketPersona.displayName) || listPocketActors(this.state).some((actor) => normalizeActorName(actor.name) === normalizeActorName(name));
-      row2.append(input, el("span", "lp-grow", name), el("span", "lp-copy", known ? "Known actor" : "Name-only · profile not required"));
-      picker.appendChild(row2);
+      row.append(input, el("span", "lp-grow", name), el("span", "lp-copy", known ? "Known actor" : "Name-only · profile not required"));
+      picker.appendChild(row);
     }
     participants.appendChild(picker);
     const completed = el("input");
@@ -5924,11 +6412,23 @@ ${body}`;
     return page;
   }
   renderTrackers() {
+    const draftKey = `${this.state.chatId}:${this.state.characterId}:${this.selectedTrackerId}`;
     return renderTrackersView({
       state: this.state,
       selectedId: this.selectedTrackerId,
       selectedView: this.selectedTrackerView,
       accent: this.preferences.colors.accent,
+      draft: this.trackerDrafts.get(draftKey),
+      updateDraft: (draft) => {
+        this.trackerDrafts.set(draftKey, draft);
+      },
+      saving: Boolean(this.trackerSaveRequest),
+      save: (payload) => {
+        if (this.trackerSaveRequest)
+          return;
+        this.trackerSaveDraftKey = draftKey;
+        this.trackerSaveRequest = this.send("lumiphone:action", { action: "tracker", payload });
+      },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
       send: (type, payload) => {
@@ -6041,8 +6541,8 @@ ${body}`;
     llmActions.append(test, configureLlm);
     llm.appendChild(llmActions);
     const personaReady = Boolean(state.setup.personaConfigured);
-    const persona2 = el("section", "lp-card lp-settings-section");
-    persona2.append(el("div", "lp-eyebrow", personaReady ? "✓ PERSONA" : "○ PERSONA"), el("strong", "", personaReady ? state.pocketPersona.displayName : this.activePersona?.name || "Choose the phone owner"), el("p", "lp-copy", personaReady ? "This character owns Pocket and is the recipient role for private DMs." : "Choose who Pocket follows as the phone owner."));
+    const persona = el("section", "lp-card lp-settings-section");
+    persona.append(el("div", "lp-eyebrow", personaReady ? "✓ PERSONA" : "○ PERSONA"), el("strong", "", personaReady ? state.pocketPersona.displayName : this.activePersona?.name || "Choose the phone owner"), el("p", "lp-copy", personaReady ? "This character owns Pocket and is the recipient role for private DMs." : "Choose who Pocket follows as the phone owner."));
     const personaActions = el("div", "lp-row");
     if (this.activePersona) {
       const follow = button(`Follow ${this.activePersona.name}`, "lp-button");
@@ -6060,7 +6560,7 @@ ${body}`;
       this.renderFirstChatPersonaEditor();
     });
     personaActions.appendChild(customize);
-    persona2.appendChild(personaActions);
+    persona.appendChild(personaActions);
     const worldStatus = state.setup.worldStatus || "unconfigured";
     const goal = state.events.find((event) => event.lane === "Current goal" && !event.completed);
     const world = el("section", "lp-card lp-settings-section");
@@ -6109,7 +6609,7 @@ ${body}`;
       this.send("lumiphone:dismiss_setup");
       this.setupModalDismiss?.();
     });
-    body.append(llm, persona2, world, start, later);
+    body.append(llm, persona, world, start, later);
   }
   renderFirstChatPersonaEditor() {
     const body = this.setupModalBody;
@@ -6145,9 +6645,9 @@ ${body}`;
     const personality = el("textarea", "lp-textarea");
     personality.placeholder = "Personality — stable traits that shape conversation";
     personality.value = phoneProfile.personality;
-    const appearance2 = el("textarea", "lp-textarea");
-    appearance2.placeholder = "Minimal appearance — only a few recognizable details";
-    appearance2.value = phoneProfile.appearance;
+    const appearance = el("textarea", "lp-textarea");
+    appearance.placeholder = "Minimal appearance — only a few recognizable details";
+    appearance.value = phoneProfile.appearance;
     const textingStyle = el("textarea", "lp-textarea");
     textingStyle.placeholder = "Texting quirks — lowercase, punctuation, slang/register, emoji/kaomoji habits, fragmentation…";
     textingStyle.value = phoneProfile.textingStyle;
@@ -6160,7 +6660,7 @@ ${body}`;
     source.addEventListener("change", syncSource);
     syncSource();
     const fields = el("section", "lp-card lp-settings-section");
-    fields.append(source, name, pronouns, role, el("div", "lp-label", "Personality"), personality, el("div", "lp-label", "Minimal appearance"), appearance2, el("div", "lp-label", "Texting quirks"), textingStyle);
+    fields.append(source, name, pronouns, role, el("div", "lp-label", "Personality"), personality, el("div", "lp-label", "Minimal appearance"), appearance, el("div", "lp-label", "Texting quirks"), textingStyle);
     const actions = el("div", "lp-row");
     const personaOperation = [...this.operations.values()].find((entry) => entry.task === "persona-profile" && entry.phase !== "complete" && entry.phase !== "error");
     const enrich = button(personaOperation ? "Enriching…" : "Enrich with LLM", "lp-button lp-button-quiet");
@@ -6193,7 +6693,7 @@ ${body}`;
           role: role.value.trim(),
           phoneProfile: {
             personality: personality.value.trim(),
-            appearance: appearance2.value.trim(),
+            appearance: appearance.value.trim(),
             textingStyle: textingStyle.value.trim()
           }
         }
@@ -7280,7 +7780,43 @@ var PHONE_STYLES = `
   .lp-contact-photo-editor .lp-avatar { width:54px; height:54px; font-size:18px; }
   .lp-contact-photo-editor .lp-actions { justify-content:flex-start; }
 
-${POCKET_DESIGN_SYSTEM}`;
+${POCKET_DESIGN_SYSTEM}
+
+  /* Recipient columns follow the actual avatar, including profile overrides. */
+  .lp-message-picker-row { grid-template-columns:max-content minmax(0,1fr) auto; column-gap:14px; }
+  .lp-message-picker-row .lp-identity-line,
+  .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }
+  .lp-message-picker-row .lp-identity-name { line-height:1.4; }
+  .lp-message-picker-row[hidden], .lp-section[hidden], .lp-field[hidden], .lp-tracker-config-fields[hidden] { display:none; }
+  .lp-template-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  .lp-template-card { appearance:none; padding:18px 12px; border:1px solid var(--lp-border); border-radius:20px; display:grid; justify-items:start; gap:7px; background:var(--lp-surface); color:var(--lp-text); text-align:left; cursor:pointer; }
+  .lp-template-card:hover { border-color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 9%,var(--lp-surface)); }
+  .lp-template-mark { width:38px; height:38px; display:grid; place-items:center; border-radius:13px; color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 12%,transparent); font-size:24px; }
+  .lp-template-card small { color:var(--lp-muted); }
+  .lp-tracker-preview { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 14px; padding:22px; border-radius:22px; border:1px solid color-mix(in srgb,var(--tracker-color) 35%,var(--lp-border)); background:linear-gradient(135deg,color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)),var(--lp-surface)); }
+  .lp-tracker-preview .lp-eyebrow { grid-column:1/-1; }
+  .lp-preview-name { font-size:18px; overflow-wrap:anywhere; }
+  .lp-preview-value { color:var(--tracker-color); font-size:24px; font-weight:750; overflow-wrap:anywhere; }
+  .lp-tracker-preview small { grid-column:1/-1; color:var(--lp-muted); }
+  .lp-band-list { display:grid; gap:8px; }
+  .lp-band-editor { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,.65fr) minmax(0,.65fr) 28px 28px; gap:5px; align-items:center; }
+  .lp-band-editor .lp-input { min-width:0; padding:8px; }
+  .lp-band-editor .lp-color-input { width:28px; }
+  .lp-tracker-config-fields { display:grid; gap:12px; }
+  .lp-npc-camera .lp-content { display:grid; gap:12px; }
+  .lp-npc-viewfinder { position:relative; min-height:280px; border-radius:24px; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:46px 22px 22px; background:radial-gradient(ellipse at 50% 38%,#353038,#101014 72%); color:#fff; border:1px solid #ffffff16; }
+  .lp-npc-viewfinder::before { content:''; position:absolute; inset:0; background:linear-gradient(to right,transparent 33%,#ffffff0b 33%,#ffffff0b 33.3%,transparent 33.3%,transparent 66.6%,#ffffff0b 66.6%,#ffffff0b 66.9%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff0b 33%,#ffffff0b 33.3%,transparent 33.3%,transparent 66.6%,#ffffff0b 66.6%,#ffffff0b 66.9%,transparent 66.9%); pointer-events:none; }
+  .lp-camera-mode { position:absolute; top:15px; left:18px; right:18px; display:flex; justify-content:space-between; font-size:9px; letter-spacing:.09em; font-weight:750; color:#fff9; }
+  .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }
+  .lp-npc-camera-mark { font-size:38px; font-weight:650; }
+  .lp-npc-camera-copy { position:relative; text-align:center; margin-top:24px; max-width:320px; }
+  .lp-npc-camera-copy strong { font-size:16px; }
+  .lp-npc-camera-copy p { font-size:11px; line-height:1.6; color:#fff9; }
+  .lp-quick-controls { display:grid; grid-template-columns:1fr 68px 1fr; align-items:center; padding:8px 0 16px; }
+  .lp-npc-camera .lp-shutter { background:#17171c; }
+  .lp-npc-camera .lp-shutter::after { background:#f7e8b2; }
+  .lp-npc-camera .lp-shutter:focus-visible { outline:3px solid var(--lp-accent); outline-offset:5px; }
+`;
 
 // src/frontend.ts
 function setup(ctx) {

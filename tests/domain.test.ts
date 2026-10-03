@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { defaultPreferences, normalizePreferences, normalizeWallpaper } from '../src/domain/preferences.js'
 import { MODEL_CONTEXT_BUDGET, projectPhoneContext } from '../src/domain/projection.js'
 import { calculatePhoneSurface } from '../src/frontend/surface.js'
-import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand } from '../src/domain/trackers.js'
+import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand, uniqueTrackerKey, validateTrackerConfig } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
 import { ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, normalizeActorName, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
@@ -20,6 +20,25 @@ import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, 
 import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
 import type { PhoneState, PhoneTracker } from '../src/types.js'
+
+describe('tracker configuration safety', () => {
+  const tracker = normalizeTracker({ label: 'Health', kind: 'meter', min: 0, max: 100, value: 40, initialValue: 40, presentation: 'vitals', target: { type: 'character', id: 'a', label: 'Alice' } })!
+  test('new templates receive independent keys', () => {
+    expect(uniqueTrackerKey('Health', [{ key: 'health' }, { key: 'health_2' }])).toBe('health_3')
+    expect(uniqueTrackerKey('Health', [])).toBe('health')
+  })
+  test('rejects impossible ranges, mismatched displays, and contradictory policies', () => {
+    expect(() => validateTrackerConfig({ ...tracker })).not.toThrow()
+    expect(() => validateTrackerConfig({ ...tracker, max: 0 })).toThrow('Maximum')
+    expect(() => validateTrackerConfig({ ...tracker, value: NaN })).toThrow('finite')
+    expect(() => validateTrackerConfig({ ...tracker, presentation: 'state' })).toThrow('display')
+    expect(() => validateTrackerConfig({ ...tracker, updateMode: 'model', allowModelWrite: false })).toThrow('Story updates')
+  })
+  test('rejects invalid states and out-of-range bands instead of silently changing them', () => {
+    expect(() => validateTrackerConfig({ ...tracker, kind: 'state', presentation: 'state', states: ['Calm'], state: 'Crisis' })).toThrow('current state')
+    expect(() => validateTrackerConfig({ ...tracker, bands: [{ min: 50, max: 120, label: 'High' }] })).toThrow('band')
+  })
+})
 
 describe('device preference schema', () => {
   test('migrates legacy settings without retaining arbitrary CSS', () => {

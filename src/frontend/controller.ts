@@ -147,14 +147,23 @@ class PocketController {
   private pendingWallpaperTarget: PocketImageTarget | null = null
   private pendingContactPhotoId = ''
   private selectedContactId = ''
-  private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'new' | 'draft' = 'list'
+  private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' = 'list'
+  private npcBriefs = new Map<string, string>()
+  private contactFormDrafts = new Map<string, Array<{ value: string; checked: boolean }>>()
   private npcDraft: PocketContactDraft | null = null
   private previousNpcDraft: PocketContactDraft | null = null
   private selectedConversationId = ''
   private deviceOwnerActorId = ''
   private syncIndicator: HTMLDivElement
   private syncIndicatorTimer = 0
-  private selectedConversationView: 'thread' | 'new-group' | 'group-detail' = 'thread'
+  private selectedConversationView: 'thread' | 'new-group' | 'group-editor' | 'group-detail' = 'thread'
+  private groupDrafts = new Map<string, { title: string; participants: string[] }>()
+  private groupSaveRequest = ''
+  private groupSaveDraftKey = ''
+  private trackerDrafts = new Map<string, Record<string, unknown>>()
+  private trackerSaveRequest = ''
+  private trackerSaveDraftKey = ''
+  private cameraDraft = { scene: '', enhance: undefined as boolean | undefined }
   private selectedMessageId = ''
   private selectedNoteId = ''
   private selectedEventId = ''
@@ -900,6 +909,11 @@ class PocketController {
       if (active.characterId && payload.state.characterId !== active.characterId) return
       const previousUnread = this.unreadCount()
       if (payload.reason === 'host_swipe') this.clearActivitySurfaces(true)
+      if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
+        this.cameraDraft = { scene: '', enhance: undefined }
+        this.cameraPreview = ''; this.cameraProgress = ''; this.cameraBusy = false; this.cameraRequestId = ''
+        this.npcDraft = null; this.previousNpcDraft = null
+      }
       this.state = payload.state as PhoneState
       const personaDeviceId = pocketPersonaActorId(this.state)
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state!, conversation))])
@@ -1035,8 +1049,10 @@ class PocketController {
       if (this.currentApp === 'settings') this.render(false)
       return
     }
-    if (payload.type === 'lumiphone:action_done' && payload.result?.trackerId && this.currentApp === 'trackers' && this.selectedTrackerView === 'config') {
-      this.openPocket({ app: 'trackers', trackerId: String(payload.result.trackerId), view: 'detail' }, false)
+    if (payload.type === 'lumiphone:action_done' && payload.result?.trackerId && payload.requestId === this.trackerSaveRequest) {
+      this.trackerDrafts.delete(this.trackerSaveDraftKey)
+      this.trackerSaveRequest = ''
+      if (this.currentApp === 'trackers' && this.selectedTrackerView === 'config') this.openPocket(this.router.settle({ app: 'trackers', trackerId: String(payload.result.trackerId), view: 'detail' }), false)
       return
     }
     if (payload.type === 'lumiphone:pocket_persona_preview' && payload.persona) {
@@ -1116,7 +1132,10 @@ class PocketController {
     if (payload.type === 'lumiphone:contact_draft' && payload.draft) {
       if (this.npcDraft) this.previousNpcDraft = structuredClone(this.npcDraft)
       this.npcDraft = structuredClone(payload.draft as PocketContactDraft)
-      if (this.currentApp === 'contacts') this.openPocket({ app: 'contacts', view: 'import' }, false)
+      if (this.currentApp === 'contacts') {
+        if (this.selectedContactView === 'quick-gen') this.render(false)
+        else this.openPocket({ app: 'contacts', view: 'import' }, false)
+      }
       return
     }
     if (payload.type === 'lumiphone:reference_armed') {
@@ -1124,10 +1143,14 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:conversation_opened' && payload.conversationId) {
-      this.openPocket({ app: 'messages', conversationId: payload.conversationId, view: 'thread' })
+      if (payload.requestId === this.groupSaveRequest) {
+        this.groupDrafts.delete(this.groupSaveDraftKey); this.groupSaveRequest = ''
+        this.openPocket(this.router.settle({ app: 'messages', conversationId: payload.conversationId, view: 'thread' }), false)
+      } else this.openPocket({ app: 'messages', conversationId: payload.conversationId, view: 'thread' })
       return
     }
     if ((payload.type === 'lumiphone:contact_created' || payload.type === 'lumiphone:contact_saved') && payload.contactId) {
+      for (const key of this.contactFormDrafts.keys()) if (key.startsWith(`${this.state?.chatId}:${this.state?.characterId}:`)) this.contactFormDrafts.delete(key)
       this.contactSourcesRequested = false
       this.npcDraft = null
       this.previousNpcDraft = null
@@ -1202,6 +1225,8 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      if (payload.requestId === this.groupSaveRequest) this.groupSaveRequest = ''
+      if (payload.requestId === this.trackerSaveRequest) this.trackerSaveRequest = ''
       if (payload.requestId === this.cameraRequestId) this.cameraBusy = false
       this.messageRequests.delete(payload.requestId)
       const operation = this.operations.get(payload.requestId)
@@ -1445,7 +1470,7 @@ class PocketController {
       this.send('lumiphone:mark_read', { app: 'contacts' })
     } else if (route.app === 'trackers') {
       const tracker = route.trackerId ? this.state.trackers.find((entry) => entry.id === route.trackerId) : null
-      this.selectedTrackerId = tracker?.id || (route.trackerId?.startsWith('__template:') ? route.trackerId : '')
+      this.selectedTrackerId = tracker?.id || (route.trackerId?.startsWith('__template') ? route.trackerId : '')
       this.selectedTrackerView = route.view || 'detail'
       this.send('lumiphone:mark_read', { app: 'trackers' })
     } else if (route.app === 'calendar') {
@@ -1634,6 +1659,14 @@ class PocketController {
       : this.currentApp === 'notifications' ? this.renderNotifications()
       : this.renderSettings()
     view.classList.add('lumiphone-app-view')
+    if (this.currentApp === 'contacts' && ['config', 'new', 'draft'].includes(this.selectedContactView)) {
+      const key = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactId}:${this.selectedContactView}`
+      const fields = [...view.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')]
+      const draft = this.contactFormDrafts.get(key)
+      fields.forEach((field, index) => { if (draft?.[index]) { field.value = draft[index].value; if (field instanceof HTMLInputElement) field.checked = draft[index].checked } })
+      const remember = () => this.contactFormDrafts.set(key, fields.map(field => ({ value: field.value, checked: field instanceof HTMLInputElement && field.checked })))
+      view.addEventListener('input', remember); view.addEventListener('change', remember)
+    }
     view.dataset.pocketApp = this.currentApp
     const animation = this.preferences.reducedMotion ? 'none' : this.preferences.animation
     if (transition && animation !== 'none') {
@@ -1743,6 +1776,11 @@ class PocketController {
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
+      groupDraft: this.groupDrafts.get(`${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId || 'new'}`),
+      updateGroupDraft: draft => { this.groupDrafts.set(`${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId || 'new'}`, draft) },
+      groupSaving: Boolean(this.groupSaveRequest),
+      saveGroup: (type, payload) => { if (this.groupSaveRequest) return; this.groupSaveDraftKey = `${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId || 'new'}`; this.groupSaveRequest = this.send(type, payload) },
+      openContacts: () => this.openPocket({ app: 'contacts', view: 'import' }),
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || 'auto',
       draft: this.messageDrafts.get(this.selectedConversationId) || '',
@@ -2046,6 +2084,8 @@ class PocketController {
   private renderContacts(): HTMLDivElement {
     return renderContactsView({
       state: this.state!, selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
+      generationBrief: this.npcBriefs.get(`${this.state!.chatId}:${this.state!.characterId}`) || '',
+      updateGenerationBrief: brief => { this.npcBriefs.set(`${this.state!.chatId}:${this.state!.characterId}`, brief) },
       sources: this.contactSources, npcBank: this.npcBank, capabilities: this.caps,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('contacts', title, copy),
@@ -2263,11 +2303,14 @@ class PocketController {
     const prompt = el('textarea', 'lp-textarea')
     prompt.placeholder = 'Describe the photo or moment…'
     prompt.rows = 2
+    prompt.value = this.cameraDraft.scene
+    prompt.addEventListener('input', () => { this.cameraDraft.scene = prompt.value })
     const optionRow = el('div', 'lp-row-between')
     const enhanceLabel = el('label', 'lp-row')
     const enhance = el('input')
     enhance.type = 'checkbox'
-    enhance.checked = this.preferences.sceneEnhancer
+    enhance.checked = this.cameraDraft.enhance ?? this.preferences.sceneEnhancer
+    enhance.addEventListener('change', () => { this.cameraDraft.enhance = enhance.checked })
     enhanceLabel.append(enhance, el('span', 'lp-copy', 'Enhance scene description'))
     const source = el('span', 'lp-copy', this.swarmProfile?.source === 'swarm_studio' ? 'Swarm Studio' : 'Primitive/manual')
     optionRow.append(enhanceLabel, source)
@@ -2557,9 +2600,14 @@ class PocketController {
   }
 
   private renderTrackers(): HTMLDivElement {
+    const draftKey = `${this.state!.chatId}:${this.state!.characterId}:${this.selectedTrackerId}`
     return renderTrackersView({
       state: this.state!, selectedId: this.selectedTrackerId, selectedView: this.selectedTrackerView,
       accent: this.preferences.colors.accent,
+      draft: this.trackerDrafts.get(draftKey),
+      updateDraft: draft => { this.trackerDrafts.set(draftKey, draft) },
+      saving: Boolean(this.trackerSaveRequest),
+      save: payload => { if (this.trackerSaveRequest) return; this.trackerSaveDraftKey = draftKey; this.trackerSaveRequest = this.send('lumiphone:action', { action: 'tracker', payload }) },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
       send: (type, payload) => { this.send(type, payload) },

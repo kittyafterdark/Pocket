@@ -30,6 +30,42 @@ export function trackerKey(value: unknown, fallback = 'tracker'): string {
   return key || fallback
 }
 
+export function uniqueTrackerKey(label: unknown, trackers: Pick<PhoneTracker, 'key'>[]): string {
+  const base = trackerKey(label)
+  const used = new Set(trackers.map(entry => entry.key))
+  let key = base
+  for (let suffix = 2; used.has(key); suffix++) key = `${base.slice(0, 110)}_${suffix}`
+  return key
+}
+
+export function validateTrackerConfig(value: RecordValue): void {
+  if (!clean(value.label, 120)) throw new Error('Give your tracker a name.')
+  if (!KINDS.has(value.kind as TrackerKind)) throw new Error('Choose a tracker type.')
+  const allowed = value.kind === 'state' ? ['state', 'compact'] : value.kind === 'counter' ? ['counter', 'compact'] : value.kind === 'timer' ? ['timer', 'compact'] : ['meter', 'vitals', 'relationship', 'segmented', 'compact']
+  if (!allowed.includes(String(value.presentation))) throw new Error('Choose a display that matches this tracker type.')
+  if (value.kind === 'state') {
+    const states = Array.isArray(value.states) ? value.states.map(entry => clean(entry, 80)).filter(Boolean) : []
+    if (!states.length || !states.includes(String(value.state))) throw new Error('Choose a current state from the allowed states.')
+    if (value.updateMode === 'automatic') throw new Error('States use manual or story updates.')
+    if (value.initialState && !states.includes(String(value.initialState))) throw new Error('Keep the reset state in the allowed states.')
+  } else {
+    for (const key of ['value', 'initialValue', 'min', 'max', 'ratePerHour']) {
+      if (!Number.isFinite(Number(value[key]))) throw new Error('Tracker numbers must be finite.')
+    }
+    if (Number(value.max) <= Number(value.min)) throw new Error('Maximum must be greater than minimum.')
+    for (const key of ['value', 'initialValue']) if (Number(value[key]) < Number(value.min) || Number(value[key]) > Number(value.max)) throw new Error('Starting and reset values must fit the range.')
+    if (value.kind === 'counter' && !(Number(value.step) > 0)) throw new Error('Counter step must be positive.')
+    if (value.kind === 'timer' && !['up', 'down'].includes(String(value.direction))) throw new Error('Choose a timer direction.')
+  }
+  if (!MODES.has(value.updateMode as TrackerUpdateMode)) throw new Error('Choose how this tracker updates.')
+  if (value.updateMode === 'automatic' && !Number(value.ratePerHour)) throw new Error('Choose a non-zero change per hour for time updates.')
+  if (value.updateMode === 'model' && value.allowModelWrite !== true) throw new Error('Story updates require model changes to be enabled.')
+  if (!record(value.target) || !TARGETS.has(value.target.type as TrackerTarget['type']) || !clean(value.target.label)) throw new Error('Choose who or what this tracker belongs to.')
+  for (const band of Array.isArray(value.bands) ? value.bands : []) {
+    if (!record(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max)) throw new Error('Each band needs a label and a valid range inside the tracker range.')
+  }
+}
+
 export function normalizeTrackerTarget(value: unknown, fallback: TrackerTarget = { type: 'custom', id: '', label: 'Unassigned' }): TrackerTarget {
   if (!record(value)) return fallback
   const type = TARGETS.has(value.type as TrackerTarget['type']) ? value.type as TrackerTarget['type'] : fallback.type

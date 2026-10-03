@@ -789,6 +789,20 @@ assert.equal(JSON.parse(allowedTrackerTool).ok, true)
 const writableTracker = storage.get('phones/chat-a__char-a.json').trackers.find((tracker) => tracker.id === 'writable-tracker')
 assert.equal(writableTracker.value, 5)
 assert.equal(writableTracker.history.at(-1).source, 'model')
+const templateConfig = {
+  command: 'create', key: 'health', label: 'Health', kind: 'meter', presentation: 'vitals',
+  value: 100, initialValue: 100, min: 0, max: 100, ratePerHour: 0, updateMode: 'manual', allowModelWrite: false,
+  target: { type: 'character', id: 'char-a', label: 'Alice' }, bands: [],
+}
+for (const requestId of ['health-first', 'health-second']) await frontendHandler({
+  type: 'lumiphone:action', requestId, chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { ...templateConfig },
+}, 'user-a')
+const healthTrackers = storage.get('phones/chat-a__char-a.json').trackers.filter(entry => entry.label === 'Health')
+assert.equal(healthTrackers.length, 2, 'template creation must not overwrite another target with the same key')
+assert.notEqual(healthTrackers[0].key, healthTrackers[1].key)
+const missingTrackerCount = storage.get('phones/chat-a__char-a.json').trackers.length
+await frontendHandler({ type: 'lumiphone:action', requestId: 'missing-tracker-operation', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { command: 'update', trackerId: 'gone', operation: 'add', amount: 1 } }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, missingTrackerCount, 'missing operation targets must not create placeholders')
 const trackerCountBeforeClear = storage.get('phones/chat-a__char-a.json').trackers.length
 await frontendHandler({ type: 'lumiphone:notifications_clear', requestId: 'clear-notifications', chatId: 'chat-a', characterId: 'char-a', mode: 'all' }, 'user-a')
 assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, trackerCountBeforeClear, 'clear all must not delete trackers')
@@ -1762,11 +1776,46 @@ assert.match(dockRoot.textContent, /Draft Two/)
 dockRoot.querySelector('.lp-nav-action').click()
 assert.match(dockRoot.textContent, /Add Contact/, 'one Back after saving a new draft must return to the ordinary import screen')
 
+const quickGenerate = [...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Generate NPC')
+quickGenerate.click()
+assert.ok(dockRoot.querySelector('.lp-npc-viewfinder'), 'quick generation opens a camera-style preview')
+const quickBrief = dockRoot.querySelector('textarea')
+quickBrief.value = 'A sleepy florist'
+quickBrief.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+backendReceiver(savedDraftState)
+assert.equal(dockRoot.querySelector('textarea').value, 'A sleepy florist', 'quick generation keeps the brief across state updates')
+
+dockRoot.querySelector('.lumiphone-homebar button').click()
+const draftMessagesIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Messages')
+draftMessagesIcon.click()
+;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'New').click()
+const recipientSearch = dockRoot.querySelector('input[type="search"]')
+recipientSearch.value = 'NO SUCH CONTACT'
+recipientSearch.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+assert.ok([...dockRoot.querySelectorAll('.lp-message-picker-row')].every(node => node.hidden))
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === '＋ New group').click()
+const groupNameDraft = dockRoot.querySelector('input[placeholder="Group name"]')
+groupNameDraft.value = 'Little garden club'
+groupNameDraft.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+const groupChoices = [...dockRoot.querySelectorAll('input[type="checkbox"]')]
+for (const checkbox of groupChoices.slice(0, 2)) { checkbox.checked = true; checkbox.dispatchEvent(new dom.window.Event('change', { bubbles: true })) }
+backendReceiver(savedDraftState)
+assert.equal(dockRoot.querySelector('input[placeholder="Group name"]').value, 'Little garden club', 'group editor is a real route and keeps its draft')
+assert.equal(dockRoot.querySelectorAll('input[type="checkbox"]:checked').length, 2)
+
 dockRoot.querySelector('.lumiphone-homebar button').click()
 const trackerIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Trackers'))
 trackerIcon.click()
 const addTracker = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Add')
 addTracker.click()
+assert.match(dockRoot.textContent, /Pick a starting point/)
+const blankTemplate = [...dockRoot.querySelectorAll('.lp-template-card')].find(node => node.textContent.includes('Blank meter'))
+blankTemplate.click()
+const trackerName = [...dockRoot.querySelectorAll('label')].find(node => node.textContent === 'Name').querySelector('input')
+trackerName.value = 'Pocket progress'
+trackerName.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+backendReceiver(savedDraftState)
+assert.equal([...dockRoot.querySelectorAll('label')].find(node => node.textContent === 'Name').querySelector('input').value, 'Pocket progress', 'tracker drafts survive backend rerenders')
 const saveTracker = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Save')
 assert.equal(saveTracker.disabled, false, 'Tracker Save must be enabled by the page action contract')
 const trackerActionsBefore = frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length
@@ -1914,7 +1963,3 @@ assert.ok(dockRoot.querySelector('.lumiphone-app-view[data-pocket-app="weather"]
 cleanup()
 
 console.log('Pocket contracts passed.')
-
-
-
-
