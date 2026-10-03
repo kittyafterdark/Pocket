@@ -871,17 +871,26 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-band-editor .lp-input { min-width:0; padding:8px; }
   .lp-band-editor .lp-color-input { width:28px; }
   .lp-tracker-config-fields { display:grid; gap:12px; }
-  .lp-npc-camera .lp-content { display:grid; gap:12px; }
-  .lp-npc-viewfinder { position:relative; min-height:280px; border-radius:24px; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:46px 22px 22px; background:radial-gradient(ellipse at 50% 38%,#353038,#101014 72%); color:#fff; border:1px solid #ffffff16; }
+  .lumiphone-shell .lp-npc-camera { height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); background:#08080a; }
+  .lumiphone-shell .lp-npc-camera .lp-nav { background:#08080a; border-color:#ffffff12; }
+  .lumiphone-shell .lp-npc-camera .lp-content { min-height:0; padding:0; display:grid; grid-template-rows:36px minmax(320px,1fr) auto; gap:0; overflow:auto; background:#08080a; }
+  .lp-npc-viewfinder { position:relative; min-height:0; min-width:0; height:100%; width:auto; max-width:100%; aspect-ratio:3/4; justify-self:center; overflow:hidden; background:radial-gradient(ellipse at 50% 38%,#353038,#101014 72%); color:#fff; }
   .lp-npc-viewfinder::before { content:''; position:absolute; inset:0; background:linear-gradient(to right,transparent 33%,#ffffff0b 33%,#ffffff0b 33.3%,transparent 33.3%,transparent 66.6%,#ffffff0b 66.6%,#ffffff0b 66.9%,transparent 66.9%),linear-gradient(to bottom,transparent 33%,#ffffff0b 33%,#ffffff0b 33.3%,transparent 33.3%,transparent 66.6%,#ffffff0b 66.6%,#ffffff0b 66.9%,transparent 66.9%); pointer-events:none; }
-  .lp-camera-mode { position:absolute; top:15px; left:18px; right:18px; display:flex; justify-content:space-between; font-size:9px; letter-spacing:.09em; font-weight:750; color:#fff9; }
+  .lp-camera-mode { display:flex; align-items:center; justify-content:space-between; padding:0 20px; background:#08080a; border-bottom:1px solid #ffffff12; font-size:9px; letter-spacing:.09em; font-weight:750; color:#fff9; }
+  .lp-camera-subject { position:absolute; inset:18px 22px 168px; display:flex; flex-direction:column; justify-content:center; align-items:center; min-height:0; }
+  .lumiphone-shell .lp-camera-floating-brief { position:absolute; bottom:18px; left:18px; right:18px; padding:14px; gap:8px; border:1px solid #ffffff24; border-radius:20px; background:#15151bba; backdrop-filter:blur(18px); box-shadow:0 10px 32px #0005; }
+  .lumiphone-shell .lp-camera-floating-brief .lp-field-label { color:#fffd; font-size:11px; }
+  .lumiphone-shell .lp-camera-floating-brief .lp-textarea { background:transparent; border:0; border-radius:0; padding:0; min-height:80px; max-height:130px; font-size:13px; color:#fff; resize:none; }
+  .lp-camera-floating-brief .lp-textarea::placeholder { color:#ffffff70; }
+  .lp-camera-bottom-strip { background:#08080a; border-top:1px solid #ffffff12; padding:14px 18px 18px; }
+  .lp-camera-caption { margin:0; text-align:center; color:#f8d670; font-size:9px; letter-spacing:.1em; font-weight:750; }
   .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }
   .lp-npc-camera-mark { font-size:38px; font-weight:650; }
-  .lp-npc-camera-copy { position:relative; text-align:center; margin-top:24px; max-width:320px; }
+  .lp-npc-camera-copy { position:relative; text-align:center; margin-top:18px; max-width:320px; max-height:110px; overflow:auto; }
   .lp-npc-camera-copy strong { font-size:16px; }
   .lp-npc-camera-copy p { font-size:11px; line-height:1.6; color:#fff9; }
-  .lp-quick-controls { display:grid; grid-template-columns:1fr 68px 1fr; align-items:center; padding:8px 0 16px; }
+  .lp-quick-controls { display:grid; grid-template-columns:1fr 68px 1fr; align-items:center; padding:14px 0 0; }
   .lp-npc-camera .lp-shutter { background:#17171c; }
-  .lp-npc-camera .lp-shutter::after { background:#f7e8b2; }
+  .lp-npc-camera .lp-shutter::after { background:#fff; }
   .lp-npc-camera .lp-shutter:focus-visible { outline:3px solid var(--lp-accent); outline-offset:5px; }
 `

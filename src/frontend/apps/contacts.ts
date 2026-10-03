@@ -318,35 +318,41 @@ function importView(host: ContactsViewHost): HTMLDivElement {
 
 function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
   const active = [...host.operations.values()].find(entry => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
-  const { page, content } = host.page('Quick Generate', 'A new face for your little world')
+  const { page, content } = host.page('Quick Generate', 'NPC profiles')
   page.classList.add('lp-npc-camera')
   const finder = el('div', 'lp-npc-viewfinder')
-  const mode = el('div', 'lp-camera-mode', '✦ AUTO'); mode.append(el('span', '', 'POCKET PORTRAIT'))
+  const mode = el('div', 'lp-camera-mode', 'ϟ AUTO'); mode.append(el('span', '', 'POCKET'), el('span', '', 'PROFILE'))
   const focus = el('div', 'lp-focus-frame')
   const draft = host.npcDraft
-  const mark = el('div', 'lp-npc-camera-mark', draft ? draft.name.slice(0, 1).toUpperCase() : '✿')
+  const mark = el('div', 'lp-npc-camera-mark', draft ? draft.name.slice(0, 1).toUpperCase() : '+')
   focus.append(mark)
   const copy = el('div', 'lp-npc-camera-copy')
-  copy.append(el('strong', '', active ? 'Meeting someone new…' : draft?.name || 'Someone lovely is out there'), el('p', '', active?.message || draft?.identityBrief || 'Describe them below, then tap the shutter.'))
-  finder.append(mode, focus, copy)
+  copy.append(el('strong', '', active ? 'Developing profile…' : draft?.name || 'Frame a new character'), el('p', '', active?.message || draft?.identityBrief || 'Describe an NPC, then tap the shutter.'))
+  const subject = el('div', 'lp-camera-subject'); subject.append(focus, copy)
+  finder.append(subject)
   const brief = el('textarea', 'lp-textarea'); brief.placeholder = 'A sleepy florist with a sharp wit and a soft spot for stray cats…'; brief.maxLength = 2000; brief.rows = 3; brief.value = host.generationBrief
   brief.addEventListener('input', () => host.updateGenerationBrief(brief.value))
-  const caption = el('p', 'lp-copy', 'PROFILE · Unsaved until you choose Use')
+  const floating = fieldBlock('Character brief', brief)
+  floating.classList.add('lp-camera-floating-brief')
+  finder.append(floating)
+  const footer = el('div', 'lp-camera-bottom-strip')
+  const caption = el('p', 'lp-camera-caption', draft ? 'PREVIEW · UNSAVED' : 'PROFILE')
   const controls = el('div', 'lp-quick-controls')
   const manual = button('Manual', 'lp-nav-action'); manual.addEventListener('click', () => host.select('', 'new'))
   const shutter = button('', 'lp-shutter'); shutter.setAttribute('aria-label', draft ? 'Generate another NPC' : 'Generate NPC'); shutter.disabled = Boolean(active) || !host.capabilities?.generation
   shutter.addEventListener('click', () => { if (!brief.value.trim()) { brief.focus(); host.showError('Describe someone first.'); return }; shutter.disabled = true; host.send('lumiphone:generate_contact', { description: brief.value.trim() }) })
   const edit = button('Edit', 'lp-nav-action'); edit.disabled = !draft || Boolean(active); edit.addEventListener('click', () => host.select('', 'draft'))
   controls.append(manual, shutter, edit)
-  content.append(finder, fieldBlock('Who are we meeting?', brief), caption, controls)
+  footer.append(caption, controls)
+  content.append(mode, finder, footer)
   if (draft) {
     const actions = actionGroup('lp-draft-actions')
     const use = button(`Use ${draft.name}`, 'lp-button lp-button-primary'); use.disabled = Boolean(active); use.addEventListener('click', () => { use.disabled = true; host.send('lumiphone:save_contact', { contact: draftPayload(draft) }) })
     actions.append(use)
     if (host.previousNpcDraft) { const undo = button('Previous', 'lp-button lp-button-quiet'); undo.addEventListener('click', () => host.restorePreviousNpcDraft()); actions.append(undo) }
-    content.append(actions)
+    footer.append(actions)
   }
-  if (!host.capabilities?.generation) content.append(el('p', 'lp-warning', 'Enable text generation in Settings to meet a new NPC.'))
+  if (!host.capabilities?.generation) footer.append(el('p', 'lp-warning', 'Enable text generation in Settings to generate an NPC.'))
   return page
 }
 
