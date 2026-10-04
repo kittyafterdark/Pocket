@@ -7931,10 +7931,10 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-receipt-details summary { width:max-content; cursor:pointer; }
   .pocket-receipt-details > span { display:block; margin-top:3px; max-width:460px; line-height:1.35; }
   .pocket-inline-frame { width:min(100%,460px); min-width:0; box-sizing:border-box; margin:6px auto; padding:12px; border:1px solid color-mix(in srgb,var(--pocket-inline-text,#fff) 12%,transparent); border-radius:22px; background:var(--pocket-inline-bg,linear-gradient(145deg,#171327,#123a4a)); background-size:cover; background-position:center; color:var(--pocket-inline-text,#f7f5ff); overflow:hidden; }
-  .pocket-inline-frame .pocket-inline-artifact { width:100%; box-sizing:border-box; grid-template-columns:32px minmax(0,1fr); background:var(--pocket-inline-surface,#202127); color:inherit; box-shadow:none; backdrop-filter:none; border-radius:12px; }
-  .pocket-inline-frame[data-appearance="cards"] { padding:4px; border-radius:14px; background:var(--pocket-inline-surface,#202127); }
-  .pocket-inline-frame[data-appearance="cards"] .pocket-inline-artifact { border:0; padding:12px; }
-  .pocket-inline-frame[data-appearance="cards"] .pocket-inline-transcript-more { border-top:1px solid color-mix(in srgb,currentColor 10%,transparent); border-radius:0 0 10px 10px; margin-top:0; opacity:.8; }
+  .pocket-inline-frame .pocket-inline-artifact { width:100%; box-sizing:border-box; grid-template-columns:32px minmax(0,1fr); background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 6%,var(--pocket-inline-surface,#202127)); color:inherit; box-shadow:none; backdrop-filter:none; border-radius:15px; }
+  .pocket-inline-frame[data-appearance="cards"] { padding:5px; border-radius:18px; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 9%,var(--pocket-inline-surface,#202127)); border-color:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 22%,transparent); box-shadow:0 4px 14px #00000012; }
+  .pocket-inline-frame[data-appearance="cards"] .pocket-inline-artifact { border:0; padding:12px; background:transparent; }
+  .pocket-inline-frame[data-appearance="cards"] .pocket-inline-transcript-more { border-top:1px solid color-mix(in srgb,currentColor 10%,transparent); border-radius:0 0 13px 13px; margin-top:0; opacity:.8; background:transparent; }
   .pocket-inline-frame .pocket-inline-artifact-chrome,.pocket-inline-frame .pocket-inline-artifact-device { grid-column:1/-1; }
   .pocket-inline-frame .pocket-inline-artifact-copy { grid-column:2; }
   .pocket-inline-avatar { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; grid-row:auto/span 2; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 60%,#333); color:white; font-size:12px; font-weight:750; overflow:hidden; }
