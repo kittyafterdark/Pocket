@@ -22,7 +22,7 @@ export type PocketRoute =
   | { app: 'calendar'; eventId?: string }
   | { app: 'notes'; noteId?: string }
   | { app: 'gallery'; imageId?: string }
-  | { app: 'camera' }
+  | { app: 'camera'; contactId?: string }
   | { app: 'weather' }
   | { app: 'notifications' }
   | { app: 'settings'; section?: string }

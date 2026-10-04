@@ -1954,6 +1954,9 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   const requestId = text(input.requestId, 180) || id('cam')
   const scene = text(input.scene ?? input.prompt ?? input.text ?? input.content, 12_000)
   if (!scene) throw new Error('Describe the scene you want the camera to capture.')
+  const contactId = text(input.contactId, 180)
+  const portraitContact = contactId ? state.contacts.find(entry => entry.id === contactId) : undefined
+  if (contactId && !portraitContact) throw new Error('That contact no longer exists.')
   const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences, userId)
   const controller = new AbortController()
   const job: CameraJob = { controller, cancelled: false, chatId: context.chatId, characterId: context.characterId, userId }
@@ -1970,7 +1973,9 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   }
   if (job.cancelled) return { ok: false, cancelled: true }
   const presets = profile.presets ? `${profile.presets}, ` : ''
-  const prompt = [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(', ')
+  const prompt = portraitContact
+    ? [profile.presets, `Single-subject contact portrait. ${portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description}`, expanded].filter(Boolean).join(', ')
+    : [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(', ')
   const manual = preferences.manualVisualProfile
   const parameters: AnyRecord = { ...manual.parameters, ...(isRecord(input.parameters) ? input.parameters : {}) }
   if (manual.loras.length && parameters.loras === undefined) parameters.loras = manual.loras

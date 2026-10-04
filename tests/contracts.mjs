@@ -1333,6 +1333,20 @@ await frontendHandler({
 assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:camera_done' && message.requestId === 'camera-fallback'))
 spindle.generate.quiet = originalQuiet
 
+const originalImageGenerate = spindle.imageGen.generate
+let portraitInput
+spindle.imageGen.generate = async input => { portraitInput = input; return { imageId: 'portrait-image', imageUrl: '/api/v1/image-gen/results/portrait-image' } }
+const portraitContact = storage.get('phones/chat-a__char-a.json').contacts[0]
+const oldAvatar = portraitContact.avatarOverrideUrl
+await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'portrait-test', chatId: 'chat-a', characterId: 'char-a', contactId: portraitContact.id, scene: 'Head and shoulders, neutral background', enhance: false }, 'user-a')
+assert.match(portraitInput.prompt, /Single-subject contact portrait/)
+assert.equal(storage.get('phones/chat-a__char-a.json').contacts[0].avatarOverrideUrl, oldAvatar, 'portrait generation must wait for an explicit apply action')
+portraitInput = null
+await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'portrait-missing', chatId: 'chat-a', characterId: 'char-a', contactId: 'missing-contact', scene: 'Portrait', enhance: false }, 'user-a')
+assert.equal(portraitInput, null, 'missing portrait target must fail before image generation')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'portrait-missing'))
+spindle.imageGen.generate = originalImageGenerate
+
 let resolveLateImage
 spindle.imageGen.generate = async () => new Promise((resolve) => { resolveLateImage = resolve })
 const cancelledGeneration = frontendHandler({
@@ -1773,6 +1787,26 @@ savedDraftState.state.contacts.push({
 backendReceiver(savedDraftState)
 backendReceiver({ type: 'lumiphone:contact_saved', requestId: 'ui-save-draft', contactId: savedDraftId })
 assert.match(dockRoot.textContent, /Draft Two/)
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Edit').click()
+const contactNameDraft = dockRoot.querySelector('input[placeholder="Name"]')
+contactNameDraft.value = 'Draft Two edited'
+contactNameDraft.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Quick Generate').click()
+assert.ok(dockRoot.querySelector('.lp-photo-viewfinder'))
+assert.match(dockRoot.querySelector('textarea').value, /Portrait of Draft Two/)
+dockRoot.querySelector('form.lp-camera-body').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+const portraitRequest = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
+assert.equal(portraitRequest.contactId, savedDraftId)
+backendReceiver({ type: 'lumiphone:camera_progress', requestId: portraitRequest.requestId, imageDataUrl: 'data:image/png;base64,preview', phase: 'preview' })
+assert.ok(![...dockRoot.querySelectorAll('button')].some(node => node.textContent === 'Use photo'), 'partial previews cannot be applied')
+backendReceiver({ type: 'lumiphone:camera_done', requestId: portraitRequest.requestId, imageUrl: '/api/v1/images/portrait' })
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
+const photoApply = frontendSends.filter(message => message.type === 'lumiphone:set_contact_photo').at(-1)
+assert.equal(photoApply.contactId, savedDraftId)
+assert.equal(photoApply.imageUrl, '/api/v1/images/portrait')
+dockRoot.querySelector('.lp-nav-action').click()
+assert.equal(dockRoot.querySelector('input[placeholder="Name"]').value, 'Draft Two edited', 'camera round trip preserves unsaved contact edits')
+dockRoot.querySelector('.lp-nav-action').click()
 dockRoot.querySelector('.lp-nav-action').click()
 assert.match(dockRoot.textContent, /Add Contact/, 'one Back after saving a new draft must return to the ordinary import screen')
 

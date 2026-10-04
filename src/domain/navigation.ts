@@ -33,7 +33,8 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
   if (app === 'notes') return { app, noteId: shortId(raw.noteId) }
   if (app === 'gallery') return { app, imageId: shortId(raw.imageId) }
   if (app === 'settings') return { app, section: shortId(raw.section) }
-  if (app === 'camera' || app === 'weather' || app === 'notifications' || app === 'home') return { app }
+  if (app === 'camera') return { app, contactId: shortId(raw.contactId) }
+  if (app === 'weather' || app === 'notifications' || app === 'home') return { app }
   return fallback
 }
 

@@ -24,6 +24,7 @@ export interface ContactsViewHost {
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
   choosePhoto(contactId: string): void
+  generatePhoto(contactId: string): void
   useSourcePhoto(contactId: string): void
   requestSources(): void
   send(type: string, payload?: Record<string, unknown>): void
@@ -104,6 +105,9 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     const choosePhoto = button('Choose from Gallery', 'lp-button lp-button-quiet')
     choosePhoto.addEventListener('click', () => host.choosePhoto(contact.id))
     actions.appendChild(choosePhoto)
+    const generatePhoto = button('Quick Generate', 'lp-button')
+    generatePhoto.addEventListener('click', () => host.generatePhoto(contact.id))
+    actions.appendChild(generatePhoto)
     if (contact.sourceAvatarUrl && contact.avatarOverrideUrl) {
       const sourcePhoto = button('Use linked image', 'lp-button lp-button-quiet')
       sourcePhoto.addEventListener('click', () => host.useSourcePhoto(contact.id))

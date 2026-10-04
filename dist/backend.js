@@ -669,7 +669,9 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return { app, imageId: shortId(raw.imageId) };
   if (app === "settings")
     return { app, section: shortId(raw.section) };
-  if (app === "camera" || app === "weather" || app === "notifications" || app === "home")
+  if (app === "camera")
+    return { app, contactId: shortId(raw.contactId) };
+  if (app === "weather" || app === "notifications" || app === "home")
     return { app };
   return fallback;
 }
@@ -4659,6 +4661,10 @@ async function cameraGenerate(input, userId) {
   const scene = text2(input.scene ?? input.prompt ?? input.text ?? input.content, 12000);
   if (!scene)
     throw new Error("Describe the scene you want the camera to capture.");
+  const contactId = text2(input.contactId, 180);
+  const portraitContact = contactId ? state.contacts.find((entry) => entry.id === contactId) : undefined;
+  if (contactId && !portraitContact)
+    throw new Error("That contact no longer exists.");
   const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences, userId);
   const controller = new AbortController;
   const job = { controller, cancelled: false, chatId: context.chatId, characterId: context.characterId, userId };
@@ -4676,7 +4682,7 @@ async function cameraGenerate(input, userId) {
   if (job.cancelled)
     return { ok: false, cancelled: true };
   const presets = profile.presets ? `${profile.presets}, ` : "";
-  const prompt = [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(", ");
+  const prompt = portraitContact ? [profile.presets, `Single-subject contact portrait. ${portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description}`, expanded].filter(Boolean).join(", ") : [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(", ");
   const manual = preferences.manualVisualProfile;
   const parameters = { ...manual.parameters, ...isRecord2(input.parameters) ? input.parameters : {} };
   if (manual.loras.length && parameters.loras === undefined)

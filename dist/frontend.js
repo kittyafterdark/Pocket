@@ -304,7 +304,9 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return { app, imageId: shortId(raw.imageId) };
   if (app === "settings")
     return { app, section: shortId(raw.section) };
-  if (app === "camera" || app === "weather" || app === "notifications" || app === "home")
+  if (app === "camera")
+    return { app, contactId: shortId(raw.contactId) };
+  if (app === "weather" || app === "notifications" || app === "home")
     return { app };
   return fallback;
 }
@@ -2931,6 +2933,9 @@ function contactEditor(host, contact, draft = null) {
     const choosePhoto = button("Choose from Gallery", "lp-button lp-button-quiet");
     choosePhoto.addEventListener("click", () => host.choosePhoto(contact.id));
     actions.appendChild(choosePhoto);
+    const generatePhoto = button("Quick Generate", "lp-button");
+    generatePhoto.addEventListener("click", () => host.generatePhoto(contact.id));
+    actions.appendChild(generatePhoto);
     if (contact.sourceAvatarUrl && contact.avatarOverrideUrl) {
       const sourcePhoto = button("Use linked image", "lp-button lp-button-quiet");
       sourcePhoto.addEventListener("click", () => host.useSourcePhoto(contact.id));
@@ -3785,6 +3790,8 @@ class PocketController {
   selectedSettingsSection = "";
   selectedTrackerView = "detail";
   cameraPreview = "";
+  cameraContactId = "";
+  cameraReady = false;
   cameraProgress = "";
   cameraBusy = false;
   cameraRequestId = "";
@@ -4563,6 +4570,8 @@ class PocketController {
         this.cameraProgress = "";
         this.cameraBusy = false;
         this.cameraRequestId = "";
+        this.cameraContactId = "";
+        this.cameraReady = false;
         this.npcDraft = null;
         this.previousNpcDraft = null;
       }
@@ -4911,6 +4920,7 @@ class PocketController {
       this.cameraBusy = false;
       this.cameraProgress = "Photo saved to Gallery";
       this.cameraPreview = payload.imageUrl || this.cameraPreview;
+      this.cameraReady = Boolean(payload.imageUrl);
       if (payload.profile)
         this.swarmProfile = payload.profile;
       if (this.currentApp === "camera")
@@ -5192,6 +5202,19 @@ class PocketController {
     } else if (route.app === "notes") {
       this.selectedNoteId = route.noteId === "__new__" || route.noteId && this.state.notes.some((entry) => entry.id === route.noteId) ? route.noteId : "";
       this.send("lumiphone:mark_read", { app: "notes" });
+    } else if (route.app === "camera") {
+      const contactId = route.contactId || "";
+      if (contactId !== this.cameraContactId) {
+        this.cameraContactId = contactId;
+        this.cameraPreview = "";
+        this.cameraReady = false;
+        this.cameraRequestId = "";
+        this.cameraBusy = false;
+        this.cameraProgress = "";
+        const contact = this.state.contacts.find((entry) => entry.id === contactId);
+        this.cameraDraft = { scene: contact ? `Portrait of ${contact.name}. ${contact.phoneProfile?.appearance || contact.identityBrief || contact.description}. Head and shoulders, one subject, looking at the camera, clean background.` : "", enhance: false };
+      }
+      this.send("lumiphone:mark_read", { app: "camera" });
     } else if (route.app === "gallery") {
       this.selectedGalleryImageId = route.imageId || "";
       this.requestGallery(this.galleryScope);
@@ -5883,6 +5906,7 @@ ${body}`;
       },
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
+      generatePhoto: (contactId) => this.openPocket({ app: "camera", contactId }),
       useSourcePhoto: (contactId) => this.send("lumiphone:set_contact_photo", { contactId, useSource: true }),
       requestSources: () => {
         if (this.contactSourcesRequested)
@@ -6078,28 +6102,35 @@ ${body}`;
     input.focus();
   }
   renderCamera() {
-    const page = el("div", "lp-camera");
+    const page = el("div", "lp-camera lp-npc-camera");
+    const contact = this.state.contacts.find((entry) => entry.id === this.cameraContactId);
     const nav = el("header", "lp-nav");
     const back = button("‹ Back", "lp-nav-action");
     back.addEventListener("click", () => this.back());
     const profileLabel = this.swarmProfile?.available ? "Swarm profile linked" : "Manual profile";
-    const title = el("div", "lp-nav-title", "Camera");
-    title.appendChild(el("span", "lp-nav-subtitle", profileLabel));
+    const title = el("div", "lp-nav-title", this.cameraContactId ? "Quick Generate" : "Camera");
+    title.appendChild(el("span", "lp-nav-subtitle", contact ? `${contact.name} · Contact photo` : profileLabel));
     const gallery = button("Gallery", "lp-nav-action");
     gallery.addEventListener("click", () => this.openApp("gallery"));
     nav.append(back, title, gallery);
-    const viewfinder = el("div", "lp-viewfinder");
+    const controls = el("form", "lp-content lp-camera-body");
+    const mode = el("div", "lp-camera-mode", "ϟ AUTO");
+    mode.append(el("span", "", "POCKET"), el("span", "", this.cameraContactId ? "PORTRAIT" : "PHOTO"));
+    const viewfinder = el("div", "lp-npc-viewfinder lp-photo-viewfinder");
     if (this.cameraPreview) {
       const image = el("img");
       image.src = this.cameraPreview;
       image.alt = "Camera preview";
       viewfinder.appendChild(image);
     } else {
-      const placeholder = el("div", "lp-camera-placeholder");
-      placeholder.append(icon("camera"), el("div", "", "What would you like to capture?"));
+      const placeholder = el("div", "lp-camera-subject");
+      const focus = el("div", "lp-focus-frame");
+      focus.append(el("div", "lp-npc-camera-mark", "+"));
+      const copy = el("div", "lp-npc-camera-copy");
+      copy.append(el("strong", "", contact ? `Frame ${contact.name}` : "Frame a moment"), el("p", "", "Describe the photo, then tap the shutter."));
+      placeholder.append(focus, copy);
       viewfinder.appendChild(placeholder);
     }
-    const controls = el("form", "lp-camera-controls");
     const prompt = el("textarea", "lp-textarea");
     prompt.placeholder = "Describe the photo or moment…";
     prompt.rows = 2;
@@ -6107,6 +6138,10 @@ ${body}`;
     prompt.addEventListener("input", () => {
       this.cameraDraft.scene = prompt.value;
     });
+    const floating = fieldBlock("Photo description", prompt);
+    floating.classList.add("lp-camera-floating-brief");
+    viewfinder.append(floating);
+    const footer = el("div", "lp-camera-bottom-strip");
     const optionRow = el("div", "lp-row-between");
     const enhanceLabel = el("label", "lp-row");
     const enhance = el("input");
@@ -6116,7 +6151,7 @@ ${body}`;
       this.cameraDraft.enhance = enhance.checked;
     });
     enhanceLabel.append(enhance, el("span", "lp-copy", "Enhance scene description"));
-    const source = el("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Primitive/manual");
+    const source = el("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Manual profile");
     optionRow.append(enhanceLabel, source);
     const shutterRow = el("div", "lp-shutter-row");
     const cancel = button(this.cameraBusy ? "Cancel" : "", "lp-button");
@@ -6130,12 +6165,21 @@ ${body}`;
     const shutter = el("button", "lp-shutter");
     shutter.type = "submit";
     shutter.disabled = this.cameraBusy || !this.caps?.imageGen;
-    const spacer = el("span");
-    shutterRow.append(cancel, shutter, spacer);
+    const album = button("Gallery", "lp-nav-action");
+    album.addEventListener("click", () => this.openApp("gallery"));
+    shutterRow.append(cancel, shutter, album);
     const progress = el("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
-    const promptDrawer = disclosure("Describe the moment", fieldBlock("Photo description", prompt));
     const optionsDrawer = disclosure("Camera options", optionRow);
-    controls.append(promptDrawer, optionsDrawer, shutterRow, progress);
+    footer.append(el("p", "lp-camera-caption", this.cameraContactId ? "PORTRAIT" : "PHOTO"), shutterRow, progress, optionsDrawer);
+    if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
+      const use = button("Use photo", "lp-button");
+      use.disabled = !contact;
+      use.addEventListener("click", () => {
+        this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId: this.cameraContactId, imageUrl: this.cameraPreview });
+      });
+      footer.append(use);
+    }
+    controls.append(mode, viewfinder, footer);
     shutter.setAttribute("aria-label", "Take photo");
     controls.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -6143,17 +6187,17 @@ ${body}`;
       if (this.cameraBusy)
         return;
       if (!scene) {
-        promptDrawer.open = true;
         prompt.focus();
         return;
       }
       this.cameraRequestId = requestId("camera");
       this.cameraBusy = true;
+      this.cameraReady = false;
       this.cameraProgress = "Sending scene to camera…";
-      this.send("lumiphone:camera_generate", { requestId: this.cameraRequestId, scene, enhance: enhance.checked });
+      this.send("lumiphone:camera_generate", { requestId: this.cameraRequestId, scene, enhance: enhance.checked, contactId: this.cameraContactId || undefined });
       this.render();
     });
-    page.append(nav, viewfinder, controls);
+    page.append(nav, controls);
     return page;
   }
   renderNotes() {
@@ -7822,6 +7866,11 @@ ${POCKET_DESIGN_SYSTEM}
   .lumiphone-shell .lp-camera-floating-brief .lp-field-label { color:#fffd; font-size:11px; }
   .lumiphone-shell .lp-camera-floating-brief .lp-textarea { background:transparent; border:0; border-radius:0; padding:0; min-height:80px; max-height:130px; font-size:13px; color:#fff; resize:none; }
   .lp-camera-floating-brief .lp-textarea::placeholder { color:#ffffff70; }
+  .lumiphone-shell .lp-camera.lp-npc-camera { min-height:0; color:#fff; }
+  .lp-photo-viewfinder > img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  .lumiphone-shell .lp-camera-bottom-strip .lp-copy { color:#ffffff9e; }
+  .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
+  .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
   .lp-camera-bottom-strip { background:#08080a; border-top:1px solid #ffffff12; padding:14px 18px 18px; }
   .lp-camera-caption { margin:0; text-align:center; color:#f8d670; font-size:9px; letter-spacing:.1em; font-weight:750; }
   .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }

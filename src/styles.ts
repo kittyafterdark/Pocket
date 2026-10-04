@@ -882,6 +882,11 @@ ${POCKET_DESIGN_SYSTEM}
   .lumiphone-shell .lp-camera-floating-brief .lp-field-label { color:#fffd; font-size:11px; }
   .lumiphone-shell .lp-camera-floating-brief .lp-textarea { background:transparent; border:0; border-radius:0; padding:0; min-height:80px; max-height:130px; font-size:13px; color:#fff; resize:none; }
   .lp-camera-floating-brief .lp-textarea::placeholder { color:#ffffff70; }
+  .lumiphone-shell .lp-camera.lp-npc-camera { min-height:0; color:#fff; }
+  .lp-photo-viewfinder > img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  .lumiphone-shell .lp-camera-bottom-strip .lp-copy { color:#ffffff9e; }
+  .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
+  .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
   .lp-camera-bottom-strip { background:#08080a; border-top:1px solid #ffffff12; padding:14px 18px 18px; }
   .lp-camera-caption { margin:0; text-align:center; color:#f8d670; font-size:9px; letter-spacing:.1em; font-weight:750; }
   .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }
