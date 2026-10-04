@@ -200,11 +200,57 @@ export const POCKET_DESIGN_SYSTEM = `
   .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { background:var(--pocket-inline-accent,#51459c); }
   button.pocket-inline-transcript-more { display:block; width:100%; padding:10px; margin-top:5px; border:0; border-radius:12px; background:var(--pocket-inline-surface,#202127); color:inherit; font:inherit; font-size:11px; cursor:pointer; }
   button.pocket-inline-transcript-more:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:2px; }
-  .pocket-inline-frame[data-appearance="phone"] { width:min(100%,320px); min-height:310px; padding:12px 10px 20px; border:6px solid var(--pocket-inline-surface,#17151d); outline:1px solid color-mix(in srgb,var(--pocket-inline-text,#fff) 20%,transparent); border-radius:35px; box-shadow:0 12px 30px #0003; position:relative; }
-  .pocket-inline-frame[data-appearance="phone"]::after { content:''; position:absolute; width:70px; height:3px; background:currentColor; opacity:.5; border-radius:4px; bottom:7px; left:calc(50% - 35px); }
-  .pocket-mock-status { display:flex; justify-content:space-between; padding:0 5px 16px; font-size:9px; font-weight:700; }
-  .pocket-mock-clock { display:block; font-size:46px; font-weight:300; text-align:center; margin:8px 0 20px; }
-  .pocket-mock-composer { display:block; border:1px solid color-mix(in srgb,currentColor 20%,transparent); border-radius:24px; margin-top:15px; padding:10px; opacity:.55; font-size:11px; }
+  .pocket-inline-frame.pocket-phone-device { width:min(100%,320px); aspect-ratio:9/19.5; min-height:0; padding:0 0 18px; border:5px solid #29262e; outline:1px solid #ffffff14; border-radius:34px; background:#17151b; color:#f2f0f5; box-shadow:0 8px 24px #0003; position:relative; display:flex; flex-direction:column; container-type:inline-size; }
+  .pocket-phone-device::after { content:''; position:absolute; width:70px; height:3px; background:#dedbe5; opacity:.6; border-radius:4px; bottom:7px; left:calc(50% - 35px); pointer-events:none; }
+  .pocket-phone-status { display:flex; justify-content:space-between; align-items:center; padding:13px 18px 9px; min-height:32px; flex:none; font-size:10px; font-weight:650; }
+  .pocket-phone-indicators { letter-spacing:1px; font-size:9px; }
+  .pocket-phone-screen { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+  .pocket-phone-lock { padding:18px 12px; align-items:center; }
+  .pocket-phone-lock-label { font-size:11px; color:#b9b4c3; margin-top:24px; }
+  .pocket-phone-clock { font-size:52px; line-height:1.2; font-weight:300; letter-spacing:-2px; margin-top:10px; }
+  .pocket-phone-lock-caption { font-size:10px; color:#b9b4c3; margin:8px 0 36px; }
+  .pocket-phone-notification { appearance:none; display:grid; grid-template-columns:30px minmax(0,1fr); gap:4px 8px; width:100%; padding:12px; background:#242229; color:#f2f0f5; border:1px solid #ffffff14; border-radius:15px; text-align:left; font:inherit; cursor:pointer; box-shadow:0 3px 10px #0002; }
+  .pocket-phone-app-label { display:block; font-size:10px; font-weight:600; color:#b9b4c3; }
+  .pocket-phone-notification .pocket-phone-app-label { grid-column:1/-1; margin-bottom:5px; }
+  .pocket-phone-notification-sender { font-size:12px; align-self:center; }
+  .pocket-phone-notification-copy { grid-column:2; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+  .pocket-phone-avatar { display:grid; place-items:center; width:30px; height:30px; flex:none; grid-row:auto/span 2; border-radius:50%; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 48%,#29272f); color:#f7f5ff; font-size:12px; font-weight:650; overflow:hidden; }
+  .pocket-phone-avatar img { width:100%; height:100%; object-fit:cover; }
+  .pocket-phone-app-header { appearance:none; display:block; flex:none; width:100%; padding:12px 14px; background:#211e27; color:#f2f0f5; border:0; border-bottom:1px solid #ffffff14; font:inherit; text-align:left; cursor:pointer; }
+  .pocket-phone-conversation-title { display:block; margin-top:5px; font-size:14px; line-height:1.3; overflow-wrap:anywhere; }
+  .pocket-phone-subtitle { display:block; font-size:10px; color:#b9b4c3; margin-top:3px; }
+  .pocket-phone-thread { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#514b5f transparent; padding:16px 12px; display:flex; flex-direction:column; gap:9px; }
+  .pocket-phone-message { display:grid; grid-template-columns:24px minmax(0,1fr); align-self:flex-start; max-width:94%; gap:3px 7px; }
+  .pocket-phone-message .pocket-phone-avatar { width:24px; height:24px; font-size:10px; }
+  .pocket-phone-sender { grid-column:2; font-size:10px; color:#b9b4c3; font-weight:600; }
+  .pocket-phone-bubble { grid-column:2; display:block; width:fit-content; background:#282430; border-radius:13px 13px 13px 4px; padding:8px 10px; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+  .pocket-phone-message[data-direction="sent"] { align-self:flex-end; display:block; max-width:88%; }
+  .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble { background:var(--pocket-inline-accent,#8b7dff); color:white; border-radius:13px 13px 4px 13px; }
+  .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar { visibility:hidden; }
+  .pocket-phone-message[data-continuation="true"] .pocket-phone-sender { display:none; }
+  .pocket-phone-delivery { text-align:right; font-size:9px; color:#b9b4c3; margin-top:-4px; }
+  .pocket-phone-composer { flex:none; margin:0; padding:14px; border:0; border-top:1px solid #ffffff14; border-radius:0; background:#211e27; color:#b9b4c3; font-size:12px; }
+  .pocket-phone-composer::after { content:'↑'; float:right; color:var(--pocket-inline-accent,#8b7dff); }
+  .pocket-phone-call .pocket-phone-app-header { background:transparent; border:0; font-size:10px; color:#b9b4c3; }
+  .pocket-phone-call-identity { display:flex; flex:1; min-height:0; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:20px 18px; text-align:center; }
+  .pocket-phone-call-identity .pocket-phone-avatar { width:76px; height:76px; font-size:30px; margin-bottom:12px; }
+  .pocket-phone-call-label { font-size:11px; color:#b9b4c3; }
+  .pocket-phone-call-name { font-size:20px; line-height:1.3; font-weight:600; overflow-wrap:anywhere; }
+  .pocket-phone-call-status { font-size:12px; line-height:1.5; color:#b9b4c3; }
+  .pocket-phone-call-controls { display:flex; flex:none; flex-direction:column; align-items:center; gap:10px; padding:12px 12px 48px; }
+  .pocket-phone-call-controls .pocket-call-symbol { width:52px; height:52px; margin:0; }
+  .pocket-phone-call-controls .pocket-call-symbol svg { width:26px; height:26px; }
+  .pocket-phone-call[data-call-status="ended"] .pocket-call-symbol,.pocket-phone-call[data-call-status="missed"] .pocket-call-symbol { background:#994c57; }
+  .pocket-phone-call-speaker,.pocket-phone-control-caption { font-size:10px; color:#b9b4c3; }
+  @container (max-width:240px) {
+    .pocket-phone-call-identity { gap:7px; padding:10px 12px; }
+    .pocket-phone-call-identity .pocket-phone-avatar { width:56px; height:56px; font-size:24px; margin-bottom:4px; }
+    .pocket-phone-call-name { font-size:17px; }
+    .pocket-phone-call-status { font-size:11px; }
+    .pocket-phone-call-controls { padding:8px 12px 24px; gap:8px; }
+    .pocket-phone-call-controls .pocket-call-symbol { width:44px; height:44px; }
+  }
+  .pocket-phone-notification:focus-visible,.pocket-phone-app-header:focus-visible,.pocket-phone-thread:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:-2px; }
   .pocket-inline-frame .pocket-inline-call { display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px; }
   .pocket-inline-call .pocket-inline-avatar { width:44px; height:44px; font-size:18px; }
   .pocket-call-symbol { display:grid; place-items:center; width:36px; height:36px; border-radius:50%; background:#476b54; color:white; margin-top:6px; }

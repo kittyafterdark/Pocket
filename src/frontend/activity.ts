@@ -1,6 +1,7 @@
 import type { PocketActivity, PocketRoute } from '../types.js'
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { callSummary } from '../domain/phone-events.js'
+import { buildPhoneScreen, callSymbol } from './phone-screen.js'
 
 export interface ActivityRenderOptions {
   includeReceipt?: boolean
@@ -25,18 +26,7 @@ function frameArtifact(artifact: HTMLElement, activity: PocketActivity, options:
   if (options.backgroundPosition) frame.style.backgroundPosition = options.backgroundPosition
   if (options.textColor) frame.style.setProperty('--pocket-inline-text', options.textColor)
   if (options.surfaceColor) frame.style.setProperty('--pocket-inline-surface', options.surfaceColor)
-  if (options.appearance === 'phone') {
-    const status = document.createElement('span'); status.className = 'pocket-mock-status'; status.setAttribute('aria-hidden', 'true')
-    status.textContent = activity.presentation?.storyAt?.slice(11, 16) || 'Pocket'
-    const indicators = document.createElement('span'); indicators.textContent = '▮▮▮  ▰'; status.append(indicators); frame.append(status)
-    if (activity.presentation?.kind === 'received' && !activity.presentation.call && activity.presentation.storyAt) {
-      const clock = document.createElement('span'); clock.className = 'pocket-mock-clock'; clock.textContent = activity.presentation.storyAt.slice(11, 16); frame.append(clock)
-    }
-  }
   frame.append(artifact)
-  if (options.appearance === 'phone' && ['sent', 'batch'].includes(activity.presentation?.kind || '')) {
-    const composer = document.createElement('span'); composer.className = 'pocket-mock-composer'; composer.textContent = '＋    Message'; composer.setAttribute('aria-hidden', 'true'); frame.append(composer)
-  }
   return frame
 }
 
@@ -184,13 +174,7 @@ function buildMessageArtifact(
     primary.append(avatar(presentation.senderName || 'Call', options.avatarUrl), messageChrome('', 'Phone'))
     const name = document.createElement('strong'); name.className = 'pocket-inline-artifact-actors'; name.textContent = actorLine(activity) || activity.title
     const status = document.createElement('span'); status.className = 'pocket-inline-artifact-copy'; status.textContent = callSummary(presentation.call)
-    const icon = document.createElement('span'); icon.className = 'pocket-call-symbol'; icon.setAttribute('aria-hidden', 'true')
-    const handset = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    handset.setAttribute('viewBox', '0 0 24 24'); handset.setAttribute('fill', 'none'); handset.setAttribute('stroke', 'currentColor')
-    handset.setAttribute('stroke-width', '1.8'); handset.setAttribute('stroke-linecap', 'round'); handset.setAttribute('stroke-linejoin', 'round')
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-    path.setAttribute('d', 'M3 15.5v-3a2 2 0 0 1 .7-1.5c4.7-4 11.9-4 16.6 0a2 2 0 0 1 .7 1.5v3a1 1 0 0 1-1.2 1l-4-.8a1 1 0 0 1-.8-1v-2.3a12 12 0 0 0-6 0v2.3a1 1 0 0 1-.8 1l-4 .8a1 1 0 0 1-1.2-1Z')
-    handset.append(path); icon.append(handset); primary.append(name, status, icon)
+    primary.append(name, status, callSymbol())
   } else if (presentation.kind === 'sent') {
     const recipient = document.createElement('span')
     recipient.className = 'pocket-inline-artifact-recipient'
@@ -233,7 +217,7 @@ function buildActivityStack(
   stack.className = 'pocket-artifact-stack'
 
   if (options.includeArtifact !== false) {
-    const artifact = buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options)
+    const artifact = options.appearance === 'phone' ? buildPhoneScreen(activity, openRoute, options) : buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options)
     if (artifact) stack.appendChild(artifact)
   }
 

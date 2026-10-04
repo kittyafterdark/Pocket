@@ -4059,6 +4059,112 @@ class PocketRouteHistory {
   }
 }
 
+// src/frontend/phone-screen.ts
+function node(tag, className, text = "") {
+  const element = document.createElement(tag);
+  element.className = className;
+  element.textContent = text;
+  return element;
+}
+function portrait(name, url) {
+  const avatar = node("span", "pocket-phone-avatar", name.slice(0, 1).toUpperCase());
+  avatar.setAttribute("aria-hidden", "true");
+  if (url) {
+    const image = document.createElement("img");
+    image.src = url;
+    image.alt = "";
+    avatar.replaceChildren(image);
+  }
+  return avatar;
+}
+function callSymbol() {
+  const icon = node("span", "pocket-call-symbol");
+  icon.setAttribute("aria-hidden", "true");
+  const handset = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  for (const [key, value] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round" }))
+    handset.setAttribute(key, value);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M3 15.5v-3a2 2 0 0 1 .7-1.5c4.7-4 11.9-4 16.6 0a2 2 0 0 1 .7 1.5v3a1 1 0 0 1-1.2 1l-4-.8a1 1 0 0 1-.8-1v-2.3a12 12 0 0 0-6 0v2.3a1 1 0 0 1-.8 1l-4 .8a1 1 0 0 1-1.2-1Z");
+  handset.append(path);
+  icon.append(handset);
+  return icon;
+}
+function buildPhoneScreen(activity, openRoute, options) {
+  const presentation = activity.presentation;
+  if (!presentation || !["received", "observed", "sent", "batch"].includes(presentation.kind))
+    return null;
+  const type = presentation.call ? "call" : presentation.kind === "batch" ? "group" : presentation.kind === "sent" ? "chat" : "lock";
+  const phone = node("div", "pocket-inline-frame pocket-phone-device");
+  phone.dataset.appearance = "phone";
+  phone.dataset.screen = type;
+  phone.style.setProperty("--pocket-inline-accent", options.accent || "#8b7dff");
+  const time = presentation.storyAt?.slice(11, 16);
+  const status = node("div", "pocket-phone-status", time || "Pocket");
+  const indicators = node("span", "pocket-phone-indicators", "▮▮▮  ▰");
+  indicators.setAttribute("aria-hidden", "true");
+  status.append(indicators);
+  const screen = node("div", "pocket-phone-screen");
+  phone.append(status, screen);
+  const routeButton = (label, className, aria) => {
+    const button = node("button", className, label);
+    button.type = "button";
+    button.setAttribute("aria-label", aria);
+    button.addEventListener("click", () => openRoute(activity.route));
+    return button;
+  };
+  const recipients = presentation.recipientNames?.filter(Boolean).join(", ") || "";
+  const title = presentation.conversationTitle || (type === "lock" ? presentation.senderName : recipients) || activity.title || "Messages";
+  if (type === "lock") {
+    screen.classList.add("pocket-phone-lock");
+    if (options.background)
+      screen.style.background = options.background;
+    screen.style.backgroundSize = options.backgroundSize || "cover";
+    screen.style.backgroundPosition = options.backgroundPosition || "center";
+    screen.append(node("span", "pocket-phone-lock-label", presentation.kind === "observed" ? `${recipients || "Another actor"}'s phone` : "Locked"));
+    screen.append(node("span", "pocket-phone-clock", time || "Locked"));
+    screen.append(node("span", "pocket-phone-lock-caption", "Tap notification to open"));
+    const notification = routeButton("", "pocket-phone-notification", `Open ${presentation.kind === "observed" ? `${recipients}'s phone · ` : ""}${title} in Pocket`);
+    notification.append(node("span", "pocket-phone-app-label", "Messages"), portrait(presentation.senderName || "?", options.avatarUrl), node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", activity.summary || ""));
+    screen.append(notification);
+  } else if (type === "call") {
+    screen.classList.add("pocket-phone-call");
+    screen.dataset.callStatus = presentation.call.status;
+    screen.append(routeButton("Phone · Call history ↗", "pocket-phone-app-header", "Open call history in Pocket"));
+    const identity = node("div", "pocket-phone-call-identity");
+    identity.append(portrait(presentation.senderName || "Call", options.avatarUrl), node("span", "pocket-phone-call-label", "Phone"), node("strong", "pocket-phone-call-name", [presentation.senderName, recipients].filter(Boolean).join(" → ") || activity.title), node("span", "pocket-phone-call-status", callSummary(presentation.call)));
+    const controls = node("div", "pocket-phone-call-controls");
+    controls.append(callSymbol(), node("span", "pocket-phone-control-caption", presentation.call.status === "connected" ? "Connected" : presentation.call.status === "ended" ? "Call ended" : "Missed call"));
+    screen.append(identity, controls);
+  } else {
+    screen.classList.add("pocket-phone-chat");
+    const header = routeButton("", "pocket-phone-app-header", `Open ${title} in Pocket`);
+    header.append(node("span", "pocket-phone-app-label", "‹  Messages"), node("strong", "pocket-phone-conversation-title", title));
+    if (type === "group")
+      header.append(node("span", "pocket-phone-subtitle", `${presentation.batchMessages?.length || 0} messages`));
+    const thread = node("div", "pocket-phone-thread");
+    thread.tabIndex = 0;
+    thread.setAttribute("role", "region");
+    thread.setAttribute("aria-label", `${title} conversation`);
+    const messages = type === "group" ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, text: activity.summary || "", direction: "sent" }];
+    for (const [index, message] of messages.entries()) {
+      const row = node("div", "pocket-phone-message");
+      row.dataset.direction = message.direction;
+      const previous = messages[index - 1];
+      row.dataset.continuation = String(Boolean(previous && previous.senderName === message.senderName));
+      if (message.direction !== "sent")
+        row.append(portrait(message.senderName, options.avatars?.[message.senderActorId || ""]), node("strong", "pocket-phone-sender", message.senderName));
+      row.append(node("span", "pocket-phone-bubble", message.text));
+      thread.append(row);
+    }
+    if (type === "chat")
+      thread.append(node("span", "pocket-phone-delivery", "Sent"));
+    const composer = node("span", "pocket-mock-composer pocket-phone-composer", "＋    Message");
+    composer.setAttribute("aria-hidden", "true");
+    screen.append(header, thread, composer);
+  }
+  return phone;
+}
+
 // src/frontend/activity.ts
 function frameArtifact(artifact, activity, options) {
   const frame = document.createElement("div");
@@ -4077,30 +4183,7 @@ function frameArtifact(artifact, activity, options) {
     frame.style.setProperty("--pocket-inline-text", options.textColor);
   if (options.surfaceColor)
     frame.style.setProperty("--pocket-inline-surface", options.surfaceColor);
-  if (options.appearance === "phone") {
-    const status = document.createElement("span");
-    status.className = "pocket-mock-status";
-    status.setAttribute("aria-hidden", "true");
-    status.textContent = activity.presentation?.storyAt?.slice(11, 16) || "Pocket";
-    const indicators = document.createElement("span");
-    indicators.textContent = "▮▮▮  ▰";
-    status.append(indicators);
-    frame.append(status);
-    if (activity.presentation?.kind === "received" && !activity.presentation.call && activity.presentation.storyAt) {
-      const clock = document.createElement("span");
-      clock.className = "pocket-mock-clock";
-      clock.textContent = activity.presentation.storyAt.slice(11, 16);
-      frame.append(clock);
-    }
-  }
   frame.append(artifact);
-  if (options.appearance === "phone" && ["sent", "batch"].includes(activity.presentation?.kind || "")) {
-    const composer = document.createElement("span");
-    composer.className = "pocket-mock-composer";
-    composer.textContent = "＋    Message";
-    composer.setAttribute("aria-hidden", "true");
-    frame.append(composer);
-  }
   return frame;
 }
 function avatar2(name, url) {
@@ -4269,21 +4352,7 @@ function buildMessageArtifact(activity, openRoute, options) {
     const status = document.createElement("span");
     status.className = "pocket-inline-artifact-copy";
     status.textContent = callSummary(presentation.call);
-    const icon = document.createElement("span");
-    icon.className = "pocket-call-symbol";
-    icon.setAttribute("aria-hidden", "true");
-    const handset = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    handset.setAttribute("viewBox", "0 0 24 24");
-    handset.setAttribute("fill", "none");
-    handset.setAttribute("stroke", "currentColor");
-    handset.setAttribute("stroke-width", "1.8");
-    handset.setAttribute("stroke-linecap", "round");
-    handset.setAttribute("stroke-linejoin", "round");
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", "M3 15.5v-3a2 2 0 0 1 .7-1.5c4.7-4 11.9-4 16.6 0a2 2 0 0 1 .7 1.5v3a1 1 0 0 1-1.2 1l-4-.8a1 1 0 0 1-.8-1v-2.3a12 12 0 0 0-6 0v2.3a1 1 0 0 1-.8 1l-4 .8a1 1 0 0 1-1.2-1Z");
-    handset.append(path);
-    icon.append(handset);
-    primary.append(name, status, icon);
+    primary.append(name, status, callSymbol());
   } else if (presentation.kind === "sent") {
     const recipient = document.createElement("span");
     recipient.className = "pocket-inline-artifact-recipient";
@@ -4315,7 +4384,7 @@ function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
   stack.className = "pocket-artifact-stack";
   if (options.includeArtifact !== false) {
-    const artifact = buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options);
+    const artifact = options.appearance === "phone" ? buildPhoneScreen(activity, openRoute, options) : buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options);
     if (artifact)
       stack.appendChild(artifact);
   }
@@ -7968,11 +8037,57 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { background:var(--pocket-inline-accent,#51459c); }
   button.pocket-inline-transcript-more { display:block; width:100%; padding:10px; margin-top:5px; border:0; border-radius:12px; background:var(--pocket-inline-surface,#202127); color:inherit; font:inherit; font-size:11px; cursor:pointer; }
   button.pocket-inline-transcript-more:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:2px; }
-  .pocket-inline-frame[data-appearance="phone"] { width:min(100%,320px); min-height:310px; padding:12px 10px 20px; border:6px solid var(--pocket-inline-surface,#17151d); outline:1px solid color-mix(in srgb,var(--pocket-inline-text,#fff) 20%,transparent); border-radius:35px; box-shadow:0 12px 30px #0003; position:relative; }
-  .pocket-inline-frame[data-appearance="phone"]::after { content:''; position:absolute; width:70px; height:3px; background:currentColor; opacity:.5; border-radius:4px; bottom:7px; left:calc(50% - 35px); }
-  .pocket-mock-status { display:flex; justify-content:space-between; padding:0 5px 16px; font-size:9px; font-weight:700; }
-  .pocket-mock-clock { display:block; font-size:46px; font-weight:300; text-align:center; margin:8px 0 20px; }
-  .pocket-mock-composer { display:block; border:1px solid color-mix(in srgb,currentColor 20%,transparent); border-radius:24px; margin-top:15px; padding:10px; opacity:.55; font-size:11px; }
+  .pocket-inline-frame.pocket-phone-device { width:min(100%,320px); aspect-ratio:9/19.5; min-height:0; padding:0 0 18px; border:5px solid #29262e; outline:1px solid #ffffff14; border-radius:34px; background:#17151b; color:#f2f0f5; box-shadow:0 8px 24px #0003; position:relative; display:flex; flex-direction:column; container-type:inline-size; }
+  .pocket-phone-device::after { content:''; position:absolute; width:70px; height:3px; background:#dedbe5; opacity:.6; border-radius:4px; bottom:7px; left:calc(50% - 35px); pointer-events:none; }
+  .pocket-phone-status { display:flex; justify-content:space-between; align-items:center; padding:13px 18px 9px; min-height:32px; flex:none; font-size:10px; font-weight:650; }
+  .pocket-phone-indicators { letter-spacing:1px; font-size:9px; }
+  .pocket-phone-screen { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+  .pocket-phone-lock { padding:18px 12px; align-items:center; }
+  .pocket-phone-lock-label { font-size:11px; color:#b9b4c3; margin-top:24px; }
+  .pocket-phone-clock { font-size:52px; line-height:1.2; font-weight:300; letter-spacing:-2px; margin-top:10px; }
+  .pocket-phone-lock-caption { font-size:10px; color:#b9b4c3; margin:8px 0 36px; }
+  .pocket-phone-notification { appearance:none; display:grid; grid-template-columns:30px minmax(0,1fr); gap:4px 8px; width:100%; padding:12px; background:#242229; color:#f2f0f5; border:1px solid #ffffff14; border-radius:15px; text-align:left; font:inherit; cursor:pointer; box-shadow:0 3px 10px #0002; }
+  .pocket-phone-app-label { display:block; font-size:10px; font-weight:600; color:#b9b4c3; }
+  .pocket-phone-notification .pocket-phone-app-label { grid-column:1/-1; margin-bottom:5px; }
+  .pocket-phone-notification-sender { font-size:12px; align-self:center; }
+  .pocket-phone-notification-copy { grid-column:2; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+  .pocket-phone-avatar { display:grid; place-items:center; width:30px; height:30px; flex:none; grid-row:auto/span 2; border-radius:50%; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 48%,#29272f); color:#f7f5ff; font-size:12px; font-weight:650; overflow:hidden; }
+  .pocket-phone-avatar img { width:100%; height:100%; object-fit:cover; }
+  .pocket-phone-app-header { appearance:none; display:block; flex:none; width:100%; padding:12px 14px; background:#211e27; color:#f2f0f5; border:0; border-bottom:1px solid #ffffff14; font:inherit; text-align:left; cursor:pointer; }
+  .pocket-phone-conversation-title { display:block; margin-top:5px; font-size:14px; line-height:1.3; overflow-wrap:anywhere; }
+  .pocket-phone-subtitle { display:block; font-size:10px; color:#b9b4c3; margin-top:3px; }
+  .pocket-phone-thread { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#514b5f transparent; padding:16px 12px; display:flex; flex-direction:column; gap:9px; }
+  .pocket-phone-message { display:grid; grid-template-columns:24px minmax(0,1fr); align-self:flex-start; max-width:94%; gap:3px 7px; }
+  .pocket-phone-message .pocket-phone-avatar { width:24px; height:24px; font-size:10px; }
+  .pocket-phone-sender { grid-column:2; font-size:10px; color:#b9b4c3; font-weight:600; }
+  .pocket-phone-bubble { grid-column:2; display:block; width:fit-content; background:#282430; border-radius:13px 13px 13px 4px; padding:8px 10px; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+  .pocket-phone-message[data-direction="sent"] { align-self:flex-end; display:block; max-width:88%; }
+  .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble { background:var(--pocket-inline-accent,#8b7dff); color:white; border-radius:13px 13px 4px 13px; }
+  .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar { visibility:hidden; }
+  .pocket-phone-message[data-continuation="true"] .pocket-phone-sender { display:none; }
+  .pocket-phone-delivery { text-align:right; font-size:9px; color:#b9b4c3; margin-top:-4px; }
+  .pocket-phone-composer { flex:none; margin:0; padding:14px; border:0; border-top:1px solid #ffffff14; border-radius:0; background:#211e27; color:#b9b4c3; font-size:12px; }
+  .pocket-phone-composer::after { content:'↑'; float:right; color:var(--pocket-inline-accent,#8b7dff); }
+  .pocket-phone-call .pocket-phone-app-header { background:transparent; border:0; font-size:10px; color:#b9b4c3; }
+  .pocket-phone-call-identity { display:flex; flex:1; min-height:0; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:20px 18px; text-align:center; }
+  .pocket-phone-call-identity .pocket-phone-avatar { width:76px; height:76px; font-size:30px; margin-bottom:12px; }
+  .pocket-phone-call-label { font-size:11px; color:#b9b4c3; }
+  .pocket-phone-call-name { font-size:20px; line-height:1.3; font-weight:600; overflow-wrap:anywhere; }
+  .pocket-phone-call-status { font-size:12px; line-height:1.5; color:#b9b4c3; }
+  .pocket-phone-call-controls { display:flex; flex:none; flex-direction:column; align-items:center; gap:10px; padding:12px 12px 48px; }
+  .pocket-phone-call-controls .pocket-call-symbol { width:52px; height:52px; margin:0; }
+  .pocket-phone-call-controls .pocket-call-symbol svg { width:26px; height:26px; }
+  .pocket-phone-call[data-call-status="ended"] .pocket-call-symbol,.pocket-phone-call[data-call-status="missed"] .pocket-call-symbol { background:#994c57; }
+  .pocket-phone-call-speaker,.pocket-phone-control-caption { font-size:10px; color:#b9b4c3; }
+  @container (max-width:240px) {
+    .pocket-phone-call-identity { gap:7px; padding:10px 12px; }
+    .pocket-phone-call-identity .pocket-phone-avatar { width:56px; height:56px; font-size:24px; margin-bottom:4px; }
+    .pocket-phone-call-name { font-size:17px; }
+    .pocket-phone-call-status { font-size:11px; }
+    .pocket-phone-call-controls { padding:8px 12px 24px; gap:8px; }
+    .pocket-phone-call-controls .pocket-call-symbol { width:44px; height:44px; }
+  }
+  .pocket-phone-notification:focus-visible,.pocket-phone-app-header:focus-visible,.pocket-phone-thread:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:-2px; }
   .pocket-inline-frame .pocket-inline-call { display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px; }
   .pocket-inline-call .pocket-inline-avatar { width:44px; height:44px; font-size:18px; }
   .pocket-call-symbol { display:grid; place-items:center; width:36px; height:36px; border-radius:50%; background:#476b54; color:white; margin-top:6px; }
