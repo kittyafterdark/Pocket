@@ -2023,7 +2023,9 @@ function trackerDisplay(tracker, state) {
   const latest = current.history.at(-1);
   if (latest && current.presentation !== "relationship" && current.presentation !== "compact") {
     const delta = typeof latest.next === "number" && typeof latest.previous === "number" ? latest.next - latest.previous : null;
-    card.append(el("span", "lp-tracker-last-change", delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? "+" : ""}${Number(delta.toFixed(2))}${current.unit} · ${latest.source === "jev" ? "Open JEV" : latest.source === "model" ? "Story" : latest.source === "automatic" ? "Time" : "You"}`));
+    const source = { jev: "Open JEV", model: "Story", tag: "Story", automatic: "Time", migration: "Imported", user: "You" }[latest.source];
+    const change = delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? "+" : ""}${Number(delta.toFixed(2))}${current.unit}`;
+    card.append(el("span", "lp-tracker-last-change", `${change} · ${source}`));
   }
   const footer = el("div", "lp-tracker-meta");
   footer.append(el("span", "", current.presentation === "timer" ? `${current.clock === "real" ? "Real" : "Story"} time` : status), el("span", "", current.updateMode === "jev" ? "Open JEV" : current.updateMode === "model" ? "Story updates" : current.updateMode === "automatic" ? "Automatic" : "Manual"));
