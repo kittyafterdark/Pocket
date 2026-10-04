@@ -5212,7 +5212,7 @@ class PocketController {
         this.cameraBusy = false;
         this.cameraProgress = "";
         const contact = this.state.contacts.find((entry) => entry.id === contactId);
-        this.cameraDraft = { scene: contact ? `Portrait of ${contact.name}. ${contact.phoneProfile?.appearance || contact.identityBrief || contact.description}. Head and shoulders, one subject, looking at the camera, clean background.` : "", enhance: false };
+        this.cameraDraft = { scene: contact ? [`Portrait of ${contact.name}`, contact.phoneProfile?.appearance || contact.identityBrief || contact.description, "Head and shoulders, one subject, looking at the camera, clean background"].filter(Boolean).map((part) => part.trim().replace(/[.!]+$/, "")).join(". ") + "." : "", enhance: false };
       }
       this.send("lumiphone:mark_read", { app: "camera" });
     } else if (route.app === "gallery") {
