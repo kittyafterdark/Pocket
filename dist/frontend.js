@@ -6577,7 +6577,10 @@ ${body}`;
     const progress = el("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
     progress.setAttribute("role", "status");
     progress.setAttribute("aria-live", "polite");
-    const optionsDrawer = disclosure("Camera options", purpose, aspect, connection, fieldBlock("Checkpoint override", model), optionRow);
+    const optionsDrawer = button("Camera options", "lp-camera-options-chip");
+    const optionFields = el("div", "lp-camera-sheet-fields");
+    optionFields.append(purpose, aspect, connection, fieldBlock("Checkpoint override", model), optionRow);
+    optionsDrawer.addEventListener("click", () => showPocketSheet(optionsDrawer, "Camera options", optionFields));
     footer.append(el("p", "lp-camera-caption", this.cameraContactId ? "PORTRAIT" : "PHOTO"), shutterRow, progress, optionsDrawer);
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button("Use photo", "lp-button");
@@ -6612,7 +6615,11 @@ ${body}`;
         });
         framing.append(fieldBlock(label, slider));
       }
-      footer.append(disclosure("Avatar framing", crop, framing), use);
+      const frame = button("Avatar framing", "lp-camera-options-chip");
+      const frameFields = el("div", "lp-camera-sheet-fields");
+      frameFields.append(crop, framing);
+      frame.addEventListener("click", () => showPocketSheet(frame, "Avatar framing", frameFields));
+      footer.append(frame, use);
     }
     controls.append(mode, viewfinder, footer);
     shutter.setAttribute("aria-label", "Take photo");
@@ -8336,6 +8343,8 @@ ${POCKET_DESIGN_SYSTEM}
   .lumiphone-shell .lp-camera-bottom-strip .lp-copy { color:#ffffff9e; }
   .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
   .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
+  .lp-camera-options-chip { appearance:none; display:block; margin:8px auto 0; border:1px solid #ffffff24; border-radius:20px; padding:7px 14px; background:#ffffff0b; color:#ffffffb8; font:inherit; font-size:11px; cursor:pointer; }
+  .lp-camera-sheet-fields { display:grid; gap:12px; text-align:left; }
   .lp-avatar-framing { display:grid; place-items:center; padding:12px; }
   .lp-avatar-framing img { width:96px; height:96px; border-radius:50%; object-fit:cover; }
   .lp-avatar-framing-controls { display:grid; gap:12px; }

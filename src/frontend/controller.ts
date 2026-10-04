@@ -2429,7 +2429,10 @@ class PocketController {
     shutterRow.append(cancel, shutter, album)
     const progress = el('div', 'lp-camera-progress', this.cameraProgress || (!this.caps?.imageGen ? 'Grant Image Generation permission in Settings' : ''))
     progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite')
-    const optionsDrawer = disclosure('Camera options', purpose, aspect, connection, fieldBlock('Checkpoint override', model), optionRow)
+    const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
+    const optionFields = el('div', 'lp-camera-sheet-fields')
+    optionFields.append(purpose, aspect, connection, fieldBlock('Checkpoint override', model), optionRow)
+    optionsDrawer.addEventListener('click', () => showPocketSheet(optionsDrawer, 'Camera options', optionFields))
     footer.append(el('p', 'lp-camera-caption', this.cameraContactId ? 'PORTRAIT' : 'PHOTO'), shutterRow, progress, optionsDrawer)
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button('Use photo', 'lp-button')
@@ -2451,7 +2454,10 @@ class PocketController {
         const slider = el('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.value = String(this.cameraFocus[axis]); slider.addEventListener('input', () => { this.cameraFocus[axis] = Number(slider.value); preview.style.objectPosition = `${this.cameraFocus.x}% ${this.cameraFocus.y}%` })
         framing.append(fieldBlock(label, slider))
       }
-      footer.append(disclosure('Avatar framing', crop, framing), use)
+      const frame = button('Avatar framing', 'lp-camera-options-chip')
+      const frameFields = el('div', 'lp-camera-sheet-fields'); frameFields.append(crop, framing)
+      frame.addEventListener('click', () => showPocketSheet(frame, 'Avatar framing', frameFields))
+      footer.append(frame, use)
     }
     controls.append(mode, viewfinder, footer)
     shutter.setAttribute('aria-label', 'Take photo')

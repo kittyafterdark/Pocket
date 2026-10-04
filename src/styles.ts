@@ -917,6 +917,8 @@ ${POCKET_DESIGN_SYSTEM}
   .lumiphone-shell .lp-camera-bottom-strip .lp-copy { color:#ffffff9e; }
   .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
   .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
+  .lp-camera-options-chip { appearance:none; display:block; margin:8px auto 0; border:1px solid #ffffff24; border-radius:20px; padding:7px 14px; background:#ffffff0b; color:#ffffffb8; font:inherit; font-size:11px; cursor:pointer; }
+  .lp-camera-sheet-fields { display:grid; gap:12px; text-align:left; }
   .lp-avatar-framing { display:grid; place-items:center; padding:12px; }
   .lp-avatar-framing img { width:96px; height:96px; border-radius:50%; object-fit:cover; }
   .lp-avatar-framing-controls { display:grid; gap:12px; }
