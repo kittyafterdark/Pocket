@@ -15,6 +15,52 @@ import { PocketRouteHistory } from '../src/frontend/router.js'
 import { normalizeContactGroups, saveContactGroup } from '../src/domain/contact-groups.js'
 import { aspectDimensions, effectiveImageRequest } from '../src/backend/image-jobs.js'
 import type { SwarmVisualProfile, PocketContactGroup } from '../src/types.js'
+import { applyJevAnswer, jevQuestion, normalizeJevSettings } from '../src/domain/jev.js'
+import { runOpenJev } from '../src/backend/jev.js'
+
+describe('Open JEV tracker decisions', () => {
+  const now = '2026-10-03T20:00:00.000Z'
+  const numeric = () => normalizeTracker({ label: 'Trust', kind: 'meter', value: 50, min: 0, max: 100, updateMode: 'jev', jev: { question: 'How much does Alice trust you?', minConfidence: .6, levels: [{ value: 0, label: 'Distrust' }, { value: 20, label: 'Cautious' }, { value: 100, label: 'Complete trust' }] } }, { now })!
+  const answer = { type: 'score', options: ['Distrust', 'Cautious', 'Complete trust'], probs: [0, .75, .25], expected: 2.25 }
+  test('one-based Open JEV scores interpolate nonuniform anchors and preserve provenance', () => {
+    const next = applyJevAnswer(numeric(), answer, 'turn1', now)
+    expect(next.value).toBe(40)
+    expect(next.history.at(-1)?.source).toBe('jev')
+    expect(normalizeTracker(next)!.history.at(-1)?.source).toBe('jev')
+    expect(next.allowModelWrite).toBe(false)
+  })
+  test('uncertain and malformed answers preserve values and history', () => {
+    const tracker = numeric()
+    const uncertain = applyJevAnswer(tracker, { ...answer, probs: [.34, .33, .33], expected: 1.99 }, 'turn2', now)
+    expect(uncertain.value).toBe(50); expect(uncertain.history).toHaveLength(0); expect(uncertain.jevResult?.status).toBe('uncertain')
+    for (const invalid of [{ ...answer, expected: 100 }, { ...answer, probs: [0, '0.75', .25] }, { ...answer, options: ['Wrong', 'Cautious', 'Complete trust'] }, { ...answer, probs: [0, .75, .75] }]) {
+      const next = applyJevAnswer(tracker, invalid, 'turn3', now); expect(next.value).toBe(50); expect(next.jevResult?.status).toBe('invalid')
+    }
+  })
+  test('state choices use exact allowed options; unchanged values produce no history', () => {
+    const tracker = normalizeTracker({ ...numeric(), kind: 'state', state: 'Friends', states: ['Strangers', 'Friends'] })!
+    const chosen = { type: 'choice', options: ['Strangers', 'Friends'], probs: [.1, .9], chosen: 'Friends', chosen_index: 1 }
+    const same = applyJevAnswer(tracker, chosen, 'turn4', now)
+    expect(same.history).toHaveLength(0); expect(same.jevResult?.status).toBe('unchanged')
+    expect(applyJevAnswer(tracker, { ...chosen, chosen: 'Lovers' }, 'turn5', now).jevResult?.status).toBe('invalid')
+    expect(jevQuestion(tracker).type).toBe('choice')
+  })
+  test('configuration rejects invalid rubrics and timer inference', () => {
+    const tracker = numeric()
+    expect(() => validateTrackerConfig({ ...tracker, jev: { ...tracker.jev, levels: [{ value: 100, label: 'High' }, { value: 0, label: 'Low' }] } })).toThrow()
+    expect(() => jevQuestion({ ...tracker, kind: 'timer', direction: 'down' })).toThrow()
+    expect(normalizeJevSettings(null).enabled).toBe(false)
+  })
+  test('Gradio protocol reads generated snapshots and requires a completed job', async () => {
+    const calls: Array<{ url: string; options: any }> = []
+    const snapshot = { scorer: { questions: [{ id: 'q1', ...answer }] }, done: true }
+    const stream = `event: heartbeat\ndata: null\n\nevent: generating\ndata: ${JSON.stringify([snapshot])}\n\nevent: complete\ndata: ${JSON.stringify([snapshot])}\n\n`
+    const result = await runOpenJev(async (url, options) => { calls.push({ url, options }); return { status: 200, body: options ? '{"event_id":"job1"}' : stream } }, 'https://jev.example', 'Story', [jevQuestion(numeric())])
+    expect(result).toHaveLength(1); expect(calls[0].url).toEndWith('/gradio_api/call/v2/run')
+    expect(JSON.parse(calls[0].options.body).compare).toBe(false); expect(JSON.parse(calls[0].options.body).verify).toBe(false)
+    await expect(runOpenJev(async (_url, options) => ({ status: 200, body: options ? '{"event_id":"job1"}' : stream.replace('event: complete', 'event: heartbeat') }), 'https://jev.example', 'Story', [jevQuestion(numeric())])).rejects.toThrow('incomplete')
+  })
+})
 
 describe('portable casts and image purposes', () => {
   test('migrates old banks and prunes invalid cast members without merging identities', () => {

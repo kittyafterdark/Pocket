@@ -1,279 +1,12 @@
 // @bun
-// src/domain/preferences.ts
-var PREFERENCES_VERSION = 5;
-var PREFERENCES_PATH = "device/preferences.json";
-var HEX = /^#[0-9a-f]{6}$/i;
-var THEME_COLORS = {
-  midnight: {
-    accent: "#8b7dff",
-    bezel: "#17151d",
-    background: "#0d0c12",
-    surface: "#17131f",
-    text: "#f8f6ff",
-    wallpaperPrimary: "#171327",
-    wallpaperSecondary: "#123a4a",
-    chatPrimary: "#2c2448",
-    chatSecondary: "#13111c"
-  },
-  porcelain: {
-    accent: "#6657d9",
-    bezel: "#d6d0cb",
-    background: "#f2f0ed",
-    surface: "#f7f3ef",
-    text: "#201d25",
-    wallpaperPrimary: "#eeeae6",
-    wallpaperSecondary: "#cfd9e8",
-    chatPrimary: "#e4def8",
-    chatSecondary: "#faf8f6"
-  },
-  rose: {
-    accent: "#ff78a8",
-    bezel: "#321722",
-    background: "#1b1018",
-    surface: "#28131c",
-    text: "#fff4f7",
-    wallpaperPrimary: "#4a1830",
-    wallpaperSecondary: "#7a294e",
-    chatPrimary: "#4b1d31",
-    chatSecondary: "#1d1117"
-  },
-  forest: {
-    accent: "#63d8a4",
-    bezel: "#10251d",
-    background: "#0d1713",
-    surface: "#11231c",
-    text: "#f1fff8",
-    wallpaperPrimary: "#14372a",
-    wallpaperSecondary: "#1d5a41",
-    chatPrimary: "#17412f",
-    chatSecondary: "#0f1c17"
-  }
-};
-function record(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function text(value, fallback = "", max = 12000) {
-  return typeof value === "string" ? value.trim().slice(0, max) || fallback : fallback;
-}
-function bool(value, fallback) {
-  return typeof value === "boolean" ? value : fallback;
-}
-function numberIn(value, fallback, min, max) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
-}
-function defaultWallpaper() {
-  return { source: null, fit: "cover", focalX: 0.5, focalY: 0.5, scrim: 0.22 };
-}
-function normalizeImageSource(value) {
-  const raw = record(value);
-  if (raw.kind === "gallery") {
-    const imageId = text(raw.imageId, "", 180);
-    return imageId ? { kind: "gallery", imageId } : null;
-  }
-  if (raw.kind === "asset") {
-    const assetId = text(raw.assetId, "", 180);
-    return assetId ? { kind: "asset", assetId } : null;
-  }
-  if (raw.kind === "url") {
-    const url = text(raw.url, "", 2000);
-    return /^(https?:\/\/|\/)/i.test(url) ? { kind: "url", url } : null;
-  }
-  return null;
-}
-function normalizeWallpaper(value, legacyUrl = "") {
-  const raw = record(value);
-  const fit = raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover";
-  const migratedUrl = text(legacyUrl, "", 2000);
-  return {
-    source: normalizeImageSource(raw.source) || (/^(https?:\/\/|\/)/i.test(migratedUrl) ? { kind: "url", url: migratedUrl } : null),
-    fit,
-    focalX: numberIn(raw.focalX, 0.5, 0, 1),
-    focalY: numberIn(raw.focalY, 0.5, 0, 1),
-    scrim: numberIn(raw.scrim, 0.22, 0, 0.85)
-  };
-}
-function safeColor(value, fallback) {
-  const candidate = text(value, fallback, 16);
-  return HEX.test(candidate) ? candidate.toLowerCase() : fallback;
-}
-function themePalette(theme) {
-  return structuredClone(THEME_COLORS[theme === "custom" ? "midnight" : theme]);
-}
-function defaultPreferences() {
-  return {
-    version: PREFERENCES_VERSION,
-    theme: "midnight",
-    colors: themePalette("midnight"),
-    homeWallpaper: defaultWallpaper(),
-    chatWallpaper: defaultWallpaper(),
-    handsetScale: 1,
-    uiScale: 1,
-    animation: "spring",
-    animationDurationMs: 280,
-    reducedMotion: false,
-    autoOpenOnModelAction: false,
-    pushNotifications: false,
-    useSwarmProfile: true,
-    sceneEnhancer: true,
-    generationMode: "roleplay",
-    sidecarConnectionId: "",
-    sidecarModelOverride: "",
-    autoReplyAfterSend: false,
-    replyCadence: "natural",
-    ambientMessaging: "off",
-    roleplayContextMode: "smart",
-    showReconciliationStatus: true,
-    recentRoleplayMessages: 8,
-    notificationSounds: false,
-    notificationPreviews: true,
-    notifyMessages: true,
-    notifyContacts: true,
-    notifyTrackers: true,
-    customCss: "",
-    personaAppearance: {},
-    generationHistory: [],
-    manualVisualProfile: { positive: "", negative: "", model: "", connectionId: "", loras: [], parameters: {} }
-  };
-}
-function normalizePreferences(value) {
-  const fallback = defaultPreferences();
-  const raw = record(value);
-  const version = Number(raw.version ?? 0);
-  if (Number.isFinite(version) && version > PREFERENCES_VERSION)
-    return fallback;
-  const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "custom"]);
-  const theme = allowedThemes.has(raw.theme) ? raw.theme : fallback.theme;
-  const preset = themePalette(theme);
-  const colors = record(raw.colors);
-  const legacyAccent = safeColor(raw.accent, preset.accent);
-  const legacyBezel = safeColor(raw.bezelColor, preset.bezel);
-  const palette = {
-    accent: safeColor(colors.accent, legacyAccent),
-    bezel: safeColor(colors.bezel, legacyBezel),
-    background: safeColor(colors.background, preset.background),
-    surface: safeColor(colors.surface, preset.surface),
-    text: safeColor(colors.text, preset.text),
-    wallpaperPrimary: safeColor(colors.wallpaperPrimary, preset.wallpaperPrimary),
-    wallpaperSecondary: safeColor(colors.wallpaperSecondary, preset.wallpaperSecondary),
-    chatPrimary: safeColor(colors.chatPrimary, preset.chatPrimary),
-    chatSecondary: safeColor(colors.chatSecondary, preset.chatSecondary)
-  };
-  const manual = record(raw.manualVisualProfile);
-  const allowedAnimations = new Set(["spring", "slide", "fade", "none"]);
-  const history = (Array.isArray(raw.generationHistory) ? raw.generationHistory : []).slice(-24).flatMap((entry) => {
-    const item = record(entry);
-    const requestId = text(item.requestId, "", 180);
-    const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test"]);
-    if (!requestId || !tasks.has(task))
-      return [];
-    const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
-    return [{
-      requestId,
-      task,
-      mode: item.mode === "sidecar" ? "sidecar" : "roleplay",
-      connectionId: text(item.connectionId, "", 180),
-      connectionName: text(item.connectionName, "", 180),
-      provider: text(item.provider, "", 120),
-      model: text(item.model, "", 500),
-      status,
-      startedAt: text(item.startedAt, new Date(0).toISOString(), 40),
-      completedAt: text(item.completedAt, "", 40) || undefined,
-      latencyMs: Number.isFinite(Number(item.latencyMs)) ? Math.max(0, Math.round(Number(item.latencyMs))) : undefined,
-      error: text(item.error, "", 500) || undefined
-    }];
-  });
-  const rawPersonaAppearance = record(raw.personaAppearance);
-  const personaAppearance = {};
-  for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
-    if (!personaId || personaId.length > 180)
-      continue;
-    const item = record(value);
-    const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
-    const overrideColors = record(item.colors);
-    const overridePreset = themePalette(overrideTheme);
-    personaAppearance[personaId] = {
-      enabled: bool(item.enabled, false),
-      theme: overrideTheme,
-      colors: {
-        accent: safeColor(overrideColors.accent, overridePreset.accent),
-        bezel: safeColor(overrideColors.bezel, overridePreset.bezel),
-        background: safeColor(overrideColors.background, overridePreset.background),
-        surface: safeColor(overrideColors.surface, overridePreset.surface),
-        text: safeColor(overrideColors.text, overridePreset.text),
-        wallpaperPrimary: safeColor(overrideColors.wallpaperPrimary, overridePreset.wallpaperPrimary),
-        wallpaperSecondary: safeColor(overrideColors.wallpaperSecondary, overridePreset.wallpaperSecondary),
-        chatPrimary: safeColor(overrideColors.chatPrimary, overridePreset.chatPrimary),
-        chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary)
-      },
-      customCss: text(item.customCss, "", 30000),
-      homeWallpaper: normalizeWallpaper(item.homeWallpaper, text(item.wallpaperImageUrl, "", 2000)),
-      chatWallpaper: normalizeWallpaper(item.chatWallpaper, text(item.chatWallpaperImageUrl, "", 2000))
-    };
-  }
-  const contextMode = raw.roleplayContextMode === "off" || raw.roleplayContextMode === "recent" || raw.roleplayContextMode === "story" ? raw.roleplayContextMode : "smart";
-  return {
-    version: PREFERENCES_VERSION,
-    theme,
-    colors: palette,
-    homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
-    chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
-    handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
-    uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
-    animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
-    animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
-    reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
-    autoOpenOnModelAction: bool(raw.autoOpenOnModelAction, fallback.autoOpenOnModelAction),
-    pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
-    useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
-    sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
-    generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
-    sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
-    sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
-    autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
-    replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
-    ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
-    roleplayContextMode: contextMode,
-    showReconciliationStatus: bool(raw.showReconciliationStatus, fallback.showReconciliationStatus),
-    recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
-    notificationSounds: bool(raw.notificationSounds, fallback.notificationSounds),
-    notificationPreviews: bool(raw.notificationPreviews, fallback.notificationPreviews),
-    notifyMessages: bool(raw.notifyMessages, fallback.notifyMessages),
-    notifyContacts: bool(raw.notifyContacts, fallback.notifyContacts),
-    notifyTrackers: bool(raw.notifyTrackers, fallback.notifyTrackers),
-    customCss: text(raw.customCss, "", 30000),
-    personaAppearance,
-    generationHistory: history,
-    manualVisualProfile: {
-      positive: text(manual.positive, "", 12000),
-      negative: text(manual.negative, "", 12000),
-      model: text(manual.model, "", 500),
-      connectionId: text(manual.connectionId, "", 200),
-      loras: (Array.isArray(manual.loras) ? manual.loras : []).slice(0, 24).flatMap((entry) => {
-        const item = record(entry);
-        const name = text(item.name, "", 500);
-        if (!name)
-          return [];
-        return [{ name, weight: numberIn(item.weight, 1, -4, 4) }];
-      }),
-      parameters: record(manual.parameters)
-    }
-  };
-}
-function isFuturePreferences(value) {
-  const raw = record(value);
-  return Number.isFinite(Number(raw.version)) && Number(raw.version) > PREFERENCES_VERSION;
-}
-
 // src/domain/trackers.ts
 var TRACKER_HISTORY_LIMIT = 40;
 var KINDS = new Set(["meter", "counter", "state", "timer"]);
 var CLOCKS = new Set(["real", "roleplay"]);
-var MODES = new Set(["manual", "model", "automatic"]);
+var MODES = new Set(["manual", "model", "automatic", "jev"]);
 var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
 var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
-function record2(value) {
+function record(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function clean(value, max = 160) {
@@ -303,6 +36,8 @@ function uniqueTrackerKey(label, trackers) {
   return key;
 }
 function validateTrackerConfig(value) {
+  if (value.updateMode === "jev")
+    validateJevTracker(value);
   if (!clean(value.label, 120))
     throw new Error("Give your tracker a name.");
   if (!KINDS.has(value.kind))
@@ -339,22 +74,22 @@ function validateTrackerConfig(value) {
     throw new Error("Choose a non-zero change per hour for time updates.");
   if (value.updateMode === "model" && value.allowModelWrite !== true)
     throw new Error("Story updates require model changes to be enabled.");
-  if (!record2(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
+  if (!record(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
     throw new Error("Choose who or what this tracker belongs to.");
   for (const band of Array.isArray(value.bands) ? value.bands : []) {
-    if (!record2(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
+    if (!record(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
       throw new Error("Each band needs a label and a valid range inside the tracker range.");
   }
 }
 function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
-  if (!record2(value))
+  if (!record(value))
     return fallback;
   const type = TARGETS.has(value.type) ? value.type : fallback.type;
   return { type, id: clean(value.id, 180), label: clean(value.label, 160) || fallback.label };
 }
 function normalizeBands(value, min, max, color) {
   const bands = (Array.isArray(value) ? value : []).flatMap((item) => {
-    if (!record2(item))
+    if (!record(item))
       return [];
     const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
     const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
@@ -372,10 +107,10 @@ function normalizeBands(value, min, max, color) {
 }
 function normalizeHistory(value) {
   return (Array.isArray(value) ? value : []).flatMap((item) => {
-    if (!record2(item))
+    if (!record(item))
       return [];
     const operation = ["set", "add", "subtract", "reset", "set_state", "automatic"].includes(String(item.operation)) ? item.operation : "set";
-    const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" ? item.source : "user";
+    const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" || item.source === "jev" ? item.source : "user";
     const createdAt = iso(item.createdAt, new Date().toISOString());
     return [{
       id: clean(item.id, 160) || trackerId("hist"),
@@ -391,7 +126,7 @@ function normalizeHistory(value) {
   }).slice(-TRACKER_HISTORY_LIMIT);
 }
 function normalizeTracker(value, context = {}) {
-  if (!record2(value))
+  if (!record(value))
     return null;
   const now = context.now || new Date().toISOString();
   const label = clean(value.label, 120);
@@ -423,7 +158,9 @@ function normalizeTracker(value, context = {}) {
     target,
     updateMode,
     clock,
-    allowModelWrite: legacy ? false : value.allowModelWrite === true,
+    allowModelWrite: legacy || updateMode === "jev" ? false : value.allowModelWrite === true,
+    jev: normalizeJevConfig(value.jev),
+    jevResult: normalizeJevResult(value.jevResult),
     presentation,
     bands: normalizeBands(value.bands, min, max, color),
     history: normalizeHistory(value.history),
@@ -538,6 +275,360 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
       roleplayAt: clean(roleplayNow, 80) || undefined
     });
   return { tracker: next, changed: true };
+}
+
+// src/domain/jev.ts
+var OPEN_JEV_ENDPOINT = "https://pngwn-open-jev.hf.space";
+var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+var clean2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+function normalizeJevSettings(value) {
+  const raw = object(value) ? value : {};
+  let endpoint = clean2(raw.endpoint, 500) || OPEN_JEV_ENDPOINT;
+  try {
+    const url = new URL(endpoint);
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+      throw new Error;
+    endpoint = url.href.replace(/\/$/, "");
+  } catch {
+    endpoint = OPEN_JEV_ENDPOINT;
+  }
+  return { enabled: raw.enabled === true, endpoint, autoAfterTurn: raw.autoAfterTurn === true };
+}
+function normalizeJevConfig(value) {
+  const raw = object(value) ? value : {};
+  const levels = (Array.isArray(raw.levels) ? raw.levels : []).flatMap((entry) => object(entry) && typeof entry.value === "number" && Number.isFinite(entry.value) && clean2(entry.label, 160) ? [{ value: entry.value, label: clean2(entry.label, 160) }] : []).slice(0, 10);
+  return { question: clean2(raw.question, 240), levels, minConfidence: typeof raw.minConfidence === "number" && Number.isFinite(raw.minConfidence) ? Math.min(1, Math.max(0, raw.minConfidence)) : 0.65 };
+}
+function validateJevTracker(tracker) {
+  const raw = object(tracker.jev) ? tracker.jev : {};
+  const config = normalizeJevConfig(raw);
+  if (!config.question || String(raw.question).trim().length > 240)
+    throw new Error("Give JEV a short question (up to 240 characters).");
+  if (tracker.kind === "timer" || tracker.kind === "counter")
+    throw new Error("JEV estimates values and states. Quantities and timers use exact updates.");
+  if (typeof raw.minConfidence !== "number" || raw.minConfidence < 0 || raw.minConfidence > 1 || !Number.isFinite(raw.minConfidence))
+    throw new Error("JEV confidence must be between 0 and 1.");
+  if (tracker.kind === "state") {
+    if (!Array.isArray(tracker.states) || tracker.states.length < 2 || tracker.states.length > 16)
+      throw new Error("JEV needs between 2 and 16 allowed states.");
+  } else {
+    if (!Array.isArray(raw.levels) || raw.levels.length < 2 || raw.levels.length > 10 || config.levels.length !== raw.levels.length)
+      throw new Error("JEV needs 2\u201310 described numeric levels.");
+    if (config.levels.some((level, index) => level.value < Number(tracker.min) || level.value > Number(tracker.max) || index > 0 && level.value <= config.levels[index - 1].value))
+      throw new Error("JEV levels must increase and fit the tracker range.");
+    if (new Set(config.levels.map((level) => level.label)).size !== config.levels.length)
+      throw new Error("Give each JEV level a different description.");
+  }
+}
+function normalizeJevResult(value) {
+  if (!object(value) || !["applied", "unchanged", "uncertain", "invalid"].includes(String(value.status)))
+    return;
+  return { sourceKey: clean2(value.sourceKey, 200), status: value.status, evaluatedAt: clean2(value.evaluatedAt, 80), message: clean2(value.message, 300), confidence: typeof value.confidence === "number" && Number.isFinite(value.confidence) ? value.confidence : undefined };
+}
+function jevQuestion(tracker) {
+  validateJevTracker(tracker);
+  return { type: tracker.kind === "state" ? "choice" : "score", question: tracker.jev.question, options: tracker.kind === "state" ? tracker.states : tracker.jev.levels.map((level) => level.label) };
+}
+function applyJevAnswer(tracker, answer, sourceKey, now, roleplayNow) {
+  if (tracker.updateMode !== "jev")
+    return tracker;
+  const config = tracker.jev;
+  const result = (status, message, confidence, next = tracker) => ({ ...next, jevResult: { sourceKey, status, message, confidence, evaluatedAt: now } });
+  if (!object(answer) || answer.type !== (tracker.kind === "state" ? "choice" : "score") || !Array.isArray(answer.probs))
+    return result("invalid", "JEV returned an invalid answer.");
+  const options = tracker.kind === "state" ? tracker.states : config.levels.map((level) => level.label);
+  const probs = answer.probs;
+  if (!Array.isArray(answer.options) || JSON.stringify(answer.options) !== JSON.stringify(options) || probs.length !== options.length || probs.some((p) => typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) || Math.abs(probs.reduce((sum, p) => sum + p, 0) - 1) > 0.002)
+    return result("invalid", "JEV probabilities or rubric did not match.");
+  const confidence = Math.max(...probs);
+  if (confidence < config.minConfidence)
+    return result("uncertain", "Confidence was below the threshold; kept the current value.", confidence);
+  let next;
+  const reason = `Open JEV \xB7 ${Math.round(confidence * 100)}% confidence \xB7 ${config.question}`;
+  if (tracker.kind === "state") {
+    const index = probs.indexOf(confidence);
+    if (answer.chosen !== options[index] || answer.chosen_index !== index)
+      return result("invalid", "JEV choice did not match its probabilities.", confidence);
+    next = applyTrackerOperation(tracker, { operation: "set_state", state: options[index], reason, source: "jev", now, roleplayNow });
+  } else {
+    const expected = probs.reduce((sum, p, index) => sum + p * (index + 1), 0);
+    if (typeof answer.expected !== "number" || Math.abs(answer.expected - expected) > 0.015)
+      return result("invalid", "JEV score did not match its probabilities.", confidence);
+    const position = Math.min(config.levels.length - 1, Math.max(0, expected - 1));
+    const low = Math.floor(position), high = Math.ceil(position);
+    const amount = config.levels[low].value + (config.levels[high].value - config.levels[low].value) * (position - low);
+    next = applyTrackerOperation(tracker, { operation: "set", amount: Number(amount.toFixed(2)), reason, source: "jev", now, roleplayNow });
+  }
+  return result(next === tracker ? "unchanged" : "applied", next === tracker ? "JEV agreed with the current value." : "Updated from the story.", confidence, next);
+}
+
+// src/domain/preferences.ts
+var PREFERENCES_VERSION = 5;
+var PREFERENCES_PATH = "device/preferences.json";
+var HEX = /^#[0-9a-f]{6}$/i;
+var THEME_COLORS = {
+  midnight: {
+    accent: "#8b7dff",
+    bezel: "#17151d",
+    background: "#0d0c12",
+    surface: "#17131f",
+    text: "#f8f6ff",
+    wallpaperPrimary: "#171327",
+    wallpaperSecondary: "#123a4a",
+    chatPrimary: "#2c2448",
+    chatSecondary: "#13111c"
+  },
+  porcelain: {
+    accent: "#6657d9",
+    bezel: "#d6d0cb",
+    background: "#f2f0ed",
+    surface: "#f7f3ef",
+    text: "#201d25",
+    wallpaperPrimary: "#eeeae6",
+    wallpaperSecondary: "#cfd9e8",
+    chatPrimary: "#e4def8",
+    chatSecondary: "#faf8f6"
+  },
+  rose: {
+    accent: "#ff78a8",
+    bezel: "#321722",
+    background: "#1b1018",
+    surface: "#28131c",
+    text: "#fff4f7",
+    wallpaperPrimary: "#4a1830",
+    wallpaperSecondary: "#7a294e",
+    chatPrimary: "#4b1d31",
+    chatSecondary: "#1d1117"
+  },
+  forest: {
+    accent: "#63d8a4",
+    bezel: "#10251d",
+    background: "#0d1713",
+    surface: "#11231c",
+    text: "#f1fff8",
+    wallpaperPrimary: "#14372a",
+    wallpaperSecondary: "#1d5a41",
+    chatPrimary: "#17412f",
+    chatSecondary: "#0f1c17"
+  }
+};
+function record2(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function text(value, fallback = "", max = 12000) {
+  return typeof value === "string" ? value.trim().slice(0, max) || fallback : fallback;
+}
+function bool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function numberIn(value, fallback, min, max) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+function defaultWallpaper() {
+  return { source: null, fit: "cover", focalX: 0.5, focalY: 0.5, scrim: 0.22 };
+}
+function normalizeImageSource(value) {
+  const raw = record2(value);
+  if (raw.kind === "gallery") {
+    const imageId = text(raw.imageId, "", 180);
+    return imageId ? { kind: "gallery", imageId } : null;
+  }
+  if (raw.kind === "asset") {
+    const assetId = text(raw.assetId, "", 180);
+    return assetId ? { kind: "asset", assetId } : null;
+  }
+  if (raw.kind === "url") {
+    const url = text(raw.url, "", 2000);
+    return /^(https?:\/\/|\/)/i.test(url) ? { kind: "url", url } : null;
+  }
+  return null;
+}
+function normalizeWallpaper(value, legacyUrl = "") {
+  const raw = record2(value);
+  const fit = raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover";
+  const migratedUrl = text(legacyUrl, "", 2000);
+  return {
+    source: normalizeImageSource(raw.source) || (/^(https?:\/\/|\/)/i.test(migratedUrl) ? { kind: "url", url: migratedUrl } : null),
+    fit,
+    focalX: numberIn(raw.focalX, 0.5, 0, 1),
+    focalY: numberIn(raw.focalY, 0.5, 0, 1),
+    scrim: numberIn(raw.scrim, 0.22, 0, 0.85)
+  };
+}
+function safeColor(value, fallback) {
+  const candidate = text(value, fallback, 16);
+  return HEX.test(candidate) ? candidate.toLowerCase() : fallback;
+}
+function themePalette(theme) {
+  return structuredClone(THEME_COLORS[theme === "custom" ? "midnight" : theme]);
+}
+function defaultPreferences() {
+  return {
+    version: PREFERENCES_VERSION,
+    theme: "midnight",
+    colors: themePalette("midnight"),
+    homeWallpaper: defaultWallpaper(),
+    chatWallpaper: defaultWallpaper(),
+    handsetScale: 1,
+    uiScale: 1,
+    animation: "spring",
+    animationDurationMs: 280,
+    reducedMotion: false,
+    autoOpenOnModelAction: false,
+    pushNotifications: false,
+    useSwarmProfile: true,
+    sceneEnhancer: true,
+    jev: normalizeJevSettings(null),
+    generationMode: "roleplay",
+    sidecarConnectionId: "",
+    sidecarModelOverride: "",
+    autoReplyAfterSend: false,
+    replyCadence: "natural",
+    ambientMessaging: "off",
+    roleplayContextMode: "smart",
+    showReconciliationStatus: true,
+    recentRoleplayMessages: 8,
+    notificationSounds: false,
+    notificationPreviews: true,
+    notifyMessages: true,
+    notifyContacts: true,
+    notifyTrackers: true,
+    customCss: "",
+    personaAppearance: {},
+    generationHistory: [],
+    manualVisualProfile: { positive: "", negative: "", model: "", connectionId: "", loras: [], parameters: {} }
+  };
+}
+function normalizePreferences(value) {
+  const fallback = defaultPreferences();
+  const raw = record2(value);
+  const version = Number(raw.version ?? 0);
+  if (Number.isFinite(version) && version > PREFERENCES_VERSION)
+    return fallback;
+  const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "custom"]);
+  const theme = allowedThemes.has(raw.theme) ? raw.theme : fallback.theme;
+  const preset = themePalette(theme);
+  const colors = record2(raw.colors);
+  const legacyAccent = safeColor(raw.accent, preset.accent);
+  const legacyBezel = safeColor(raw.bezelColor, preset.bezel);
+  const palette = {
+    accent: safeColor(colors.accent, legacyAccent),
+    bezel: safeColor(colors.bezel, legacyBezel),
+    background: safeColor(colors.background, preset.background),
+    surface: safeColor(colors.surface, preset.surface),
+    text: safeColor(colors.text, preset.text),
+    wallpaperPrimary: safeColor(colors.wallpaperPrimary, preset.wallpaperPrimary),
+    wallpaperSecondary: safeColor(colors.wallpaperSecondary, preset.wallpaperSecondary),
+    chatPrimary: safeColor(colors.chatPrimary, preset.chatPrimary),
+    chatSecondary: safeColor(colors.chatSecondary, preset.chatSecondary)
+  };
+  const manual = record2(raw.manualVisualProfile);
+  const allowedAnimations = new Set(["spring", "slide", "fade", "none"]);
+  const history = (Array.isArray(raw.generationHistory) ? raw.generationHistory : []).slice(-24).flatMap((entry) => {
+    const item = record2(entry);
+    const requestId = text(item.requestId, "", 180);
+    const task = text(item.task, "", 40);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test"]);
+    if (!requestId || !tasks.has(task))
+      return [];
+    const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
+    return [{
+      requestId,
+      task,
+      mode: item.mode === "sidecar" ? "sidecar" : "roleplay",
+      connectionId: text(item.connectionId, "", 180),
+      connectionName: text(item.connectionName, "", 180),
+      provider: text(item.provider, "", 120),
+      model: text(item.model, "", 500),
+      status,
+      startedAt: text(item.startedAt, new Date(0).toISOString(), 40),
+      completedAt: text(item.completedAt, "", 40) || undefined,
+      latencyMs: Number.isFinite(Number(item.latencyMs)) ? Math.max(0, Math.round(Number(item.latencyMs))) : undefined,
+      error: text(item.error, "", 500) || undefined
+    }];
+  });
+  const rawPersonaAppearance = record2(raw.personaAppearance);
+  const personaAppearance = {};
+  for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
+    if (!personaId || personaId.length > 180)
+      continue;
+    const item = record2(value);
+    const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
+    const overrideColors = record2(item.colors);
+    const overridePreset = themePalette(overrideTheme);
+    personaAppearance[personaId] = {
+      enabled: bool(item.enabled, false),
+      theme: overrideTheme,
+      colors: {
+        accent: safeColor(overrideColors.accent, overridePreset.accent),
+        bezel: safeColor(overrideColors.bezel, overridePreset.bezel),
+        background: safeColor(overrideColors.background, overridePreset.background),
+        surface: safeColor(overrideColors.surface, overridePreset.surface),
+        text: safeColor(overrideColors.text, overridePreset.text),
+        wallpaperPrimary: safeColor(overrideColors.wallpaperPrimary, overridePreset.wallpaperPrimary),
+        wallpaperSecondary: safeColor(overrideColors.wallpaperSecondary, overridePreset.wallpaperSecondary),
+        chatPrimary: safeColor(overrideColors.chatPrimary, overridePreset.chatPrimary),
+        chatSecondary: safeColor(overrideColors.chatSecondary, overridePreset.chatSecondary)
+      },
+      customCss: text(item.customCss, "", 30000),
+      homeWallpaper: normalizeWallpaper(item.homeWallpaper, text(item.wallpaperImageUrl, "", 2000)),
+      chatWallpaper: normalizeWallpaper(item.chatWallpaper, text(item.chatWallpaperImageUrl, "", 2000))
+    };
+  }
+  const contextMode = raw.roleplayContextMode === "off" || raw.roleplayContextMode === "recent" || raw.roleplayContextMode === "story" ? raw.roleplayContextMode : "smart";
+  return {
+    version: PREFERENCES_VERSION,
+    theme,
+    colors: palette,
+    homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
+    chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
+    handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
+    uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
+    animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
+    animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
+    reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
+    autoOpenOnModelAction: bool(raw.autoOpenOnModelAction, fallback.autoOpenOnModelAction),
+    pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
+    useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
+    sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
+    jev: normalizeJevSettings(raw.jev),
+    generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
+    sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
+    sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
+    autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
+    replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
+    ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
+    roleplayContextMode: contextMode,
+    showReconciliationStatus: bool(raw.showReconciliationStatus, fallback.showReconciliationStatus),
+    recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
+    notificationSounds: bool(raw.notificationSounds, fallback.notificationSounds),
+    notificationPreviews: bool(raw.notificationPreviews, fallback.notificationPreviews),
+    notifyMessages: bool(raw.notifyMessages, fallback.notifyMessages),
+    notifyContacts: bool(raw.notifyContacts, fallback.notifyContacts),
+    notifyTrackers: bool(raw.notifyTrackers, fallback.notifyTrackers),
+    customCss: text(raw.customCss, "", 30000),
+    personaAppearance,
+    generationHistory: history,
+    manualVisualProfile: {
+      positive: text(manual.positive, "", 12000),
+      negative: text(manual.negative, "", 12000),
+      model: text(manual.model, "", 500),
+      connectionId: text(manual.connectionId, "", 200),
+      loras: (Array.isArray(manual.loras) ? manual.loras : []).slice(0, 24).flatMap((entry) => {
+        const item = record2(entry);
+        const name = text(item.name, "", 500);
+        if (!name)
+          return [];
+        return [{ name, weight: numberIn(item.weight, 1, -4, 4) }];
+      }),
+      parameters: record2(manual.parameters)
+    }
+  };
+}
+function isFuturePreferences(value) {
+  const raw = record2(value);
+  return Number.isFinite(Number(raw.version)) && Number(raw.version) > PREFERENCES_VERSION;
 }
 
 // src/domain/projection.ts
@@ -699,7 +790,7 @@ function legacyActionRoute(app, action) {
 function record3(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean2(value, max) {
+function clean3(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function names(value) {
@@ -708,7 +799,7 @@ function names(value) {
   const result = [];
   const seen = new Set;
   for (const item of value) {
-    const name = clean2(item, 120).replace(/\s+/g, " ");
+    const name = clean3(item, 120).replace(/\s+/g, " ");
     const key = name.toLocaleLowerCase();
     if (!name || seen.has(key))
       continue;
@@ -725,24 +816,24 @@ function normalizeSuggestionWhenKind(value) {
 function normalizeEventSuggestion(value, makeId) {
   if (!record3(value) || value.kind !== undefined && value.kind !== "event")
     return;
-  const title = clean2(value.title, 180);
+  const title = clean3(value.title, 180);
   if (!title)
     return;
   const status = value.status === "declined" || value.status === "scheduled" ? value.status : "pending";
-  const start = clean2(value.start, 80);
-  const end = clean2(value.end, 80);
+  const start = clean3(value.start, 80);
+  const end = clean3(value.end, 80);
   return {
-    id: clean2(value.id, 180) || makeId("suggestion"),
+    id: clean3(value.id, 180) || makeId("suggestion"),
     kind: "event",
     status,
     title,
-    description: clean2(value.description, 1200),
+    description: clean3(value.description, 1200),
     whenKind: normalizeSuggestionWhenKind(value.whenKind),
-    whenText: clean2(value.whenText, 240),
+    whenText: clean3(value.whenText, 240),
     start: Number.isFinite(Date.parse(start)) ? start : undefined,
     end: Number.isFinite(Date.parse(end)) ? end : undefined,
     participantNames: names(value.participantNames ?? value.participants),
-    scheduledEventId: clean2(value.scheduledEventId, 180) || undefined
+    scheduledEventId: clean3(value.scheduledEventId, 180) || undefined
   };
 }
 function generatedEventSuggestion(value, makeId) {
@@ -767,7 +858,7 @@ var ACCENTS = ["#8b7dff", "#ef6f9a", "#55bfa3", "#e19a55", "#5e9ee6", "#b779dc",
 function record4(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean3(value, max) {
+function clean4(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function flag(value, fallback = false) {
@@ -780,13 +871,13 @@ function percentage(value, fallback) {
 function normalizePhoneProfile(value) {
   if (!record4(value))
     return;
-  const personality = clean3(value.personality, 600);
-  const appearance = clean3(value.appearance, 360);
-  const textingStyle = clean3(value.textingStyle, 600);
+  const personality = clean4(value.personality, 600);
+  const appearance = clean4(value.appearance, 360);
+  const textingStyle = clean4(value.textingStyle, 600);
   return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
 }
 function timestamp(value, fallback) {
-  const candidate = clean3(value, 40);
+  const candidate = clean4(value, 40);
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
 }
 function stableContactAccent(seed) {
@@ -810,23 +901,23 @@ function contactAccent(contact) {
 }
 function normalizeSource(value, contactId, characterId, description) {
   if (record4(value) && value.kind === "character") {
-    return { kind: "character", characterId: clean3(value.characterId, 180) || contactId };
+    return { kind: "character", characterId: clean4(value.characterId, 180) || contactId };
   }
   if (record4(value) && value.kind === "council") {
     return {
       kind: "council",
-      memberId: clean3(value.memberId, 180),
-      itemId: clean3(value.itemId, 180)
+      memberId: clean4(value.memberId, 180),
+      itemId: clean4(value.itemId, 180)
     };
   }
   if (record4(value) && value.kind === "npc") {
     return {
       kind: "npc",
       origin: value.origin === "generated" || value.origin === "scene" || value.origin === "discovered" ? value.origin : "manual",
-      description: clean3(value.description, 600) || description,
-      sceneKey: clean3(value.sceneKey, 180) || undefined,
-      discoveredActorId: clean3(value.discoveredActorId, 180) || undefined,
-      bankId: clean3(value.bankId, 180) || undefined
+      description: clean4(value.description, 600) || description,
+      sceneKey: clean4(value.sceneKey, 180) || undefined,
+      discoveredActorId: clean4(value.discoveredActorId, 180) || undefined,
+      bankId: clean4(value.bankId, 180) || undefined
     };
   }
   if (contactId === characterId)
@@ -836,11 +927,11 @@ function normalizeSource(value, contactId, characterId, description) {
 function normalizePocketContact(value, context) {
   if (!record4(value))
     return null;
-  const contactId = clean3(value.id, 180) || context.makeId("contact");
-  const name = clean3(value.name, 120);
+  const contactId = clean4(value.id, 180) || context.makeId("contact");
+  const name = clean4(value.name, 120);
   if (!name)
     return null;
-  const identityBrief = clean3(value.identityBrief, 1200) || clean3(value.description, 1200) || clean3(value.subtitle, 160);
+  const identityBrief = clean4(value.identityBrief, 1200) || clean4(value.description, 1200) || clean4(value.subtitle, 160);
   const description = identityBrief;
   const source = normalizeSource(value.source, contactId, context.characterId, description);
   const presence = record4(value.presence) ? value.presence : {};
@@ -852,18 +943,18 @@ function normalizePocketContact(value, context) {
   return {
     id: contactId,
     name,
-    role: clean3(value.role, 120) || clean3(value.subtitle, 120) || (source.kind === "character" ? "Character" : source.kind === "council" ? "Council member" : "Pocket NPC"),
+    role: clean4(value.role, 120) || clean4(value.subtitle, 120) || (source.kind === "character" ? "Character" : source.kind === "council" ? "Council member" : "Pocket NPC"),
     description,
     identityBrief,
     phoneProfile: normalizePhoneProfile(value.phoneProfile),
-    sceneNote: clean3(value.sceneNote, 600),
-    avatarUrl: clean3(value.avatarUrl, 2000),
-    sourceAvatarUrl: clean3(value.sourceAvatarUrl, 2000) || clean3(value.avatarUrl, 2000),
-    avatarOverrideUrl: clean3(value.avatarOverrideUrl, 2000),
-    ...value.avatarSource || clean3(value.avatarOverrideUrl, 2000) ? { avatarSource: normalizeImageSource(value.avatarSource) || normalizeImageSource({ kind: "url", url: value.avatarOverrideUrl }) } : {},
+    sceneNote: clean4(value.sceneNote, 600),
+    avatarUrl: clean4(value.avatarUrl, 2000),
+    sourceAvatarUrl: clean4(value.sourceAvatarUrl, 2000) || clean4(value.avatarUrl, 2000),
+    avatarOverrideUrl: clean4(value.avatarOverrideUrl, 2000),
+    ...value.avatarSource || clean4(value.avatarOverrideUrl, 2000) ? { avatarSource: normalizeImageSource(value.avatarSource) || normalizeImageSource({ kind: "url", url: value.avatarOverrideUrl }) } : {},
     ...value.avatarFocus ? { avatarFocus: normalizeAvatarFocus(value.avatarFocus) } : {},
-    accent: /^#[0-9a-f]{6}$/i.test(clean3(value.accent, 20)) ? clean3(value.accent, 20) : stableContactAccent(contactId),
-    sourceAccent: /^#[0-9a-f]{6}$/i.test(clean3(value.sourceAccent, 20)) ? clean3(value.sourceAccent, 20) : "",
+    accent: /^#[0-9a-f]{6}$/i.test(clean4(value.accent, 20)) ? clean4(value.accent, 20) : stableContactAccent(contactId),
+    sourceAccent: /^#[0-9a-f]{6}$/i.test(clean4(value.sourceAccent, 20)) ? clean4(value.sourceAccent, 20) : "",
     colorMode: value.colorMode === "source" ? "source" : "pocket",
     source,
     relationship: value.relationship === "close" ? "close" : "background",
@@ -890,15 +981,15 @@ function normalizePocketContact(value, context) {
 function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
   if (!record4(value))
     return null;
-  const messageText = clean3(value.text, 12000);
+  const messageText = clean4(value.text, 12000);
   if (!messageText)
     return null;
-  const legacySender = clean3(value.sender, 20);
+  const legacySender = clean4(value.sender, 20);
   const sender = legacySender === "system" ? "system" : legacySender === "user" || legacySender === "persona" ? "persona" : "contact";
-  const senderContactId = sender === "contact" ? clean3(value.senderContactId, 180) || fallbackContact?.id : undefined;
-  const senderActorId = sender === "persona" ? clean3(value.senderActorId, 180) || personaActorId : sender === "contact" ? clean3(value.senderActorId, 180) || senderContactId : undefined;
-  const recipientActorIds = [...new Set((Array.isArray(value.recipientActorIds) ? value.recipientActorIds : []).map((entry) => clean3(entry, 180)).filter(Boolean))].slice(0, 16);
-  const readByActorIds = [...new Set((Array.isArray(value.readByActorIds) ? value.readByActorIds : []).map((entry) => clean3(entry, 180)).filter(Boolean))].slice(0, 16);
+  const senderContactId = sender === "contact" ? clean4(value.senderContactId, 180) || fallbackContact?.id : undefined;
+  const senderActorId = sender === "persona" ? clean4(value.senderActorId, 180) || personaActorId : sender === "contact" ? clean4(value.senderActorId, 180) || senderContactId : undefined;
+  const recipientActorIds = [...new Set((Array.isArray(value.recipientActorIds) ? value.recipientActorIds : []).map((entry) => clean4(entry, 180)).filter(Boolean))].slice(0, 16);
+  const readByActorIds = [...new Set((Array.isArray(value.readByActorIds) ? value.readByActorIds : []).map((entry) => clean4(entry, 180)).filter(Boolean))].slice(0, 16);
   if (senderActorId && !readByActorIds.includes(senderActorId))
     readByActorIds.push(senderActorId);
   const senderActorKind = sender === "contact" && value.senderActorKind === "discovered" ? "discovered" : sender === "contact" ? "contact" : undefined;
@@ -910,38 +1001,38 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
   const groupBatch = info && record4(info.groupBatch) ? info.groupBatch : null;
   const count = (input) => Math.max(0, Math.round(Number(input) || 0));
   return {
-    id: clean3(value.id, 120) || makeId("msg"),
+    id: clean4(value.id, 120) || makeId("msg"),
     sender,
     senderActorId,
     recipientActorIds,
     readByActorIds,
     senderActorKind,
     senderContactId,
-    senderName: clean3(value.senderName, 120) || (sender === "persona" ? "You" : sender === "system" ? "Pocket" : fallbackContact?.name || "Unknown contact"),
-    senderAccent: clean3(value.senderAccent, 40) || (sender === "contact" ? fallbackContact?.accent || stableContactAccent(senderContactId || "unknown") : ""),
+    senderName: clean4(value.senderName, 120) || (sender === "persona" ? "You" : sender === "system" ? "Pocket" : fallbackContact?.name || "Unknown contact"),
+    senderAccent: clean4(value.senderAccent, 40) || (sender === "contact" ? fallbackContact?.accent || stableContactAccent(senderContactId || "unknown") : ""),
     text: messageText,
     createdAt: timestamp(value.createdAt, now),
     read,
     status,
-    imageId: clean3(value.imageId, 160) || undefined,
-    imageUrl: clean3(value.imageUrl, 2000) || undefined,
+    imageId: clean4(value.imageId, 160) || undefined,
+    imageUrl: clean4(value.imageUrl, 2000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
-    origin: record4(value.origin) && clean3(value.origin.chatId, 180) && clean3(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {
-      chatId: clean3(value.origin.chatId, 180),
-      hostMessageId: clean3(value.origin.hostMessageId, 180),
+    origin: record4(value.origin) && clean4(value.origin.chatId, 180) && clean4(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {
+      chatId: clean4(value.origin.chatId, 180),
+      hostMessageId: clean4(value.origin.hostMessageId, 180),
       swipeId: Math.max(0, Math.round(Number(value.origin.swipeId))),
-      generationId: clean3(value.origin.generationId, 180) || undefined
+      generationId: clean4(value.origin.generationId, 180) || undefined
     } : undefined,
     candidateCommitState: value.candidateCommitState === "provisional" ? "provisional" : value.candidateCommitState === "committed" ? "committed" : undefined,
-    generation: generation && clean3(generation.requestId, 180) ? {
-      requestId: clean3(generation.requestId, 180),
-      retryOf: clean3(generation.retryOf, 180) || undefined,
+    generation: generation && clean4(generation.requestId, 180) ? {
+      requestId: clean4(generation.requestId, 180),
+      retryOf: clean4(generation.retryOf, 180) || undefined,
       info: info ? {
-        speaker: clean3(info.speaker, 120),
-        source: clean3(info.source, 240),
-        sourceId: clean3(info.sourceId, 180),
+        speaker: clean4(info.speaker, 120),
+        source: clean4(info.source, 240),
+        sourceId: clean4(info.sourceId, 180),
         sourceResolution: info.sourceResolution === "resolved" || info.sourceResolution === "manual" ? info.sourceResolution : "snapshot",
-        activeCharacterId: clean3(info.activeCharacterId, 180),
+        activeCharacterId: clean4(info.activeCharacterId, 180),
         activeCharacterUsed: flag(info.activeCharacterUsed),
         identityChars: count(info.identityChars),
         sceneSnapshotStale: flag(info.sceneSnapshotStale, true),
@@ -953,10 +1044,10 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
         threadCount: count(info.threadCount),
         threadChars: count(info.threadChars),
         generationMode: info.generationMode === "sidecar" ? "sidecar" : "roleplay",
-        connectionName: clean3(info.connectionName, 180),
-        model: clean3(info.model, 500),
-        groupBatch: groupBatch && clean3(groupBatch.id, 180) ? {
-          id: clean3(groupBatch.id, 180),
+        connectionName: clean4(info.connectionName, 180),
+        model: clean4(info.model, 500),
+        groupBatch: groupBatch && clean4(groupBatch.id, 180) ? {
+          id: clean4(groupBatch.id, 180),
           position: Math.max(1, count(groupBatch.position)),
           size: Math.max(1, count(groupBatch.size)),
           eligibleCount: count(groupBatch.eligibleCount)
@@ -964,8 +1055,8 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
         replyDecision: decision ? {
           rawAction: decision.rawAction === "reply" || decision.rawAction === "pause" || decision.rawAction === "handoff" || decision.rawAction === "arrival_handoff" ? decision.rawAction : "none",
           normalizedAction: decision.normalizedAction === "reply" || decision.normalizedAction === "pause" || decision.normalizedAction === "handoff" || decision.normalizedAction === "arrival_handoff" ? decision.normalizedAction : "none",
-          reason: clean3(decision.reason, 80),
-          normalizationReason: clean3(decision.normalizationReason, 180)
+          reason: clean4(decision.reason, 80),
+          normalizationReason: clean4(decision.normalizationReason, 180)
         } : undefined
       } : undefined
     } : undefined
@@ -974,8 +1065,8 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
 function normalizeConversation(value, contacts, now, makeId, personaActorId) {
   if (!record4(value))
     return null;
-  const persistedContactIds = [...new Set((Array.isArray(value.participantContactIds) ? value.participantContactIds : []).map((entry) => clean3(entry, 180)).filter(Boolean))].slice(0, 16);
-  const participantActorIds = [...new Set((Array.isArray(value.participantActorIds) ? value.participantActorIds : persistedContactIds).map((entry) => clean3(entry, 180)).filter(Boolean))].slice(0, 16);
+  const persistedContactIds = [...new Set((Array.isArray(value.participantContactIds) ? value.participantContactIds : []).map((entry) => clean4(entry, 180)).filter(Boolean))].slice(0, 16);
+  const participantActorIds = [...new Set((Array.isArray(value.participantActorIds) ? value.participantActorIds : persistedContactIds).map((entry) => clean4(entry, 180)).filter(Boolean))].slice(0, 16);
   if (!participantActorIds.length)
     return null;
   const participantContactIds = [...new Set([
@@ -1009,12 +1100,12 @@ function normalizeConversation(value, contacts, now, makeId, personaActorId) {
   const resumePauseReason = pauseReasons.has(availabilityValue?.resumePauseReason) ? availabilityValue?.resumePauseReason : undefined;
   const availability = availabilityValue?.state === "local" && migratedLocalReason ? resumePauseReason ? { state: "local", reason: migratedLocalReason, resumePauseReason } : { state: "local", reason: migratedLocalReason } : availabilityValue?.state === "arriving" || legacyArriving ? { state: "arriving" } : availabilityValue?.state === "paused" && pauseReasons.has(availabilityValue.reason) ? { state: "paused", reason: availabilityValue.reason } : pauseReason ? { state: "paused", reason: pauseReason } : { state: "remote" };
   const burstValue = record4(value.outgoingBurst) ? value.outgoingBurst : null;
-  const burstId = clean3(burstValue?.id, 180);
+  const burstId = clean4(burstValue?.id, 180);
   const rawTail = value.tailSnapshot && typeof value.tailSnapshot === "object" && !Array.isArray(value.tailSnapshot) ? value.tailSnapshot : value.snapshot && typeof value.snapshot === "object" && !Array.isArray(value.snapshot) ? value.snapshot : null;
   return {
-    id: clean3(value.id, 180) || makeId("conversation"),
+    id: clean4(value.id, 180) || makeId("conversation"),
     kind,
-    title: clean3(value.title, 120) || (kind === "direct" ? fallback?.name || messages.at(-1)?.senderName || "Conversation" : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group"),
+    title: clean4(value.title, 120) || (kind === "direct" ? fallback?.name || messages.at(-1)?.senderName || "Conversation" : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(", ").slice(0, 120) || "Group"),
     participantActorIds,
     includesPocketPersona,
     participantContactIds,
@@ -1027,25 +1118,25 @@ function normalizeConversation(value, contacts, now, makeId, personaActorId) {
     } : undefined,
     availability,
     tailSnapshot: rawTail ? {
-      text: clean3(rawTail.text ?? rawTail.summary, 2400),
-      recentMessageIds: (Array.isArray(rawTail.recentMessageIds) ? rawTail.recentMessageIds : []).map((entry) => clean3(entry, 180)).filter(Boolean).slice(-8),
+      text: clean4(rawTail.text ?? rawTail.summary, 2400),
+      recentMessageIds: (Array.isArray(rawTail.recentMessageIds) ? rawTail.recentMessageIds : []).map((entry) => clean4(entry, 180)).filter(Boolean).slice(-8),
       updatedAt: timestamp(rawTail.updatedAt, now)
     } : undefined,
     lastDecision: record4(value.lastDecision) ? {
       rawAction: value.lastDecision.rawAction === "reply" || value.lastDecision.rawAction === "pause" || value.lastDecision.rawAction === "handoff" || value.lastDecision.rawAction === "arrival_handoff" ? value.lastDecision.rawAction : "none",
       normalizedAction: value.lastDecision.normalizedAction === "reply" || value.lastDecision.normalizedAction === "pause" || value.lastDecision.normalizedAction === "handoff" || value.lastDecision.normalizedAction === "arrival_handoff" ? value.lastDecision.normalizedAction : "none",
-      reason: clean3(value.lastDecision.reason, 80),
-      normalizationReason: clean3(value.lastDecision.normalizationReason, 180),
+      reason: clean4(value.lastDecision.reason, 80),
+      normalizationReason: clean4(value.lastDecision.normalizationReason, 180),
       contactInScene: flag(value.lastDecision.contactInScene),
       remoteEligible: flag(value.lastDecision.remoteEligible, true),
       explicitRemoteOverride: flag(value.lastDecision.explicitRemoteOverride),
       createdAt: timestamp(value.lastDecision.createdAt, now),
-      burstId: clean3(value.lastDecision.burstId, 180) || undefined,
-      relayId: clean3(value.lastDecision.relayId, 180) || undefined
+      burstId: clean4(value.lastDecision.burstId, 180) || undefined,
+      relayId: clean4(value.lastDecision.relayId, 180) || undefined
     } : undefined,
     outgoingBurst: burstId ? {
       id: burstId,
-      messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean3(entry, 180)).filter(Boolean).slice(-12),
+      messageIds: (Array.isArray(burstValue?.messageIds) ? burstValue.messageIds : []).map((entry) => clean4(entry, 180)).filter(Boolean).slice(-12),
       open: flag(burstValue?.open, false),
       held: flag(burstValue?.held, false),
       finalized: flag(burstValue?.finalized, false),
@@ -1106,7 +1197,7 @@ function ensureDirectConversation(state, contactId, now, makeId) {
 function normalizeContactCollections(value, context) {
   const personaActorId = context.personaActorId || `persona:${context.characterId || "owner"}`;
   const contacts = (Array.isArray(value.contacts) ? value.contacts : []).map((entry) => normalizePocketContact(entry, context)).filter((entry) => Boolean(entry)).slice(0, MAX_CONTACTS);
-  const suppressedSourceKeys = new Set((Array.isArray(value.suppressedContactSourceKeys) ? value.suppressedContactSourceKeys : []).map((entry) => clean3(entry, 240)).filter(Boolean));
+  const suppressedSourceKeys = new Set((Array.isArray(value.suppressedContactSourceKeys) ? value.suppressedContactSourceKeys : []).map((entry) => clean4(entry, 240)).filter(Boolean));
   const activeSourceKey = `character:${context.characterId}`;
   let current = contacts.find((entry) => entry.source.kind === "character" && entry.source.characterId === context.characterId);
   if (current && suppressedSourceKeys.has(activeSourceKey)) {
@@ -1126,7 +1217,7 @@ function normalizeContactCollections(value, context) {
     for (const rawContact of value.contacts) {
       if (!record4(rawContact))
         continue;
-      const contactId = clean3(rawContact.id, 180) || context.characterId;
+      const contactId = clean4(rawContact.id, 180) || context.characterId;
       const contact = contacts.find((entry) => entry.id === contactId);
       if (!contact)
         continue;
@@ -1213,7 +1304,7 @@ var MAX_NPC_BANK_ENTRIES = 240;
 function record5(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean4(value, max) {
+function clean5(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function percentage2(value, fallback) {
@@ -1223,21 +1314,21 @@ function percentage2(value, fallback) {
 function phoneProfile(value) {
   if (!record5(value))
     return;
-  const personality = clean4(value.personality, 600);
-  const appearance = clean4(value.appearance, 360);
-  const textingStyle = clean4(value.textingStyle, 600);
+  const personality = clean5(value.personality, 600);
+  const appearance = clean5(value.appearance, 360);
+  const textingStyle = clean5(value.textingStyle, 600);
   return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
 }
 function timestamp2(value, fallback) {
-  const candidate = clean4(value, 40);
+  const candidate = clean5(value, 40);
   return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
 }
 function accent(value, fallback = "#8b7dff") {
-  const candidate = clean4(value, 20);
+  const candidate = clean5(value, 20);
   return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : fallback;
 }
 function normalizeNpcBankName(value) {
-  return clean4(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
+  return clean5(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
 }
 function emptyNpcBank(now = new Date().toISOString()) {
   return { version: NPC_BANK_VERSION, entries: [], groups: [], updatedAt: now };
@@ -1252,22 +1343,22 @@ function normalizeNpcBank(value, now = new Date().toISOString()) {
   const entries = (Array.isArray(value.entries) ? value.entries : []).slice(0, MAX_NPC_BANK_ENTRIES).flatMap((raw) => {
     if (!record5(raw))
       return [];
-    const name = clean4(raw.name, 120).replace(/\s+/g, " ");
+    const name = clean5(raw.name, 120).replace(/\s+/g, " ");
     const normalizedName = normalizeNpcBankName(name);
-    const entryId = clean4(raw.id, 180);
+    const entryId = clean5(raw.id, 180);
     if (!name || !normalizedName || !entryId || seen.has(entryId))
       return [];
     seen.add(entryId);
-    const aliases = [...new Set((Array.isArray(raw.aliases) ? raw.aliases : []).map((item) => clean4(item, 120).replace(/\s+/g, " ")).filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24);
+    const aliases = [...new Set((Array.isArray(raw.aliases) ? raw.aliases : []).map((item) => clean5(item, 120).replace(/\s+/g, " ")).filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24);
     return [{
       id: entryId,
       name,
       normalizedName,
       aliases,
-      role: clean4(raw.role, 120) || "Pocket NPC",
-      identityBrief: clean4(raw.identityBrief ?? raw.description, 1200),
+      role: clean5(raw.role, 120) || "Pocket NPC",
+      identityBrief: clean5(raw.identityBrief ?? raw.description, 1200),
       phoneProfile: phoneProfile(raw.phoneProfile),
-      avatarUrl: clean4(raw.avatarUrl, 2000),
+      avatarUrl: clean5(raw.avatarUrl, 2000),
       avatarSource: normalizeImageSource(raw.avatarSource) || normalizeImageSource({ kind: "url", url: raw.avatarUrl }),
       avatarFocus: normalizeAvatarFocus(raw.avatarFocus),
       accent: accent(raw.accent),
@@ -1275,7 +1366,7 @@ function normalizeNpcBank(value, now = new Date().toISOString()) {
         talkativeness: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
         fragmentation: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.fragmentation : undefined, 35)
       },
-      tags: [...new Set((Array.isArray(raw.tags) ? raw.tags : []).map((item) => clean4(item, 80)).filter(Boolean))].slice(0, 24),
+      tags: [...new Set((Array.isArray(raw.tags) ? raw.tags : []).map((item) => clean5(item, 80)).filter(Boolean))].slice(0, 24),
       createdAt: timestamp2(raw.createdAt, now),
       updatedAt: timestamp2(raw.updatedAt, now)
     }];
@@ -1753,7 +1844,7 @@ function shouldTakeAmbientOpportunity(frequency, random = Math.random()) {
 
 // src/domain/actor-memory.ts
 var MAX_ACTOR_MEMORIES = 160;
-function clean5(value, max = 4000) {
+function clean6(value, max = 4000) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function record6(value) {
@@ -1762,7 +1853,7 @@ function record6(value) {
 function stringList(value, max = 24) {
   if (!Array.isArray(value))
     return [];
-  return [...new Set(value.map((entry) => clean5(entry, 180)).filter(Boolean))].slice(0, max);
+  return [...new Set(value.map((entry) => clean6(entry, 180)).filter(Boolean))].slice(0, max);
 }
 function nameKey(value) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -1773,18 +1864,18 @@ function normalizeActorMemories(value) {
   const rows = value.slice(-MAX_ACTOR_MEMORIES).flatMap((item) => {
     if (!record6(item))
       return [];
-    const id = clean5(item.id, 180);
-    const messageId = clean5(item.messageId, 180);
-    const conversationId = clean5(item.conversationId, 180);
-    const text = clean5(item.text, 700);
-    const speakerActorId = clean5(item.speakerActorId, 180);
-    const speakerName = clean5(item.speakerName, 120);
+    const id = clean6(item.id, 180);
+    const messageId = clean6(item.messageId, 180);
+    const conversationId = clean6(item.conversationId, 180);
+    const text = clean6(item.text, 700);
+    const speakerActorId = clean6(item.speakerActorId, 180);
+    const speakerName = clean6(item.speakerName, 120);
     if (!id || !messageId || !conversationId || !text || !speakerActorId || !speakerName)
       return [];
     return [{
       id,
       conversationId,
-      conversationTitle: clean5(item.conversationTitle, 120) || "Pocket conversation",
+      conversationTitle: clean6(item.conversationTitle, 120) || "Pocket conversation",
       conversationKind: item.conversationKind === "group" ? "group" : "direct",
       messageId,
       speakerActorId,
@@ -1792,7 +1883,7 @@ function normalizeActorMemories(value) {
       text,
       knownByActorIds: stringList(item.knownByActorIds),
       knownByNames: stringList(item.knownByNames),
-      createdAt: clean5(item.createdAt, 80)
+      createdAt: clean6(item.createdAt, 80)
     }];
   });
   const byMessage = new Map;
@@ -1809,7 +1900,7 @@ function upsertActorMemory(current, entry) {
   return next.slice(-MAX_ACTOR_MEMORIES);
 }
 function removeActorMemoryByMessageId(current, messageId) {
-  const target = clean5(messageId, 180);
+  const target = clean6(messageId, 180);
   return target ? current.filter((item) => item.messageId !== target) : current;
 }
 function actorCanRecall(entry, actorIds, actorNames) {
@@ -1818,9 +1909,9 @@ function actorCanRecall(entry, actorIds, actorNames) {
   return entry.knownByNames.some((name) => actorNames.has(nameKey(name)));
 }
 function memoryRows(memories, options) {
-  const actorIds = new Set(options.actorIds.map((entry) => clean5(entry, 180)).filter(Boolean));
+  const actorIds = new Set(options.actorIds.map((entry) => clean6(entry, 180)).filter(Boolean));
   const actorNames = new Set(options.actorNames.map(nameKey).filter(Boolean));
-  const exclude = clean5(options.excludeConversationId, 180);
+  const exclude = clean6(options.excludeConversationId, 180);
   return memories.filter((entry) => (!exclude || entry.conversationId !== exclude) && actorCanRecall(entry, actorIds, actorNames)).slice(-(options.maxRows ?? 10));
 }
 function formatRows(rows, maxChars) {
@@ -1841,7 +1932,7 @@ function actorPhoneMemoryContext(memories, options) {
   if (!rows.length)
     return "";
   const body = formatRows(rows, Math.max(400, (options.maxChars ?? 2600) - 260));
-  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean5(options.actorName, 120) || "THIS SPEAKER"}
+  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean6(options.actorName, 120) || "THIS SPEAKER"}
 These are earlier Pocket messages this actor personally had access to in OTHER threads.
 They are memory, not current-thread messages. Do not pretend they happened in this thread.
 ${body}`.slice(0, options.maxChars ?? 2600);
@@ -1952,7 +2043,7 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
 }
 
 // src/backend/structured.ts
-function object(value) {
+function object2(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Generation returned an invalid JSON object.");
   return value;
@@ -1997,13 +2088,13 @@ function parseGeneratedObject(content) {
     throw new Error("Generation returned an empty response.");
   const fenced = fencedBody(raw);
   if (fenced !== null)
-    return object(JSON.parse(fenced));
+    return object2(JSON.parse(fenced));
   try {
-    return object(JSON.parse(raw));
+    return object2(JSON.parse(raw));
   } catch (directError) {
     const extracted = firstCompleteObject(raw);
     if (extracted)
-      return object(JSON.parse(extracted));
+      return object2(JSON.parse(extracted));
     throw directError;
   }
 }
@@ -2103,7 +2194,7 @@ function stripPocketPresentationMarkup(value) {
 
 // src/backend/roleplay-context.ts
 var BUDGETS = { actor: 1200, scene: 1800, thread: 6000, recent: 3200, story: 2400, total: 10500 };
-function clean6(value, max) {
+function clean7(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function roleplayTimeLabel(state) {
@@ -2184,11 +2275,11 @@ function threadLine(state, conversation, message) {
   const persona = state.pocketPersona.displayName || "You";
   const sender = message.sender === "persona" ? persona : message.senderName || "Pocket";
   if (conversation.kind !== "group" || message.sender !== "contact")
-    return `${sender}: ${clean6(message.text, 520)}`;
+    return `${sender}: ${clean7(message.text, 520)}`;
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds]);
   const senderId = message.senderActorId || message.senderContactId || "";
   const former = Boolean(senderId && !currentIds.has(senderId));
-  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean6(message.text, 520)}`;
+  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean7(message.text, 520)}`;
 }
 function trimBlock(lines, budget) {
   return lines.filter(Boolean).join(`
@@ -2201,11 +2292,11 @@ async function assemblePocketContext(options) {
   const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : [];
   const authoritative = hostMessages.at(-1);
   const authoritativeLatest = authoritative ? {
-    id: clean6(authoritative.id, 180),
+    id: clean7(authoritative.id, 180),
     index: messageIndex(authoritative, hostMessages.length - 1),
     excerpt: sanitizeNarrativeContent(authoritative.content, 180)
   } : { id: "", index: -1, excerpt: "" };
-  const actorIdentity = clean6(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
+  const actorIdentity = clean7(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1400);
   const scene = trimBlock(sceneLines(state), BUDGETS.scene);
   const includePhoneThread = options.includePhoneThread !== false;
@@ -2215,14 +2306,14 @@ async function assemblePocketContext(options) {
   const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
-    const anchor = clean6(message.id, 180);
+    const anchor = clean7(message.id, 180);
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
     return `${role}${source}: ${sanitizeNarrativeContent(message.content, 520)}`;
   }).filter((line) => !line.endsWith(": "));
   const recent = trimBlock(recentLines, BUDGETS.recent);
   const includedMessage = selectedRecent.at(-1);
   const includedLatest = includedMessage ? {
-    id: clean6(includedMessage.id, 180),
+    id: clean7(includedMessage.id, 180),
     index: messageIndex(includedMessage, hostMessages.length - 1),
     excerpt: sanitizeNarrativeContent(includedMessage.content, 180)
   } : { id: "", index: -1, excerpt: "" };
@@ -2606,6 +2697,60 @@ async function runImageJob(api, input, signal, progress) {
   return result;
 }
 
+// src/backend/jev.ts
+function body(response) {
+  const raw = response;
+  if (!raw || !Number.isFinite(raw.status) || raw.status < 200 || raw.status >= 300)
+    throw new Error(`Open JEV request failed (HTTP ${raw?.status || "unknown"}).`);
+  if (typeof raw.body !== "string")
+    throw new Error("Open JEV returned an invalid HTTP body.");
+  return raw.body;
+}
+async function runOpenJev(http, endpoint, state, questions) {
+  if (!questions.length || questions.length > 24)
+    throw new Error("Open JEV accepts 1\u201324 questions per batch.");
+  const submitted = JSON.parse(body(await http(`${endpoint}/gradio_api/call/v2/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, questions, compare: false, verify: false }) })));
+  if (typeof submitted.event_id !== "string" || !/^[a-zA-Z0-9_-]{1,160}$/.test(submitted.event_id))
+    throw new Error("Open JEV did not return a job ID.");
+  const stream = body(await http(`${endpoint}/gradio_api/call/run/${submitted.event_id}`));
+  let answer;
+  let complete = false;
+  for (const event of stream.replace(/\r\n/g, `
+`).split(`
+
+`)) {
+    const type = event.split(`
+`).find((line) => line.startsWith("event:"))?.slice(6).trim();
+    const data = event.split(`
+`).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
+`);
+    if (!data || type === "heartbeat")
+      continue;
+    if (type === "error")
+      throw new Error("Open JEV could not finish the evaluation. Try again when the Space is available.");
+    if (type !== "generating" && type !== "complete")
+      continue;
+    const parsed = JSON.parse(data);
+    const snapshot = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (snapshot?.error)
+      throw new Error("Open JEV rejected the evaluation. Check question lengths and Space availability.");
+    if (snapshot?.scorer?.questions)
+      answer = snapshot.scorer.questions;
+    if (type === "complete")
+      complete = true;
+  }
+  if (!complete || !Array.isArray(answer) || answer.length !== questions.length)
+    throw new Error("Open JEV returned incomplete results.");
+  return answer;
+}
+function jevSourceKey(value) {
+  const serialized = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let index = 0;index < serialized.length; index++)
+    hash = Math.imul(hash ^ serialized.charCodeAt(index), 16777619);
+  return `open-jev-v1:${serialized.length}:${(hash >>> 0).toString(16)}`;
+}
+
 // src/backend/references.ts
 function compact2(value, max) {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
@@ -2733,6 +2878,7 @@ var MAX_EVENTS = 200;
 var MAX_TRACKERS = 40;
 var MAX_ACTIVITIES = 120;
 var stateLocks = new Map;
+var jevFlights = new Set;
 var cameraJobs = new Map;
 var notificationThrottle = new Map;
 var ambientFlights = new Set;
@@ -3563,6 +3709,79 @@ async function savePreferences(value, userId) {
   const preferences = normalizePreferences(value);
   await spindle.userStorage.setJson(PREFERENCES_PATH, preferences, { indent: 2, userId });
   return preferences;
+}
+async function evaluateJevTrackers(chatId, characterId, userId, trackerId = "", force = false) {
+  const settings = normalizeJevSettings((await loadPreferences(userId)).jev);
+  if (!settings.enabled) {
+    if (force)
+      throw new Error("Enable Open JEV in Settings first.");
+    return;
+  }
+  if (!spindle.permissions.has("cors_proxy") || !spindle.permissions.has("chats"))
+    throw new Error("Open JEV needs remote requests and chat access.");
+  const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:jev`;
+  if (jevFlights.has(flightKey)) {
+    if (force)
+      throw new Error("JEV is already evaluating this chat.");
+    return;
+  }
+  jevFlights.add(flightKey);
+  try {
+    const messages = await spindle.chat.getMessages(chatId);
+    const narrative = messages.filter((entry) => ["user", "assistant"].includes(entry?.role) && sanitizeNarrativeContent(entry.content, 1)).slice(-6).map((entry) => ({ id: entry.id, role: entry.role, content: sanitizeNarrativeContent(entry.content, 1500) }));
+    if (!narrative.length)
+      throw new Error("JEV needs a story message to evaluate.");
+    const state = await loadState(chatId, characterId, userId);
+    const selected = state.trackers.filter((entry) => entry.updateMode === "jev" && (!trackerId || entry.id === trackerId));
+    if (!selected.length) {
+      if (force)
+        throw new Error("Choose a tracker with JEV updates.");
+      return;
+    }
+    const eligible = selected.map((tracker) => {
+      const sourceKey = jevSourceKey({ narrative, target: tracker.target, config: tracker.jev, kind: tracker.kind, states: tracker.kind === "state" ? tracker.states : [], endpoint: settings.endpoint });
+      return { tracker, sourceKey, baseline: JSON.stringify(tracker) };
+    }).filter((entry) => force || entry.tracker.jevResult?.sourceKey !== entry.sourceKey);
+    if (!eligible.length)
+      return;
+    send({ type: "lumiphone:jev_status", chatId, characterId, status: "working", message: "Reading the story with Open JEV\u2026" }, userId);
+    for (let offset = 0;offset < eligible.length; offset += 24) {
+      const batch = eligible.slice(offset, offset + 24);
+      const context = JSON.stringify({ story: narrative, subjects: batch.map((entry, index) => ({ id: `subject${index + 1}`, tracker: entry.tracker.label, target: entry.tracker.target, current: entry.tracker.kind === "state" ? entry.tracker.state : entry.tracker.value })) });
+      const questions = batch.map((entry, index) => ({ ...jevQuestion(entry.tracker), question: `For subject${index + 1}: ${entry.tracker.jev.question}` }));
+      const answers = await runOpenJev((url, options) => spindle.cors(url, options), settings.endpoint, context, questions);
+      const currentMessages = await spindle.chat.getMessages(chatId);
+      const currentNarrative = currentMessages.filter((entry) => ["user", "assistant"].includes(entry?.role) && sanitizeNarrativeContent(entry.content, 1)).slice(-6).map((entry) => ({ id: entry.id, role: entry.role, content: sanitizeNarrativeContent(entry.content, 1500) }));
+      if (JSON.stringify(currentNarrative) !== JSON.stringify(narrative))
+        throw new Error("The story changed while JEV was evaluating. Evaluate again.");
+      await withStateLock(stateKey(chatId, characterId), async () => {
+        const currentSettings = normalizeJevSettings((await loadPreferences(userId)).jev);
+        if (!currentSettings.enabled || currentSettings.endpoint !== settings.endpoint)
+          return;
+        const latest = await loadState(chatId, characterId, userId);
+        let changed = false;
+        batch.forEach((entry, index) => {
+          const at = latest.trackers.findIndex((tracker) => tracker.id === entry.tracker.id);
+          if (at < 0 || JSON.stringify(latest.trackers[at]) !== entry.baseline)
+            return;
+          if (answers[index]?.id !== `q${index + 1}`)
+            return;
+          latest.trackers[at] = applyJevAnswer(latest.trackers[at], answers[index], entry.sourceKey, nowIso(), latest.roleplayNow);
+          changed = true;
+        });
+        if (changed) {
+          await saveState(latest, userId);
+          await sendState(latest, userId, "jev");
+        }
+      });
+    }
+    send({ type: "lumiphone:jev_status", chatId, characterId, status: "complete", message: "JEV evaluation complete. Results are in each tracker." }, userId);
+  } catch (error) {
+    send({ type: "lumiphone:jev_status", chatId, characterId, status: "error", message: error instanceof Error ? error.message : "Open JEV evaluation failed." }, userId);
+    throw error;
+  } finally {
+    jevFlights.delete(flightKey);
+  }
 }
 async function loadNpcBank(userId) {
   const raw = await spindle.userStorage.getJson(NPC_BANK_PATH, { fallback: null, userId });
@@ -7547,6 +7766,10 @@ async function handleFrontend(payload, userId) {
         await sendState(state, userId, "load");
         break;
       }
+      case "lumiphone:jev_evaluate": {
+        await evaluateJevTrackers(context.chatId, context.characterId, userId, text2(payload.trackerId, 120), true);
+        break;
+      }
       case "lumiphone:view_state": {
         frontendViews.set(viewKey(userId), {
           chatId: context.chatId,
@@ -9385,6 +9608,9 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
         throw error;
       }
       considerAmbientMessage(chatId, characterId, "turn", userId);
+      const jevSettings = normalizeJevSettings((await loadPreferences(userId)).jev);
+      if (jevSettings.enabled && jevSettings.autoAfterTurn)
+        evaluateJevTrackers(chatId, characterId, userId).catch((error) => spindle.log.warn(`Pocket JEV: ${error instanceof Error ? error.message : "evaluation failed"}`));
     }
     if (endedCandidate && (payload?.error || !messageId)) {
       try {

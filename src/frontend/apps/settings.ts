@@ -1,5 +1,6 @@
 import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
+import { normalizeJevSettings } from '../../domain/jev.js'
 import { disclosure, fieldBlock, outgoingSurface } from '../components/ui.js'
 import { button, el } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -116,6 +117,7 @@ function categories(host: SettingsViewHost): HTMLDivElement {
     ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
     ['generation', 'Pocket Generation', 'Model source and connection diagnostics'],
+    ['jev', 'Open JEV', 'Hugging Face decisions for trackers'],
     ['camera', 'Camera & Swarm Studio', 'Visual profile and macro diagnostics'],
     ['notifications', 'Notifications', 'Kinds, previews, push, and sound'],
     ['permissions', 'Permissions', 'Lumiverse capability access'],
@@ -383,6 +385,26 @@ function camera(host: SettingsViewHost): HTMLDivElement {
   manual.append(positive, negative, model, connection, loras, parameters, apply); content.append(swarm, disclosure('Advanced manual overrides', manual)); return page
 }
 
+function jevSettings(host: SettingsViewHost): HTMLDivElement {
+  const settings = normalizeJevSettings(host.draft.jev)
+  const { page, content } = host.page('Open JEV', 'Hugging Face tracker decisions')
+  const card = el('section', 'lp-card lp-settings-section')
+  const endpoint = el('input', 'lp-input'); endpoint.value = settings.endpoint; endpoint.type = 'url'
+  const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = settings.enabled
+  const automatic = el('input'); automatic.type = 'checkbox'; automatic.checked = settings.autoAfterTurn
+  const enabledField = fieldBlock('Enable Open JEV', enabled)
+  const autoField = fieldBlock('Evaluate after story turns', automatic)
+  card.append(el('p', 'lp-copy', 'Choose Open JEV updates on each tracker and describe its rubric. Evaluation sends the last six story messages and selected tracker targets to this endpoint. The public Space may queue or time out; a failed request keeps your values.'), enabledField, autoField, fieldBlock('Space URL', endpoint, 'Default: pngwn/open-jev. Use a compatible duplicate or local deployment.'))
+  const apply = button('Save JEV settings')
+  apply.addEventListener('click', () => {
+    try { const url = new URL(endpoint.value.trim()); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error() } catch { host.showError('Enter a Space base URL without credentials or query parameters.'); return }
+    const next = clone(host.draft); next.jev = normalizeJevSettings({ enabled: enabled.checked, autoAfterTurn: automatic.checked, endpoint: endpoint.value }); host.update(next)
+  })
+  const evaluate = button('Evaluate JEV trackers', 'lp-button lp-button-quiet'); evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate'))
+  card.append(apply, evaluate); content.append(card)
+  return page
+}
+
 function notifications(host: SettingsViewHost): HTMLDivElement {
   const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); host.update(next) }
   const { page, content } = host.page('Notifications', 'Device-wide behavior'); const card = el('section', 'lp-card lp-settings-section')
@@ -422,6 +444,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
   if (host.section === 'persona') return persona(host)
   if (host.section === 'messages') return messages(host)
   if (host.section === 'generation') return generation(host)
+  if (host.section === 'jev') return jevSettings(host)
   if (host.section === 'camera') return camera(host)
   if (host.section === 'notifications') return notifications(host)
   if (host.section === 'permissions') return permissions(host)

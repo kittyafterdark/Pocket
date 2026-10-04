@@ -1,3 +1,294 @@
+// src/domain/trackers.ts
+var TRACKER_HISTORY_LIMIT = 40;
+var KINDS = new Set(["meter", "counter", "state", "timer"]);
+var CLOCKS = new Set(["real", "roleplay"]);
+var MODES = new Set(["manual", "model", "automatic", "jev"]);
+var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
+var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
+function record(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean(value, max = 160) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function finite(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function iso(value, fallback) {
+  const text = clean(value, 80);
+  return Number.isFinite(Date.parse(text)) ? text : fallback;
+}
+function trackerId(prefix = "trk") {
+  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
+}
+function trackerKey(value, fallback = "tracker") {
+  const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return key || fallback;
+}
+function validateTrackerConfig(value) {
+  if (value.updateMode === "jev")
+    validateJevTracker(value);
+  if (!clean(value.label, 120))
+    throw new Error("Give your tracker a name.");
+  if (!KINDS.has(value.kind))
+    throw new Error("Choose a tracker type.");
+  const allowed = value.kind === "state" ? ["state", "compact"] : value.kind === "counter" ? ["counter", "compact"] : value.kind === "timer" ? ["timer", "compact"] : ["meter", "vitals", "relationship", "segmented", "compact"];
+  if (!allowed.includes(String(value.presentation)))
+    throw new Error("Choose a display that matches this tracker type.");
+  if (value.kind === "state") {
+    const states = Array.isArray(value.states) ? value.states.map((entry) => clean(entry, 80)).filter(Boolean) : [];
+    if (!states.length || !states.includes(String(value.state)))
+      throw new Error("Choose a current state from the allowed states.");
+    if (value.updateMode === "automatic")
+      throw new Error("States use manual or story updates.");
+    if (value.initialState && !states.includes(String(value.initialState)))
+      throw new Error("Keep the reset state in the allowed states.");
+  } else {
+    for (const key of ["value", "initialValue", "min", "max", "ratePerHour"]) {
+      if (!Number.isFinite(Number(value[key])))
+        throw new Error("Tracker numbers must be finite.");
+    }
+    if (Number(value.max) <= Number(value.min))
+      throw new Error("Maximum must be greater than minimum.");
+    for (const key of ["value", "initialValue"])
+      if (Number(value[key]) < Number(value.min) || Number(value[key]) > Number(value.max))
+        throw new Error("Starting and reset values must fit the range.");
+    if (value.kind === "counter" && !(Number(value.step) > 0))
+      throw new Error("Counter step must be positive.");
+    if (value.kind === "timer" && !["up", "down"].includes(String(value.direction)))
+      throw new Error("Choose a timer direction.");
+  }
+  if (!MODES.has(value.updateMode))
+    throw new Error("Choose how this tracker updates.");
+  if (value.updateMode === "automatic" && !Number(value.ratePerHour))
+    throw new Error("Choose a non-zero change per hour for time updates.");
+  if (value.updateMode === "model" && value.allowModelWrite !== true)
+    throw new Error("Story updates require model changes to be enabled.");
+  if (!record(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
+    throw new Error("Choose who or what this tracker belongs to.");
+  for (const band of Array.isArray(value.bands) ? value.bands : []) {
+    if (!record(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
+      throw new Error("Each band needs a label and a valid range inside the tracker range.");
+  }
+}
+function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
+  if (!record(value))
+    return fallback;
+  const type = TARGETS.has(value.type) ? value.type : fallback.type;
+  return { type, id: clean(value.id, 180), label: clean(value.label, 160) || fallback.label };
+}
+function normalizeBands(value, min, max, color) {
+  const bands = (Array.isArray(value) ? value : []).flatMap((item) => {
+    if (!record(item))
+      return [];
+    const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
+    const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
+    const label = clean(item.label, 80);
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color, meaning: item.meaning === "good" || item.meaning === "bad" ? item.meaning : "neutral" }] : [];
+  }).slice(0, 12);
+  if (bands.length || max <= min)
+    return bands;
+  const span = max - min;
+  return [
+    { min, max: min + span * 0.33, label: "Low", color },
+    { min: min + span * 0.33, max: min + span * 0.67, label: "Steady", color },
+    { min: min + span * 0.67, max, label: "High", color }
+  ];
+}
+function normalizeHistory(value) {
+  return (Array.isArray(value) ? value : []).flatMap((item) => {
+    if (!record(item))
+      return [];
+    const operation = ["set", "add", "subtract", "reset", "set_state", "automatic"].includes(String(item.operation)) ? item.operation : "set";
+    const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" || item.source === "jev" ? item.source : "user";
+    const createdAt = iso(item.createdAt, new Date().toISOString());
+    return [{
+      id: clean(item.id, 160) || trackerId("hist"),
+      previous: typeof item.previous === "string" ? clean(item.previous, 160) : finite(item.previous, 0),
+      next: typeof item.next === "string" ? clean(item.next, 160) : finite(item.next, 0),
+      operation,
+      amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
+      reason: clean(item.reason, 300),
+      source,
+      createdAt,
+      roleplayAt: clean(item.roleplayAt, 80) || undefined
+    }];
+  }).slice(-TRACKER_HISTORY_LIMIT);
+}
+function normalizeTracker(value, context = {}) {
+  if (!record(value))
+    return null;
+  const now = context.now || new Date().toISOString();
+  const label = clean(value.label, 120);
+  if (!label)
+    return null;
+  const legacy = !KINDS.has(value.kind);
+  const kind = legacy ? "meter" : value.kind;
+  const min = finite(value.min, kind === "counter" ? 0 : 0);
+  const max = Math.max(min, finite(value.max, kind === "counter" ? 999999 : 100));
+  const numeric = Math.max(min, Math.min(max, finite(value.value, min)));
+  const initialValue = Math.max(min, Math.min(max, finite(value.initialValue, numeric)));
+  const color = clean(value.color, 40) || "#8b7dff";
+  const ratePerHour = Math.max(-1e5, Math.min(1e5, finite(value.ratePerHour, 0)));
+  const target = legacy ? { type: "custom", id: "", label: "Unassigned" } : normalizeTrackerTarget(value.target, context.characterId ? { type: "character", id: context.characterId, label: context.characterName || "Character" } : { type: "custom", id: "", label: "Unassigned" });
+  const clock = legacy ? "real" : CLOCKS.has(value.clock) ? value.clock : "real";
+  const updateMode = MODES.has(value.updateMode) ? value.updateMode : ratePerHour ? "automatic" : "manual";
+  const presentation = PRESENTATIONS.has(value.presentation) ? value.presentation : kind === "counter" ? "counter" : kind === "timer" ? "timer" : kind === "state" ? "state" : "meter";
+  const base = {
+    id: clean(value.id, 120) || trackerId(),
+    key: trackerKey(value.key || label),
+    label,
+    kind,
+    value: numeric,
+    initialValue,
+    min,
+    max,
+    unit: clean(value.unit, 40),
+    color,
+    target,
+    updateMode,
+    clock,
+    allowModelWrite: legacy || updateMode === "jev" ? false : value.allowModelWrite === true,
+    jev: normalizeJevConfig(value.jev),
+    jevResult: normalizeJevResult(value.jevResult),
+    presentation,
+    bands: normalizeBands(value.bands, min, max, color),
+    history: normalizeHistory(value.history),
+    ratePerHour,
+    lastUpdated: iso(value.lastUpdated, now),
+    lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
+    pausedReason: clean(value.pausedReason, 240),
+    visibleToModel: value.visibleToModel !== false,
+    createdAt: iso(value.createdAt, now),
+    updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
+  };
+  if (kind === "state") {
+    const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean(entry, 80)).filter(Boolean).slice(0, 24);
+    const initialState = clean(value.initialState, 80) || states[0] || "Unknown";
+    const state = clean(value.state, 80) || initialState;
+    return { ...base, kind, state, initialState, states: states.includes(state) ? states : [...states, state].slice(0, 24) };
+  }
+  if (kind === "counter")
+    return { ...base, kind, step: Math.max(0.0001, Math.abs(finite(value.step, 1))) };
+  if (kind === "timer")
+    return { ...base, kind, direction: value.direction === "up" ? "up" : "down" };
+  return { ...base, kind };
+}
+var TRACKER_TEMPLATES = [
+  { group: "Character", name: "Health", values: { kind: "meter", label: "Health", key: "health", value: 100, initialValue: 100, min: 0, max: 100, unit: "%", presentation: "vitals", bands: [{ min: 0, max: 35, label: "Critical", color: "#ef6b73", meaning: "bad" }, { min: 35, max: 70, label: "Recovering", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Healthy", color: "#62c994", meaning: "good" }] } },
+  { group: "Character", name: "Hunger", values: { kind: "meter", label: "Hunger", key: "hunger", value: 20, initialValue: 20, min: 0, max: 100, unit: "%", updateMode: "automatic", ratePerHour: 3, clock: "roleplay", bands: [{ min: 0, max: 30, label: "Sated", color: "#62c994", meaning: "good" }, { min: 30, max: 70, label: "Hungry", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Starving", color: "#ef6b73", meaning: "bad" }] } },
+  { group: "Relationship", name: "Trust", values: { kind: "meter", label: "Trust", key: "trust", value: 50, initialValue: 50, min: 0, max: 100, unit: "%", presentation: "relationship", bands: [{ min: 0, max: 30, label: "Wary", color: "#ef6b73", meaning: "bad" }, { min: 30, max: 70, label: "Building trust", color: "#8b7dff", meaning: "neutral" }, { min: 70, max: 100, label: "Trusted", color: "#62c994", meaning: "good" }], target: { type: "relationship", id: "", label: "Current relationship" } } },
+  { group: "Relationship", name: "Relationship Status", values: { kind: "state", label: "Relationship Status", key: "relationship_status", state: "Acquaintances", initialState: "Acquaintances", states: ["Strangers", "Acquaintances", "Friends", "Close", "Partners"], presentation: "state", target: { type: "relationship", id: "", label: "Current relationship" } } },
+  { group: "Scene", name: "Tension", values: { kind: "meter", label: "Scene Tension", key: "scene_tension", value: 10, initialValue: 10, min: 0, max: 100, unit: "%", bands: [{ min: 0, max: 30, label: "Calm", color: "#62c994", meaning: "good" }, { min: 30, max: 70, label: "Uneasy", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Flashpoint", color: "#ef6b73", meaning: "bad" }], target: { type: "scene", id: "", label: "Current scene" } } },
+  { group: "Resource", name: "Ammo", values: { kind: "counter", label: "Ammo", key: "ammo", value: 12, initialValue: 12, min: 0, max: 999, unit: " rounds", presentation: "counter" } },
+  { group: "World", name: "World Alert", values: { kind: "state", label: "World Alert", key: "world_alert", state: "Calm", initialState: "Calm", states: ["Calm", "Watchful", "Alarmed", "Crisis"], target: { type: "world", id: "", label: "Current world" } } },
+  { group: "Timer", name: "Countdown", values: { kind: "timer", label: "Countdown", key: "countdown", value: 60, initialValue: 60, min: 0, max: 60, unit: " min", direction: "down", updateMode: "automatic", ratePerHour: -60, clock: "roleplay", presentation: "timer" } },
+  { group: "State", name: "Condition", values: { kind: "state", label: "Condition", key: "condition", state: "Stable", initialState: "Stable", states: ["Stable", "Wounded", "Critical", "Recovering"], presentation: "state" } },
+  { group: "Blank", name: "Blank meter", values: { kind: "meter", label: "New tracker", key: "new_tracker", value: 0, initialValue: 0, min: 0, max: 100, presentation: "meter" } }
+];
+function addHistory(tracker, entry) {
+  return { ...tracker, history: [...tracker.history, { ...entry, id: trackerId("hist") }].slice(-TRACKER_HISTORY_LIMIT) };
+}
+function trackerBand(tracker, value = tracker.value) {
+  return tracker.bands.find((band, index) => value >= band.min && (value < band.max || index === tracker.bands.length - 1)) || null;
+}
+function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
+  if (tracker.kind === "state" || tracker.updateMode !== "automatic" || !tracker.ratePerHour)
+    return { tracker, changed: false };
+  const current = tracker.clock === "roleplay" ? Date.parse(roleplayNow) : Date.parse(wallNow);
+  const previous = tracker.clock === "roleplay" ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated);
+  if (!Number.isFinite(current)) {
+    const pausedReason = tracker.clock === "roleplay" ? "Roleplay time is approximate or unavailable." : "Real-time clock is unavailable.";
+    return { tracker: { ...tracker, pausedReason }, changed: tracker.pausedReason !== pausedReason };
+  }
+  if (!Number.isFinite(previous)) {
+    const anchor = new Date(current).toISOString();
+    return {
+      tracker: {
+        ...tracker,
+        pausedReason: "",
+        lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
+        lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
+      },
+      changed: true
+    };
+  }
+  if (current <= previous)
+    return { tracker: tracker.pausedReason ? { ...tracker, pausedReason: "" } : tracker, changed: Boolean(tracker.pausedReason) };
+  const nextValue = Math.max(tracker.min, Math.min(tracker.max, tracker.value + (current - previous) / 3600000 * tracker.ratePerHour));
+  const anchor = new Date(current).toISOString();
+  let next = {
+    ...tracker,
+    value: nextValue,
+    pausedReason: "",
+    updatedAt: wallNow,
+    lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
+    lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
+  };
+  if (nextValue !== tracker.value)
+    next = addHistory(next, {
+      previous: tracker.value,
+      next: nextValue,
+      operation: "automatic",
+      amount: nextValue - tracker.value,
+      reason: tracker.clock === "roleplay" ? "Roleplay time advanced" : "Real time advanced",
+      source: "automatic",
+      createdAt: wallNow,
+      roleplayAt: clean(roleplayNow, 80) || undefined
+    });
+  return { tracker: next, changed: true };
+}
+
+// src/domain/jev.ts
+var OPEN_JEV_ENDPOINT = "https://pngwn-open-jev.hf.space";
+var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+var clean2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+function normalizeJevSettings(value) {
+  const raw = object(value) ? value : {};
+  let endpoint = clean2(raw.endpoint, 500) || OPEN_JEV_ENDPOINT;
+  try {
+    const url = new URL(endpoint);
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+      throw new Error;
+    endpoint = url.href.replace(/\/$/, "");
+  } catch {
+    endpoint = OPEN_JEV_ENDPOINT;
+  }
+  return { enabled: raw.enabled === true, endpoint, autoAfterTurn: raw.autoAfterTurn === true };
+}
+function normalizeJevConfig(value) {
+  const raw = object(value) ? value : {};
+  const levels = (Array.isArray(raw.levels) ? raw.levels : []).flatMap((entry) => object(entry) && typeof entry.value === "number" && Number.isFinite(entry.value) && clean2(entry.label, 160) ? [{ value: entry.value, label: clean2(entry.label, 160) }] : []).slice(0, 10);
+  return { question: clean2(raw.question, 240), levels, minConfidence: typeof raw.minConfidence === "number" && Number.isFinite(raw.minConfidence) ? Math.min(1, Math.max(0, raw.minConfidence)) : 0.65 };
+}
+function validateJevTracker(tracker) {
+  const raw = object(tracker.jev) ? tracker.jev : {};
+  const config = normalizeJevConfig(raw);
+  if (!config.question || String(raw.question).trim().length > 240)
+    throw new Error("Give JEV a short question (up to 240 characters).");
+  if (tracker.kind === "timer" || tracker.kind === "counter")
+    throw new Error("JEV estimates values and states. Quantities and timers use exact updates.");
+  if (typeof raw.minConfidence !== "number" || raw.minConfidence < 0 || raw.minConfidence > 1 || !Number.isFinite(raw.minConfidence))
+    throw new Error("JEV confidence must be between 0 and 1.");
+  if (tracker.kind === "state") {
+    if (!Array.isArray(tracker.states) || tracker.states.length < 2 || tracker.states.length > 16)
+      throw new Error("JEV needs between 2 and 16 allowed states.");
+  } else {
+    if (!Array.isArray(raw.levels) || raw.levels.length < 2 || raw.levels.length > 10 || config.levels.length !== raw.levels.length)
+      throw new Error("JEV needs 2–10 described numeric levels.");
+    if (config.levels.some((level, index) => level.value < Number(tracker.min) || level.value > Number(tracker.max) || index > 0 && level.value <= config.levels[index - 1].value))
+      throw new Error("JEV levels must increase and fit the tracker range.");
+    if (new Set(config.levels.map((level) => level.label)).size !== config.levels.length)
+      throw new Error("Give each JEV level a different description.");
+  }
+}
+function normalizeJevResult(value) {
+  if (!object(value) || !["applied", "unchanged", "uncertain", "invalid"].includes(String(value.status)))
+    return;
+  return { sourceKey: clean2(value.sourceKey, 200), status: value.status, evaluatedAt: clean2(value.evaluatedAt, 80), message: clean2(value.message, 300), confidence: typeof value.confidence === "number" && Number.isFinite(value.confidence) ? value.confidence : undefined };
+}
+
 // src/domain/preferences.ts
 var PREFERENCES_VERSION = 5;
 var HEX = /^#[0-9a-f]{6}$/i;
@@ -47,7 +338,7 @@ var THEME_COLORS = {
     chatSecondary: "#0f1c17"
   }
 };
-function record(value) {
+function record2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function text(value, fallback = "", max = 12000) {
@@ -64,7 +355,7 @@ function defaultWallpaper() {
   return { source: null, fit: "cover", focalX: 0.5, focalY: 0.5, scrim: 0.22 };
 }
 function normalizeImageSource(value) {
-  const raw = record(value);
+  const raw = record2(value);
   if (raw.kind === "gallery") {
     const imageId = text(raw.imageId, "", 180);
     return imageId ? { kind: "gallery", imageId } : null;
@@ -80,7 +371,7 @@ function normalizeImageSource(value) {
   return null;
 }
 function normalizeWallpaper(value, legacyUrl = "") {
-  const raw = record(value);
+  const raw = record2(value);
   const fit = raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover";
   const migratedUrl = text(legacyUrl, "", 2000);
   return {
@@ -114,6 +405,7 @@ function defaultPreferences() {
     pushNotifications: false,
     useSwarmProfile: true,
     sceneEnhancer: true,
+    jev: normalizeJevSettings(null),
     generationMode: "roleplay",
     sidecarConnectionId: "",
     sidecarModelOverride: "",
@@ -136,14 +428,14 @@ function defaultPreferences() {
 }
 function normalizePreferences(value) {
   const fallback = defaultPreferences();
-  const raw = record(value);
+  const raw = record2(value);
   const version = Number(raw.version ?? 0);
   if (Number.isFinite(version) && version > PREFERENCES_VERSION)
     return fallback;
   const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "custom"]);
   const theme = allowedThemes.has(raw.theme) ? raw.theme : fallback.theme;
   const preset = themePalette(theme);
-  const colors = record(raw.colors);
+  const colors = record2(raw.colors);
   const legacyAccent = safeColor(raw.accent, preset.accent);
   const legacyBezel = safeColor(raw.bezelColor, preset.bezel);
   const palette = {
@@ -157,10 +449,10 @@ function normalizePreferences(value) {
     chatPrimary: safeColor(colors.chatPrimary, preset.chatPrimary),
     chatSecondary: safeColor(colors.chatSecondary, preset.chatSecondary)
   };
-  const manual = record(raw.manualVisualProfile);
+  const manual = record2(raw.manualVisualProfile);
   const allowedAnimations = new Set(["spring", "slide", "fade", "none"]);
   const history = (Array.isArray(raw.generationHistory) ? raw.generationHistory : []).slice(-24).flatMap((entry) => {
-    const item = record(entry);
+    const item = record2(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
     const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test"]);
@@ -182,14 +474,14 @@ function normalizePreferences(value) {
       error: text(item.error, "", 500) || undefined
     }];
   });
-  const rawPersonaAppearance = record(raw.personaAppearance);
+  const rawPersonaAppearance = record2(raw.personaAppearance);
   const personaAppearance = {};
   for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
     if (!personaId || personaId.length > 180)
       continue;
-    const item = record(value);
+    const item = record2(value);
     const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
-    const overrideColors = record(item.colors);
+    const overrideColors = record2(item.colors);
     const overridePreset = themePalette(overrideTheme);
     personaAppearance[personaId] = {
       enabled: bool(item.enabled, false),
@@ -226,6 +518,7 @@ function normalizePreferences(value) {
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
+    jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
@@ -249,13 +542,13 @@ function normalizePreferences(value) {
       model: text(manual.model, "", 500),
       connectionId: text(manual.connectionId, "", 200),
       loras: (Array.isArray(manual.loras) ? manual.loras : []).slice(0, 24).flatMap((entry) => {
-        const item = record(entry);
+        const item = record2(entry);
         const name = text(item.name, "", 500);
         if (!name)
           return [];
         return [{ name, weight: numberIn(item.weight, 1, -4, 4) }];
       }),
-      parameters: record(manual.parameters)
+      parameters: record2(manual.parameters)
     }
   };
 }
@@ -836,6 +1129,7 @@ function categories(host) {
     ["personalization", "Personalization", "Theme, wallpapers, and your Persona"],
     ["messages", "Messages", "Replies, ambient texts, roleplay context"],
     ["generation", "Pocket Generation", "Model source and connection diagnostics"],
+    ["jev", "Open JEV", "Hugging Face decisions for trackers"],
     ["camera", "Camera & Swarm Studio", "Visual profile and macro diagnostics"],
     ["notifications", "Notifications", "Kinds, previews, push, and sound"],
     ["permissions", "Permissions", "Lumiverse capability access"],
@@ -1375,6 +1669,42 @@ function camera(host) {
   content.append(swarm, disclosure("Advanced manual overrides", manual));
   return page;
 }
+function jevSettings(host) {
+  const settings = normalizeJevSettings(host.draft.jev);
+  const { page, content } = host.page("Open JEV", "Hugging Face tracker decisions");
+  const card = el("section", "lp-card lp-settings-section");
+  const endpoint = el("input", "lp-input");
+  endpoint.value = settings.endpoint;
+  endpoint.type = "url";
+  const enabled = el("input");
+  enabled.type = "checkbox";
+  enabled.checked = settings.enabled;
+  const automatic = el("input");
+  automatic.type = "checkbox";
+  automatic.checked = settings.autoAfterTurn;
+  const enabledField = fieldBlock("Enable Open JEV", enabled);
+  const autoField = fieldBlock("Evaluate after story turns", automatic);
+  card.append(el("p", "lp-copy", "Choose Open JEV updates on each tracker and describe its rubric. Evaluation sends the last six story messages and selected tracker targets to this endpoint. The public Space may queue or time out; a failed request keeps your values."), enabledField, autoField, fieldBlock("Space URL", endpoint, "Default: pngwn/open-jev. Use a compatible duplicate or local deployment."));
+  const apply = button("Save JEV settings");
+  apply.addEventListener("click", () => {
+    try {
+      const url = new URL(endpoint.value.trim());
+      if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+        throw new Error;
+    } catch {
+      host.showError("Enter a Space base URL without credentials or query parameters.");
+      return;
+    }
+    const next = clone(host.draft);
+    next.jev = normalizeJevSettings({ enabled: enabled.checked, autoAfterTurn: automatic.checked, endpoint: endpoint.value });
+    host.update(next);
+  });
+  const evaluate = button("Evaluate JEV trackers", "lp-button lp-button-quiet");
+  evaluate.addEventListener("click", () => host.send("lumiphone:jev_evaluate"));
+  card.append(apply, evaluate);
+  content.append(card);
+  return page;
+}
 function notifications(host) {
   const settings = host.draft;
   const commit = (mutate) => {
@@ -1480,6 +1810,8 @@ function renderSettingsView(host) {
     return messages(host);
   if (host.section === "generation")
     return generation(host);
+  if (host.section === "jev")
+    return jevSettings(host);
   if (host.section === "camera")
     return camera(host);
   if (host.section === "notifications")
@@ -1489,244 +1821,6 @@ function renderSettingsView(host) {
   if (host.section === "data")
     return data(host);
   return categories(host);
-}
-
-// src/domain/trackers.ts
-var TRACKER_HISTORY_LIMIT = 40;
-var KINDS = new Set(["meter", "counter", "state", "timer"]);
-var CLOCKS = new Set(["real", "roleplay"]);
-var MODES = new Set(["manual", "model", "automatic"]);
-var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
-var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
-function record2(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function clean(value, max = 160) {
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
-function finite(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-function iso(value, fallback) {
-  const text = clean(value, 80);
-  return Number.isFinite(Date.parse(text)) ? text : fallback;
-}
-function trackerId(prefix = "trk") {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
-}
-function trackerKey(value, fallback = "tracker") {
-  const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return key || fallback;
-}
-function validateTrackerConfig(value) {
-  if (!clean(value.label, 120))
-    throw new Error("Give your tracker a name.");
-  if (!KINDS.has(value.kind))
-    throw new Error("Choose a tracker type.");
-  const allowed = value.kind === "state" ? ["state", "compact"] : value.kind === "counter" ? ["counter", "compact"] : value.kind === "timer" ? ["timer", "compact"] : ["meter", "vitals", "relationship", "segmented", "compact"];
-  if (!allowed.includes(String(value.presentation)))
-    throw new Error("Choose a display that matches this tracker type.");
-  if (value.kind === "state") {
-    const states = Array.isArray(value.states) ? value.states.map((entry) => clean(entry, 80)).filter(Boolean) : [];
-    if (!states.length || !states.includes(String(value.state)))
-      throw new Error("Choose a current state from the allowed states.");
-    if (value.updateMode === "automatic")
-      throw new Error("States use manual or story updates.");
-    if (value.initialState && !states.includes(String(value.initialState)))
-      throw new Error("Keep the reset state in the allowed states.");
-  } else {
-    for (const key of ["value", "initialValue", "min", "max", "ratePerHour"]) {
-      if (!Number.isFinite(Number(value[key])))
-        throw new Error("Tracker numbers must be finite.");
-    }
-    if (Number(value.max) <= Number(value.min))
-      throw new Error("Maximum must be greater than minimum.");
-    for (const key of ["value", "initialValue"])
-      if (Number(value[key]) < Number(value.min) || Number(value[key]) > Number(value.max))
-        throw new Error("Starting and reset values must fit the range.");
-    if (value.kind === "counter" && !(Number(value.step) > 0))
-      throw new Error("Counter step must be positive.");
-    if (value.kind === "timer" && !["up", "down"].includes(String(value.direction)))
-      throw new Error("Choose a timer direction.");
-  }
-  if (!MODES.has(value.updateMode))
-    throw new Error("Choose how this tracker updates.");
-  if (value.updateMode === "automatic" && !Number(value.ratePerHour))
-    throw new Error("Choose a non-zero change per hour for time updates.");
-  if (value.updateMode === "model" && value.allowModelWrite !== true)
-    throw new Error("Story updates require model changes to be enabled.");
-  if (!record2(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
-    throw new Error("Choose who or what this tracker belongs to.");
-  for (const band of Array.isArray(value.bands) ? value.bands : []) {
-    if (!record2(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
-      throw new Error("Each band needs a label and a valid range inside the tracker range.");
-  }
-}
-function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
-  if (!record2(value))
-    return fallback;
-  const type = TARGETS.has(value.type) ? value.type : fallback.type;
-  return { type, id: clean(value.id, 180), label: clean(value.label, 160) || fallback.label };
-}
-function normalizeBands(value, min, max, color) {
-  const bands = (Array.isArray(value) ? value : []).flatMap((item) => {
-    if (!record2(item))
-      return [];
-    const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
-    const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
-    const label = clean(item.label, 80);
-    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color, meaning: item.meaning === "good" || item.meaning === "bad" ? item.meaning : "neutral" }] : [];
-  }).slice(0, 12);
-  if (bands.length || max <= min)
-    return bands;
-  const span = max - min;
-  return [
-    { min, max: min + span * 0.33, label: "Low", color },
-    { min: min + span * 0.33, max: min + span * 0.67, label: "Steady", color },
-    { min: min + span * 0.67, max, label: "High", color }
-  ];
-}
-function normalizeHistory(value) {
-  return (Array.isArray(value) ? value : []).flatMap((item) => {
-    if (!record2(item))
-      return [];
-    const operation = ["set", "add", "subtract", "reset", "set_state", "automatic"].includes(String(item.operation)) ? item.operation : "set";
-    const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" ? item.source : "user";
-    const createdAt = iso(item.createdAt, new Date().toISOString());
-    return [{
-      id: clean(item.id, 160) || trackerId("hist"),
-      previous: typeof item.previous === "string" ? clean(item.previous, 160) : finite(item.previous, 0),
-      next: typeof item.next === "string" ? clean(item.next, 160) : finite(item.next, 0),
-      operation,
-      amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
-      reason: clean(item.reason, 300),
-      source,
-      createdAt,
-      roleplayAt: clean(item.roleplayAt, 80) || undefined
-    }];
-  }).slice(-TRACKER_HISTORY_LIMIT);
-}
-function normalizeTracker(value, context = {}) {
-  if (!record2(value))
-    return null;
-  const now = context.now || new Date().toISOString();
-  const label = clean(value.label, 120);
-  if (!label)
-    return null;
-  const legacy = !KINDS.has(value.kind);
-  const kind = legacy ? "meter" : value.kind;
-  const min = finite(value.min, kind === "counter" ? 0 : 0);
-  const max = Math.max(min, finite(value.max, kind === "counter" ? 999999 : 100));
-  const numeric = Math.max(min, Math.min(max, finite(value.value, min)));
-  const initialValue = Math.max(min, Math.min(max, finite(value.initialValue, numeric)));
-  const color = clean(value.color, 40) || "#8b7dff";
-  const ratePerHour = Math.max(-1e5, Math.min(1e5, finite(value.ratePerHour, 0)));
-  const target = legacy ? { type: "custom", id: "", label: "Unassigned" } : normalizeTrackerTarget(value.target, context.characterId ? { type: "character", id: context.characterId, label: context.characterName || "Character" } : { type: "custom", id: "", label: "Unassigned" });
-  const clock = legacy ? "real" : CLOCKS.has(value.clock) ? value.clock : "real";
-  const updateMode = MODES.has(value.updateMode) ? value.updateMode : ratePerHour ? "automatic" : "manual";
-  const presentation = PRESENTATIONS.has(value.presentation) ? value.presentation : kind === "counter" ? "counter" : kind === "timer" ? "timer" : kind === "state" ? "state" : "meter";
-  const base = {
-    id: clean(value.id, 120) || trackerId(),
-    key: trackerKey(value.key || label),
-    label,
-    kind,
-    value: numeric,
-    initialValue,
-    min,
-    max,
-    unit: clean(value.unit, 40),
-    color,
-    target,
-    updateMode,
-    clock,
-    allowModelWrite: legacy ? false : value.allowModelWrite === true,
-    presentation,
-    bands: normalizeBands(value.bands, min, max, color),
-    history: normalizeHistory(value.history),
-    ratePerHour,
-    lastUpdated: iso(value.lastUpdated, now),
-    lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
-    pausedReason: clean(value.pausedReason, 240),
-    visibleToModel: value.visibleToModel !== false,
-    createdAt: iso(value.createdAt, now),
-    updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
-  };
-  if (kind === "state") {
-    const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean(entry, 80)).filter(Boolean).slice(0, 24);
-    const initialState = clean(value.initialState, 80) || states[0] || "Unknown";
-    const state = clean(value.state, 80) || initialState;
-    return { ...base, kind, state, initialState, states: states.includes(state) ? states : [...states, state].slice(0, 24) };
-  }
-  if (kind === "counter")
-    return { ...base, kind, step: Math.max(0.0001, Math.abs(finite(value.step, 1))) };
-  if (kind === "timer")
-    return { ...base, kind, direction: value.direction === "up" ? "up" : "down" };
-  return { ...base, kind };
-}
-var TRACKER_TEMPLATES = [
-  { group: "Character", name: "Health", values: { kind: "meter", label: "Health", key: "health", value: 100, initialValue: 100, min: 0, max: 100, unit: "%", presentation: "vitals", bands: [{ min: 0, max: 35, label: "Critical", color: "#ef6b73", meaning: "bad" }, { min: 35, max: 70, label: "Recovering", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Healthy", color: "#62c994", meaning: "good" }] } },
-  { group: "Character", name: "Hunger", values: { kind: "meter", label: "Hunger", key: "hunger", value: 20, initialValue: 20, min: 0, max: 100, unit: "%", updateMode: "automatic", ratePerHour: 3, clock: "roleplay", bands: [{ min: 0, max: 30, label: "Sated", color: "#62c994", meaning: "good" }, { min: 30, max: 70, label: "Hungry", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Starving", color: "#ef6b73", meaning: "bad" }] } },
-  { group: "Relationship", name: "Trust", values: { kind: "meter", label: "Trust", key: "trust", value: 50, initialValue: 50, min: 0, max: 100, unit: "%", presentation: "relationship", bands: [{ min: 0, max: 30, label: "Wary", color: "#ef6b73", meaning: "bad" }, { min: 30, max: 70, label: "Building trust", color: "#8b7dff", meaning: "neutral" }, { min: 70, max: 100, label: "Trusted", color: "#62c994", meaning: "good" }], target: { type: "relationship", id: "", label: "Current relationship" } } },
-  { group: "Relationship", name: "Relationship Status", values: { kind: "state", label: "Relationship Status", key: "relationship_status", state: "Acquaintances", initialState: "Acquaintances", states: ["Strangers", "Acquaintances", "Friends", "Close", "Partners"], presentation: "state", target: { type: "relationship", id: "", label: "Current relationship" } } },
-  { group: "Scene", name: "Tension", values: { kind: "meter", label: "Scene Tension", key: "scene_tension", value: 10, initialValue: 10, min: 0, max: 100, unit: "%", bands: [{ min: 0, max: 30, label: "Calm", color: "#62c994", meaning: "good" }, { min: 30, max: 70, label: "Uneasy", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Flashpoint", color: "#ef6b73", meaning: "bad" }], target: { type: "scene", id: "", label: "Current scene" } } },
-  { group: "Resource", name: "Ammo", values: { kind: "counter", label: "Ammo", key: "ammo", value: 12, initialValue: 12, min: 0, max: 999, unit: " rounds", presentation: "counter" } },
-  { group: "World", name: "World Alert", values: { kind: "state", label: "World Alert", key: "world_alert", state: "Calm", initialState: "Calm", states: ["Calm", "Watchful", "Alarmed", "Crisis"], target: { type: "world", id: "", label: "Current world" } } },
-  { group: "Timer", name: "Countdown", values: { kind: "timer", label: "Countdown", key: "countdown", value: 60, initialValue: 60, min: 0, max: 60, unit: " min", direction: "down", updateMode: "automatic", ratePerHour: -60, clock: "roleplay", presentation: "timer" } },
-  { group: "State", name: "Condition", values: { kind: "state", label: "Condition", key: "condition", state: "Stable", initialState: "Stable", states: ["Stable", "Wounded", "Critical", "Recovering"], presentation: "state" } },
-  { group: "Blank", name: "Blank meter", values: { kind: "meter", label: "New tracker", key: "new_tracker", value: 0, initialValue: 0, min: 0, max: 100, presentation: "meter" } }
-];
-function addHistory(tracker, entry) {
-  return { ...tracker, history: [...tracker.history, { ...entry, id: trackerId("hist") }].slice(-TRACKER_HISTORY_LIMIT) };
-}
-function trackerBand(tracker, value = tracker.value) {
-  return tracker.bands.find((band, index) => value >= band.min && (value < band.max || index === tracker.bands.length - 1)) || null;
-}
-function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
-  if (tracker.kind === "state" || tracker.updateMode !== "automatic" || !tracker.ratePerHour)
-    return { tracker, changed: false };
-  const current = tracker.clock === "roleplay" ? Date.parse(roleplayNow) : Date.parse(wallNow);
-  const previous = tracker.clock === "roleplay" ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated);
-  if (!Number.isFinite(current)) {
-    const pausedReason = tracker.clock === "roleplay" ? "Roleplay time is approximate or unavailable." : "Real-time clock is unavailable.";
-    return { tracker: { ...tracker, pausedReason }, changed: tracker.pausedReason !== pausedReason };
-  }
-  if (!Number.isFinite(previous)) {
-    const anchor = new Date(current).toISOString();
-    return {
-      tracker: {
-        ...tracker,
-        pausedReason: "",
-        lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
-        lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
-      },
-      changed: true
-    };
-  }
-  if (current <= previous)
-    return { tracker: tracker.pausedReason ? { ...tracker, pausedReason: "" } : tracker, changed: Boolean(tracker.pausedReason) };
-  const nextValue = Math.max(tracker.min, Math.min(tracker.max, tracker.value + (current - previous) / 3600000 * tracker.ratePerHour));
-  const anchor = new Date(current).toISOString();
-  let next = {
-    ...tracker,
-    value: nextValue,
-    pausedReason: "",
-    updatedAt: wallNow,
-    lastUpdated: tracker.clock === "real" ? anchor : tracker.lastUpdated,
-    lastRoleplayAt: tracker.clock === "roleplay" ? anchor : tracker.lastRoleplayAt
-  };
-  if (nextValue !== tracker.value)
-    next = addHistory(next, {
-      previous: tracker.value,
-      next: nextValue,
-      operation: "automatic",
-      amount: nextValue - tracker.value,
-      reason: tracker.clock === "roleplay" ? "Roleplay time advanced" : "Real time advanced",
-      source: "automatic",
-      createdAt: wallNow,
-      roleplayAt: clean(roleplayNow, 80) || undefined
-    });
-  return { tracker: next, changed: true };
 }
 
 // src/frontend/components/tracker-display.ts
@@ -1815,7 +1909,7 @@ function trackerDisplay(tracker, state) {
   }
   const latest = current.history.at(-1);
   const footer = el("div", "lp-tracker-meta");
-  footer.append(el("span", "", current.presentation === "timer" ? `${current.clock === "real" ? "Real" : "Story"} time` : status), el("span", "", current.updateMode === "model" ? "Story updates" : current.updateMode === "automatic" ? "Automatic" : "Manual"));
+  footer.append(el("span", "", current.presentation === "timer" ? `${current.clock === "real" ? "Real" : "Story"} time` : status), el("span", "", current.updateMode === "jev" ? "Open JEV" : current.updateMode === "model" ? "Story updates" : current.updateMode === "automatic" ? "Automatic" : "Manual"));
   card.append(footer);
   if (latest && current.presentation === "relationship")
     card.append(el("p", "lp-copy lp-tracker-change", `${latest.previous} → ${latest.next}${latest.reason ? ` · ${latest.reason}` : ""}`));
@@ -1893,7 +1987,23 @@ function trackerEditor(host, current, templateIndex = 9) {
 Wounded
 Recovering`;
   const state = choice("Current state", [], source.kind === "state" ? source.state : "");
-  const mode = choice("Updates", [["manual", "By hand"], ["model", "With the story"], ["automatic", "Over time"]], source.updateMode);
+  const mode = choice("Updates", [["manual", "By hand"], ["model", "With the story"], ["automatic", "Over time"], ["jev", "Open JEV"]], source.updateMode);
+  const jev = sectionBlock("Open JEV", "Estimates this value from recent story messages. Uncertain answers keep the current value.");
+  const question = el("textarea", "lp-textarea");
+  question.maxLength = 240;
+  question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`;
+  question.placeholder = "Ask one specific question about this target.";
+  const confidence = el("input", "lp-input");
+  confidence.type = "number";
+  confidence.min = "0";
+  confidence.max = "1";
+  confidence.step = ".05";
+  confidence.value = String(source.jev?.minConfidence ?? 0.65);
+  const levels = el("textarea", "lp-textarea");
+  levels.value = ((source.jev?.levels.length) ? source.jev.levels : [{ value: source.min, label: source.bands[0]?.label || "Low" }, { value: (source.min + source.max) / 2, label: source.bands[Math.floor(source.bands.length / 2)]?.label || "Moderate" }, { value: source.max, label: source.bands.at(-1)?.label || "High" }]).map((level) => `${level.value} | ${level.label}`).join(`
+`);
+  const levelField = fieldBlock("Rubric", levels, "2–10 levels, low to high: value | description. Describe what each level looks like in the story.");
+  jev.body.append(fieldBlock("Question", question), levelField, fieldBlock("Minimum confidence", confidence, "0–1. Open JEV uses the strongest option probability."));
   const visible = el("input");
   visible.type = "checkbox";
   visible.checked = source.visibleToModel;
@@ -2010,6 +2120,11 @@ Recovering`;
       allowModelWrite: mode.control.value === "model",
       visibleToModel: visible.checked,
       clock: clock.control.value,
+      jev: { question: question.value.trim(), minConfidence: Number(confidence.value), levels: levels.value.split(`
+`).filter((line) => line.trim()).map((line) => {
+        const delimiter = line.indexOf("|");
+        return { value: delimiter < 0 ? NaN : Number(line.slice(0, delimiter).trim()), label: delimiter < 0 ? "" : line.slice(delimiter + 1).trim() };
+      }) },
       ratePerHour: kindValue === "timer" ? Math.abs(Number(rate.value)) * (direction.control.value === "down" ? -1 : 1) : Number(rate.value),
       bands: kindValue === "state" ? [] : bandRows.map((entry) => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value, meaning: entry.meaning.value }))
     };
@@ -2024,6 +2139,12 @@ Recovering`;
     stepField.hidden = kindValue !== "counter";
     automatic.section.hidden = mode.control.value !== "automatic";
     direction.field.hidden = kindValue !== "timer";
+    jev.section.hidden = mode.control.value !== "jev";
+    levelField.hidden = kindValue === "state";
+    const jevOption = mode.control.querySelector('option[value="jev"]');
+    jevOption.disabled = kindValue === "counter" || kindValue === "timer";
+    if (jevOption.disabled && mode.control.value === "jev")
+      mode.control.value = "manual";
     const autoOption = mode.control.querySelector('option[value="automatic"]');
     autoOption.disabled = kindValue === "state";
     if (kindValue === "state" && mode.control.value === "automatic")
@@ -2055,7 +2176,7 @@ Recovering`;
     preview.replaceChildren(trackerDisplay(sample, host.state));
     preview.style.setProperty("--tracker-color", draft.color);
   };
-  content.append(preview, error, basic.section, automatic.section, advanced);
+  content.append(preview, error, basic.section, automatic.section, jev.section, advanced);
   content.addEventListener("input", remember);
   content.addEventListener("change", remember);
   refreshFields();
@@ -2168,6 +2289,13 @@ function detail(host, tracker) {
   policy.append(el("div", "lp-row-between", ""), el("p", "lp-copy", `${tracker.visibleToModel ? "Visible" : "Hidden"} in model context · ${tracker.allowModelWrite ? "Model may write" : "Model read-only"} · ${tracker.updateMode} updates`));
   if (tracker.pausedReason)
     policy.appendChild(el("p", "lp-warning", tracker.pausedReason));
+  if (tracker.updateMode === "jev") {
+    const evaluate = button("Evaluate with JEV", "lp-button lp-button-quiet");
+    evaluate.addEventListener("click", () => host.send("lumiphone:jev_evaluate", { trackerId: tracker.id }));
+    policy.append(evaluate);
+    if (tracker.jevResult)
+      policy.append(el("p", tracker.jevResult.status === "invalid" || tracker.jevResult.status === "uncertain" ? "lp-warning" : "lp-copy", `${tracker.jevResult.message}${tracker.jevResult.confidence === undefined ? "" : ` · ${Math.round(tracker.jevResult.confidence * 100)}%`} · ${tracker.jevResult.evaluatedAt}`));
+  }
   content.appendChild(policy);
   const operations = el("section", "lp-card lp-tracker-operations");
   operations.appendChild(el("div", "lp-eyebrow", "Update"));
@@ -4957,6 +5085,13 @@ class PocketController {
           { transform: "scale(1.13) rotate(-4deg)" },
           { transform: "scale(1)" }
         ], { duration: 420, easing: "ease-out" });
+      return;
+    }
+    if (payload.type === "lumiphone:jev_status") {
+      const context = this.activeContext();
+      if (payload.chatId !== context.chatId || payload.characterId !== context.characterId)
+        return;
+      this.showFeedback(String(payload.message || "JEV evaluation updated."), payload.status === "error");
       return;
     }
     if (payload.type === "lumiphone:reconciliation_status") {

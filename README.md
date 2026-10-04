@@ -114,6 +114,16 @@ When **Sync active Swarm Studio profile** is enabled, Camera resolves Swarm Stud
 
 This carries the current character/persona positives, negative prompt, preset directives, checkpoint, and aspect into the photo request without reading another extension's private storage. The integration uses published macro contracts only; Swarm Studio remains optional and unchanged. Manual positive/negative text is additive, and manual connection, model, LoRA stack, and provider-parameter JSON remain available for users without Swarm Studio. If scene planning or profile resolution fails, Camera falls back to the original brief/manual profile. Cancellation suppresses association, notification, and UI completion from late results.
 
+## Open JEV trackers
+
+Pocket supports the [pngwn/open-jev Hugging Face Space](https://huggingface.co/spaces/pngwn/open-jev/tree/main) through its published Gradio API. Enable it in Settings → Open JEV and optionally turn on evaluation after normal story turns. The Space URL can point to a compatible duplicate or local deployment. Defaults are disabled; evaluation sends the last six story messages and selected tracker targets to the configured endpoint.
+
+In a meter or state tracker's settings, choose **Open JEV** updates, ask one short question, and set a confidence threshold. Meters use 2–10 numeric anchors with descriptions; state trackers use their allowed states as choices. Scores are interpolated across the anchors, respecting Open JEV's one-based score format. Confidence is the strongest option probability. Counters and timers keep exact operations instead of inferred quantities. JEV-owned trackers are read-only for model tools, while manual edits remain available.
+
+Use **Evaluate with JEV** on a tracker or **Evaluate JEV trackers** in Settings. Accepted changes enter tracker history with JEV provenance. Uncertain, malformed, or failed results keep the current value. Automatic runs deduplicate unchanged story and rubric inputs; in-flight results preserve intervening tracker edits and reject changed story context. Lumi's HTTP proxy has a 30-second request timeout, so public Space queuing may require a retry.
+
+`bun scripts/check-open-jev.ts` checks the live adapter with synthetic context only. Pass a compatible Space base URL as the first argument to test another deployment. The adapter disables Open JEV's comparison and verification workloads.
+
 ## Storage
 
 State is kept under Lumiverse user storage at:
@@ -161,5 +171,4 @@ node scripts/mount-local.mjs --enable
 
 `npm run verify` typechecks, bundles both entries, runs pure migration/projection/surface/context tests, and runs the backend + simulated-DOM host contract. The contract covers v9/v5 migration, burst-provenance idempotency, authoritative chat-scope recovery, targeted separate relay injection, one-shot reference injection/consumption/failure/cancellation, reference prompt budgets and non-presence semantics, blocked-permission retry, host acceptance/start/consumption phases, impossible-marker context freshness, source-specific Character/Council replies, scene Character/Persona exclusion and snapshot staleness, outgoing burst batching/typing hold/manual flush, pause/handoff behavior, Gallery/asset/URL resolution and Home/Chat/Persona persistence, group speaker bounds, duplicate tool delivery, sidecar connection/model override, scene-planner fallback, Gallery current-RP update, cancellation of a late Camera result, future import rejection, app mounting, click/Enter sending, Tracker Save/history behavior, tag routing, dock recreation, wallpaper layering, and semantic handset/UI scaling. After one manual handoff in a running Lumiverse instance, `npm run test:real-host-relay` checks the persisted host trace for native-call acceptance, matching start, bounded serialized relay content, injection association, and an included phone exchange without initiating another paid generation. A simulated DOM is not labeled as visual QA.
 
-The live extension is mounted at `Lumiverse/data/extensions/lumiphone/repo`; its built entries are `dist/backend.js` and `dist/frontend.js`.
-The local mount script registers/enables the exact folder in `data/lumiverse.db` but intentionally does not bypass Lumiverse's permission-consent flow.
+The live installation is managed through Lumiverse's Extensions tab. After publishing changes, use Pocket's **Update** action there; its installed checkout is `Lumiverse/data/extensions/lumiphone/repo` and built entries are `dist/backend.js` and `dist/frontend.js`.

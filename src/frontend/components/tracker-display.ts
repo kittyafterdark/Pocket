@@ -66,7 +66,7 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
   }
   const latest = current.history.at(-1)
   const footer = el('div', 'lp-tracker-meta')
-  footer.append(el('span', '', current.presentation === 'timer' ? `${current.clock === 'real' ? 'Real' : 'Story'} time` : status), el('span', '', current.updateMode === 'model' ? 'Story updates' : current.updateMode === 'automatic' ? 'Automatic' : 'Manual'))
+  footer.append(el('span', '', current.presentation === 'timer' ? `${current.clock === 'real' ? 'Real' : 'Story'} time` : status), el('span', '', current.updateMode === 'jev' ? 'Open JEV' : current.updateMode === 'model' ? 'Story updates' : current.updateMode === 'automatic' ? 'Automatic' : 'Manual'))
   card.append(footer)
   if (latest && current.presentation === 'relationship') card.append(el('p', 'lp-copy lp-tracker-change', `${latest.previous} → ${latest.next}${latest.reason ? ` · ${latest.reason}` : ''}`))
   return card

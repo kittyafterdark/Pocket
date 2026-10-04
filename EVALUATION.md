@@ -1,6 +1,18 @@
 # Pocket evaluation pass
 
-Implemented from the pipeline/UX mapping. JEV remains deferred.
+Implemented from the pipeline/UX mapping, including the first Open JEV tracker pass.
+
+## Open JEV
+- Settings → Open JEV: enable the integration, use the public pngwn/open-jev Space or a compatible base URL, optionally evaluate after completed normal story turns.
+- Tracker settings → Updates → Open JEV: a short question, numeric rubric anchors (meters), or allowed options (states), and a confidence threshold.
+- Evaluate one tracker from its detail page or all opted-in trackers from Settings.
+- Open JEV uses its published Gradio v2 submission and SSE result protocol; comparison and verification workloads are disabled.
+- Scores interpolate one-based Open JEV expectations across explicit numeric anchors. Confidence is the maximum option probability. Low confidence, invalid results, and request failures preserve values.
+- Timers and counters retain exact/manual/story/time behavior; JEV inference applies to meters and state trackers.
+- Automatic evaluations deduplicate unchanged story/rubric inputs. Manual evaluation allows a retry. Completion preserves intervening manual/configuration edits and rejects changed story context.
+- Accepted changes use existing tracker operations and history with `jev` provenance; model tools cannot write JEV-owned trackers.
+- Defaults are disabled. Evaluation sends the last six story messages and selected tracker targets to the configured Space.
+- Live synthetic API diagnostic passed; user-chat inference remains for evaluation. The host proxy has a 30-second request timeout, so queued/cold public Space requests can fail safely.
 
 ## Messages
 - New Message: intrinsic avatar column, stacked name/role, search, recent recipients, contact-group shortcuts, Add Contact.

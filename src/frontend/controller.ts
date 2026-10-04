@@ -984,6 +984,12 @@ class PocketController {
       ], { duration: 420, easing: 'ease-out' })
       return
     }
+    if (payload.type === 'lumiphone:jev_status') {
+      const context = this.activeContext()
+      if (payload.chatId !== context.chatId || payload.characterId !== context.characterId) return
+      this.showFeedback(String(payload.message || 'JEV evaluation updated.'), payload.status === 'error')
+      return
+    }
     if (payload.type === 'lumiphone:reconciliation_status') {
       if (!this.preferences.showReconciliationStatus) return
       window.clearTimeout(this.syncIndicatorTimer)

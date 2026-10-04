@@ -223,6 +223,7 @@ export interface DevicePreferences {
   pushNotifications: boolean
   useSwarmProfile: boolean
   sceneEnhancer: boolean
+  jev?: PocketJevSettings
   generationMode: PocketGenerationMode
   sidecarConnectionId: string
   sidecarModelOverride: string
@@ -714,7 +715,21 @@ export interface RoleplayWeather {
 
 export type TrackerKind = 'meter' | 'counter' | 'state' | 'timer'
 export type TrackerClock = 'real' | 'roleplay'
-export type TrackerUpdateMode = 'manual' | 'model' | 'automatic'
+export type TrackerUpdateMode = 'manual' | 'model' | 'automatic' | 'jev'
+export interface TrackerJevConfig {
+  question: string
+  /** Numeric rubric anchors, low to high. State trackers use their allowed states. */
+  levels: Array<{ value: number; label: string }>
+  minConfidence: number
+}
+export interface TrackerJevResult {
+  sourceKey: string
+  status: 'applied' | 'unchanged' | 'uncertain' | 'invalid'
+  confidence?: number
+  evaluatedAt: string
+  message: string
+}
+export interface PocketJevSettings { enabled: boolean; endpoint: string; autoAfterTurn: boolean }
 export type TrackerOperation = 'set' | 'add' | 'subtract' | 'reset' | 'set_state'
 export type TrackerPresentation = 'relationship' | 'meter' | 'vitals' | 'segmented' | 'counter' | 'timer' | 'state' | 'compact'
 
@@ -739,7 +754,7 @@ export interface TrackerHistoryEntry {
   operation: TrackerOperation | 'automatic'
   amount?: number
   reason: string
-  source: 'user' | 'model' | 'tag' | 'automatic' | 'migration'
+  source: 'user' | 'model' | 'tag' | 'automatic' | 'migration' | 'jev'
   createdAt: string
   roleplayAt?: string
 }
@@ -757,6 +772,8 @@ interface TrackerBase {
   color: string
   target: TrackerTarget
   updateMode: TrackerUpdateMode
+  jev?: TrackerJevConfig
+  jevResult?: TrackerJevResult
   clock: TrackerClock
   allowModelWrite: boolean
   presentation: TrackerPresentation

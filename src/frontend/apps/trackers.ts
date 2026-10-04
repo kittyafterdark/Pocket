@@ -112,6 +112,10 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
     el('p', 'lp-copy', `${tracker.visibleToModel ? 'Visible' : 'Hidden'} in model context · ${tracker.allowModelWrite ? 'Model may write' : 'Model read-only'} · ${tracker.updateMode} updates`),
   )
   if (tracker.pausedReason) policy.appendChild(el('p', 'lp-warning', tracker.pausedReason))
+  if (tracker.updateMode === 'jev') {
+    const evaluate = button('Evaluate with JEV', 'lp-button lp-button-quiet'); evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate', { trackerId: tracker.id })); policy.append(evaluate)
+    if (tracker.jevResult) policy.append(el('p', tracker.jevResult.status === 'invalid' || tracker.jevResult.status === 'uncertain' ? 'lp-warning' : 'lp-copy', `${tracker.jevResult.message}${tracker.jevResult.confidence === undefined ? '' : ` · ${Math.round(tracker.jevResult.confidence * 100)}%`} · ${tracker.jevResult.evaluatedAt}`))
+  }
   content.appendChild(policy)
 
   const operations = el('section', 'lp-card lp-tracker-operations')

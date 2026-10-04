@@ -807,6 +807,43 @@ const trackerCountBeforeClear = storage.get('phones/chat-a__char-a.json').tracke
 await frontendHandler({ type: 'lumiphone:notifications_clear', requestId: 'clear-notifications', chatId: 'chat-a', characterId: 'char-a', mode: 'all' }, 'user-a')
 assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, trackerCountBeforeClear, 'clear all must not delete trackers')
 
+// Open JEV updates have their own writer policy and preserve intervening edits.
+const jevContractPreferences = structuredClone(storage.get('device/preferences.json'))
+await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: { ...jevContractPreferences, jev: { enabled: true, endpoint: 'https://jev.example', autoAfterTurn: false } } }, 'user-a')
+await frontendHandler({ type: 'lumiphone:action', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { ...templateConfig, command: 'create', label: 'JEV trust', updateMode: 'jev', value: 50, initialValue: 50, jev: { question: 'How much does Alice trust you?', minConfidence: .6, levels: [{ value: 0, label: 'Low' }, { value: 100, label: 'High' }] } } }, 'user-a')
+const jevTrackerId = storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.label === 'JEV trust').id
+const originalCors = globalThis.spindle.cors
+let jevIntervene = null
+let jevAnswerProbabilities = [.1, .9]
+globalThis.spindle.cors = async (_url, options) => {
+  if (options) {
+    const body = JSON.parse(options.body)
+    assert.equal(body.compare, false); assert.equal(body.verify, false)
+    assert.equal(body.questions[0].question, 'For subject1: How much does Alice trust you?')
+    return { status: 200, body: '{"event_id":"contract-job"}' }
+  }
+  if (jevIntervene) await jevIntervene()
+  const snapshot = { scorer: { questions: [{ id: 'q1', type: 'score', options: ['Low', 'High'], probs: jevAnswerProbabilities, expected: 1 + jevAnswerProbabilities[1] }] }, done: true }
+  return { status: 200, body: `event: complete\ndata: ${JSON.stringify([snapshot])}\n\n` }
+}
+const evaluateJev = () => frontendHandler({ type: 'lumiphone:jev_evaluate', requestId: 'jev-contract', chatId: 'chat-a', characterId: 'char-a', trackerId: jevTrackerId }, 'user-a')
+await evaluateJev()
+let jevTracker = storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId)
+assert.equal(jevTracker.value, 90); assert.equal(jevTracker.history.at(-1).source, 'jev')
+const jevHistoryLength = jevTracker.history.length
+await evaluateJev()
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId).history.length, jevHistoryLength, 're-evaluation of the same value must not duplicate history')
+jevAnswerProbabilities = [.5, .5]
+await evaluateJev()
+jevTracker = storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId)
+assert.equal(jevTracker.value, 90); assert.equal(jevTracker.jevResult.status, 'uncertain')
+jevAnswerProbabilities = [.9, .1]
+jevIntervene = async () => frontendHandler({ type: 'lumiphone:action', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { trackerId: jevTrackerId, operation: 'set', amount: 33 } }, 'user-a')
+await evaluateJev()
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId).value, 33, 'a running JEV request must not overwrite manual edits')
+globalThis.spindle.cors = originalCors
+await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: jevContractPreferences }, 'user-a')
+
 await frontendHandler({
   type: 'lumiphone:model_action', requestId: 'tag-action', chatId: 'chat-a', characterId: 'char-a', messageId: 'host-message-a',
   attrs: { action: 'note', title: 'Tag journal' }, content: 'Accepted from a hidden tag', fullMatch: '<lumi-phone action="note">Accepted from a hidden tag</lumi-phone>',
@@ -1556,7 +1593,7 @@ assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost
 assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
 const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Settings'))
 settingsIcon.click()
-assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 7, 'Settings root must render category navigation')
+assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
 dockRoot.querySelector('[data-settings-category="personalization"]').click()
 ;[...dockRoot.querySelectorAll('.lp-settings-category')].find(node => node.textContent.includes('Device appearance')).click()
 const uiScaleInput = [...dockRoot.querySelectorAll('input[type="range"]')].find((node) => node.min === '0.7' && node.max === '1.3')

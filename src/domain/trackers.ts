@@ -9,13 +9,14 @@ import type {
   TrackerTarget,
   TrackerUpdateMode,
 } from '../types.js'
+import { normalizeJevConfig, normalizeJevResult, validateJevTracker } from './jev.js'
 
 type RecordValue = Record<string, unknown>
 export const TRACKER_HISTORY_LIMIT = 40
 
 const KINDS = new Set<TrackerKind>(['meter', 'counter', 'state', 'timer'])
 const CLOCKS = new Set<TrackerClock>(['real', 'roleplay'])
-const MODES = new Set<TrackerUpdateMode>(['manual', 'model', 'automatic'])
+const MODES = new Set<TrackerUpdateMode>(['manual', 'model', 'automatic', 'jev'])
 const PRESENTATIONS = new Set<TrackerPresentation>(['relationship', 'meter', 'vitals', 'segmented', 'counter', 'timer', 'state', 'compact'])
 const TARGETS = new Set<TrackerTarget['type']>(['character', 'persona', 'relationship', 'scene', 'world', 'custom'])
 
@@ -39,6 +40,7 @@ export function uniqueTrackerKey(label: unknown, trackers: Pick<PhoneTracker, 'k
 }
 
 export function validateTrackerConfig(value: RecordValue): void {
+  if (value.updateMode === 'jev') validateJevTracker(value)
   if (!clean(value.label, 120)) throw new Error('Give your tracker a name.')
   if (!KINDS.has(value.kind as TrackerKind)) throw new Error('Choose a tracker type.')
   const allowed = value.kind === 'state' ? ['state', 'compact'] : value.kind === 'counter' ? ['counter', 'compact'] : value.kind === 'timer' ? ['timer', 'compact'] : ['meter', 'vitals', 'relationship', 'segmented', 'compact']
@@ -94,7 +96,7 @@ function normalizeHistory(value: unknown): TrackerHistoryEntry[] {
     if (!record(item)) return []
     const operation = ['set', 'add', 'subtract', 'reset', 'set_state', 'automatic'].includes(String(item.operation))
       ? item.operation as TrackerHistoryEntry['operation'] : 'set'
-    const source: TrackerHistoryEntry['source'] = item.source === 'model' || item.source === 'tag' || item.source === 'automatic' || item.source === 'migration' ? item.source : 'user'
+    const source: TrackerHistoryEntry['source'] = item.source === 'model' || item.source === 'tag' || item.source === 'automatic' || item.source === 'migration' || item.source === 'jev' ? item.source : 'user'
     const createdAt = iso(item.createdAt, new Date().toISOString())
     return [{
       id: clean(item.id, 160) || trackerId('hist'),
@@ -139,7 +141,8 @@ export function normalizeTracker(value: unknown, context: NormalizeTrackerContex
   const base = {
     id: clean(value.id, 120) || trackerId(), key: trackerKey(value.key || label), label, kind,
     value: numeric, initialValue, min, max, unit: clean(value.unit, 40), color, target,
-    updateMode, clock, allowModelWrite: legacy ? false : value.allowModelWrite === true,
+    updateMode, clock, allowModelWrite: legacy || updateMode === 'jev' ? false : value.allowModelWrite === true,
+    jev: normalizeJevConfig(value.jev), jevResult: normalizeJevResult(value.jevResult),
     presentation, bands: normalizeBands(value.bands, min, max, color), history: normalizeHistory(value.history),
     ratePerHour, lastUpdated: iso(value.lastUpdated, now),
     lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, '')),

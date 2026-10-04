@@ -53,7 +53,13 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const value = el('input', 'lp-input'); value.type = 'number'; value.step = 'any'; value.value = String(source.value)
   const states = el('textarea', 'lp-textarea'); states.value = source.kind === 'state' ? source.states.join('\n') : 'Stable\nWounded\nRecovering'
   const state = choice('Current state', [], source.kind === 'state' ? source.state : '')
-  const mode = choice('Updates', [['manual', 'By hand'], ['model', 'With the story'], ['automatic', 'Over time']], source.updateMode)
+  const mode = choice('Updates', [['manual', 'By hand'], ['model', 'With the story'], ['automatic', 'Over time'], ['jev', 'Open JEV']], source.updateMode)
+  const jev = sectionBlock('Open JEV', 'Estimates this value from recent story messages. Uncertain answers keep the current value.')
+  const question = el('textarea', 'lp-textarea'); question.maxLength = 240; question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`; question.placeholder = 'Ask one specific question about this target.'
+  const confidence = el('input', 'lp-input'); confidence.type = 'number'; confidence.min = '0'; confidence.max = '1'; confidence.step = '.05'; confidence.value = String(source.jev?.minConfidence ?? .65)
+  const levels = el('textarea', 'lp-textarea'); levels.value = (source.jev?.levels.length ? source.jev.levels : [{ value: source.min, label: source.bands[0]?.label || 'Low' }, { value: (source.min + source.max) / 2, label: source.bands[Math.floor(source.bands.length / 2)]?.label || 'Moderate' }, { value: source.max, label: source.bands.at(-1)?.label || 'High' }]).map(level => `${level.value} | ${level.label}`).join('\n')
+  const levelField = fieldBlock('Rubric', levels, '2–10 levels, low to high: value | description. Describe what each level looks like in the story.')
+  jev.body.append(fieldBlock('Question', question), levelField, fieldBlock('Minimum confidence', confidence, '0–1. Open JEV uses the strongest option probability.'))
   const visible = el('input'); visible.type = 'checkbox'; visible.checked = source.visibleToModel
   const visibleField = controlRow('Include in model context', visible, 'Story updates allow the model to change this tracker. Other modes keep it read-only.')
   const valueField = fieldBlock('Starting value', value)
@@ -108,6 +114,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
       states: [...new Set(states.value.split('\n').map(entry => entry.trim()).filter(Boolean))],
       step: Number(step.value), direction: direction.control.value, color: color.value,
       updateMode: mode.control.value, allowModelWrite: mode.control.value === 'model', visibleToModel: visible.checked, clock: clock.control.value,
+      jev: { question: question.value.trim(), minConfidence: Number(confidence.value), levels: levels.value.split('\n').filter(line => line.trim()).map(line => { const delimiter = line.indexOf('|'); return { value: delimiter < 0 ? NaN : Number(line.slice(0, delimiter).trim()), label: delimiter < 0 ? '' : line.slice(delimiter + 1).trim() } }) },
       ratePerHour: kindValue === 'timer' ? Math.abs(Number(rate.value)) * (direction.control.value === 'down' ? -1 : 1) : Number(rate.value),
       bands: kindValue === 'state' ? [] : bandRows.map(entry => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value, meaning: entry.meaning.value })),
     }
@@ -117,6 +124,9 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     customField.hidden = targets[Number(belongs.control.value)].type !== 'custom'
     valueField.hidden = kindValue === 'state'; stateFields.hidden = kindValue !== 'state'; range.hidden = kindValue === 'state'; bands.section.hidden = kindValue === 'state'; stepField.hidden = kindValue !== 'counter'
     automatic.section.hidden = mode.control.value !== 'automatic'; direction.field.hidden = kindValue !== 'timer'
+    jev.section.hidden = mode.control.value !== 'jev'; levelField.hidden = kindValue === 'state'
+    const jevOption = mode.control.querySelector<HTMLOptionElement>('option[value="jev"]')!; jevOption.disabled = kindValue === 'counter' || kindValue === 'timer'
+    if (jevOption.disabled && mode.control.value === 'jev') mode.control.value = 'manual'
     const autoOption = mode.control.querySelector<HTMLOptionElement>('option[value="automatic"]')!; autoOption.disabled = kindValue === 'state'
     if (kindValue === 'state' && mode.control.value === 'automatic') mode.control.value = 'manual'
     const display = presentation.control.value || source.presentation
@@ -135,7 +145,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     preview.replaceChildren(trackerDisplay(sample, host.state))
     preview.style.setProperty('--tracker-color', draft.color)
   }
-  content.append(preview, error, basic.section, automatic.section, advanced)
+  content.append(preview, error, basic.section, automatic.section, jev.section, advanced)
   content.addEventListener('input', remember); content.addEventListener('change', remember)
   refreshFields(); remember()
   commit = () => {

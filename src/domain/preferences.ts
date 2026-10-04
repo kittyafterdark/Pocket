@@ -1,4 +1,5 @@
 import type { DevicePreferences, PocketImageSource, PocketWallpaper, PhonePalette, PhoneTheme } from '../types.js'
+import { normalizeJevSettings } from './jev.js'
 
 export const PREFERENCES_VERSION = 5 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
@@ -100,6 +101,7 @@ export function defaultPreferences(): DevicePreferences {
     pushNotifications: false,
     useSwarmProfile: true,
     sceneEnhancer: true,
+    jev: normalizeJevSettings(null),
     generationMode: 'roleplay',
     sidecarConnectionId: '',
     sidecarModelOverride: '',
@@ -214,6 +216,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
+    jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
     sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, '', 500),
