@@ -462,6 +462,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     const bubble = el('div', 'lp-bubble lp-message-surface')
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
+    if (message.call) { bubble.classList.add('lp-call-history'); bubble.dataset.callStatus = message.call.status }
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId)
     bubble.dataset.sender = direction === 'outbound' ? 'persona' : message.sender === 'system' ? 'system' : 'contact'
     const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === 'contact' ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || '') : null

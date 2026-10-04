@@ -1,9 +1,54 @@
 import type { PocketActivity, PocketRoute } from '../types.js'
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
+import { callSummary } from '../domain/phone-events.js'
+
+export interface ActivityRenderOptions {
+  includeReceipt?: boolean
+  includeArtifact?: boolean
+  appearance?: 'cards' | 'phone'
+  accent?: string
+  background?: string
+  backgroundSize?: string
+  backgroundPosition?: string
+  avatarUrl?: string
+  avatars?: Record<string, string>
+  textColor?: string
+  surfaceColor?: string
+}
+
+function frameArtifact(artifact: HTMLElement, activity: PocketActivity, options: ActivityRenderOptions): HTMLElement {
+  const frame = document.createElement('div'); frame.className = 'pocket-inline-frame'
+  frame.dataset.appearance = options.appearance || 'cards'; frame.dataset.kind = activity.presentation?.kind || activity.kind
+  if (options.accent) frame.style.setProperty('--pocket-inline-accent', options.accent)
+  if (options.background) frame.style.setProperty('--pocket-inline-bg', options.background)
+  if (options.backgroundSize) frame.style.backgroundSize = options.backgroundSize
+  if (options.backgroundPosition) frame.style.backgroundPosition = options.backgroundPosition
+  if (options.textColor) frame.style.setProperty('--pocket-inline-text', options.textColor)
+  if (options.surfaceColor) frame.style.setProperty('--pocket-inline-surface', options.surfaceColor)
+  if (options.appearance === 'phone') {
+    const status = document.createElement('span'); status.className = 'pocket-mock-status'; status.setAttribute('aria-hidden', 'true')
+    status.textContent = activity.presentation?.storyAt?.slice(11, 16) || 'Pocket'
+    const indicators = document.createElement('span'); indicators.textContent = '▮▮▮  ▰'; status.append(indicators); frame.append(status)
+    if (activity.presentation?.kind === 'received' && !activity.presentation.call && activity.presentation.storyAt) {
+      const clock = document.createElement('span'); clock.className = 'pocket-mock-clock'; clock.textContent = activity.presentation.storyAt.slice(11, 16); frame.append(clock)
+    }
+  }
+  frame.append(artifact)
+  if (options.appearance === 'phone' && ['sent', 'batch'].includes(activity.presentation?.kind || '')) {
+    const composer = document.createElement('span'); composer.className = 'pocket-mock-composer'; composer.textContent = '＋    Message'; composer.setAttribute('aria-hidden', 'true'); frame.append(composer)
+  }
+  return frame
+}
+
+function avatar(name: string, url?: string): HTMLSpanElement {
+  const icon = document.createElement('span'); icon.className = 'pocket-inline-avatar'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = name.slice(0, 1).toUpperCase()
+  if (url) { const image = document.createElement('img'); image.src = url; image.alt = ''; icon.replaceChildren(image) }
+  return icon
+}
 
 const ICONS: Record<PocketActivity['kind'], string> = {
   message: 'Pocket', 'tracker-change': 'Tracker', timeline: 'Timeline', note: 'Journal',
-  contact: 'Contact', image: 'Photo', weather: 'Weather', system: 'Pocket',
+  contact: 'Contact', image: 'Photo', weather: 'Weather', system: 'Pocket', call: 'Call',
 }
 
 function presentationLabel(activity: PocketActivity): string {
@@ -40,12 +85,12 @@ function observedDeviceLine(activity: PocketActivity): string {
   return recipient ? `${recipient}'s phone` : 'Another phone'
 }
 
-function messageChrome(stateText = 'now'): HTMLSpanElement {
+function messageChrome(stateText = '', appName = 'Messages'): HTMLSpanElement {
   const chrome = document.createElement('span')
   chrome.className = 'pocket-inline-artifact-chrome'
   const app = document.createElement('span')
   app.className = 'pocket-inline-artifact-app'
-  app.textContent = 'Messages'
+  app.textContent = appName
   const state = document.createElement('span')
   state.className = 'pocket-inline-artifact-state'
   state.textContent = stateText
@@ -56,6 +101,7 @@ function messageChrome(stateText = 'now'): HTMLSpanElement {
 function buildBatchArtifact(
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
+  options: ActivityRenderOptions,
 ): HTMLElement | null {
   const presentation = activity.presentation
   if (presentation?.kind !== 'batch' || !presentation.batchMessages?.length) return null
@@ -73,11 +119,14 @@ function buildBatchArtifact(
 
   const transcript = document.createElement('span')
   transcript.className = 'pocket-inline-transcript'
-  const visible = presentation.batchMessages.slice(0, 8)
-  for (const item of visible) {
+  const visible = presentation.batchMessages
+  for (const [index, item] of visible.entries()) {
     const row = document.createElement('span')
     row.className = 'pocket-inline-transcript-row'
     row.dataset.direction = item.direction
+    const previous = visible[index - 1]
+    row.dataset.continuation = String(Boolean(previous && (previous.senderActorId || previous.senderName) === (item.senderActorId || item.senderName)))
+    row.hidden = index >= 3
 
     const sender = document.createElement('strong')
     sender.className = 'pocket-inline-transcript-sender'
@@ -87,24 +136,28 @@ function buildBatchArtifact(
     bubble.className = 'pocket-inline-transcript-bubble lp-message-surface'
     bubble.textContent = item.text
 
-    row.append(sender, bubble)
+    row.append(avatar(item.senderName, options.avatars?.[item.senderActorId || '']), sender, bubble)
     transcript.appendChild(row)
-  }
-  if (presentation.batchMessages.length > visible.length) {
-    const more = document.createElement('span')
-    more.className = 'pocket-inline-transcript-more'
-    more.textContent = `+ ${presentation.batchMessages.length - visible.length} more message${presentation.batchMessages.length - visible.length === 1 ? '' : 's'}`
-    transcript.appendChild(more)
   }
   primary.appendChild(transcript)
   primary.setAttribute('aria-label', `Open ${presentation.conversationTitle || activity.title || 'group chat'} in Pocket`)
   primary.addEventListener('click', () => openRoute(activity.route))
-  return primary
+  const group = document.createElement('div'); group.className = 'pocket-inline-batch'; group.append(primary)
+  if (visible.length > 3) {
+    const more = document.createElement('button'); more.type = 'button'; more.className = 'pocket-inline-transcript-more'; more.setAttribute('aria-expanded', 'false')
+    const collapsed = `Show ${visible.length - 3} more messages`; more.textContent = collapsed
+    more.addEventListener('click', () => {
+      const expanded = more.getAttribute('aria-expanded') !== 'true'; more.setAttribute('aria-expanded', String(expanded)); more.textContent = expanded ? 'Show fewer messages' : collapsed
+      for (const [index, row] of [...transcript.children].entries()) (row as HTMLElement).hidden = !expanded && index >= 3
+    }); group.append(more)
+  }
+  return frameArtifact(group, activity, options)
 }
 
 function buildMessageArtifact(
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
+  options: ActivityRenderOptions,
 ): HTMLElement | null {
   const presentation = activity.presentation
   if (!presentation || !['sent', 'received', 'observed'].includes(presentation.kind)) return null
@@ -118,7 +171,13 @@ function buildMessageArtifact(
   copy.className = 'pocket-inline-artifact-copy'
   copy.textContent = activity.summary || ''
 
-  if (presentation.kind === 'sent') {
+  if (presentation.call) {
+    primary.classList.add('pocket-inline-call'); primary.dataset.callStatus = presentation.call.status
+    primary.append(avatar(presentation.senderName || 'Call', options.avatarUrl), messageChrome('', 'Phone'))
+    const name = document.createElement('strong'); name.className = 'pocket-inline-artifact-actors'; name.textContent = actorLine(activity) || activity.title
+    const status = document.createElement('span'); status.className = 'pocket-inline-artifact-copy'; status.textContent = callSummary(presentation.call)
+    const icon = document.createElement('span'); icon.className = 'pocket-call-symbol'; icon.textContent = '☎'; icon.setAttribute('aria-hidden', 'true'); primary.append(name, status, icon)
+  } else if (presentation.kind === 'sent') {
     const recipient = document.createElement('span')
     recipient.className = 'pocket-inline-artifact-recipient'
     const recipientName = recipientLine(activity)
@@ -128,10 +187,7 @@ function buildMessageArtifact(
     bubble.className = 'pocket-inline-chat-bubble lp-message-surface'
     bubble.append(copy)
 
-    const status = document.createElement('span')
-    status.className = 'pocket-inline-sent-status'
-    status.textContent = 'sent'
-    primary.append(messageChrome('sent'), recipient, bubble, status)
+    primary.append(messageChrome('sent'), recipient, bubble)
   } else {
     if (presentation.kind === 'observed') {
       const device = document.createElement('span')
@@ -140,7 +196,8 @@ function buildMessageArtifact(
       primary.appendChild(device)
     }
 
-    primary.appendChild(messageChrome('now'))
+    primary.appendChild(messageChrome(presentation.storyAt?.slice(11, 16) || ''))
+    primary.append(avatar(presentation.senderName || 'Messages', options.avatarUrl))
 
     const sender = document.createElement('strong')
     sender.className = 'pocket-inline-artifact-actors'
@@ -150,19 +207,19 @@ function buildMessageArtifact(
 
   primary.setAttribute('aria-label', `Open ${presentation.kind === 'observed' ? `${observedDeviceLine(activity)} · ` : ''}${presentation.conversationTitle || activity.title} in Pocket`)
   primary.addEventListener('click', () => openRoute(activity.route))
-  return primary
+  return frameArtifact(primary, activity, options)
 }
 
 function buildActivityStack(
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
-  options: { includeReceipt?: boolean; includeArtifact?: boolean } = {},
+  options: ActivityRenderOptions = {},
 ): HTMLSpanElement {
   const stack = document.createElement('span')
   stack.className = 'pocket-artifact-stack'
 
   if (options.includeArtifact !== false) {
-    const artifact = buildBatchArtifact(activity, openRoute) || buildMessageArtifact(activity, openRoute)
+    const artifact = buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options)
     if (artifact) stack.appendChild(artifact)
   }
 
@@ -217,7 +274,7 @@ export function renderActivityHost(
   host: Element,
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
-  options: { includeReceipt?: boolean; includeArtifact?: boolean } = {},
+  options: ActivityRenderOptions = {},
 ): Element {
   host.replaceChildren(buildActivityStack(activity, openRoute, options))
   return host
@@ -227,6 +284,7 @@ export function activityReceipt(
   ctx: SpindleFrontendContext,
   activity: PocketActivity,
   openRoute: (route: PocketRoute) => void,
+  options: ActivityRenderOptions = {},
 ): Element | null {
   const messageId = activity.source?.messageId
   if (!messageId) return null
@@ -235,5 +293,6 @@ export function activityReceipt(
   const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', 'beforeend')
   wrapper.classList.add('pocket-receipt-host')
   wrapper.setAttribute('data-pocket-activity-id', activity.id)
-  return renderActivityHost(wrapper, activity, openRoute, { includeArtifact: false, includeReceipt: true })
+  const communication = activity.kind === 'message' || activity.kind === 'call'
+  return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: communication, includeReceipt: !communication })
 }

@@ -152,6 +152,7 @@ assert.equal(firstState.state.chatId, 'chat-a')
 assert.equal(firstState.state.characterId, 'char-a')
 assert.equal(firstState.state.characterName, 'Alice')
 assert.equal(firstState.state.version, 11)
+assert.equal(firstState.state.setup.authorship, 'roleplay', 'existing chats default to human-owned persona authorship')
 assert.deepEqual(firstState.state.discoveredActors, [])
 assert.deepEqual(firstState.state.references, [])
 assert.deepEqual(firstState.state.groupBatches, [])
@@ -172,6 +173,8 @@ assert.equal(firstState.swarmProfile.source, 'swarm_studio')
 assert.equal(firstState.swarmProfile.status, 'connected')
 assert.equal(firstState.swarmProfile.fields.char_base.detected, true)
 assert.equal(macroResolveCalls.at(-1).options.userId, 'user-a')
+// Historical tests below intentionally exercise AI-authored persona messages.
+await frontendHandler({ type: 'lumiphone:set_authorship', chatId: 'chat-a', characterId: 'char-a', authorship: 'impersonation' }, 'user-a')
 
 await frontendHandler({ type: 'lumiphone:gallery_add_to_chat', requestId: 'attach-image', chatId: 'chat-a', characterId: 'char-a', imageId: 'image-a', imageUrl: '/api/v1/images/image-a', filename: 'Scene.png' }, 'user-a')
 assert.equal(updatedChatMessages.at(-1).chatId, 'chat-a')
@@ -553,6 +556,19 @@ await frontendHandler({
   type: 'lumiphone:save_pocket_persona', requestId: 'device-persona', chatId: 'chat-device', characterId: 'char-a',
   persona: { displayName: 'Kai', role: 'Persona', source: 'manual' },
 }, 'user-a')
+const protectedDeviceBefore = JSON.stringify(storage.get('phones/chat-device__char-a.json'))
+for (const payload of [
+  { speaker: 'Kai', target: 'Tyler', text: 'Blocked alias' },
+  { sender: 'user', target: 'Tyler', text: 'Blocked shortcut' },
+  { sender: 'persona', target: 'Tyler', text: 'Blocked persona' },
+]) {
+  const denied = await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', args: { action: 'message', chat_id: 'chat-device', character_id: 'char-a', payload } }, 'user-a')
+  assert.match(denied, /Roleplay mode/)
+}
+assert.equal(JSON.stringify(storage.get('phones/chat-device__char-a.json')), protectedDeviceBefore, 'rejected persona writes must have no persisted side effects')
+await frontendHandler({ type: 'lumiphone:model_action', requestId: 'blocked-persona-tag', chatId: 'chat-device', characterId: 'char-a', attrs: { action: 'message' }, content: JSON.stringify({ sender: 'persona', target: 'Tyler', text: 'Blocked tag' }) }, 'user-a')
+assert.ok(frontendMessages.some(entry => entry.type === 'lumiphone:error' && entry.requestId === 'blocked-persona-tag' && /Roleplay mode/.test(entry.error)))
+await frontendHandler({ type: 'lumiphone:set_authorship', chatId: 'chat-device', characterId: 'char-a', authorship: 'impersonation' }, 'user-a')
 const personaSendResult = await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'device-kai-to-tyler', args: {
     action: 'message', chat_id: 'chat-device', character_id: 'char-a',
@@ -595,6 +611,36 @@ assert.deepEqual(externalDm.messages.at(-1).recipientActorIds, [tylerActor.id])
 assert.equal(deviceState.notifications.some((entry) => entry.deviceOwnerActorId === devicePersonaId && entry.body.includes('Track him')), false, 'external NPC traffic must not leak onto the Persona device')
 assert.ok(deviceState.notifications.some((entry) => entry.deviceOwnerActorId === tylerActor.id && entry.body.includes('Track him')))
 assert.equal(deviceState.activities.at(-1).presentation.kind, 'observed')
+
+// Calls use the same durable candidate commit protocol and conversation history.
+await frontendHandler({ type: 'lumiphone:get_state', chatId: 'chat-call', characterId: 'char-a' }, 'user-a')
+await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-call', characterId: 'char-a', generationId: 'call-gen', generationType: 'regenerate', targetMessageId: 'call-host', targetSwipeId: 0 }, 'user-a')
+const callStart = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', args: { action: 'call', chat_id: 'chat-call', character_id: 'char-a', payload: { speaker: 'Alice', status: 'connected', speakerphone: true } } }, 'user-a'))
+assert.ok(callStart.callId); assert.match(callStart.artifactTag, /data-pocket-inline-anchor/)
+assert.ok(frontendMessages.some(entry => entry.type === 'lumiphone:provisional_activity' && entry.activity.id === callStart.activityId && entry.activity.kind === 'call'))
+const callEnd = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', args: { action: 'call', chat_id: 'chat-call', character_id: 'char-a', payload: { speaker: 'Alice', status: 'ended', conversationId: callStart.conversationId, callId: callStart.callId, durationSeconds: 240 } } }, 'user-a'))
+assert.equal(callEnd.ok, true)
+const ghostCall = JSON.parse(await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', args: { action: 'call', chat_id: 'chat-call', character_id: 'char-a', payload: { speaker: 'Alice', status: 'missed' } } }, 'user-a'))
+const callMessagesBefore = spindle.chat.getMessages
+const callContent = `${callStart.artifactTag}\nOrdinary spoken dialogue.\n${callEnd.artifactTag}`
+spindle.chat.getMessages = async () => [{ id: 'call-host', role: 'assistant', content: callContent, swipes: [callContent], swipe_id: 0 }]
+await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-call', generationId: 'call-gen', generationType: 'regenerate', messageId: 'call-host' }, 'user-a')
+spindle.chat.getMessages = callMessagesBefore
+const callState = storage.get('phones/chat-call__char-a.json')
+const callRows = callState.conversations.flatMap(entry => entry.messages)
+assert.equal(callRows.filter(entry => entry.call).length, 2)
+assert.equal(callRows.some(entry => entry.id === ghostCall.messageId), false, 'reasoning-only call markers must be discarded')
+assert.equal(callRows.find(entry => entry.id === callEnd.messageId).call.speakerphone, true)
+assert.match(callRows.find(entry => entry.id === callEnd.messageId).text, /Call ended.*Speakerphone.*4:00/)
+assert.ok(callState.activities.some(entry => entry.id === callStart.activityId && entry.kind === 'call'))
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'call-reload', chatId: 'chat-call', characterId: 'char-a' }, 'user-a')
+assert.ok(frontendMessages.filter(entry => entry.type === 'lumiphone:state').at(-1).state.conversations.flatMap(entry => entry.messages).some(entry => entry.call?.status === 'ended'))
+const invalidEnd = await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', args: { action: 'call', chat_id: 'chat-call', character_id: 'char-a', payload: { speaker: 'Alice', status: 'ended', conversationId: callStart.conversationId, callId: 'unknown' } } }, 'user-a')
+assert.match(invalidEnd, /existing connected call/)
+const batchDenied = await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', args: { action: 'message_batch', chat_id: 'chat-call', character_id: 'char-a', payload: { conversation: 'Guarded group', participants: ['Test Persona', 'Alice'], messages: [{ sender: 'user', text: 'Cannot sneak into a batch' }] } } }, 'user-a')
+assert.match(batchDenied, /Roleplay mode/)
+await frontendHandler({ type: 'lumiphone:action', requestId: 'manual-in-rp', chatId: 'chat-call', characterId: 'char-a', action: 'message', payload: { conversationId: callStart.conversationId, text: 'Human typed this' } }, 'user-a')
+assert.ok(storage.get('phones/chat-call__char-a.json').conversations.flatMap(entry => entry.messages).some(entry => entry.text === 'Human typed this' && entry.sender === 'persona'))
 
 // Character/council-backed contact deletion leaves a source tombstone so normalization cannot resurrect it.
 await frontendHandler({ type: 'lumiphone:get_state', requestId: 'delete-state', chatId: 'chat-delete', characterId: 'char-a' }, 'user-a')
@@ -2003,8 +2049,8 @@ assert.equal(streamingArtifactHost.childElementCount, 0, 'discarded provisional 
 assert.equal(streamingArtifactHost.hidden, true, 'discarded optimistic preview anchor must be hidden')
 
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
-assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 0, 'missing placement tags must degrade to provenance instead of a fake end-of-message phone card')
-assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 1, 'missing placement tag must retain one fallback provenance receipt')
+assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'fallback communication uses the same notification renderer')
+assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 0, 'communication fallback must not add a competing provenance card')
 const exactArtifactHost = document.createElement('div')
 exactArtifactHost.className = 'pocket-inline-anchor'
 exactArtifactHost.dataset.pocketInlineAnchor = 'inline-message-activity'
@@ -2057,7 +2103,7 @@ sentArtifactHost.dataset.pocketInlineAnchor = sentInlineActivity.id
 messageBubble.prepend(sentArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: sentInlineActivity })
 assert.equal(sentArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="sent"] .pocket-inline-chat-bubble').length, 1, 'sent inline communication must use the chat-bubble primitive')
-assert.match(sentArtifactHost.textContent || '', /To Shoto Todoroki.*Bring some food when you come over\..*sent/s)
+assert.match(sentArtifactHost.textContent || '', /Messages.*sent.*To Shoto Todoroki.*Bring some food when you come over\./s)
 assert.doesNotMatch(sentArtifactHost.textContent || '', /Pocket chat|Kai\s*→\s*Shoto Todoroki/i, 'sent diegetic UI must avoid middleware-style sender arrows')
 const batchInlineActivity = {
   ...inlineMessageActivity,
@@ -2081,6 +2127,28 @@ backendReceiver({ type: 'lumiphone:activity', activity: batchInlineActivity })
 assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-chat-transcript').length, 1, 'group message_batch must render as one coherent mini chat transcript')
 assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row').length, legacyBatchRows.length, 'bounded seven-person GC riot should surface every authored bubble inline')
 assert.match(batchArtifactHost.textContent || '', /Class 3-A.*Mina Ashido.*YOU COUNTED THE SECONDS.*Denki Kaminari.*BROOOOOOOOO/s)
+assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:not([hidden])').length, 3)
+const expandBatch = batchArtifactHost.querySelector('button.pocket-inline-transcript-more')
+const sendsBeforeExpand = frontendSends.length
+expandBatch.click()
+assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:not([hidden])').length, legacyBatchRows.length)
+assert.equal(expandBatch.getAttribute('aria-expanded'), 'true')
+assert.equal(frontendSends.length, sendsBeforeExpand, 'inline expansion must not navigate or send a message')
+expandBatch.click()
+assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:not([hidden])').length, 3)
+const inlineAppearanceState = { ...savedDraftState, state: { ...savedDraftState.state, activities: [inlineMessageActivity, observedInlineActivity, sentInlineActivity, batchInlineActivity] } }
+backendReceiver({ ...inlineAppearanceState, preferences: { ...firstState.preferences, inlineAppearance: 'phone' } })
+assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.appearance, 'phone')
+assert.ok(batchArtifactHost.querySelector('.pocket-mock-composer'))
+assert.equal(batchArtifactHost.querySelector('input,textarea'), null, 'mock composer must not pretend to send messages')
+const callUiActivity = { ...inlineMessageActivity, id: 'call-ui', kind: 'call', presentation: { kind: 'received', senderName: 'Alice', recipientNames: ['Kai'], call: { callId: 'call-ui-id', status: 'ended', speakerphone: true, durationSeconds: 240 } } }
+const callUiAnchor = document.createElement('div'); callUiAnchor.dataset.pocketInlineAnchor = callUiActivity.id; messageBubble.prepend(callUiAnchor)
+backendReceiver({ type: 'lumiphone:activity', activity: callUiActivity })
+assert.ok(callUiAnchor.querySelector('.pocket-inline-call[data-call-status="ended"]'))
+assert.match(callUiAnchor.textContent, /Call ended.*Speakerphone.*4:00/)
+backendReceiver({ ...inlineAppearanceState, state: { ...inlineAppearanceState.state, activities: [...inlineAppearanceState.state.activities, callUiActivity] }, preferences: { ...firstState.preferences, inlineAppearance: 'cards' } })
+assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.appearance, 'cards')
+assert.equal(batchArtifactHost.querySelector('.pocket-mock-composer'), null)
 
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
@@ -2200,6 +2268,15 @@ assert.ok(dockRoot.querySelector('.lp-draft-portrait'))
 const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:save_contact').at(-1).contact
 assert.deepEqual(withPhoto.avatarSource, { kind: 'gallery', imageId: 'draft-photo' })
 assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/draft-photo')
+
+backendReceiver({ ...savedDraftState, reason: 'chat_switched', state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false, dismissed: false, authorship: 'roleplay' } } })
+const setupAuthorship = shownModals.at(-1).root.querySelector('select[aria-label="Character authorship"]')
+assert.ok(setupAuthorship, 'authorship choice must appear in first-run setup')
+assert.equal(setupAuthorship.value, 'roleplay')
+setupAuthorship.value = 'impersonation'
+setupAuthorship.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+assert.equal(frontendSends.at(-1).type, 'lumiphone:set_authorship')
+assert.equal(frontendSends.at(-1).authorship, 'impersonation')
 
 cleanup()
 

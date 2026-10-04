@@ -37,7 +37,7 @@ import { renderContactsView } from './apps/contacts.js'
 import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
-import { activityReceipt, renderActivityHost } from './activity.js'
+import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from './activity.js'
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
@@ -1373,6 +1373,11 @@ class PocketController {
     this.preferences = normalized
     this.applyAppearance()
     if (options.resize) this.resizeExpanded()
+    this.mountInlineArtifacts()
+    for (const [id, host] of this.injectedActivities) {
+      const activity = this.knownActivities.get(id)
+      if (activity) renderActivityHost(host, activity, () => this.openActivity(activity), { ...this.inlineOptions(activity), includeArtifact: activity.kind === 'message' || activity.kind === 'call', includeReceipt: activity.kind !== 'message' && activity.kind !== 'call' })
+    }
     if (options.persist === false) return
     window.clearTimeout(this.settingsSaveTimer)
     this.settingsSaveTimer = window.setTimeout(() => {
@@ -1494,6 +1499,22 @@ class PocketController {
 
   private openApp(app: PhoneApp): void {
     this.openPocket({ app } as PocketRoute)
+  }
+
+  private inlineOptions(activity: PocketActivity): ActivityRenderOptions {
+    if (!this.state) return {}
+    const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId())
+    const persona = owner === pocketPersonaActorId(this.state) && this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null
+    const appearance = persona?.enabled ? persona : this.preferences
+    const image = persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat
+    const wallpaper = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : this.preferences.chatWallpaper
+    const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
+    const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
+    return { appearance: this.preferences.inlineAppearance || 'cards', accent: appearance.colors.accent, background,
+      backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
+      textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
+      avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
+      avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map(row => [row.senderActorId || '', resolvePocketActor(this.state!, row.senderActorId || '')?.avatarUrl || ''])) }
   }
 
   private openActivity(activity: PocketActivity): void {
@@ -1640,9 +1661,12 @@ class PocketController {
       host.hidden = false
       host.classList.add('pocket-inline-anchor')
       host.dataset.pocketActivityId = activity.id
-      if (host.dataset.pocketMounted !== 'true') {
+      const options = this.inlineOptions(activity)
+      const appearanceKey = JSON.stringify(options)
+      if (host.dataset.pocketMounted !== 'true' || host.dataset.pocketAppearance !== appearanceKey) {
         host.dataset.pocketMounted = 'true'
-        renderActivityHost(host, activity, () => this.openActivity(activity), { includeArtifact: true, includeReceipt: false })
+        host.dataset.pocketAppearance = appearanceKey
+        renderActivityHost(host, activity, () => this.openActivity(activity), { ...options, includeArtifact: true, includeReceipt: false })
       }
       const fallback = this.injectedActivities.get(activity.id)
       if (fallback) {
@@ -1707,7 +1731,7 @@ class PocketController {
         this.pendingActivities.delete(activityId)
         continue
       }
-      const injected = activityReceipt(this.ctx, activity, () => this.openActivity(activity))
+      const injected = activityReceipt(this.ctx, activity, () => this.openActivity(activity), this.inlineOptions(activity))
       if (!injected) continue
       this.pendingActivities.delete(activityId)
       this.injectedActivities.set(activityId, injected)
@@ -2862,6 +2886,14 @@ class PocketController {
     body.replaceChildren()
 
     body.appendChild(el('p', 'lp-copy', 'Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline.'))
+    const authorship = el('section', 'lp-card lp-settings-section')
+    authorship.append(el('div', 'lp-eyebrow', 'Who writes your character?'))
+    const mode = el('select', 'lp-select'); mode.setAttribute('aria-label', 'Character authorship')
+    for (const [value, label] of [['roleplay', 'Roleplay — I write my side'], ['impersonation', 'Impersonation — AI can write my side too']] as const) {
+      const option = el('option', '', label); option.value = value; option.selected = (state.setup.authorship || 'roleplay') === value; mode.append(option)
+    }
+    mode.addEventListener('change', () => this.send('lumiphone:set_authorship', { authorship: mode.value }))
+    authorship.append(mode, el('p', 'lp-copy', 'Roleplay keeps your side yours. You can always send manually inside Pocket. This choice applies only to this chat.'))
 
     const effective = this.generation?.effective
     const latestTest = [...(this.generation?.history || this.preferences.generationHistory || [])]
@@ -2979,7 +3011,7 @@ class PocketController {
     start.addEventListener('click', () => {
       start.disabled = true
       start.textContent = 'Starting…'
-      this.send('lumiphone:finish_setup')
+      this.send('lumiphone:finish_setup', { authorship: mode.value })
     })
 
     const later = button('Not now', 'lp-button lp-button-quiet')
@@ -2988,7 +3020,7 @@ class PocketController {
       this.setupModalDismiss?.()
     })
 
-    body.append(llm, persona, world, start, later)
+    body.append(authorship, llm, persona, world, start, later)
   }
 
   private renderFirstChatPersonaEditor(): void {

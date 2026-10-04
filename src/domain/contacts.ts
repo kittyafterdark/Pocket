@@ -1,6 +1,7 @@
 import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
 import { normalizeEventSuggestion } from './scheduler.js'
 import { normalizeImageSource } from './preferences.js'
+import { normalizeCallMarker } from './phone-events.js'
 
 export function normalizeAvatarFocus(value: unknown): { x: number; y: number } {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -182,6 +183,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     read,
     status,
     imageId: clean(value.imageId, 160) || undefined,
+    call: normalizeCallMarker(value.call),
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     origin: record(value.origin) && clean(value.origin.chatId, 180) && clean(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {

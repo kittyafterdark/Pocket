@@ -221,6 +221,7 @@ export interface DevicePreferences {
   animationDurationMs: number
   reducedMotion: boolean
   autoOpenOnModelAction: boolean
+  inlineAppearance?: 'cards' | 'phone'
   pushNotifications: boolean
   useSwarmProfile: boolean
   sceneEnhancer: boolean
@@ -295,6 +296,7 @@ export interface PocketCandidateClockSnapshot extends PocketRoleplayClockSnapsho
 }
 
 export interface PhoneMessage {
+  call?: PocketCallMarker
   id: string
   sender: 'persona' | 'contact' | 'system'
   /** Generic Pocket actor identity. Contact ids remain valid actor ids. Persona messages also carry the canonical Pocket Persona actor id. */
@@ -830,11 +832,20 @@ export interface PocketActivityPresentation {
   recipientNames?: string[]
   conversationTitle?: string
   batchMessages?: PocketActivityBatchMessage[]
+  call?: PocketCallMarker
+  storyAt?: string
+}
+
+export interface PocketCallMarker {
+  callId: string
+  status: 'connected' | 'ended' | 'missed'
+  speakerphone: boolean
+  durationSeconds?: number
 }
 
 export interface PocketActivity {
   id: string
-  kind: 'message' | 'contact' | 'tracker-change' | 'timeline' | 'note' | 'image' | 'weather' | 'system'
+  kind: 'message' | 'call' | 'contact' | 'tracker-change' | 'timeline' | 'note' | 'image' | 'weather' | 'system'
   title: string
   summary?: string
   route: PocketRoute
@@ -904,6 +915,7 @@ export interface PhoneState {
     personaConfigured?: boolean
     worldStatus?: 'unconfigured' | 'seeded' | 'skipped'
     worldSeededAt?: string
+    authorship?: 'roleplay' | 'impersonation'
   }
   /** Linked source keys explicitly deleted by the user and therefore not auto-recreated. */
   suppressedContactSourceKeys: string[]

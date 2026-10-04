@@ -136,6 +136,12 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const commit = (mutate: (next: DevicePreferences) => void, options?: { persist?: boolean; resize?: boolean }) => { const next = clone(settings); mutate(next); host.update(normalizePreferences(next), options); updatePreview() }
   const { page, content } = host.page('Appearance', 'Device defaults')
   const themes = el('section', 'lp-card lp-settings-section'); themes.append(el('div', 'lp-eyebrow', 'Theme'))
+  const inline = el('select', 'lp-select'); inline.setAttribute('aria-label', 'Inline phone appearance')
+  for (const [value, label] of [['cards', 'Scene cards'], ['phone', 'Full phone']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = (settings.inlineAppearance || 'cards') === value; inline.append(option)
+  }
+  inline.addEventListener('change', () => commit(next => { next.inlineAppearance = inline.value === 'phone' ? 'phone' : 'cards' }))
+  content.append(fieldBlock('Phone events in prose', inline), el('p', 'lp-copy', 'Choose compact scene cards or a miniature phone. This does not change who can write your character.'))
   const themeRow = el('div', 'lp-theme-grid')
   for (const [name, swatch] of [['midnight', '#201a37'], ['porcelain', '#eeeae6'], ['rose', '#7a294e'], ['forest', '#1d5a41'], ['custom', settings.colors.accent]] as const) {
     const dot = button(name[0].toUpperCase() + name.slice(1), 'lp-theme-preview'); dot.title = name; dot.style.setProperty('--theme-color', swatch); dot.setAttribute('aria-pressed', String(settings.theme === name))
@@ -190,6 +196,12 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
 function persona(host: SettingsViewHost): HTMLDivElement {
   const profile = host.state.pocketPersona
   const { page, content } = host.page('Persona & Device', profile.displayName || host.activePersona?.name || 'Pocket profile')
+  const authorship = el('select', 'lp-select'); authorship.setAttribute('aria-label', 'Character authorship')
+  for (const [value, label] of [['roleplay', 'Roleplay — I write my side'], ['impersonation', 'Impersonation — AI can write my side too']] as const) {
+    const option = el('option', '', label); option.value = value; option.selected = (host.state.setup.authorship || 'roleplay') === value; authorship.append(option)
+  }
+  authorship.addEventListener('change', () => host.send('lumiphone:set_authorship', { authorship: authorship.value }))
+  content.append(fieldBlock('Who writes your character?', authorship), el('p', 'lp-copy', 'Applies to this chat. Manual sends inside Pocket are always available.'))
   const identity = el('section', 'lp-card lp-settings-section')
   identity.append(el('div', 'lp-eyebrow', 'Who is using this phone?'))
   const source = el('select', 'lp-select')

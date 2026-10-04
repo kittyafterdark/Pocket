@@ -20,6 +20,30 @@ import { runOpenJev } from '../src/backend/jev.js'
 import { BUILTIN_WALLPAPERS, builtinWallpaperUrl } from '../src/domain/wallpapers.js'
 import { normalizeImageSource } from '../src/domain/preferences.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
+import { assertPersonaAuthorship, callSummary, normalizeCallMarker } from '../src/domain/phone-events.js'
+
+test('authorship defaults protect the persona while preserving manual and NPC sends', () => {
+  const state = { setup: {} } as PhoneState
+  for (const source of ['model', 'tag'] as const) expect(() => assertPersonaAuthorship(state, source, true)).toThrow('Roleplay mode')
+  expect(() => assertPersonaAuthorship(state, 'user', true)).not.toThrow()
+  expect(() => assertPersonaAuthorship(state, 'model', false)).not.toThrow()
+  state.setup.authorship = 'impersonation'
+  expect(() => assertPersonaAuthorship(state, 'model', true)).not.toThrow()
+  expect(normalizePreferences(null).inlineAppearance).toBe('cards')
+  expect(normalizePreferences({ inlineAppearance: 'phone' }).inlineAppearance).toBe('phone')
+  expect(normalizePreferences({ inlineAppearance: 'unknown' }).inlineAppearance).toBe('cards')
+})
+
+test('call markers preserve explicit facts and never invent duration', () => {
+  expect(normalizeCallMarker({ status: 'ringing', callId: 'c' })).toBeUndefined()
+  expect(normalizeCallMarker({ status: 'ended' })).toBeUndefined()
+  const connected = normalizeCallMarker({ status: 'connected', callId: 'c', speakerphone: true, durationSeconds: 99 })!
+  expect(connected.durationSeconds).toBeUndefined()
+  expect(callSummary(connected)).toBe('Call connected · Speakerphone')
+  const ended = normalizeCallMarker({ status: 'ended', callId: 'c', durationSeconds: 241 })!
+  expect(callSummary(ended)).toBe('Call ended · 4:01')
+  expect(normalizeCallMarker({ status: 'ended', callId: 'c', durationSeconds: -5 })!.durationSeconds).toBeUndefined()
+})
 
 test('built-in wallpapers persist as portable IDs and resolve without host access', async () => {
   expect(new Set(BUILTIN_WALLPAPERS.map(item => item.id)).size).toBe(BUILTIN_WALLPAPERS.length)

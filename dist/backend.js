@@ -519,6 +519,7 @@ function defaultPreferences() {
     animationDurationMs: 280,
     reducedMotion: false,
     autoOpenOnModelAction: false,
+    inlineAppearance: "cards",
     pushNotifications: false,
     useSwarmProfile: true,
     sceneEnhancer: true,
@@ -632,6 +633,7 @@ function normalizePreferences(value) {
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
     autoOpenOnModelAction: bool(raw.autoOpenOnModelAction, fallback.autoOpenOnModelAction),
+    inlineAppearance: raw.inlineAppearance === "phone" ? "phone" : "cards",
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
@@ -760,6 +762,30 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
     pinnedNotes: state.notes.filter((note) => note.pinned).slice(0, 5).map((note) => `${note.title.slice(0, 120)}: ${note.body.slice(0, 320)}`),
     contacts
   }, budget);
+}
+
+// src/domain/phone-events.ts
+function assertPersonaAuthorship(state, source, personaSender) {
+  if (source !== "user" && personaSender && state.setup.authorship !== "impersonation") {
+    throw new Error("Roleplay mode: only the user can send as the Pocket Persona. Enable Impersonation in this chat to let the model write your side.");
+  }
+}
+function normalizeCallMarker(value) {
+  if (!value || typeof value !== "object")
+    return;
+  const raw = value;
+  if (!["connected", "ended", "missed"].includes(String(raw.status)) || typeof raw.callId !== "string" || !raw.callId.trim())
+    return;
+  const duration = raw.durationSeconds;
+  return {
+    callId: raw.callId.trim().slice(0, 180),
+    status: raw.status,
+    speakerphone: raw.speakerphone === true,
+    durationSeconds: raw.status === "ended" && typeof duration === "number" && Number.isFinite(duration) && duration >= 0 && duration <= 86400 ? Math.round(duration) : undefined
+  };
+}
+function callSummary(call) {
+  return `${call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call"}${call.speakerphone ? " \xB7 Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` \xB7 ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
 }
 
 // src/domain/navigation.ts
@@ -1058,6 +1084,7 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
     read,
     status,
     imageId: clean4(value.imageId, 160) || undefined,
+    call: normalizeCallMarker(value.call),
     imageUrl: clean4(value.imageUrl, 2000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     origin: record4(value.origin) && clean4(value.origin.chatId, 180) && clean4(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {
@@ -2939,6 +2966,8 @@ var groupBatchFlights = new Map;
 var frontendViews = new Map;
 var activePocketCandidates = new Map;
 var PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-world phone state.
+The per-chat ROLEPLAY/IMPERSONATION authorship rule below is authoritative. Persona-authored messages are available only in Impersonation; never bypass this through tags, aliases, or batches.
+For an established voice call use action="call", with speaker, target or conversationId, status="connected"|"ended"|"missed", and optional speakerphone. A connected call returns callId; ending it must supply that same callId and conversation. Use durationSeconds only when the story explicitly establishes elapsed time. Put the returned artifactTag or commitTag exactly once in the final scene, as with messages. Spoken dialogue stays in ordinary prose; never create text messages for every spoken line. These are story events, not real voice/video calls.
 
 Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt. Pocket automatically renders successfully persisted phone actions in the roleplay UI. Do not repeat or shim a phone message in prose merely to make it visible. Normal prose may naturally describe using, reading, showing, or reacting to a phone when that action matters to the scene.
 
@@ -3070,7 +3099,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
     pocketPersona: defaultPocketPersona(createdAt),
     pocketPersonaActorId: personaActorId,
     suppressedContactSourceKeys: [],
-    setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: "unconfigured" },
+    setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: "unconfigured", authorship: "roleplay" },
     contacts: collections.contacts,
     contactGroups: [],
     discoveredActors: [],
@@ -3193,7 +3222,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     const presentationKind = presentation && (presentation.kind === "sent" || presentation.kind === "received" || presentation.kind === "observed" || presentation.kind === "referenced" || presentation.kind === "generic" || presentation.kind === "batch") ? presentation.kind : undefined;
     return [{
       id: text2(item.id, 160) || id("act"),
-      kind: item.kind === "message" || item.kind === "contact" || item.kind === "tracker-change" || item.kind === "timeline" || item.kind === "note" || item.kind === "image" || item.kind === "weather" ? item.kind : "system",
+      kind: item.kind === "message" || item.kind === "call" || item.kind === "contact" || item.kind === "tracker-change" || item.kind === "timeline" || item.kind === "note" || item.kind === "image" || item.kind === "weather" ? item.kind : "system",
       title,
       summary: text2(item.summary, 500) || undefined,
       route: normalizePocketRoute(item.route),
@@ -3204,6 +3233,8 @@ function normalizeState(value, chatId, characterId, characterName) {
         senderName: text2(presentation?.senderName, 120) || undefined,
         recipientNames: (Array.isArray(presentation?.recipientNames) ? presentation.recipientNames : []).map((entry) => text2(entry, 120)).filter(Boolean).slice(0, 16),
         conversationTitle: text2(presentation?.conversationTitle, 120) || undefined,
+        call: normalizeCallMarker(presentation?.call),
+        storyAt: text2(presentation?.storyAt, 80) || undefined,
         batchMessages: (Array.isArray(presentation?.batchMessages) ? presentation.batchMessages : []).slice(0, 24).flatMap((entry) => {
           if (!isRecord2(entry))
             return [];
@@ -3517,6 +3548,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     suppressedContactSourceKeys,
     setup: {
       initialized: bool2(setupValue.initialized, hadPocketData),
+      authorship: setupValue.authorship === "impersonation" ? "impersonation" : "roleplay",
       dismissed: bool2(setupValue.dismissed),
       personaConfigured: bool2(setupValue.personaConfigured, bool2(setupValue.initialized, hadPocketData)),
       worldStatus: setupValue.worldStatus === "seeded" || setupValue.worldStatus === "skipped" ? setupValue.worldStatus : bool2(setupValue.initialized, hadPocketData) ? "skipped" : "unconfigured",
@@ -7068,7 +7100,7 @@ async function applyAction(input, userId, source = "model") {
   const action = text2(input.action, 40).toLowerCase();
   const key = stateKey(context.chatId, context.characterId);
   const payload = isRecord2(input.payload) ? input.payload : input;
-  const candidateMessageProvisional = source === "model" && (action === "message" || action === "message_batch") && Boolean(candidateOrigin(input.__candidateOrigin, context.chatId)) && !bool2(input.__candidateCommitted);
+  const candidateMessageProvisional = source === "model" && (action === "message" || action === "message_batch" || action === "call") && Boolean(candidateOrigin(input.__candidateOrigin, context.chatId)) && !bool2(input.__candidateCommitted);
   if (action === "camera") {
     const reserved = await withStateLock(key, async () => {
       const state = await loadState(context.chatId, context.characterId, userId);
@@ -7274,6 +7306,7 @@ async function applyAction(input, userId, source = "model") {
       for (const row of rows) {
         const speakerIsPersona = actorReferenceIsPocketPersona(state, row.speaker);
         const sender = speakerIsPersona || row.raw.sender === "persona" || row.raw.sender === "user" ? "persona" : row.raw.sender === "system" ? "system" : "contact";
+        assertPersonaAuthorship(state, source, sender === "persona");
         let senderActor = sender === "persona" ? resolvePocketActor(state, personaActorId) : null;
         if (sender === "contact") {
           senderActor = resolveActorReference(state, row.speaker, conversationDeviceActorIds(state, conversation));
@@ -7369,13 +7402,21 @@ async function applyAction(input, userId, source = "model") {
             messageIds
           }
         }, command);
-    } else if (action === "message") {
-      const messageText = text2(payload.text ?? payload.message ?? payload.content, 12000);
+    } else if (action === "message" || action === "call") {
+      const call = action === "call" ? normalizeCallMarker({ ...payload, callId: text2(payload.callId, 180) || (payload.status !== "ended" ? id("call") : "") }) : undefined;
+      if (action === "call" && !call)
+        throw new Error("A call needs status connected, ended, or missed. Ending a call requires its callId.");
+      if (action === "call" && payload.durationSeconds !== undefined && (typeof payload.durationSeconds !== "number" || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds < 0 || payload.durationSeconds > 86400))
+        throw new Error("Use an explicit duration in seconds, up to one day, or omit it.");
+      let messageText = call ? callSummary(call) : text2(payload.text ?? payload.message ?? payload.content, 12000);
       if (!messageText)
         throw new Error("A phone message needs text.");
       const rawSpeaker = payload.speaker ?? payload.speakerRef ?? payload.speaker_ref ?? (payload.sender !== "user" && payload.sender !== "persona" && payload.sender !== "contact" && payload.sender !== "system" ? payload.sender : undefined) ?? (text2(payload.senderContactId ?? payload.sender_contact_id, 180) ? { contactId: payload.senderContactId ?? payload.sender_contact_id } : undefined) ?? (text2(payload.contact_name ?? payload.contactName, 120) ? { contactId: payload.contact_id ?? payload.contactId, name: payload.contact_name ?? payload.contactName, relationship: payload.relationship } : undefined);
       const speakerIsPersona = actorReferenceIsPocketPersona(state, rawSpeaker);
       const sender = source === "user" || payload.sender === "user" || payload.sender === "persona" || speakerIsPersona ? "persona" : payload.sender === "system" ? "system" : "contact";
+      assertPersonaAuthorship(state, source, sender === "persona");
+      if (call && sender === "system")
+        throw new Error("A call needs an actual participating speaker.");
       const explicitConversationId = text2(payload.conversationId ?? payload.conversation_id, 180);
       const foundConversation = explicitConversationId ? state.conversations.find((entry) => entry.id === explicitConversationId) : undefined;
       const channel = text2(payload.channel, 20).toLowerCase();
@@ -7442,6 +7483,16 @@ async function applyAction(input, userId, source = "model") {
       const senderContact = sender === "contact" ? senderActor.contact : undefined;
       const communicationActors = conversationDeviceActorIds(state, conversation);
       const recipientActorIds = senderActorId ? communicationActors.filter((actorId) => actorId !== senderActorId) : communicationActors;
+      if (call) {
+        const prior = conversation.messages.filter((entry) => entry.call?.callId === call.callId).at(-1)?.call;
+        if (call.status === "ended" && prior?.status !== "connected")
+          throw new Error("End an existing connected call in this conversation.");
+        if (call.status !== "ended" && prior)
+          throw new Error("That callId is already used. Start a new call with a fresh id.");
+        if (call.status === "ended" && payload.speakerphone === undefined)
+          call.speakerphone = prior.speakerphone;
+        messageText = callSummary(call);
+      }
       const readByActorIds = senderActorId ? [senderActorId] : [];
       const routeBase = { app: "messages", conversationId: conversation.id };
       for (const ownerActorId of recipientActorIds) {
@@ -7463,6 +7514,7 @@ async function applyAction(input, userId, source = "model") {
         text: messageText,
         createdAt: phoneMessageTimestamp(state),
         read: personaRead,
+        call,
         status: sender === "persona" ? "sent" : sender === "system" ? "read" : personaRead ? "read" : "delivered",
         origin: actionOrigin,
         candidateCommitState: actionOrigin ? candidateMessageProvisional ? "provisional" : "committed" : undefined
@@ -7470,7 +7522,7 @@ async function applyAction(input, userId, source = "model") {
       conversation.messages.push(message);
       conversation.messages = conversation.messages.slice(-MAX_MESSAGES2);
       conversation.updatedAt = message.createdAt;
-      if (sender === "persona" && source === "user") {
+      if (sender === "persona" && source === "user" && !call) {
         if (conversation.kind === "group") {
           for (const batch of state.groupBatches.filter((entry) => entry.conversationId === conversation.id && (entry.status === "queued" || entry.status === "delivering"))) {
             batch.status = "cancelled";
@@ -7513,11 +7565,11 @@ async function applyAction(input, userId, source = "model") {
       }
       const direction = messageDirection(state, conversation, message, personaActorId);
       const recipientNames = recipientActorIds.map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === personaActorId ? state.pocketPersona.displayName : "Unknown")).filter(Boolean);
-      result = { ...result, actorId: senderActorId, contactId: senderContact?.id, conversationId: conversation.id, messageId: message.id, direction };
+      result = { ...result, actorId: senderActorId, contactId: senderContact?.id, conversationId: conversation.id, messageId: message.id, direction, callId: call?.callId };
       if (source !== "user")
         activity = addActivity(state, {
-          kind: "message",
-          title: direction === "outbound" ? "Sent message" : direction === "inbound" ? "Received message" : "Observed message",
+          kind: call ? "call" : "message",
+          title: call ? callSummary(call) : direction === "outbound" ? "Sent message" : direction === "inbound" ? "Received message" : "Observed message",
           summary: messageText.slice(0, 280),
           route,
           presentation: {
@@ -7526,7 +7578,9 @@ async function applyAction(input, userId, source = "model") {
             recipientActorIds,
             senderName: message.senderName,
             recipientNames,
-            conversationTitle: conversation.title
+            conversationTitle: conversation.title,
+            call,
+            storyAt: state.roleplayClockPrecision === "exact" || state.roleplayClockSource === "manual" ? state.roleplayNow : undefined
           },
           source: { messageId: text2(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id }
         }, command);
@@ -8234,11 +8288,24 @@ async function handleFrontend(payload, userId) {
         });
         break;
       }
+      case "lumiphone:set_authorship": {
+        if (payload.authorship !== "roleplay" && payload.authorship !== "impersonation")
+          throw new Error("Choose Roleplay or Impersonation.");
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          state.setup.authorship = payload.authorship === "impersonation" ? "impersonation" : "roleplay";
+          await saveState(state, userId);
+          await sendState(state, userId, "authorship");
+        });
+        break;
+      }
       case "lumiphone:finish_setup": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           if (!state.setup.personaConfigured)
             throw new Error("Choose the Pocket Persona before finishing setup.");
+          if (payload.authorship === "roleplay" || payload.authorship === "impersonation")
+            state.setup.authorship = payload.authorship;
           if (state.setup.worldStatus !== "seeded" && state.setup.worldStatus !== "skipped")
             state.setup.worldStatus = "skipped";
           state.setup.initialized = true;
@@ -8842,16 +8909,16 @@ function registerTool() {
   spindle.registerTool({
     name: "phone_action",
     display_name: "Pocket Action",
-    description: "Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. message_batch may carry one coherent burst of multiple newly-authored messages from the SAME group chat so busy GCs do not need to be summarized or artificially limited. Message/message_batch calls are provisional: the tool call alone does NOT commit canon. Every surviving message action MUST include exactly one returned commit marker. Use artifactTag on its own line at the exact story position when the action is visible/readable/observed and DO NOT also quote or style the message text. Use commitTag exactly once when the action truly occurs but should remain wholly off-screen/unrendered. If a call happened only during reasoning and is not part of the final scene, emit neither marker so Pocket discards it. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied verbatim in Pocket reference/history are historical and MUST NOT be resent; text invented now is newly-authored canon even when narrated as older chat history. Named actors may be lightweight and need no full profile. GC messages may ensure a missing group when participants are supplied; message_batch can also materialize named speakers and ensure them as members. Explicit conversation actions remain for deliberate membership edits/renames. State persists per chat and character.",
+    description: "Pocket persistence tool for the primary roleplay model. Call this tool for every newly-created phone action in the scene, including NPC-to-NPC and off-POV communication, instead of formatting phone messages into narrative text. message_batch may carry one coherent burst of multiple newly-authored messages from the SAME group chat so busy GCs do not need to be summarized or artificially limited. Message/message_batch/call actions are provisional: the tool call alone does NOT commit canon. Every surviving message action MUST include exactly one returned commit marker. Use artifactTag on its own line at the exact story position when the action is visible/readable/observed and DO NOT also quote or style the message text. Use commitTag exactly once when the action truly occurs but should remain wholly off-screen/unrendered. If a call happened only during reasoning and is not part of the final scene, emit neither marker so Pocket discards it. If an NPC phone lights up or an NPC reacts to a newly arrived message, persist the canonical sender, recipient, and message text even when the current POV cannot read the screen. Messages already supplied verbatim in Pocket reference/history are historical and MUST NOT be resent; text invented now is newly-authored canon even when narrated as older chat history. Named actors may be lightweight and need no full profile. GC messages may ensure a missing group when participants are supplied; message_batch can also materialize named speakers and ensure them as members. Explicit conversation actions remain for deliberate membership edits/renames. State persists per chat and character.",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["message", "message_batch", "conversation", "contact", "scene", "note", "event", "weather", "tracker", "camera", "notify", "open"] },
+        action: { type: "string", enum: ["message", "message_batch", "call", "conversation", "contact", "scene", "note", "event", "weather", "tracker", "camera", "notify", "open"] },
         chat_id: { type: "string", description: "Current chat id when known." },
         character_id: { type: "string", description: "Current character id when known." },
         payload: {
           type: "object",
-          description: "Action data. message accepts channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or a conversation id/exact group title. GC messages may include participants to ensure/create the group and establish membership. message_batch is GC-only and accepts conversation/title, optional participants, and messages:[{speaker,text}, ...] (max 24); Pocket persists each row as an individual canonical message while returning one batch artifact. Named actors can become lightweight discovered actors. conversation uses kind=group, title, and participants as names or actor/contact refs for explicit membership edits/renames. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.",
+          description: "Action data. Respect the chat authorship mode: persona-authored actions are forbidden in Roleplay and allowed in Impersonation. call accepts speaker, target/conversationId, status connected|ended|missed, optional speakerphone and explicit durationSeconds (ended only); reuse the returned callId to end a connected call. Spoken dialogue remains prose. message accepts channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or a conversation id/exact group title. GC messages may include participants to ensure/create the group and establish membership. message_batch is GC-only and accepts conversation/title, optional participants, and messages:[{speaker,text}, ...] (max 24); Pocket persists each row as an individual canonical message while returning one batch artifact. Named actors can become lightweight discovered actors. conversation uses kind=group, title, and participants as names or actor/contact refs for explicit membership edits/renames. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.",
           additionalProperties: true
         }
       },
@@ -8878,7 +8945,9 @@ function ensureInterceptor() {
       const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : "");
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3600 });
       const handoffMemoryBlock = targetRelayId ? "" : persistentHandoffContext(state, { maxChars: 2600 });
+      const authorship = state.setup.authorship === "impersonation" ? "IMPERSONATION: you may author and persist newly-written messages as the Pocket Persona as well as other actors." : "ROLEPLAY: the human exclusively authors the Pocket Persona. Never send a message or initiate a call as that persona, including aliases, sender=user/persona, or group batches. Explicit phone input is supplied as history; never resend it. Persist other actors\u2019 communication normally. Quoted dialogue in prose is not automatically a text message.";
       const generic = { role: "system", content: `${PHONE_GUIDANCE}
+${authorship}
 Current Pocket snapshot:
 ${projectPhoneContext(state)}` };
       const injectedMessages = [...cleanMessages, generic];
@@ -8961,7 +9030,7 @@ spindle.onFrontendMessage(handleFrontend);
 function pocketArtifactTag(activityId, action) {
   const value = text2(activityId, 180);
   const actionName = text2(action, 40);
-  return value && (actionName === "message" || actionName === "message_batch") ? pocketInlineAnchor(value) : undefined;
+  return value && (actionName === "message" || actionName === "message_batch" || actionName === "call") ? pocketInlineAnchor(value) : undefined;
 }
 var POCKET_ARTIFACT_TAG_PATTERN = /<pocket-artifact\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-artifact\s*>)/gi;
 var POCKET_COMMIT_TAG_PATTERN = /<pocket-commit\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/pocket-commit\s*>)/gi;
@@ -9044,7 +9113,7 @@ async function rewriteCompiledLegacyTag(origin, fullMatch, activityId, action) {
   const at = candidateContent.indexOf(fullMatch);
   if (at < 0)
     return false;
-  const replacement = (action === "message" || action === "message_batch") && activityId ? pocketInlineAnchor(activityId) : "";
+  const replacement = (action === "message" || action === "message_batch" || action === "call") && activityId ? pocketInlineAnchor(activityId) : "";
   const nextContent = `${candidateContent.slice(0, at)}${replacement}${candidateContent.slice(at + fullMatch.length)}`;
   await updateCandidateHostContent(origin, target, nextContent);
   return true;
@@ -9095,7 +9164,7 @@ async function compileLegacyPhoneTags(characterId, origin, userId) {
         };
         const result = await applyAction(tagPayload, userId, "tag");
         const activityId = text2(result.activityId, 180);
-        if ((action === "message" || action === "message_batch") && activityId) {
+        if ((action === "message" || action === "message_batch" || action === "call") && activityId) {
           replacement = pocketInlineAnchor(activityId);
           messageAnchors += 1;
         }
@@ -9116,7 +9185,7 @@ async function compileLegacyPhoneTags(characterId, origin, userId) {
 }
 function activityBelongsToCandidate(state, activity, origin) {
   const route = activity.route.app === "messages" ? activity.route : undefined;
-  if (activity.kind !== "message" || !route?.messageId)
+  if (activity.kind !== "message" && activity.kind !== "call" || !route?.messageId)
     return false;
   const pocketMessage = state.conversations.flatMap((entry) => entry.messages).find((entry) => entry.id === route.messageId);
   const messageOrigin = pocketMessage?.origin;
@@ -9130,7 +9199,7 @@ async function discardCandidateMessages(characterId, origin, userId, reason = "c
     for (const conversation of state.conversations) {
       const deleteIds = conversation.messages.filter((message) => message.origin?.chatId === origin.chatId && message.origin.hostMessageId === origin.hostMessageId && message.origin.swipeId === origin.swipeId).map((message) => message.id);
       for (const messageId of deleteIds) {
-        const activity = state.activities.find((entry) => entry.kind === "message" && entry.route?.app === "messages" && entry.route.messageId === messageId);
+        const activity = state.activities.find((entry) => (entry.kind === "message" || entry.kind === "call") && entry.route?.app === "messages" && entry.route.messageId === messageId);
         if (activity?.id)
           activityIds.push(activity.id);
         if (removePocketMessageArtifacts(state, conversation.id, messageId))
@@ -9202,7 +9271,7 @@ async function pruneUncommittedCandidateMessages(characterId, origin, userId) {
         return Boolean(messageOrigin && messageOrigin.chatId === origin.chatId && messageOrigin.hostMessageId === origin.hostMessageId && messageOrigin.swipeId === origin.swipeId);
       });
       for (const message of candidateRows) {
-        const activity = state.activities.find((entry) => entry.kind === "message" && entry.route?.app === "messages" && (entry.route.messageId === message.id || entry.source?.messageIds?.includes(message.id)));
+        const activity = state.activities.find((entry) => (entry.kind === "message" || entry.kind === "call") && entry.route?.app === "messages" && (entry.route.messageId === message.id || entry.source?.messageIds?.includes(message.id)));
         if (activity?.id && committedRefs.has(activity.id)) {
           if (message.candidateCommitState !== "committed")
             message.candidateCommitState = "committed";
@@ -9210,7 +9279,7 @@ async function pruneUncommittedCandidateMessages(characterId, origin, userId) {
           kept += 1;
           continue;
         }
-        if (activity?.id && activity.presentation?.kind !== "batch") {
+        if (activity?.id && !message.call && activity.presentation?.kind !== "batch") {
           const rescued = replacePlaintextMessageWithInlineAnchor(candidateContent, message.text, activity.id);
           if (rescued.changed) {
             candidateContent = rescued.content;
@@ -9458,7 +9527,7 @@ spindle.on("MESSAGE_SWIPED", async (payload, userId) => {
             }
           }
           for (const messageId of deleteIds) {
-            const activity = state.activities.find((entry) => entry.kind === "message" && entry.route?.app === "messages" && entry.route.messageId === messageId);
+            const activity = state.activities.find((entry) => (entry.kind === "message" || entry.kind === "call") && entry.route?.app === "messages" && entry.route.messageId === messageId);
             if (activity?.id)
               removedActivityIds.push(activity.id);
             changed = removePocketMessageArtifacts(state, conversation.id, messageId) || changed;

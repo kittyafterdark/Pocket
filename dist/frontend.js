@@ -437,6 +437,7 @@ function defaultPreferences() {
     animationDurationMs: 280,
     reducedMotion: false,
     autoOpenOnModelAction: false,
+    inlineAppearance: "cards",
     pushNotifications: false,
     useSwarmProfile: true,
     sceneEnhancer: true,
@@ -550,6 +551,7 @@ function normalizePreferences(value) {
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
     autoOpenOnModelAction: bool(raw.autoOpenOnModelAction, fallback.autoOpenOnModelAction),
+    inlineAppearance: raw.inlineAppearance === "phone" ? "phone" : "cards",
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
@@ -638,6 +640,11 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
   if (app === "weather" || app === "notifications" || app === "home")
     return { app };
   return fallback;
+}
+
+// src/domain/phone-events.ts
+function callSummary(call) {
+  return `${call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call"}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
 }
 
 // src/domain/contacts.ts
@@ -1260,6 +1267,18 @@ function appearance(host) {
   const { page, content } = host.page("Appearance", "Device defaults");
   const themes = el("section", "lp-card lp-settings-section");
   themes.append(el("div", "lp-eyebrow", "Theme"));
+  const inline = el("select", "lp-select");
+  inline.setAttribute("aria-label", "Inline phone appearance");
+  for (const [value, label] of [["cards", "Scene cards"], ["phone", "Full phone"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = (settings.inlineAppearance || "cards") === value;
+    inline.append(option);
+  }
+  inline.addEventListener("change", () => commit((next) => {
+    next.inlineAppearance = inline.value === "phone" ? "phone" : "cards";
+  }));
+  content.append(fieldBlock("Phone events in prose", inline), el("p", "lp-copy", "Choose compact scene cards or a miniature phone. This does not change who can write your character."));
   const themeRow = el("div", "lp-theme-grid");
   for (const [name, swatch] of [["midnight", "#201a37"], ["porcelain", "#eeeae6"], ["rose", "#7a294e"], ["forest", "#1d5a41"], ["custom", settings.colors.accent]]) {
     const dot = button(name[0].toUpperCase() + name.slice(1), "lp-theme-preview");
@@ -1359,6 +1378,16 @@ function appearance(host) {
 function persona(host) {
   const profile = host.state.pocketPersona;
   const { page, content } = host.page("Persona & Device", profile.displayName || host.activePersona?.name || "Pocket profile");
+  const authorship = el("select", "lp-select");
+  authorship.setAttribute("aria-label", "Character authorship");
+  for (const [value, label] of [["roleplay", "Roleplay — I write my side"], ["impersonation", "Impersonation — AI can write my side too"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = (host.state.setup.authorship || "roleplay") === value;
+    authorship.append(option);
+  }
+  authorship.addEventListener("change", () => host.send("lumiphone:set_authorship", { authorship: authorship.value }));
+  content.append(fieldBlock("Who writes your character?", authorship), el("p", "lp-copy", "Applies to this chat. Manual sends inside Pocket are always available."));
   const identity = el("section", "lp-card lp-settings-section");
   identity.append(el("div", "lp-eyebrow", "Who is using this phone?"));
   const source = el("select", "lp-select");
@@ -2919,6 +2948,10 @@ function renderMessagesView(host) {
     const bubble = el("div", "lp-bubble lp-message-surface");
     bubble.dataset.messageId = message.id;
     bubble.dataset.selected = String(message.id === host.selectedMessageId);
+    if (message.call) {
+      bubble.classList.add("lp-call-history");
+      bubble.dataset.callStatus = message.call.status;
+    }
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId);
     bubble.dataset.sender = direction === "outbound" ? "persona" : message.sender === "system" ? "system" : "contact";
     const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === "contact" ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || "") : null;
@@ -4027,6 +4060,62 @@ class PocketRouteHistory {
 }
 
 // src/frontend/activity.ts
+function frameArtifact(artifact, activity, options) {
+  const frame = document.createElement("div");
+  frame.className = "pocket-inline-frame";
+  frame.dataset.appearance = options.appearance || "cards";
+  frame.dataset.kind = activity.presentation?.kind || activity.kind;
+  if (options.accent)
+    frame.style.setProperty("--pocket-inline-accent", options.accent);
+  if (options.background)
+    frame.style.setProperty("--pocket-inline-bg", options.background);
+  if (options.backgroundSize)
+    frame.style.backgroundSize = options.backgroundSize;
+  if (options.backgroundPosition)
+    frame.style.backgroundPosition = options.backgroundPosition;
+  if (options.textColor)
+    frame.style.setProperty("--pocket-inline-text", options.textColor);
+  if (options.surfaceColor)
+    frame.style.setProperty("--pocket-inline-surface", options.surfaceColor);
+  if (options.appearance === "phone") {
+    const status = document.createElement("span");
+    status.className = "pocket-mock-status";
+    status.setAttribute("aria-hidden", "true");
+    status.textContent = activity.presentation?.storyAt?.slice(11, 16) || "Pocket";
+    const indicators = document.createElement("span");
+    indicators.textContent = "▮▮▮  ▰";
+    status.append(indicators);
+    frame.append(status);
+    if (activity.presentation?.kind === "received" && !activity.presentation.call && activity.presentation.storyAt) {
+      const clock = document.createElement("span");
+      clock.className = "pocket-mock-clock";
+      clock.textContent = activity.presentation.storyAt.slice(11, 16);
+      frame.append(clock);
+    }
+  }
+  frame.append(artifact);
+  if (options.appearance === "phone" && ["sent", "batch"].includes(activity.presentation?.kind || "")) {
+    const composer = document.createElement("span");
+    composer.className = "pocket-mock-composer";
+    composer.textContent = "＋    Message";
+    composer.setAttribute("aria-hidden", "true");
+    frame.append(composer);
+  }
+  return frame;
+}
+function avatar2(name, url) {
+  const icon = document.createElement("span");
+  icon.className = "pocket-inline-avatar";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = name.slice(0, 1).toUpperCase();
+  if (url) {
+    const image = document.createElement("img");
+    image.src = url;
+    image.alt = "";
+    icon.replaceChildren(image);
+  }
+  return icon;
+}
 var ICONS = {
   message: "Pocket",
   "tracker-change": "Tracker",
@@ -4035,7 +4124,8 @@ var ICONS = {
   contact: "Contact",
   image: "Photo",
   weather: "Weather",
-  system: "Pocket"
+  system: "Pocket",
+  call: "Call"
 };
 function presentationLabel(activity) {
   switch (activity.presentation?.kind) {
@@ -4078,19 +4168,19 @@ function observedDeviceLine(activity) {
   const recipient = recipientLine(activity);
   return recipient ? `${recipient}'s phone` : "Another phone";
 }
-function messageChrome(stateText = "now") {
+function messageChrome(stateText = "", appName = "Messages") {
   const chrome = document.createElement("span");
   chrome.className = "pocket-inline-artifact-chrome";
   const app = document.createElement("span");
   app.className = "pocket-inline-artifact-app";
-  app.textContent = "Messages";
+  app.textContent = appName;
   const state = document.createElement("span");
   state.className = "pocket-inline-artifact-state";
   state.textContent = stateText;
   chrome.append(app, state);
   return chrome;
 }
-function buildBatchArtifact(activity, openRoute) {
+function buildBatchArtifact(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (presentation?.kind !== "batch" || !presentation.batchMessages?.length)
     return null;
@@ -4105,32 +4195,48 @@ function buildBatchArtifact(activity, openRoute) {
   primary.appendChild(title);
   const transcript = document.createElement("span");
   transcript.className = "pocket-inline-transcript";
-  const visible = presentation.batchMessages.slice(0, 8);
-  for (const item of visible) {
+  const visible = presentation.batchMessages;
+  for (const [index, item] of visible.entries()) {
     const row = document.createElement("span");
     row.className = "pocket-inline-transcript-row";
     row.dataset.direction = item.direction;
+    const previous = visible[index - 1];
+    row.dataset.continuation = String(Boolean(previous && (previous.senderActorId || previous.senderName) === (item.senderActorId || item.senderName)));
+    row.hidden = index >= 3;
     const sender = document.createElement("strong");
     sender.className = "pocket-inline-transcript-sender";
     sender.textContent = item.senderName;
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-transcript-bubble lp-message-surface";
     bubble.textContent = item.text;
-    row.append(sender, bubble);
+    row.append(avatar2(item.senderName, options.avatars?.[item.senderActorId || ""]), sender, bubble);
     transcript.appendChild(row);
-  }
-  if (presentation.batchMessages.length > visible.length) {
-    const more = document.createElement("span");
-    more.className = "pocket-inline-transcript-more";
-    more.textContent = `+ ${presentation.batchMessages.length - visible.length} more message${presentation.batchMessages.length - visible.length === 1 ? "" : "s"}`;
-    transcript.appendChild(more);
   }
   primary.appendChild(transcript);
   primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title || "group chat"} in Pocket`);
   primary.addEventListener("click", () => openRoute(activity.route));
-  return primary;
+  const group = document.createElement("div");
+  group.className = "pocket-inline-batch";
+  group.append(primary);
+  if (visible.length > 3) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "pocket-inline-transcript-more";
+    more.setAttribute("aria-expanded", "false");
+    const collapsed = `Show ${visible.length - 3} more messages`;
+    more.textContent = collapsed;
+    more.addEventListener("click", () => {
+      const expanded = more.getAttribute("aria-expanded") !== "true";
+      more.setAttribute("aria-expanded", String(expanded));
+      more.textContent = expanded ? "Show fewer messages" : collapsed;
+      for (const [index, row] of [...transcript.children].entries())
+        row.hidden = !expanded && index >= 3;
+    });
+    group.append(more);
+  }
+  return frameArtifact(group, activity, options);
 }
-function buildMessageArtifact(activity, openRoute) {
+function buildMessageArtifact(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (!presentation || !["sent", "received", "observed"].includes(presentation.kind))
     return null;
@@ -4141,7 +4247,22 @@ function buildMessageArtifact(activity, openRoute) {
   const copy = document.createElement("span");
   copy.className = "pocket-inline-artifact-copy";
   copy.textContent = activity.summary || "";
-  if (presentation.kind === "sent") {
+  if (presentation.call) {
+    primary.classList.add("pocket-inline-call");
+    primary.dataset.callStatus = presentation.call.status;
+    primary.append(avatar2(presentation.senderName || "Call", options.avatarUrl), messageChrome("", "Phone"));
+    const name = document.createElement("strong");
+    name.className = "pocket-inline-artifact-actors";
+    name.textContent = actorLine(activity) || activity.title;
+    const status = document.createElement("span");
+    status.className = "pocket-inline-artifact-copy";
+    status.textContent = callSummary(presentation.call);
+    const icon = document.createElement("span");
+    icon.className = "pocket-call-symbol";
+    icon.textContent = "☎";
+    icon.setAttribute("aria-hidden", "true");
+    primary.append(name, status, icon);
+  } else if (presentation.kind === "sent") {
     const recipient = document.createElement("span");
     recipient.className = "pocket-inline-artifact-recipient";
     const recipientName = recipientLine(activity);
@@ -4149,10 +4270,7 @@ function buildMessageArtifact(activity, openRoute) {
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-chat-bubble lp-message-surface";
     bubble.append(copy);
-    const status = document.createElement("span");
-    status.className = "pocket-inline-sent-status";
-    status.textContent = "sent";
-    primary.append(messageChrome("sent"), recipient, bubble, status);
+    primary.append(messageChrome("sent"), recipient, bubble);
   } else {
     if (presentation.kind === "observed") {
       const device = document.createElement("span");
@@ -4160,7 +4278,8 @@ function buildMessageArtifact(activity, openRoute) {
       device.textContent = observedDeviceLine(activity);
       primary.appendChild(device);
     }
-    primary.appendChild(messageChrome("now"));
+    primary.appendChild(messageChrome(presentation.storyAt?.slice(11, 16) || ""));
+    primary.append(avatar2(presentation.senderName || "Messages", options.avatarUrl));
     const sender = document.createElement("strong");
     sender.className = "pocket-inline-artifact-actors";
     sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title;
@@ -4168,13 +4287,13 @@ function buildMessageArtifact(activity, openRoute) {
   }
   primary.setAttribute("aria-label", `Open ${presentation.kind === "observed" ? `${observedDeviceLine(activity)} · ` : ""}${presentation.conversationTitle || activity.title} in Pocket`);
   primary.addEventListener("click", () => openRoute(activity.route));
-  return primary;
+  return frameArtifact(primary, activity, options);
 }
 function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
   stack.className = "pocket-artifact-stack";
   if (options.includeArtifact !== false) {
-    const artifact = buildBatchArtifact(activity, openRoute) || buildMessageArtifact(activity, openRoute);
+    const artifact = buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options);
     if (artifact)
       stack.appendChild(artifact);
   }
@@ -4224,7 +4343,7 @@ function renderActivityHost(host, activity, openRoute, options = {}) {
   host.replaceChildren(buildActivityStack(activity, openRoute, options));
   return host;
 }
-function activityReceipt(ctx, activity, openRoute) {
+function activityReceipt(ctx, activity, openRoute, options = {}) {
   const messageId = activity.source?.messageId;
   if (!messageId)
     return null;
@@ -4234,7 +4353,8 @@ function activityReceipt(ctx, activity, openRoute) {
   const wrapper = ctx.dom.inject(bubble, '<span class="pocket-receipt-host"></span>', "beforeend");
   wrapper.classList.add("pocket-receipt-host");
   wrapper.setAttribute("data-pocket-activity-id", activity.id);
-  return renderActivityHost(wrapper, activity, openRoute, { includeArtifact: false, includeReceipt: true });
+  const communication = activity.kind === "message" || activity.kind === "call";
+  return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: communication, includeReceipt: !communication });
 }
 
 // src/frontend/controller.ts
@@ -5692,6 +5812,12 @@ class PocketController {
     this.applyAppearance();
     if (options.resize)
       this.resizeExpanded();
+    this.mountInlineArtifacts();
+    for (const [id, host] of this.injectedActivities) {
+      const activity = this.knownActivities.get(id);
+      if (activity)
+        renderActivityHost(host, activity, () => this.openActivity(activity), { ...this.inlineOptions(activity), includeArtifact: activity.kind === "message" || activity.kind === "call", includeReceipt: activity.kind !== "message" && activity.kind !== "call" });
+    }
     if (options.persist === false)
       return;
     window.clearTimeout(this.settingsSaveTimer);
@@ -5805,6 +5931,28 @@ class PocketController {
   }
   openApp(app) {
     this.openPocket({ app });
+  }
+  inlineOptions(activity) {
+    if (!this.state)
+      return {};
+    const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId());
+    const persona = owner === pocketPersonaActorId(this.state) && this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null;
+    const appearance = persona?.enabled ? persona : this.preferences;
+    const image = persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat;
+    const wallpaper = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : this.preferences.chatWallpaper;
+    const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary);
+    const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient;
+    return {
+      appearance: this.preferences.inlineAppearance || "cards",
+      accent: appearance.colors.accent,
+      background,
+      backgroundSize: `cover,${wallpaper.fit},cover`,
+      backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
+      textColor: appearance.colors.text,
+      surfaceColor: appearance.colors.surface,
+      avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
+      avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map((row) => [row.senderActorId || "", resolvePocketActor(this.state, row.senderActorId || "")?.avatarUrl || ""]))
+    };
   }
   openActivity(activity) {
     if (!this.state)
@@ -5963,9 +6111,12 @@ class PocketController {
       host.hidden = false;
       host.classList.add("pocket-inline-anchor");
       host.dataset.pocketActivityId = activity.id;
-      if (host.dataset.pocketMounted !== "true") {
+      const options = this.inlineOptions(activity);
+      const appearanceKey = JSON.stringify(options);
+      if (host.dataset.pocketMounted !== "true" || host.dataset.pocketAppearance !== appearanceKey) {
         host.dataset.pocketMounted = "true";
-        renderActivityHost(host, activity, () => this.openActivity(activity), { includeArtifact: true, includeReceipt: false });
+        host.dataset.pocketAppearance = appearanceKey;
+        renderActivityHost(host, activity, () => this.openActivity(activity), { ...options, includeArtifact: true, includeReceipt: false });
       }
       const fallback = this.injectedActivities.get(activity.id);
       if (fallback) {
@@ -6034,7 +6185,7 @@ class PocketController {
         this.pendingActivities.delete(activityId);
         continue;
       }
-      const injected = activityReceipt(this.ctx, activity, () => this.openActivity(activity));
+      const injected = activityReceipt(this.ctx, activity, () => this.openActivity(activity), this.inlineOptions(activity));
       if (!injected)
         continue;
       this.pendingActivities.delete(activityId);
@@ -7345,6 +7496,18 @@ ${body}`;
       return;
     body.replaceChildren();
     body.appendChild(el("p", "lp-copy", "Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline."));
+    const authorship = el("section", "lp-card lp-settings-section");
+    authorship.append(el("div", "lp-eyebrow", "Who writes your character?"));
+    const mode = el("select", "lp-select");
+    mode.setAttribute("aria-label", "Character authorship");
+    for (const [value, label] of [["roleplay", "Roleplay — I write my side"], ["impersonation", "Impersonation — AI can write my side too"]]) {
+      const option = el("option", "", label);
+      option.value = value;
+      option.selected = (state.setup.authorship || "roleplay") === value;
+      mode.append(option);
+    }
+    mode.addEventListener("change", () => this.send("lumiphone:set_authorship", { authorship: mode.value }));
+    authorship.append(mode, el("p", "lp-copy", "Roleplay keeps your side yours. You can always send manually inside Pocket. This choice applies only to this chat."));
     const effective = this.generation?.effective;
     const latestTest = [...this.generation?.history || this.preferences.generationHistory || []].reverse().find((entry) => entry.task === "connection-test");
     const llmReady = Boolean(this.caps?.generation && effective?.configured);
@@ -7434,14 +7597,14 @@ ${body}`;
     start.addEventListener("click", () => {
       start.disabled = true;
       start.textContent = "Starting…";
-      this.send("lumiphone:finish_setup");
+      this.send("lumiphone:finish_setup", { authorship: mode.value });
     });
     const later = button("Not now", "lp-button lp-button-quiet");
     later.addEventListener("click", () => {
       this.send("lumiphone:dismiss_setup");
       this.setupModalDismiss?.();
     });
-    body.append(llm, persona, world, start, later);
+    body.append(authorship, llm, persona, world, start, later);
   }
   renderFirstChatPersonaEditor() {
     const body = this.setupModalBody;
@@ -7755,6 +7918,40 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-receipt-details { margin:0 2px; font-size:9px; opacity:.42; order:3; }
   .pocket-receipt-details summary { width:max-content; cursor:pointer; }
   .pocket-receipt-details > span { display:block; margin-top:3px; max-width:460px; line-height:1.35; }
+  .pocket-inline-frame { width:min(100%,460px); min-width:0; box-sizing:border-box; margin:6px auto; padding:12px; border:1px solid color-mix(in srgb,var(--pocket-inline-text,#fff) 12%,transparent); border-radius:22px; background:var(--pocket-inline-bg,linear-gradient(145deg,#171327,#123a4a)); background-size:cover; background-position:center; color:var(--pocket-inline-text,#f7f5ff); overflow:hidden; }
+  .pocket-inline-frame .pocket-inline-artifact { width:100%; box-sizing:border-box; grid-template-columns:32px minmax(0,1fr); background:color-mix(in srgb,var(--pocket-inline-surface,#17151d) 92%,transparent); color:inherit; box-shadow:none; border-radius:17px; }
+  .pocket-inline-frame .pocket-inline-artifact-chrome,.pocket-inline-frame .pocket-inline-artifact-device { grid-column:1/-1; }
+  .pocket-inline-frame .pocket-inline-artifact-copy { grid-column:2; }
+  .pocket-inline-avatar { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; grid-row:auto/span 2; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 60%,#333); color:white; font-size:12px; font-weight:750; overflow:hidden; }
+  .pocket-inline-avatar img { width:100%; height:100%; object-fit:cover; }
+  .pocket-inline-frame[data-kind="sent"] .pocket-inline-artifact { width:100%; grid-template-columns:minmax(0,1fr); background:transparent; border:0; padding:2px; backdrop-filter:none; }
+  .pocket-inline-frame[data-kind="sent"] .pocket-inline-artifact-recipient { text-align:right; }
+  .pocket-inline-frame[data-kind="sent"] .pocket-inline-chat-bubble { justify-self:end; max-width:88%; padding:10px 13px; border-radius:17px 17px 5px 17px; background:var(--pocket-inline-accent,#51459c); color:white; }
+  .pocket-inline-frame[data-kind="sent"] .pocket-inline-artifact-copy { grid-column:auto; }
+  .pocket-inline-frame .pocket-inline-chat-transcript { display:grid; grid-template-columns:minmax(0,1fr); padding:10px; }
+  .pocket-inline-frame .pocket-inline-transcript { max-height:330px; overflow:auto; overscroll-behavior:contain; }
+  .pocket-inline-frame .pocket-inline-transcript-row { grid-template-columns:24px minmax(0,1fr); gap:4px 7px; max-width:94%; }
+  .pocket-inline-frame .pocket-inline-transcript-row[hidden] { display:none; }
+  .pocket-inline-transcript-row .pocket-inline-avatar { width:24px; height:24px; font-size:10px; grid-row:1/span 2; }
+  .pocket-inline-frame .pocket-inline-transcript-sender,.pocket-inline-frame .pocket-inline-transcript-bubble { grid-column:2; }
+  .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] { grid-template-columns:minmax(0,1fr); }
+  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-avatar { display:none; }
+  .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar { visibility:hidden; }
+  .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-transcript-sender { display:none; }
+  .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] :is(.pocket-inline-transcript-sender,.pocket-inline-transcript-bubble) { grid-column:1; }
+  .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { background:var(--pocket-inline-accent,#51459c); }
+  button.pocket-inline-transcript-more { display:block; width:100%; padding:10px; margin-top:5px; border:0; border-radius:12px; background:color-mix(in srgb,var(--pocket-inline-surface,#17151d) 90%,transparent); color:inherit; font:inherit; font-size:11px; cursor:pointer; }
+  button.pocket-inline-transcript-more:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:2px; }
+  .pocket-inline-frame[data-appearance="phone"] { width:min(100%,320px); min-height:310px; padding:12px 10px 20px; border:6px solid var(--pocket-inline-surface,#17151d); outline:1px solid color-mix(in srgb,var(--pocket-inline-text,#fff) 20%,transparent); border-radius:35px; box-shadow:0 12px 30px #0003; position:relative; }
+  .pocket-inline-frame[data-appearance="phone"]::after { content:''; position:absolute; width:70px; height:3px; background:currentColor; opacity:.5; border-radius:4px; bottom:7px; left:calc(50% - 35px); }
+  .pocket-mock-status { display:flex; justify-content:space-between; padding:0 5px 16px; font-size:9px; font-weight:700; }
+  .pocket-mock-clock { display:block; font-size:46px; font-weight:300; text-align:center; margin:8px 0 20px; }
+  .pocket-mock-composer { display:block; border:1px solid color-mix(in srgb,currentColor 20%,transparent); border-radius:24px; margin-top:15px; padding:10px; opacity:.55; font-size:11px; }
+  .pocket-inline-frame .pocket-inline-call { display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px; }
+  .pocket-inline-call .pocket-inline-avatar { width:44px; height:44px; font-size:18px; }
+  .pocket-call-symbol { display:grid; place-items:center; width:36px; height:36px; border-radius:50%; background:#476b54; color:white; margin-top:6px; font-size:20px; }
+  .pocket-inline-call[data-call-status="ended"] .pocket-call-symbol,.pocket-inline-call[data-call-status="missed"] .pocket-call-symbol { background:#994c57; }
+  .lp-bubble.lp-call-history { align-self:center; max-width:90%; border-radius:16px; background:var(--lp-surface); border:1px solid var(--lp-border); text-align:center; }
   @container (max-width:360px) {
     .lumiphone-shell .lp-content { padding-inline:12px; }
     .lumiphone-shell .lp-nav { padding-inline:8px; gap:4px; }
