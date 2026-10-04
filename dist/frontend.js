@@ -1956,7 +1956,7 @@ function trackerDisplay(tracker, state) {
   const heading = el("div", "lp-tracker-heading");
   heading.append(el("span", "lp-eyebrow", current.target.label || current.target.type), el("h3", "lp-title", current.label));
   const value = el("strong", "lp-tracker-readout", trackerDisplayValue(current));
-  const status = current.pausedReason || (current.kind === "timer" && current.direction === "down" && current.value <= current.min ? "Finished" : band?.label || current.kind);
+  const status = current.clockPaused ? "Paused" : current.pausedReason || (current.kind === "timer" ? current.direction === "down" && current.value <= current.min ? "Finished" : current.updateMode === "automatic" ? current.direction === "down" ? "Counting down" : "Counting up" : "Ready" : band?.label || current.kind);
   if (current.presentation === "relationship") {
     const pair = el("div", "lp-tracker-pair");
     const other = resolvePocketActor(state, current.target.id);
@@ -1997,7 +1997,7 @@ function trackerDisplay(tracker, state) {
     card.append(heading);
     const dial = el("div", "lp-timer-dial");
     dial.append(value);
-    card.append(dial, el("span", "lp-tracker-stage", current.clockPaused ? "Paused" : status === "timer" ? current.kind === "timer" && current.direction === "down" ? "Counting down" : "Counting up" : status));
+    card.append(dial, el("span", "lp-tracker-stage", status));
     if (current.updateMode === "automatic")
       card.append(el("span", "lp-copy", `${Math.abs(current.ratePerHour)}${current.unit} per hour · ${current.clock === "real" ? "real time" : "story time"}`));
   } else if (current.presentation === "counter") {

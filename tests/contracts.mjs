@@ -1969,6 +1969,7 @@ backendReceiver({ type: 'lumiphone:action_done', requestId: stateMutation.reques
 dockRoot.querySelector('.lp-nav-action').click()
 openFixtureTracker('fixture-timer')
 assert.ok(dockRoot.querySelector('.lp-timer-dial'))
+assert.doesNotMatch(dockRoot.querySelector('.lp-tracker-stage').textContent, /High|Low|Steady/, 'timer status must describe the clock, not meter bands')
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Pause clock').click()
 const clockMutation = frontendSends.at(-1)
 assert.equal(clockMutation.payload.command, 'clock'); assert.equal(clockMutation.payload.clockAction, 'pause')
