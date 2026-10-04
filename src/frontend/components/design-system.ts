@@ -147,9 +147,9 @@ export const POCKET_DESIGN_SYSTEM = `
   .pocket-inline-artifact-device { display:block; margin-bottom:1px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; font-weight:600; opacity:.55; }
   .pocket-inline-artifact-actors { display:block; margin-top:1px; white-space:normal; font-size:13px; line-height:1.3; font-weight:720; }
   .pocket-inline-artifact-copy { display:block; overflow:visible; font-size:13px; line-height:1.5; opacity:.94; -webkit-line-clamp:unset; }
-  .pocket-inline-artifact[data-kind="sent"] { width:min(88%,420px); margin-left:auto; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; backdrop-filter:none; gap:4px; }
-  .pocket-inline-artifact-recipient { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; text-align:right; opacity:.58; }
-  .pocket-inline-chat-bubble { justify-self:end; width:auto; max-width:100%; padding:10px 12px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; border-radius:18px 18px 6px 18px; box-shadow:none; }
+  .pocket-inline-artifact[data-kind="sent"] { width:min(100%,420px); margin-left:0; padding:12px 14px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 14%,transparent); border-radius:20px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,transparent); box-shadow:0 8px 24px #0002; backdrop-filter:blur(18px); gap:5px; }
+  .pocket-inline-artifact-recipient { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; text-align:left; opacity:.58; }
+  .pocket-inline-chat-bubble { justify-self:start; width:auto; max-width:100%; padding:0; background:transparent; color:inherit; border-radius:0; box-shadow:none; }
   .pocket-inline-chat-bubble .pocket-inline-artifact-copy { font-size:13px; line-height:1.48; opacity:1; }
   .pocket-inline-sent-status { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:9px; text-align:right; opacity:.42; }
   .pocket-inline-chat-transcript { width:min(100%,500px); padding:12px 13px 14px; gap:8px; cursor:pointer; }
@@ -162,10 +162,12 @@ export const POCKET_DESIGN_SYSTEM = `
   .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 76%,white 5%); color:var(--lumiverse-text,#f7f5ff); font-size:12px; line-height:1.42; text-align:left; }
   .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; }
   .pocket-inline-transcript-more { display:block; padding:5px 4px 0; border-top:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 10%,transparent); font-size:9px; opacity:.48; text-align:center; }
-  .pocket-receipt { min-height:22px; padding:2px 3px; grid-template-columns:auto minmax(0,1fr) auto; gap:5px; border-radius:6px; box-shadow:none; background:transparent; opacity:.48; }
-  button.pocket-receipt:hover { opacity:.8; background:transparent; }
-  .pocket-receipt-kind { padding:0; background:transparent; font-size:8px; font-weight:750; }
-  .pocket-receipt-copy strong { font-size:8px; font-weight:600; }
+  .pocket-receipt { width:min(100%,420px); min-height:52px; padding:10px 12px; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; border-radius:18px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 12%,transparent); box-shadow:0 6px 22px #0002; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,transparent); backdrop-filter:blur(16px); opacity:1; }
+  button.pocket-receipt:hover { background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 85%,var(--lumiverse-primary,#8b7dff)); }
+  .pocket-receipt-kind { padding:7px; border-radius:10px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 22%,transparent); font-size:9px; font-weight:750; }
+  .pocket-receipt-copy strong { font-size:11px; font-weight:650; }
+  .pocket-receipt-copy { display:grid; gap:3px; }
+  .pocket-receipt-copy span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; white-space:normal; font-size:12px; line-height:1.35; opacity:.8; }
   .pocket-receipt-arrow { font-size:11px; opacity:.4; }
   .pocket-receipt-details { margin:0 2px; font-size:9px; opacity:.42; order:3; }
   .pocket-receipt-details summary { width:max-content; cursor:pointer; }

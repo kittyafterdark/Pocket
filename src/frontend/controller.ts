@@ -28,7 +28,7 @@ import type {
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
-import { conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
+import { activityDeviceOwner, conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
 import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
@@ -169,6 +169,9 @@ class PocketController {
   private groupSaveDraftKey = ''
   private trackerDrafts = new Map<string, Record<string, unknown>>()
   private trackerSaveRequest = ''
+  private trackerMutationRequest = ''
+  private trackerJevRequest = ''
+  private jevWorking = false
   private trackerSaveDraftKey = ''
   private cameraDraft = { scene: '', enhance: undefined as boolean | undefined }
   private selectedMessageId = ''
@@ -240,7 +243,12 @@ class PocketController {
     this.launcher.type = 'button'
     this.launcher.title = 'Open Pocket'
     this.launcher.setAttribute('aria-label', 'Open Pocket')
-    this.launcher.innerHTML = PHONE_ICON
+    const launcherPhone = el('span', 'lumiphone-launcher-phone')
+    launcherPhone.setAttribute('aria-hidden', 'true')
+    const launcherScreen = el('span', 'lumiphone-launcher-screen')
+    for (let index = 0; index < 4; index++) launcherScreen.append(el('i'))
+    launcherPhone.append(launcherScreen)
+    this.launcher.append(launcherPhone)
     this.launcherBadge = el('span', 'lumiphone-badge')
     this.launcherBadge.hidden = true
     this.launcher.appendChild(this.launcherBadge)
@@ -926,6 +934,7 @@ class PocketController {
       const previousUnread = this.unreadCount()
       if (payload.reason === 'host_swipe') this.clearActivitySurfaces(true)
       if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
+        this.trackerMutationRequest = ''; this.trackerJevRequest = ''; this.jevWorking = false
         this.collectionRequest = ''
         this.cameraDraft = { scene: '', enhance: undefined }
         this.cameraPreview = ''; this.cameraProgress = ''; this.cameraBusy = false; this.cameraRequestId = ''; this.cameraContactId = ''; this.cameraReady = false
@@ -987,6 +996,9 @@ class PocketController {
     if (payload.type === 'lumiphone:jev_status') {
       const context = this.activeContext()
       if (payload.chatId !== context.chatId || payload.characterId !== context.characterId) return
+      this.jevWorking = payload.status === 'working'
+      if (!this.jevWorking) this.trackerJevRequest = ''
+      if (this.currentApp === 'trackers') this.render(false)
       this.showFeedback(String(payload.message || 'JEV evaluation updated.'), payload.status === 'error')
       return
     }
@@ -1072,6 +1084,11 @@ class PocketController {
     if (payload.type === 'lumiphone:context_preview' && payload.diagnostics) {
       this.contextPreview = payload.diagnostics as PocketContextDiagnostics
       if (this.currentApp === 'settings') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:action_done' && payload.requestId === this.trackerMutationRequest) {
+      this.trackerMutationRequest = ''
+      if (this.currentApp === 'trackers') this.render(false)
       return
     }
     if (payload.type === 'lumiphone:action_done' && payload.result?.trackerId && payload.requestId === this.trackerSaveRequest) {
@@ -1266,6 +1283,8 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      if (payload.requestId === this.trackerMutationRequest) this.trackerMutationRequest = ''
+      if (payload.requestId === this.trackerJevRequest) { this.trackerJevRequest = ''; this.jevWorking = false }
       if (payload.requestId === this.collectionRequest) this.collectionRequest = ''
       if (payload.requestId === this.groupSaveRequest) this.groupSaveRequest = ''
       if (payload.requestId === this.trackerSaveRequest) this.trackerSaveRequest = ''
@@ -1477,6 +1496,21 @@ class PocketController {
     this.openPocket({ app } as PocketRoute)
   }
 
+  private openActivity(activity: PocketActivity): void {
+    if (!this.state) return
+    const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId())
+    if (!owner) { this.showError('This conversation is no longer available.'); return }
+    if (owner !== this.currentDeviceOwnerActorId()) {
+      if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
+      this.cameraRequestId = ''; this.cameraBusy = false; this.cameraReady = false; this.cameraPreview = ''; this.cameraContactId = ''; this.cameraNpcDraft = null
+      this.deviceOwnerActorId = owner
+      this.selectedConversationId = ''; this.selectedMessageId = ''
+      this.router.reset({ app: 'home' })
+      this.syncSurfaceIdentity(); this.updateBadge(); this.renderDrawerLanding()
+    }
+    this.openPocket(activity.route)
+  }
+
   private back(): void {
     this.openPocket(this.router.back(), false)
   }
@@ -1608,7 +1642,7 @@ class PocketController {
       host.dataset.pocketActivityId = activity.id
       if (host.dataset.pocketMounted !== 'true') {
         host.dataset.pocketMounted = 'true'
-        renderActivityHost(host, activity, (route) => this.openPocket(route), { includeArtifact: true, includeReceipt: false })
+        renderActivityHost(host, activity, () => this.openActivity(activity), { includeArtifact: true, includeReceipt: false })
       }
       const fallback = this.injectedActivities.get(activity.id)
       if (fallback) {
@@ -1673,7 +1707,7 @@ class PocketController {
         this.pendingActivities.delete(activityId)
         continue
       }
-      const injected = activityReceipt(this.ctx, activity, (route) => this.openPocket(route))
+      const injected = activityReceipt(this.ctx, activity, () => this.openActivity(activity))
       if (!injected) continue
       this.pendingActivities.delete(activityId)
       this.injectedActivities.set(activityId, injected)
@@ -2742,10 +2776,16 @@ class PocketController {
       draft: this.trackerDrafts.get(draftKey),
       updateDraft: draft => { this.trackerDrafts.set(draftKey, draft) },
       saving: Boolean(this.trackerSaveRequest),
+      pending: Boolean(this.trackerMutationRequest) || this.jevWorking,
       save: payload => { if (this.trackerSaveRequest) return; this.trackerSaveDraftKey = draftKey; this.trackerSaveRequest = this.send('lumiphone:action', { action: 'tracker', payload }) },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
-      send: (type, payload) => { this.send(type, payload) },
+      send: (type, payload) => {
+        if (this.trackerMutationRequest || this.jevWorking) return
+        if (type === 'lumiphone:jev_evaluate') { this.jevWorking = true; this.trackerJevRequest = this.send(type, payload) }
+        else this.trackerMutationRequest = this.send(type, payload)
+        this.render(false)
+      },
       select: (id, view = 'detail', replace = false) => this.openPocket({ app: 'trackers', trackerId: id || undefined, view }, !replace),
       back: () => this.back(),
       onCleanup: (cleanup) => this.viewCleanups.push(cleanup),

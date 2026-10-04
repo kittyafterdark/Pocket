@@ -159,6 +159,7 @@ function normalizeTracker(value, context = {}) {
     lastUpdated: iso(value.lastUpdated, now),
     lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
     pausedReason: clean(value.pausedReason, 240),
+    clockPaused: value.clockPaused === true,
     visibleToModel: value.visibleToModel !== false,
     createdAt: iso(value.createdAt, now),
     updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
@@ -195,6 +196,8 @@ function trackerBand(tracker, value = tracker.value) {
 }
 function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
   if (tracker.kind === "state" || tracker.updateMode !== "automatic" || !tracker.ratePerHour)
+    return { tracker, changed: false };
+  if (tracker.clockPaused)
     return { tracker, changed: false };
   const current = tracker.clock === "roleplay" ? Date.parse(roleplayNow) : Date.parse(wallNow);
   const previous = tracker.clock === "roleplay" ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated);
@@ -738,6 +741,19 @@ function conversationDeviceActorIds(state, conversation) {
 }
 function conversationVisibleOnDevice(state, conversation, deviceOwnerActorId) {
   return conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state));
+}
+function activityDeviceOwner(state, activity, currentOwner) {
+  if (activity.scope.chatId !== state.chatId || activity.scope.characterId !== state.characterId)
+    return null;
+  if (activity.route.app !== "messages" || !activity.route.conversationId)
+    return currentOwner;
+  const conversationId = activity.route.conversationId;
+  const conversation = state.conversations.find((entry) => entry.id === conversationId);
+  if (!conversation)
+    return null;
+  const participants = conversationDeviceActorIds(state, conversation);
+  const preferred = activity.presentation?.kind === "observed" ? activity.presentation.recipientActorIds || [] : [];
+  return [...preferred, currentOwner, ...participants].find((actorId) => participants.includes(actorId) && resolvePocketActor(state, actorId)) || null;
 }
 function messageDirection(state, conversation, message, deviceOwnerActorId) {
   const owner = deviceOwnerActorId || pocketPersonaActorId(state);
@@ -1977,6 +1993,17 @@ function trackerDisplay(tracker, state) {
       segments.append(segment);
     }
     card.append(segments, el("span", "lp-tracker-stage", status));
+  } else if (current.presentation === "timer") {
+    card.append(heading);
+    const dial = el("div", "lp-timer-dial");
+    dial.append(value);
+    card.append(dial, el("span", "lp-tracker-stage", current.clockPaused ? "Paused" : status === "timer" ? current.kind === "timer" && current.direction === "down" ? "Counting down" : "Counting up" : status));
+    if (current.updateMode === "automatic")
+      card.append(el("span", "lp-copy", `${Math.abs(current.ratePerHour)}${current.unit} per hour · ${current.clock === "real" ? "real time" : "story time"}`));
+  } else if (current.presentation === "counter") {
+    card.append(heading, el("span", "lp-counter-caption", "AVAILABLE"), value);
+    if (current.kind === "counter")
+      card.append(el("span", "lp-copy", `Changes in ${current.step}${current.unit} steps`));
   } else {
     card.append(heading, value);
     if (current.presentation === "meter") {
@@ -1989,12 +2016,12 @@ function trackerDisplay(tracker, state) {
       limits.append(el("span", "", `${current.min}${current.unit}`), el("span", "", `${current.max}${current.unit}`));
       card.append(rail, limits);
     }
-    if (current.presentation === "timer")
-      card.append(el("span", "lp-tracker-stage", status === "timer" ? current.kind === "timer" && current.direction === "down" ? "Counting down" : "Counting up" : status));
-    if (current.presentation === "counter" && current.kind === "counter")
-      card.append(el("span", "lp-copy", `Step ${current.step}${current.unit} · ${current.min}–${current.max}`));
   }
   const latest = current.history.at(-1);
+  if (latest && current.presentation !== "relationship" && current.presentation !== "compact") {
+    const delta = typeof latest.next === "number" && typeof latest.previous === "number" ? latest.next - latest.previous : null;
+    card.append(el("span", "lp-tracker-last-change", delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? "+" : ""}${Number(delta.toFixed(2))}${current.unit} · ${latest.source === "jev" ? "Open JEV" : latest.source === "model" ? "Story" : latest.source === "automatic" ? "Time" : "You"}`));
+  }
   const footer = el("div", "lp-tracker-meta");
   footer.append(el("span", "", current.presentation === "timer" ? `${current.clock === "real" ? "Real" : "Story"} time` : status), el("span", "", current.updateMode === "jev" ? "Open JEV" : current.updateMode === "model" ? "Story updates" : current.updateMode === "automatic" ? "Automatic" : "Manual"));
   card.append(footer);
@@ -2006,6 +2033,7 @@ function refreshTrackerDisplay(card, tracker, state) {
   const fresh = trackerDisplay(tracker, state);
   card.replaceChildren(...fresh.childNodes);
   card.style.cssText = fresh.style.cssText;
+  card.dataset.meaning = fresh.dataset.meaning;
 }
 
 // src/frontend/apps/tracker-editor.ts
@@ -2294,18 +2322,6 @@ Recovering`;
 }
 
 // src/frontend/apps/trackers.ts
-function selectField(labelText, options, selected) {
-  const label = el("label", "lp-label", labelText);
-  const select = el("select", "lp-select");
-  for (const [value, name] of options) {
-    const option = el("option", "", name);
-    option.value = value;
-    option.selected = selected === value;
-    select.appendChild(option);
-  }
-  label.appendChild(select);
-  return { label, select };
-}
 function targetLabel(target) {
   return target.label || target.type;
 }
@@ -2377,7 +2393,8 @@ function detail(host, tracker) {
   if (tracker.pausedReason)
     policy.appendChild(el("p", "lp-warning", tracker.pausedReason));
   if (tracker.updateMode === "jev") {
-    const evaluate = button("Evaluate with JEV", "lp-button lp-button-quiet");
+    const evaluate = button(host.pending ? "Reading the story…" : "Evaluate with JEV", "lp-button lp-button-quiet");
+    evaluate.disabled = host.pending;
     evaluate.addEventListener("click", () => host.send("lumiphone:jev_evaluate", { trackerId: tracker.id }));
     policy.append(evaluate);
     if (tracker.jevResult)
@@ -2385,30 +2402,63 @@ function detail(host, tracker) {
   }
   content.appendChild(policy);
   const operations = el("section", "lp-card lp-tracker-operations");
-  operations.appendChild(el("div", "lp-eyebrow", "Update"));
+  operations.appendChild(el("div", "lp-eyebrow", host.pending ? "Updating…" : tracker.kind === "counter" ? "Inventory" : tracker.kind === "timer" ? "Clock controls" : tracker.kind === "state" ? "Choose a state" : "Adjust value"));
+  operations.setAttribute("aria-busy", String(host.pending));
+  const change = (payload) => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, reason: "Changed in Pocket", ...payload } });
   if (tracker.kind === "state") {
-    const state = selectField("State", tracker.states.map((value) => [value, value]), tracker.state);
-    const apply = button("Set state");
-    apply.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "set_state", state: state.select.value, reason: "Changed in Pocket" } }));
+    const choices = el("div", "lp-state-choices");
+    for (const state of tracker.states) {
+      const choice = button(state, "lp-chip");
+      choice.setAttribute("aria-pressed", String(state === tracker.state));
+      choice.disabled = host.pending || state === tracker.state;
+      choice.addEventListener("click", () => change({ operation: "set_state", state }));
+      choices.append(choice);
+    }
     const reset = button(`Reset to ${tracker.initialState}`, "lp-button lp-button-quiet");
-    reset.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "reset", reason: "Reset in Pocket" } }));
-    operations.append(state.label, apply, reset);
+    reset.addEventListener("click", () => change({ operation: "reset" }));
+    operations.append(choices, reset);
   } else {
+    if (tracker.kind === "counter") {
+      const steps = el("div", "lp-counter-controls");
+      for (const [operation, label] of [["subtract", `Use ${tracker.step}${tracker.unit}`], ["add", `Add ${tracker.step}${tracker.unit}`]]) {
+        const control = button(label);
+        control.addEventListener("click", () => change({ operation, amount: tracker.step }));
+        steps.append(control);
+      }
+      operations.append(steps);
+    }
+    if (tracker.kind === "timer" && tracker.updateMode === "automatic") {
+      const pause = button(tracker.clockPaused ? "Resume clock" : "Pause clock");
+      pause.addEventListener("click", () => change({ command: "clock", clockAction: tracker.clockPaused ? "resume" : "pause" }));
+      operations.append(pause, el("p", "lp-copy", tracker.clockPaused ? "Resume from this value, without counting the paused time." : `Runs on ${tracker.clock === "real" ? "real time" : "the story clock"}.`));
+    }
     const amount = el("input", "lp-input");
     amount.type = "number";
     amount.step = "any";
-    amount.value = tracker.kind === "counter" ? String(tracker.step) : "1";
+    amount.value = String(host.draft?.operationAmount ?? (tracker.kind === "counter" ? tracker.step : 1));
+    amount.addEventListener("input", () => host.updateDraft({ ...host.draft, operationAmount: amount.value }));
     amount.setAttribute("aria-label", "Tracker amount");
     const row = el("div", "lp-tracker-operation-row");
     for (const [operation, label] of [["subtract", "−"], ["add", "+"], ["set", "Set"]]) {
       const control = button(label);
-      control.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation, amount: Number(amount.value), reason: "Changed in Pocket" } }));
+      control.addEventListener("click", () => {
+        if (amount.value.trim() && Number.isFinite(Number(amount.value)))
+          change({ operation, amount: Number(amount.value) });
+      });
       row.appendChild(control);
     }
     const reset = button("Reset", "lp-button lp-button-quiet");
-    reset.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "reset", reason: "Reset in Pocket" } }));
-    operations.append(amount, row, reset);
+    reset.addEventListener("click", () => change({ operation: "reset" }));
+    if (tracker.kind === "counter" || tracker.kind === "timer") {
+      const manual = el("details", "lp-tracker-manual");
+      manual.append(el("summary", "", "Adjust precisely"), amount, row);
+      operations.append(manual, reset);
+    } else
+      operations.append(amount, row, reset);
   }
+  if (host.pending)
+    for (const control of operations.querySelectorAll("button,input"))
+      control.disabled = true;
   content.appendChild(operations);
   const history = el("section", "lp-tracker-history");
   history.appendChild(el("div", "lp-eyebrow", `History · last ${tracker.history.length}`));
@@ -4079,9 +4129,8 @@ function buildMessageArtifact(activity, openRoute) {
   const presentation = activity.presentation;
   if (!presentation || !["sent", "received", "observed"].includes(presentation.kind))
     return null;
-  const primary = document.createElement(presentation.kind === "observed" ? "div" : "button");
-  if (primary instanceof HTMLButtonElement)
-    primary.type = "button";
+  const primary = document.createElement("button");
+  primary.type = "button";
   primary.className = "pocket-inline-artifact";
   primary.dataset.kind = presentation.kind;
   const copy = document.createElement("span");
@@ -4098,7 +4147,7 @@ function buildMessageArtifact(activity, openRoute) {
     const status = document.createElement("span");
     status.className = "pocket-inline-sent-status";
     status.textContent = "sent";
-    primary.append(recipient, bubble, status);
+    primary.append(messageChrome("sent"), recipient, bubble, status);
   } else {
     if (presentation.kind === "observed") {
       const device = document.createElement("span");
@@ -4112,12 +4161,8 @@ function buildMessageArtifact(activity, openRoute) {
     sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title;
     primary.append(sender, copy);
   }
-  if (primary instanceof HTMLButtonElement) {
-    primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title} in Pocket`);
-    primary.addEventListener("click", () => openRoute(activity.route));
-  } else {
-    primary.setAttribute("aria-label", `Message visible on ${observedDeviceLine(activity)}`);
-  }
+  primary.setAttribute("aria-label", `Open ${presentation.kind === "observed" ? `${observedDeviceLine(activity)} · ` : ""}${presentation.conversationTitle || activity.title} in Pocket`);
+  primary.addEventListener("click", () => openRoute(activity.route));
   return primary;
 }
 function buildActivityStack(activity, openRoute, options = {}) {
@@ -4129,24 +4174,27 @@ function buildActivityStack(activity, openRoute, options = {}) {
       stack.appendChild(artifact);
   }
   if (options.includeReceipt !== false) {
-    const interactive = activity.presentation?.kind !== "observed";
-    const receipt = document.createElement(interactive ? "button" : "span");
-    if (receipt instanceof HTMLButtonElement)
-      receipt.type = "button";
+    const receipt = document.createElement("button");
+    receipt.type = "button";
     receipt.className = "pocket-receipt";
     const label = document.createElement("span");
     label.className = "pocket-receipt-kind";
-    label.textContent = "Pocket";
+    label.textContent = ICONS[activity.kind];
     const copy = document.createElement("span");
     copy.className = "pocket-receipt-copy";
     const title = document.createElement("strong");
     const conversation = activity.presentation?.conversationTitle || activity.title;
     title.textContent = conversation ? `${presentationLabel(activity)} · ${conversation}` : presentationLabel(activity);
     copy.appendChild(title);
+    if (activity.summary) {
+      const summary = document.createElement("span");
+      summary.textContent = activity.summary;
+      copy.append(summary);
+    }
     const arrow = document.createElement("span");
     arrow.className = "pocket-receipt-arrow";
     arrow.setAttribute("aria-hidden", "true");
-    arrow.textContent = receipt instanceof HTMLButtonElement ? "›" : "·";
+    arrow.textContent = "›";
     receipt.append(label, copy, arrow);
     if (receipt instanceof HTMLButtonElement) {
       receipt.setAttribute("aria-label", `Open ${activity.presentation?.conversationTitle || activity.title} in Pocket`);
@@ -4297,6 +4345,9 @@ class PocketController {
   groupSaveDraftKey = "";
   trackerDrafts = new Map;
   trackerSaveRequest = "";
+  trackerMutationRequest = "";
+  trackerJevRequest = "";
+  jevWorking = false;
   trackerSaveDraftKey = "";
   cameraDraft = { scene: "", enhance: undefined };
   selectedMessageId = "";
@@ -4368,7 +4419,13 @@ class PocketController {
     this.launcher.type = "button";
     this.launcher.title = "Open Pocket";
     this.launcher.setAttribute("aria-label", "Open Pocket");
-    this.launcher.innerHTML = PHONE_ICON;
+    const launcherPhone = el("span", "lumiphone-launcher-phone");
+    launcherPhone.setAttribute("aria-hidden", "true");
+    const launcherScreen = el("span", "lumiphone-launcher-screen");
+    for (let index = 0;index < 4; index++)
+      launcherScreen.append(el("i"));
+    launcherPhone.append(launcherScreen);
+    this.launcher.append(launcherPhone);
     this.launcherBadge = el("span", "lumiphone-badge");
     this.launcherBadge.hidden = true;
     this.launcher.appendChild(this.launcherBadge);
@@ -5096,6 +5153,9 @@ class PocketController {
       if (payload.reason === "host_swipe")
         this.clearActivitySurfaces(true);
       if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
+        this.trackerMutationRequest = "";
+        this.trackerJevRequest = "";
+        this.jevWorking = false;
         this.collectionRequest = "";
         this.cameraDraft = { scene: "", enhance: undefined };
         this.cameraPreview = "";
@@ -5178,6 +5238,11 @@ class PocketController {
       const context = this.activeContext();
       if (payload.chatId !== context.chatId || payload.characterId !== context.characterId)
         return;
+      this.jevWorking = payload.status === "working";
+      if (!this.jevWorking)
+        this.trackerJevRequest = "";
+      if (this.currentApp === "trackers")
+        this.render(false);
       this.showFeedback(String(payload.message || "JEV evaluation updated."), payload.status === "error");
       return;
     }
@@ -5276,6 +5341,12 @@ class PocketController {
     if (payload.type === "lumiphone:context_preview" && payload.diagnostics) {
       this.contextPreview = payload.diagnostics;
       if (this.currentApp === "settings")
+        this.render(false);
+      return;
+    }
+    if (payload.type === "lumiphone:action_done" && payload.requestId === this.trackerMutationRequest) {
+      this.trackerMutationRequest = "";
+      if (this.currentApp === "trackers")
         this.render(false);
       return;
     }
@@ -5507,6 +5578,12 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      if (payload.requestId === this.trackerMutationRequest)
+        this.trackerMutationRequest = "";
+      if (payload.requestId === this.trackerJevRequest) {
+        this.trackerJevRequest = "";
+        this.jevWorking = false;
+      }
       if (payload.requestId === this.collectionRequest)
         this.collectionRequest = "";
       if (payload.requestId === this.groupSaveRequest)
@@ -5724,6 +5801,33 @@ class PocketController {
   openApp(app) {
     this.openPocket({ app });
   }
+  openActivity(activity) {
+    if (!this.state)
+      return;
+    const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId());
+    if (!owner) {
+      this.showError("This conversation is no longer available.");
+      return;
+    }
+    if (owner !== this.currentDeviceOwnerActorId()) {
+      if (this.cameraBusy)
+        this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
+      this.cameraRequestId = "";
+      this.cameraBusy = false;
+      this.cameraReady = false;
+      this.cameraPreview = "";
+      this.cameraContactId = "";
+      this.cameraNpcDraft = null;
+      this.deviceOwnerActorId = owner;
+      this.selectedConversationId = "";
+      this.selectedMessageId = "";
+      this.router.reset({ app: "home" });
+      this.syncSurfaceIdentity();
+      this.updateBadge();
+      this.renderDrawerLanding();
+    }
+    this.openPocket(activity.route);
+  }
   back() {
     this.openPocket(this.router.back(), false);
   }
@@ -5856,7 +5960,7 @@ class PocketController {
       host.dataset.pocketActivityId = activity.id;
       if (host.dataset.pocketMounted !== "true") {
         host.dataset.pocketMounted = "true";
-        renderActivityHost(host, activity, (route) => this.openPocket(route), { includeArtifact: true, includeReceipt: false });
+        renderActivityHost(host, activity, () => this.openActivity(activity), { includeArtifact: true, includeReceipt: false });
       }
       const fallback = this.injectedActivities.get(activity.id);
       if (fallback) {
@@ -5925,7 +6029,7 @@ class PocketController {
         this.pendingActivities.delete(activityId);
         continue;
       }
-      const injected = activityReceipt(this.ctx, activity, (route) => this.openPocket(route));
+      const injected = activityReceipt(this.ctx, activity, () => this.openActivity(activity));
       if (!injected)
         continue;
       this.pendingActivities.delete(activityId);
@@ -7138,6 +7242,7 @@ ${body}`;
         this.trackerDrafts.set(draftKey, draft);
       },
       saving: Boolean(this.trackerSaveRequest),
+      pending: Boolean(this.trackerMutationRequest) || this.jevWorking,
       save: (payload) => {
         if (this.trackerSaveRequest)
           return;
@@ -7147,7 +7252,14 @@ ${body}`;
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       field: (label, value, type) => this.field(label, value, type),
       send: (type, payload) => {
-        this.send(type, payload);
+        if (this.trackerMutationRequest || this.jevWorking)
+          return;
+        if (type === "lumiphone:jev_evaluate") {
+          this.jevWorking = true;
+          this.trackerJevRequest = this.send(type, payload);
+        } else
+          this.trackerMutationRequest = this.send(type, payload);
+        this.render(false);
       },
       select: (id, view = "detail", replace = false) => this.openPocket({ app: "trackers", trackerId: id || undefined, view }, !replace),
       back: () => this.back(),
@@ -7613,9 +7725,9 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-inline-artifact-device { display:block; margin-bottom:1px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; font-weight:600; opacity:.55; }
   .pocket-inline-artifact-actors { display:block; margin-top:1px; white-space:normal; font-size:13px; line-height:1.3; font-weight:720; }
   .pocket-inline-artifact-copy { display:block; overflow:visible; font-size:13px; line-height:1.5; opacity:.94; -webkit-line-clamp:unset; }
-  .pocket-inline-artifact[data-kind="sent"] { width:min(88%,420px); margin-left:auto; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; backdrop-filter:none; gap:4px; }
-  .pocket-inline-artifact-recipient { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; text-align:right; opacity:.58; }
-  .pocket-inline-chat-bubble { justify-self:end; width:auto; max-width:100%; padding:10px 12px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; border-radius:18px 18px 6px 18px; box-shadow:none; }
+  .pocket-inline-artifact[data-kind="sent"] { width:min(100%,420px); margin-left:0; padding:12px 14px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 14%,transparent); border-radius:20px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,transparent); box-shadow:0 8px 24px #0002; backdrop-filter:blur(18px); gap:5px; }
+  .pocket-inline-artifact-recipient { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; text-align:left; opacity:.58; }
+  .pocket-inline-chat-bubble { justify-self:start; width:auto; max-width:100%; padding:0; background:transparent; color:inherit; border-radius:0; box-shadow:none; }
   .pocket-inline-chat-bubble .pocket-inline-artifact-copy { font-size:13px; line-height:1.48; opacity:1; }
   .pocket-inline-sent-status { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:9px; text-align:right; opacity:.42; }
   .pocket-inline-chat-transcript { width:min(100%,500px); padding:12px 13px 14px; gap:8px; cursor:pointer; }
@@ -7628,10 +7740,12 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 76%,white 5%); color:var(--lumiverse-text,#f7f5ff); font-size:12px; line-height:1.42; text-align:left; }
   .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; }
   .pocket-inline-transcript-more { display:block; padding:5px 4px 0; border-top:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 10%,transparent); font-size:9px; opacity:.48; text-align:center; }
-  .pocket-receipt { min-height:22px; padding:2px 3px; grid-template-columns:auto minmax(0,1fr) auto; gap:5px; border-radius:6px; box-shadow:none; background:transparent; opacity:.48; }
-  button.pocket-receipt:hover { opacity:.8; background:transparent; }
-  .pocket-receipt-kind { padding:0; background:transparent; font-size:8px; font-weight:750; }
-  .pocket-receipt-copy strong { font-size:8px; font-weight:600; }
+  .pocket-receipt { width:min(100%,420px); min-height:52px; padding:10px 12px; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; border-radius:18px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 12%,transparent); box-shadow:0 6px 22px #0002; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,transparent); backdrop-filter:blur(16px); opacity:1; }
+  button.pocket-receipt:hover { background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 85%,var(--lumiverse-primary,#8b7dff)); }
+  .pocket-receipt-kind { padding:7px; border-radius:10px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 22%,transparent); font-size:9px; font-weight:750; }
+  .pocket-receipt-copy strong { font-size:11px; font-weight:650; }
+  .pocket-receipt-copy { display:grid; gap:3px; }
+  .pocket-receipt-copy span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; white-space:normal; font-size:12px; line-height:1.35; opacity:.8; }
   .pocket-receipt-arrow { font-size:11px; opacity:.4; }
   .pocket-receipt-details { margin:0 2px; font-size:9px; opacity:.42; order:3; }
   .pocket-receipt-details summary { width:max-content; cursor:pointer; }
@@ -7655,13 +7769,21 @@ var PHONE_STYLES = `
   }
   .lumiphone-handset-host { margin:auto; cursor:default; overscroll-behavior:contain; }
   .lumiphone-launcher {
-    appearance: none; width: 58px; height: 58px; padding: 0; border: 1px solid rgba(255,255,255,.2);
-    border-radius: 19px; display: grid; place-items: center; position: relative; cursor: pointer;
-    color: #fff; background: linear-gradient(145deg,#9a8cff,#5746ce 58%,#2b216f);
-    box-shadow: 0 18px 42px rgba(16,11,38,.38), inset 0 1px rgba(255,255,255,.28);
+    appearance: none; width: 58px; height: 58px; padding: 0; border: 0;
+    border-radius: 18px; display: grid; place-items: center; position: relative; cursor: pointer;
+    color: #fff; background: transparent;
+    filter:drop-shadow(0 5px 7px #0006);
     transition: transform .2s ease, box-shadow .2s ease; touch-action: none;
   }
-  .lumiphone-launcher:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 22px 48px rgba(16,11,38,.46), inset 0 1px rgba(255,255,255,.32); }
+  .lumiphone-launcher:hover { transform: translateY(-2px) rotate(-5deg); }
+  .lumiphone-launcher-phone { width:31px; height:48px; display:grid; position:relative; border:2px solid #b8afd2; border-radius:10px; padding:6px 3px; background:#252131; transform:rotate(8deg); box-shadow:inset 0 0 0 1px #17141f; }
+  .lumiphone-launcher-phone::before { content:''; position:absolute; top:3px; left:10px; width:7px; height:2px; border-radius:4px; background:#b8afd2; z-index:1; }
+  .lumiphone-launcher-phone::after { content:''; position:absolute; bottom:3px; left:10px; width:7px; height:2px; border-radius:4px; background:#d6cfee; }
+  .lumiphone-launcher-screen { display:grid; grid-template-columns:repeat(2,1fr); align-content:end; gap:3px; padding:5px 3px; border-radius:5px; background:linear-gradient(155deg,#b6a0e3,#7c86bb 50%,#5daca4); }
+  .lumiphone-launcher-screen i { width:6px; height:6px; border-radius:2px; background:#fff9; }
+  .lumiphone-launcher-screen i:nth-child(2) { background:#ffe3a7; }
+  .lumiphone-launcher-screen i:nth-child(3) { background:#84e2b1; }
+  .lumiphone-launcher-screen i:nth-child(4) { background:#e3b1d9; }
   .lumiphone-launcher:focus-visible { outline: 3px solid color-mix(in srgb,#9a8cff 58%,white); outline-offset: 3px; }
   .lumiphone-launcher svg { width: 27px; height: 27px; }
   .lumiphone-badge {
@@ -8532,6 +8654,19 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-tracker-vitals { text-align:center; }
   .lp-tracker-counter .lp-tracker-readout { font-size:42px; }
   .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:34px; letter-spacing:.035em; }
+  .lp-tracker-timer { text-align:center; border-left-width:1px; background:radial-gradient(ellipse at top,color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)),var(--lp-surface)); }
+  .lp-timer-dial { display:grid; place-items:center; min-height:115px; margin:6px 0; border-block:1px solid color-mix(in srgb,var(--tracker-color) 25%,transparent); }
+  .lp-tracker-counter { grid-template-columns:minmax(0,1fr) auto; align-items:center; border-left-width:1px; }
+  .lp-tracker-counter .lp-tracker-heading { grid-column:1/-1; }
+  .lp-counter-caption { color:var(--lp-muted); font-size:10px; font-weight:800; letter-spacing:.12em; }
+  .lp-tracker-counter > .lp-copy,.lp-tracker-counter .lp-tracker-meta,.lp-tracker-counter .lp-tracker-last-change { grid-column:1/-1; }
+  .lp-tracker-last-change { color:var(--lp-muted); font-size:11px; }
+  .lp-counter-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .lp-state-choices { display:flex; flex-wrap:wrap; gap:8px; }
+  .lp-state-choices .lp-chip[aria-pressed="true"] { opacity:1; background:color-mix(in srgb,var(--lp-accent) 25%,var(--lp-surface)); }
+  .lp-tracker-manual { display:grid; }
+  .lp-tracker-manual summary { cursor:pointer; color:var(--lp-muted); padding-block:8px; font-size:12px; }
+  .lp-tracker-manual .lp-input { margin-bottom:8px; }
   .lp-state-path { display:flex; flex-wrap:wrap; gap:6px; }
   .lp-state-path span { border-radius:10px; padding:5px 9px; font-size:10px; background:var(--lp-bg); color:var(--lp-muted); }
   .lp-state-path span[data-active="true"] { background:var(--tracker-color); color:#101014; font-weight:700; }

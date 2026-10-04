@@ -7,13 +7,21 @@ export const PHONE_STYLES = `
   }
   .lumiphone-handset-host { margin:auto; cursor:default; overscroll-behavior:contain; }
   .lumiphone-launcher {
-    appearance: none; width: 58px; height: 58px; padding: 0; border: 1px solid rgba(255,255,255,.2);
-    border-radius: 19px; display: grid; place-items: center; position: relative; cursor: pointer;
-    color: #fff; background: linear-gradient(145deg,#9a8cff,#5746ce 58%,#2b216f);
-    box-shadow: 0 18px 42px rgba(16,11,38,.38), inset 0 1px rgba(255,255,255,.28);
+    appearance: none; width: 58px; height: 58px; padding: 0; border: 0;
+    border-radius: 18px; display: grid; place-items: center; position: relative; cursor: pointer;
+    color: #fff; background: transparent;
+    filter:drop-shadow(0 5px 7px #0006);
     transition: transform .2s ease, box-shadow .2s ease; touch-action: none;
   }
-  .lumiphone-launcher:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 22px 48px rgba(16,11,38,.46), inset 0 1px rgba(255,255,255,.32); }
+  .lumiphone-launcher:hover { transform: translateY(-2px) rotate(-5deg); }
+  .lumiphone-launcher-phone { width:31px; height:48px; display:grid; position:relative; border:2px solid #b8afd2; border-radius:10px; padding:6px 3px; background:#252131; transform:rotate(8deg); box-shadow:inset 0 0 0 1px #17141f; }
+  .lumiphone-launcher-phone::before { content:''; position:absolute; top:3px; left:10px; width:7px; height:2px; border-radius:4px; background:#b8afd2; z-index:1; }
+  .lumiphone-launcher-phone::after { content:''; position:absolute; bottom:3px; left:10px; width:7px; height:2px; border-radius:4px; background:#d6cfee; }
+  .lumiphone-launcher-screen { display:grid; grid-template-columns:repeat(2,1fr); align-content:end; gap:3px; padding:5px 3px; border-radius:5px; background:linear-gradient(155deg,#b6a0e3,#7c86bb 50%,#5daca4); }
+  .lumiphone-launcher-screen i { width:6px; height:6px; border-radius:2px; background:#fff9; }
+  .lumiphone-launcher-screen i:nth-child(2) { background:#ffe3a7; }
+  .lumiphone-launcher-screen i:nth-child(3) { background:#84e2b1; }
+  .lumiphone-launcher-screen i:nth-child(4) { background:#e3b1d9; }
   .lumiphone-launcher:focus-visible { outline: 3px solid color-mix(in srgb,#9a8cff 58%,white); outline-offset: 3px; }
   .lumiphone-launcher svg { width: 27px; height: 27px; }
   .lumiphone-badge {
@@ -884,6 +892,19 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-tracker-vitals { text-align:center; }
   .lp-tracker-counter .lp-tracker-readout { font-size:42px; }
   .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:34px; letter-spacing:.035em; }
+  .lp-tracker-timer { text-align:center; border-left-width:1px; background:radial-gradient(ellipse at top,color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)),var(--lp-surface)); }
+  .lp-timer-dial { display:grid; place-items:center; min-height:115px; margin:6px 0; border-block:1px solid color-mix(in srgb,var(--tracker-color) 25%,transparent); }
+  .lp-tracker-counter { grid-template-columns:minmax(0,1fr) auto; align-items:center; border-left-width:1px; }
+  .lp-tracker-counter .lp-tracker-heading { grid-column:1/-1; }
+  .lp-counter-caption { color:var(--lp-muted); font-size:10px; font-weight:800; letter-spacing:.12em; }
+  .lp-tracker-counter > .lp-copy,.lp-tracker-counter .lp-tracker-meta,.lp-tracker-counter .lp-tracker-last-change { grid-column:1/-1; }
+  .lp-tracker-last-change { color:var(--lp-muted); font-size:11px; }
+  .lp-counter-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .lp-state-choices { display:flex; flex-wrap:wrap; gap:8px; }
+  .lp-state-choices .lp-chip[aria-pressed="true"] { opacity:1; background:color-mix(in srgb,var(--lp-accent) 25%,var(--lp-surface)); }
+  .lp-tracker-manual { display:grid; }
+  .lp-tracker-manual summary { cursor:pointer; color:var(--lp-muted); padding-block:8px; font-size:12px; }
+  .lp-tracker-manual .lp-input { margin-bottom:8px; }
   .lp-state-path { display:flex; flex-wrap:wrap; gap:6px; }
   .lp-state-path span { border-radius:10px; padding:5px 9px; font-size:10px; background:var(--lp-bg); color:var(--lp-muted); }
   .lp-state-path span[data-active="true"] { background:var(--tracker-color); color:#101014; font-weight:700; }

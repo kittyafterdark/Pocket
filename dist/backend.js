@@ -168,6 +168,7 @@ function normalizeTracker(value, context = {}) {
     lastUpdated: iso(value.lastUpdated, now),
     lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
     pausedReason: clean(value.pausedReason, 240),
+    clockPaused: value.clockPaused === true,
     visibleToModel: value.visibleToModel !== false,
     createdAt: iso(value.createdAt, now),
     updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
@@ -233,6 +234,8 @@ function applyTrackerOperation(tracker, input) {
 function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
   if (tracker.kind === "state" || tracker.updateMode !== "automatic" || !tracker.ratePerHour)
     return { tracker, changed: false };
+  if (tracker.clockPaused)
+    return { tracker, changed: false };
   const current = tracker.clock === "roleplay" ? Date.parse(roleplayNow) : Date.parse(wallNow);
   const previous = tracker.clock === "roleplay" ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated);
   if (!Number.isFinite(current)) {
@@ -275,6 +278,14 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
       roleplayAt: clean(roleplayNow, 80) || undefined
     });
   return { tracker: next, changed: true };
+}
+function setTrackerClockPaused(tracker, paused, roleplayNow, wallNow = new Date().toISOString()) {
+  if (tracker.kind === "state" || tracker.updateMode !== "automatic")
+    throw new Error("Only timed trackers can be paused.");
+  if (tracker.clockPaused === paused)
+    return tracker;
+  const current = paused ? materializeTracker(tracker, roleplayNow, wallNow).tracker : tracker;
+  return { ...current, clockPaused: paused, updatedAt: wallNow, lastUpdated: wallNow, lastRoleplayAt: Number.isFinite(Date.parse(roleplayNow)) ? new Date(roleplayNow).toISOString() : "", pausedReason: paused ? "Paused by you." : "" };
 }
 
 // src/domain/jev.ts
@@ -7661,7 +7672,7 @@ async function applyAction(input, userId, source = "model") {
       activity = addActivity(state, { kind: "weather", title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}\xB0${state.weather.unit}`, route, source: { messageId: text2(input.messageId, 180) || undefined } }, command);
     } else if (action === "tracker") {
       const trackerCommand = text2(payload.command, 30);
-      if (trackerCommand && !["create", "configure", "update"].includes(trackerCommand))
+      if (trackerCommand && !["create", "configure", "update", "clock"].includes(trackerCommand))
         throw new Error("Unknown tracker command.");
       if (trackerCommand === "create") {
         if (source !== "user")
@@ -7697,7 +7708,13 @@ async function applyAction(input, userId, source = "model") {
       if (operation && existing?.kind !== "state" && operation !== "reset" && !Number.isFinite(Number(payload.amount ?? payload.value)))
         throw new Error("Enter a valid amount.");
       let next;
-      if (existing && operation) {
+      if (trackerCommand === "clock") {
+        if (source !== "user" || !existing)
+          throw new Error("Only you can pause an existing tracker.");
+        if (!["pause", "resume"].includes(String(payload.clockAction)))
+          throw new Error("Choose pause or resume.");
+        next = setTrackerClockPaused(existing, payload.clockAction === "pause", state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? "" : state.roleplayNow);
+      } else if (existing && operation) {
         next = applyTrackerOperation(existing, {
           operation,
           amount: numberValue(payload.amount ?? payload.value, 0),

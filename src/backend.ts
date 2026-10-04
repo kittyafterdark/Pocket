@@ -38,7 +38,7 @@ import type {
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
 import { projectPhoneContext } from './domain/projection.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
-import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
+import { applyTrackerOperation, materializeTracker, normalizeTracker, setTrackerClockPaused, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeAvatarFocus, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
 import { applyNpcBankProfile, contactFromNpcBank, findNpcBankMatch, isFutureNpcBank, normalizeNpcBank, normalizeNpcBankName, NPC_BANK_PATH, removeNpcBankEntry, upsertNpcBankFromContact } from './domain/npc-bank.js'
 import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
@@ -4501,7 +4501,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       activity = addActivity(state, { kind: 'weather', title: state.weather.location, summary: `${state.weather.condition}, ${state.weather.temperature}°${state.weather.unit}`, route, source: { messageId: text(input.messageId, 180) || undefined } }, command)
     } else if (action === 'tracker') {
       const trackerCommand = text(payload.command, 30)
-      if (trackerCommand && !['create', 'configure', 'update'].includes(trackerCommand)) throw new Error('Unknown tracker command.')
+      if (trackerCommand && !['create', 'configure', 'update', 'clock'].includes(trackerCommand)) throw new Error('Unknown tracker command.')
       if (trackerCommand === 'create') {
         if (source !== 'user') throw new Error('Tracker creation requires a user request.')
         payload.id = id('trk')
@@ -4527,7 +4527,11 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       if (trackerCommand === 'update' && !operation) throw new Error('Choose a tracker operation.')
       if (operation && existing?.kind !== 'state' && operation !== 'reset' && !Number.isFinite(Number(payload.amount ?? payload.value))) throw new Error('Enter a valid amount.')
       let next: PhoneTracker
-      if (existing && operation) {
+      if (trackerCommand === 'clock') {
+        if (source !== 'user' || !existing) throw new Error('Only you can pause an existing tracker.')
+        if (!['pause', 'resume'].includes(String(payload.clockAction))) throw new Error('Choose pause or resume.')
+        next = setTrackerClockPaused(existing, payload.clockAction === 'pause', state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? '' : state.roleplayNow)
+      } else if (existing && operation) {
         next = applyTrackerOperation(existing, {
           operation, amount: numberValue(payload.amount ?? payload.value, 0), state: text(payload.state ?? payload.value, 80),
           reason: text(payload.reason, 300), source, roleplayNow: state.roleplayNow,

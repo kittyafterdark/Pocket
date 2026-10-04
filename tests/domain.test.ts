@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { defaultPreferences, normalizePreferences, normalizeWallpaper } from '../src/domain/preferences.js'
 import { MODEL_CONTEXT_BUDGET, projectPhoneContext } from '../src/domain/projection.js'
 import { calculatePhoneSurface } from '../src/frontend/surface.js'
-import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerBand, uniqueTrackerKey, validateTrackerConfig } from '../src/domain/trackers.js'
+import { applyTrackerOperation, materializeTracker, normalizeTracker, setTrackerClockPaused, trackerBand, uniqueTrackerKey, validateTrackerConfig } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
 import { ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, normalizeActorName, promoteDiscoveredActor, resolvePocketActor } from '../src/domain/actors.js'
@@ -110,7 +110,7 @@ describe('portable casts and image purposes', () => {
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import { sanitizeNarrativeContent } from '../src/backend/narrative-content.js'
-import { conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../src/domain/device.js'
+import { activityDeviceOwner, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../src/domain/device.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayIdFromMessages } from '../src/backend/continuity.js'
 import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
@@ -849,6 +849,22 @@ describe('typed trackers', () => {
     expect(resumed.tracker.lastRoleplayAt).toBe('2026-01-02T00:00:00.000Z')
   })
 
+  test('explicit pauses persist and resume without catching up on either clock', () => {
+    const hour = (n: number) => `2026-01-01T0${n}:00:00.000Z`
+    for (const clock of ['real', 'roleplay'] as const) {
+      const tracker = normalizeTracker({ label: 'Countdown', kind: 'timer', value: 60, min: 0, max: 60, updateMode: 'automatic', ratePerHour: -10, clock, lastUpdated: hour(0), lastRoleplayAt: hour(0) }, { now: hour(0), roleplayNow: hour(0) })!
+      const paused = setTrackerClockPaused(tracker, true, hour(1), hour(1))
+      expect(paused.value).toBe(50)
+      expect(normalizeTracker(paused)!.clockPaused).toBe(true)
+      expect(materializeTracker(paused, hour(4), hour(4)).tracker.value).toBe(50)
+      expect(setTrackerClockPaused(paused, true, hour(4), hour(4))).toBe(paused)
+      const resumed = setTrackerClockPaused(paused, false, hour(4), hour(4))
+      expect(materializeTracker(resumed, hour(5), hour(5)).tracker.value).toBe(40)
+      expect(materializeTracker(resumed, hour(9), hour(9)).tracker.value).toBe(0)
+    }
+    expect(() => setTrackerClockPaused(normalizeTracker({ label: 'Manual', kind: 'counter' })!, true, hour(0))).toThrow()
+  })
+
   test('applies operations, clamps values, labels semantic bands, and bounds history', () => {
     let tracker = normalizeTracker({ label: 'Health', kind: 'meter', value: 50, initialValue: 50, min: 0, max: 100, bands: [{ min: 0, max: 30, label: 'Critical', color: '#ff0000' }] }, { roleplayNow: rpStart })!
     tracker = applyTrackerOperation(tracker, { operation: 'add', amount: 900, reason: 'heal', source: 'user', roleplayNow: rpStart })
@@ -951,6 +967,11 @@ describe('Pocket device projections', () => {
       conversations: [],
     } as unknown as PhoneState
     const conversation = ensureExternalDirectConversation(state, 'actor-marcus', 'actor-tyler', now, (prefix) => `${prefix}-external`)
+    const activity = { scope: { chatId: 'chat-a', characterId: 'char-a' }, route: { app: 'messages', conversationId: conversation.id }, presentation: { kind: 'observed', recipientActorIds: ['actor-tyler'] } } as any
+    expect(activityDeviceOwner(state, activity, 'persona:kai')).toBe('actor-tyler')
+    expect(activityDeviceOwner(state, { ...activity, presentation: { kind: 'observed', recipientActorIds: ['missing'] } }, 'actor-marcus')).toBe('actor-marcus')
+    expect(activityDeviceOwner(state, { ...activity, scope: { chatId: 'other', characterId: 'char-a' } }, 'persona:kai')).toBeNull()
+    expect(activityDeviceOwner(state, { ...activity, route: { app: 'messages', conversationId: 'deleted' } }, 'persona:kai')).toBeNull()
     conversation.messages.push({
       id: 'm-external', sender: 'contact', senderActorId: 'actor-marcus', senderName: 'Marcus', senderAccent: '',
       recipientActorIds: ['actor-tyler'], readByActorIds: ['actor-marcus'], text: 'Track him. Send the pin.', createdAt: now, read: false, status: 'delivered',

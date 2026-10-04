@@ -15,6 +15,7 @@ export interface TrackerViewHost {
   draft: Record<string, unknown> | undefined
   updateDraft(draft: Record<string, unknown>): void
   saving: boolean
+  pending: boolean
   save(payload: Record<string, unknown>): void
   accent: string
   page(title: string, subtitle?: string, action?: PageAction): Page
@@ -113,33 +114,53 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
   )
   if (tracker.pausedReason) policy.appendChild(el('p', 'lp-warning', tracker.pausedReason))
   if (tracker.updateMode === 'jev') {
-    const evaluate = button('Evaluate with JEV', 'lp-button lp-button-quiet'); evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate', { trackerId: tracker.id })); policy.append(evaluate)
+    const evaluate = button(host.pending ? 'Reading the story…' : 'Evaluate with JEV', 'lp-button lp-button-quiet'); evaluate.disabled = host.pending; evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate', { trackerId: tracker.id })); policy.append(evaluate)
     if (tracker.jevResult) policy.append(el('p', tracker.jevResult.status === 'invalid' || tracker.jevResult.status === 'uncertain' ? 'lp-warning' : 'lp-copy', `${tracker.jevResult.message}${tracker.jevResult.confidence === undefined ? '' : ` · ${Math.round(tracker.jevResult.confidence * 100)}%`} · ${tracker.jevResult.evaluatedAt}`))
   }
   content.appendChild(policy)
 
   const operations = el('section', 'lp-card lp-tracker-operations')
-  operations.appendChild(el('div', 'lp-eyebrow', 'Update'))
+  operations.appendChild(el('div', 'lp-eyebrow', host.pending ? 'Updating…' : tracker.kind === 'counter' ? 'Inventory' : tracker.kind === 'timer' ? 'Clock controls' : tracker.kind === 'state' ? 'Choose a state' : 'Adjust value'))
+  operations.setAttribute('aria-busy', String(host.pending))
+  const change = (payload: Record<string, unknown>) => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, reason: 'Changed in Pocket', ...payload } })
   if (tracker.kind === 'state') {
-    const state = selectField('State', tracker.states.map((value) => [value, value]), tracker.state)
-    const apply = button('Set state')
-    apply.addEventListener('click', () => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, operation: 'set_state', state: state.select.value, reason: 'Changed in Pocket' } }))
+    const choices = el('div', 'lp-state-choices')
+    for (const state of tracker.states) {
+      const choice = button(state, 'lp-chip'); choice.setAttribute('aria-pressed', String(state === tracker.state)); choice.disabled = host.pending || state === tracker.state
+      choice.addEventListener('click', () => change({ operation: 'set_state', state })); choices.append(choice)
+    }
     const reset = button(`Reset to ${tracker.initialState}`, 'lp-button lp-button-quiet')
-    reset.addEventListener('click', () => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, operation: 'reset', reason: 'Reset in Pocket' } }))
-    operations.append(state.label, apply, reset)
+    reset.addEventListener('click', () => change({ operation: 'reset' }))
+    operations.append(choices, reset)
   } else {
-    const amount = el('input', 'lp-input'); amount.type = 'number'; amount.step = 'any'; amount.value = tracker.kind === 'counter' ? String(tracker.step) : '1'
+    if (tracker.kind === 'counter') {
+      const steps = el('div', 'lp-counter-controls')
+      for (const [operation, label] of [['subtract', `Use ${tracker.step}${tracker.unit}`], ['add', `Add ${tracker.step}${tracker.unit}`]] as const) {
+        const control = button(label); control.addEventListener('click', () => change({ operation, amount: tracker.step })); steps.append(control)
+      }
+      operations.append(steps)
+    }
+    if (tracker.kind === 'timer' && tracker.updateMode === 'automatic') {
+      const pause = button(tracker.clockPaused ? 'Resume clock' : 'Pause clock')
+      pause.addEventListener('click', () => change({ command: 'clock', clockAction: tracker.clockPaused ? 'resume' : 'pause' }))
+      operations.append(pause, el('p', 'lp-copy', tracker.clockPaused ? 'Resume from this value, without counting the paused time.' : `Runs on ${tracker.clock === 'real' ? 'real time' : 'the story clock'}.`))
+    }
+    const amount = el('input', 'lp-input'); amount.type = 'number'; amount.step = 'any'; amount.value = String(host.draft?.operationAmount ?? (tracker.kind === 'counter' ? tracker.step : 1))
+    amount.addEventListener('input', () => host.updateDraft({ ...host.draft, operationAmount: amount.value }))
     amount.setAttribute('aria-label', 'Tracker amount')
     const row = el('div', 'lp-tracker-operation-row')
     for (const [operation, label] of [['subtract', '−'], ['add', '+'], ['set', 'Set']] as const) {
       const control = button(label)
-      control.addEventListener('click', () => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, operation, amount: Number(amount.value), reason: 'Changed in Pocket' } }))
+      control.addEventListener('click', () => { if (amount.value.trim() && Number.isFinite(Number(amount.value))) change({ operation, amount: Number(amount.value) }) })
       row.appendChild(control)
     }
     const reset = button('Reset', 'lp-button lp-button-quiet')
-    reset.addEventListener('click', () => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, operation: 'reset', reason: 'Reset in Pocket' } }))
-    operations.append(amount, row, reset)
+    reset.addEventListener('click', () => change({ operation: 'reset' }))
+    if (tracker.kind === 'counter' || tracker.kind === 'timer') {
+      const manual = el('details', 'lp-tracker-manual'); manual.append(el('summary', '', 'Adjust precisely'), amount, row); operations.append(manual, reset)
+    } else operations.append(amount, row, reset)
   }
+  if (host.pending) for (const control of operations.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button,input')) control.disabled = true
   content.appendChild(operations)
 
   const history = el('section', 'lp-tracker-history')

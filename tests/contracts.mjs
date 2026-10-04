@@ -805,8 +805,18 @@ const missingTrackerCount = storage.get('phones/chat-a__char-a.json').trackers.l
 await frontendHandler({ type: 'lumiphone:action', requestId: 'missing-tracker-operation', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { command: 'update', trackerId: 'gone', operation: 'add', amount: 1 } }, 'user-a')
 assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, missingTrackerCount, 'missing operation targets must not create placeholders')
 const trackerCountBeforeClear = storage.get('phones/chat-a__char-a.json').trackers.length
+await frontendHandler({ type: 'lumiphone:action', requestId: 'clock-create', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { ...templateConfig, trackerId: 'clock-contract', key: 'journey-clock', label: 'Journey clock', kind: 'timer', direction: 'down', presentation: 'timer', updateMode: 'automatic', ratePerHour: -1, clock: 'real', value: 60, unit: 'min' } }, 'user-a')
+await frontendHandler({ type: 'lumiphone:action', requestId: 'clock-pause', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { command: 'clock', trackerId: 'clock-contract', clockAction: 'pause' } }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === 'clock-contract').clockPaused, true)
+assert.ok(frontendMessages.some(entry => entry.type === 'lumiphone:action_done' && entry.requestId === 'clock-pause'))
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'clock-reload', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.equal(frontendMessages.filter(entry => entry.type === 'lumiphone:state').at(-1).state.trackers.find(entry => entry.id === 'clock-contract').clockPaused, true)
+const modelClockResult = await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', requestId: 'clock-model', args: { action: 'tracker', chat_id: 'chat-a', character_id: 'char-a', payload: { command: 'clock', trackerId: 'clock-contract', clockAction: 'resume' } } }, 'user-a')
+assert.match(modelClockResult, /does not allow model updates/, 'model tools must not resume a user-paused clock')
+await frontendHandler({ type: 'lumiphone:action', requestId: 'clock-resume', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { command: 'clock', trackerId: 'clock-contract', clockAction: 'resume' } }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === 'clock-contract').clockPaused, false)
 await frontendHandler({ type: 'lumiphone:notifications_clear', requestId: 'clear-notifications', chatId: 'chat-a', characterId: 'char-a', mode: 'all' }, 'user-a')
-assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, trackerCountBeforeClear, 'clear all must not delete trackers')
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, trackerCountBeforeClear + 1, 'clear all must not delete trackers')
 
 // Open JEV updates have their own writer policy and preserve intervening edits.
 const jevContractPreferences = structuredClone(storage.get('device/preferences.json'))
@@ -1925,6 +1935,49 @@ assert.equal(saveTracker.disabled, false, 'Tracker Save must be enabled by the p
 const trackerActionsBefore = frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length
 saveTracker.click()
 assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length, trackerActionsBefore + 1, 'Tracker Save must dispatch its action')
+// Controlled tracker fixtures exercise the same controller and pending pipeline.
+const trackerUiState = structuredClone(savedDraftState)
+const trackerBase = { ...trackerUiState.state.trackers[0], updateMode: 'manual', ratePerHour: 0, history: [] }
+trackerUiState.state.trackers = [
+  { ...trackerBase, id: 'fixture-counter', label: 'Supplies', kind: 'counter', presentation: 'counter', step: 2, value: 10 },
+  { ...trackerBase, id: 'fixture-state', label: 'Weather mood', kind: 'state', presentation: 'state', states: ['Clear', 'Stormy'], state: 'Clear', initialState: 'Clear' },
+  { ...trackerBase, id: 'fixture-timer', label: 'Journey', kind: 'timer', presentation: 'timer', updateMode: 'automatic', clock: 'roleplay', ratePerHour: -1, value: 60, unit: 'min' },
+]
+backendReceiver(trackerUiState)
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.textContent.includes('Trackers')).click()
+const openFixtureTracker = id => dockRoot.querySelector(`[data-tracker-id="${id}"]`).dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+openFixtureTracker('fixture-counter')
+assert.ok(dockRoot.querySelector('.lp-counter-caption'))
+const preciseAmount = dockRoot.querySelector('input[aria-label="Tracker amount"]')
+preciseAmount.value = '7'; preciseAmount.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+backendReceiver(trackerUiState)
+assert.equal(dockRoot.querySelector('input[aria-label="Tracker amount"]').value, '7')
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent.startsWith('Use 2')).click()
+const counterMutation = frontendSends.at(-1)
+assert.equal(counterMutation.payload.operation, 'subtract'); assert.equal(counterMutation.payload.amount, 2)
+assert.ok([...dockRoot.querySelectorAll('.lp-tracker-operations button')].every(node => node.disabled))
+backendReceiver({ type: 'lumiphone:error', requestId: counterMutation.requestId, error: 'Controlled failure' })
+assert.ok([...dockRoot.querySelectorAll('.lp-tracker-operations button')].some(node => !node.disabled))
+dockRoot.querySelector('.lp-nav-action').click()
+openFixtureTracker('fixture-state')
+assert.equal(dockRoot.querySelector('.lp-state-choices [aria-pressed="true"]').textContent, 'Clear')
+;[...dockRoot.querySelectorAll('.lp-state-choices button')].find(node => node.textContent === 'Stormy').click()
+const stateMutation = frontendSends.at(-1)
+assert.equal(stateMutation.payload.operation, 'set_state'); assert.equal(stateMutation.payload.state, 'Stormy')
+backendReceiver({ type: 'lumiphone:action_done', requestId: stateMutation.requestId, result: { trackerId: 'fixture-state' } })
+dockRoot.querySelector('.lp-nav-action').click()
+openFixtureTracker('fixture-timer')
+assert.ok(dockRoot.querySelector('.lp-timer-dial'))
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Pause clock').click()
+const clockMutation = frontendSends.at(-1)
+assert.equal(clockMutation.payload.command, 'clock'); assert.equal(clockMutation.payload.clockAction, 'pause')
+trackerUiState.state.trackers[2].clockPaused = true
+backendReceiver(trackerUiState)
+backendReceiver({ type: 'lumiphone:action_done', requestId: clockMutation.requestId, result: { trackerId: 'fixture-timer' } })
+assert.ok([...dockRoot.querySelectorAll('button')].some(node => node.textContent === 'Resume clock' && !node.disabled))
+backendReceiver(savedDraftState)
+
 const inlineMessageActivity = {
   id: 'inline-message-activity', kind: 'message', title: 'Received message', summary: 'He is awake and on his way.',
   route: { app: 'messages', conversationId: 'conversation-inline', messageId: 'message-inline' },
@@ -1974,6 +2027,22 @@ backendReceiver({ type: 'lumiphone:activity', activity: observedInlineActivity }
 assert.equal(observedArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="observed"]').length, 1, 'observed communication must render as a phone notification glimpse')
 assert.match(observedArtifactHost.textContent || '', /Shoto Todoroki's phone.*Messages.*Izuku Midoriya.*budget review/s)
 assert.doesNotMatch(observedArtifactHost.textContent || '', /observed phone|glimpse|Izuku Midoriya\s*→\s*Shoto Todoroki/i, 'diegetic observed UI must not expose debug/event-card language')
+
+const externalUiState = structuredClone(savedDraftState)
+externalUiState.state.discoveredActors.push(...structuredClone(deviceState.discoveredActors).map(actor => ({ ...actor, chatId: 'chat-a' })))
+externalUiState.state.conversations.push(structuredClone(externalDm))
+backendReceiver(externalUiState)
+const externalUiActivity = { ...structuredClone(deviceState.activities.find(entry => entry.route.conversationId === externalDm.id)), id: 'cross-phone-ui', scope: { chatId: 'chat-a', characterId: 'char-a' }, source: { messageId: 'host-message-a' } }
+const externalAnchor = document.createElement('div'); externalAnchor.className = 'pocket-inline-anchor'; externalAnchor.dataset.pocketInlineAnchor = externalUiActivity.id; messageBubble.prepend(externalAnchor)
+backendReceiver({ type: 'lumiphone:activity', activity: externalUiActivity })
+const externalButton = externalAnchor.querySelector('button.pocket-inline-artifact')
+assert.ok(externalButton, 'observed artifact is keyboard accessible')
+externalButton.click()
+assert.equal(frontendSends.filter(entry => entry.type === 'lumiphone:view_state').at(-1).deviceOwnerActorId, tylerActor.id)
+assert.match(dockRoot.textContent, /Track him\. Send the pin\./)
+assert.ok(dockRoot.querySelector('.lp-bubble[data-selected="true"]'), 'observed route selects its specific message')
+assert.equal(dockRoot.querySelector('textarea'), null, 'observed actor phone stays read-only')
+backendReceiver(savedDraftState)
 
 const sentInlineActivity = {
   ...inlineMessageActivity,

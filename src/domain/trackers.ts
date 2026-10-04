@@ -146,7 +146,7 @@ export function normalizeTracker(value: unknown, context: NormalizeTrackerContex
     presentation, bands: normalizeBands(value.bands, min, max, color), history: normalizeHistory(value.history),
     ratePerHour, lastUpdated: iso(value.lastUpdated, now),
     lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, '')),
-    pausedReason: clean(value.pausedReason, 240), visibleToModel: value.visibleToModel !== false,
+    pausedReason: clean(value.pausedReason, 240), clockPaused: value.clockPaused === true, visibleToModel: value.visibleToModel !== false,
     createdAt: iso(value.createdAt, now), updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now)),
   }
   if (kind === 'state') {
@@ -220,6 +220,7 @@ export interface MaterializeResult { tracker: PhoneTracker; changed: boolean }
 
 export function materializeTracker(tracker: PhoneTracker, roleplayNow: string, wallNow = new Date().toISOString()): MaterializeResult {
   if (tracker.kind === 'state' || tracker.updateMode !== 'automatic' || !tracker.ratePerHour) return { tracker, changed: false }
+  if (tracker.clockPaused) return { tracker, changed: false }
   const current = tracker.clock === 'roleplay' ? Date.parse(roleplayNow) : Date.parse(wallNow)
   const previous = tracker.clock === 'roleplay' ? Date.parse(tracker.lastRoleplayAt) : Date.parse(tracker.lastUpdated)
   if (!Number.isFinite(current)) {
@@ -251,6 +252,14 @@ export function materializeTracker(tracker: PhoneTracker, roleplayNow: string, w
     createdAt: wallNow, roleplayAt: clean(roleplayNow, 80) || undefined,
   })
   return { tracker: next, changed: true }
+}
+
+/** Resume anchors the clock now, so a deliberate pause never catches up later. */
+export function setTrackerClockPaused(tracker: PhoneTracker, paused: boolean, roleplayNow: string, wallNow = new Date().toISOString()): PhoneTracker {
+  if (tracker.kind === 'state' || tracker.updateMode !== 'automatic') throw new Error('Only timed trackers can be paused.')
+  if (tracker.clockPaused === paused) return tracker
+  const current = paused ? materializeTracker(tracker, roleplayNow, wallNow).tracker : tracker
+  return { ...current, clockPaused: paused, updatedAt: wallNow, lastUpdated: wallNow, lastRoleplayAt: Number.isFinite(Date.parse(roleplayNow)) ? new Date(roleplayNow).toISOString() : '', pausedReason: paused ? 'Paused by you.' : '' }
 }
 
 export function createTrackerFromTemplate(template: TrackerTemplate, overrides: RecordValue = {}, context: NormalizeTrackerContext = {}): PhoneTracker {

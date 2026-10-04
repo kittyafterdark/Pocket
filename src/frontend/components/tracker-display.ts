@@ -54,6 +54,14 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
     const segments = el('div', 'lp-tracker-segments')
     for (let index = 0; index < 10; index++) { const segment = el('span'); segment.dataset.filled = String(trackerPercent(current) >= (index + 1) * 10); segments.append(segment) }
     card.append(segments, el('span', 'lp-tracker-stage', status))
+  } else if (current.presentation === 'timer') {
+    card.append(heading)
+    const dial = el('div', 'lp-timer-dial'); dial.append(value)
+    card.append(dial, el('span', 'lp-tracker-stage', current.clockPaused ? 'Paused' : status === 'timer' ? current.kind === 'timer' && current.direction === 'down' ? 'Counting down' : 'Counting up' : status))
+    if (current.updateMode === 'automatic') card.append(el('span', 'lp-copy', `${Math.abs(current.ratePerHour)}${current.unit} per hour · ${current.clock === 'real' ? 'real time' : 'story time'}`))
+  } else if (current.presentation === 'counter') {
+    card.append(heading, el('span', 'lp-counter-caption', 'AVAILABLE'), value)
+    if (current.kind === 'counter') card.append(el('span', 'lp-copy', `Changes in ${current.step}${current.unit} steps`))
   } else {
     card.append(heading, value)
     if (current.presentation === 'meter') {
@@ -61,10 +69,12 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
       const limits = el('div', 'lp-row-between lp-copy'); limits.append(el('span', '', `${current.min}${current.unit}`), el('span', '', `${current.max}${current.unit}`))
       card.append(rail, limits)
     }
-    if (current.presentation === 'timer') card.append(el('span', 'lp-tracker-stage', status === 'timer' ? current.kind === 'timer' && current.direction === 'down' ? 'Counting down' : 'Counting up' : status))
-    if (current.presentation === 'counter' && current.kind === 'counter') card.append(el('span', 'lp-copy', `Step ${current.step}${current.unit} · ${current.min}–${current.max}`))
   }
   const latest = current.history.at(-1)
+  if (latest && current.presentation !== 'relationship' && current.presentation !== 'compact') {
+    const delta = typeof latest.next === 'number' && typeof latest.previous === 'number' ? latest.next - latest.previous : null
+    card.append(el('span', 'lp-tracker-last-change', delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? '+' : ''}${Number(delta.toFixed(2))}${current.unit} · ${latest.source === 'jev' ? 'Open JEV' : latest.source === 'model' ? 'Story' : latest.source === 'automatic' ? 'Time' : 'You'}`))
+  }
   const footer = el('div', 'lp-tracker-meta')
   footer.append(el('span', '', current.presentation === 'timer' ? `${current.clock === 'real' ? 'Real' : 'Story'} time` : status), el('span', '', current.updateMode === 'jev' ? 'Open JEV' : current.updateMode === 'model' ? 'Story updates' : current.updateMode === 'automatic' ? 'Automatic' : 'Manual'))
   card.append(footer)
@@ -76,4 +86,5 @@ export function refreshTrackerDisplay(card: HTMLElement, tracker: PhoneTracker, 
   const fresh = trackerDisplay(tracker, state)
   card.replaceChildren(...fresh.childNodes)
   card.style.cssText = fresh.style.cssText
+  card.dataset.meaning = fresh.dataset.meaning
 }

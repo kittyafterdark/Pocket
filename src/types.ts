@@ -784,6 +784,7 @@ interface TrackerBase {
   lastUpdated: string
   lastRoleplayAt: string
   pausedReason: string
+  clockPaused?: boolean
   visibleToModel: boolean
   createdAt: string
   updatedAt: string

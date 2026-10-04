@@ -109,8 +109,8 @@ function buildMessageArtifact(
   const presentation = activity.presentation
   if (!presentation || !['sent', 'received', 'observed'].includes(presentation.kind)) return null
 
-  const primary = document.createElement(presentation.kind === 'observed' ? 'div' : 'button')
-  if (primary instanceof HTMLButtonElement) primary.type = 'button'
+  const primary = document.createElement('button')
+  primary.type = 'button'
   primary.className = 'pocket-inline-artifact'
   primary.dataset.kind = presentation.kind
 
@@ -131,7 +131,7 @@ function buildMessageArtifact(
     const status = document.createElement('span')
     status.className = 'pocket-inline-sent-status'
     status.textContent = 'sent'
-    primary.append(recipient, bubble, status)
+    primary.append(messageChrome('sent'), recipient, bubble, status)
   } else {
     if (presentation.kind === 'observed') {
       const device = document.createElement('span')
@@ -148,12 +148,8 @@ function buildMessageArtifact(
     primary.append(sender, copy)
   }
 
-  if (primary instanceof HTMLButtonElement) {
-    primary.setAttribute('aria-label', `Open ${presentation.conversationTitle || activity.title} in Pocket`)
-    primary.addEventListener('click', () => openRoute(activity.route))
-  } else {
-    primary.setAttribute('aria-label', `Message visible on ${observedDeviceLine(activity)}`)
-  }
+  primary.setAttribute('aria-label', `Open ${presentation.kind === 'observed' ? `${observedDeviceLine(activity)} · ` : ''}${presentation.conversationTitle || activity.title} in Pocket`)
+  primary.addEventListener('click', () => openRoute(activity.route))
   return primary
 }
 
@@ -171,14 +167,13 @@ function buildActivityStack(
   }
 
   if (options.includeReceipt !== false) {
-    const interactive = activity.presentation?.kind !== 'observed'
-    const receipt = document.createElement(interactive ? 'button' : 'span')
-    if (receipt instanceof HTMLButtonElement) receipt.type = 'button'
+    const receipt = document.createElement('button')
+    receipt.type = 'button'
     receipt.className = 'pocket-receipt'
 
     const label = document.createElement('span')
     label.className = 'pocket-receipt-kind'
-    label.textContent = 'Pocket'
+    label.textContent = ICONS[activity.kind]
 
     const copy = document.createElement('span')
     copy.className = 'pocket-receipt-copy'
@@ -186,11 +181,14 @@ function buildActivityStack(
     const conversation = activity.presentation?.conversationTitle || activity.title
     title.textContent = conversation ? `${presentationLabel(activity)} · ${conversation}` : presentationLabel(activity)
     copy.appendChild(title)
+    if (activity.summary) {
+      const summary = document.createElement('span'); summary.textContent = activity.summary; copy.append(summary)
+    }
 
     const arrow = document.createElement('span')
     arrow.className = 'pocket-receipt-arrow'
     arrow.setAttribute('aria-hidden', 'true')
-    arrow.textContent = receipt instanceof HTMLButtonElement ? '›' : '·'
+    arrow.textContent = '›'
     receipt.append(label, copy, arrow)
 
     if (receipt instanceof HTMLButtonElement) {

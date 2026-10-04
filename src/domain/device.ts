@@ -1,4 +1,4 @@
-import type { PhoneMessage, PhoneState, PocketConversation, PocketMessageDirection } from '../types.js'
+import type { PhoneMessage, PhoneState, PocketConversation, PocketMessageDirection, PocketActivity } from '../types.js'
 import { normalizeActorName, resolvePocketActor } from './actors.js'
 
 export function pocketPersonaActorId(state: Pick<PhoneState, 'pocketPersonaActorId' | 'pocketPersona' | 'chatId' | 'characterId'>): string {
@@ -24,6 +24,18 @@ export function conversationDeviceActorIds(state: PhoneState, conversation: Pock
 
 export function conversationVisibleOnDevice(state: PhoneState, conversation: PocketConversation, deviceOwnerActorId: string): boolean {
   return conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state))
+}
+
+/** Choose an actual participating phone, preferring the observed recipient. */
+export function activityDeviceOwner(state: PhoneState, activity: PocketActivity, currentOwner: string): string | null {
+  if (activity.scope.chatId !== state.chatId || activity.scope.characterId !== state.characterId) return null
+  if (activity.route.app !== 'messages' || !activity.route.conversationId) return currentOwner
+  const conversationId = activity.route.conversationId
+  const conversation = state.conversations.find(entry => entry.id === conversationId)
+  if (!conversation) return null
+  const participants = conversationDeviceActorIds(state, conversation)
+  const preferred = activity.presentation?.kind === 'observed' ? activity.presentation.recipientActorIds || [] : []
+  return [...preferred, currentOwner, ...participants].find(actorId => participants.includes(actorId) && resolvePocketActor(state, actorId)) || null
 }
 
 export function messageDirection(
