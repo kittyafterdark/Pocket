@@ -114,6 +114,10 @@ When **Sync active Swarm Studio profile** is enabled, Camera resolves Swarm Stud
 
 This carries the current character/persona positives, negative prompt, preset directives, checkpoint, and aspect into the photo request without reading another extension's private storage. The integration uses published macro contracts only; Swarm Studio remains optional and unchanged. Manual positive/negative text is additive, and manual connection, model, LoRA stack, and provider-parameter JSON remain available for users without Swarm Studio. If scene planning or profile resolution fails, Camera falls back to the original brief/manual profile. Cancellation suppresses association, notification, and UI completion from late results.
 
+## Ready-made wallpapers
+
+Settings → Personalization → Device appearance (or Persona appearance) includes **Pocket Wallpapers** on both Home and Chat controls. Browse 14 bundled SVG patterns, gradients, and scenes, preview a selection, then apply it. These wallpapers work offline and persist as catalog IDs, so exports stay small and portable. Existing fit, focal-position, scrim, Gallery, Upload, and URL controls remain available.
+
 ## Open JEV trackers
 
 Pocket supports the [pngwn/open-jev Hugging Face Space](https://huggingface.co/spaces/pngwn/open-jev/tree/main) through its published Gradio API. Enable it in Settings → Open JEV and optionally turn on evaluation after normal story turns. The Space URL can point to a compatible duplicate or local deployment. Defaults are disabled; evaluation sends the last six story messages and selected tracker targets to the configured endpoint.

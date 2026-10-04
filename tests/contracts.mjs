@@ -206,6 +206,7 @@ assert.deepEqual(urlWallpaperState.resolvedWallpapers.personaHome, {
 assert.doesNotMatch(JSON.stringify(storage.get('device/preferences.json')), /cached-remote/, 'URL preferences must retain the URL rather than its resolver cache asset')
 
 for (const source of [
+  { kind: 'builtin', wallpaperId: 'moonrise' },
   { kind: 'gallery', imageId: 'image-a' },
   { kind: 'asset', assetId: 'uploaded-wallpaper' },
   { kind: 'url', url: 'https://example.test/wall.png' },
@@ -2032,6 +2033,20 @@ assert.ok(frontendSends.some((message) => message.type === 'lumiphone:model_acti
 // UI pass: burst grouping and contextual actions preserve the original command payload.
 dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true }
 dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new Event('close')) }
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Settings').click()
+dockRoot.querySelector('[data-settings-category="personalization"]').click()
+;[...dockRoot.querySelectorAll('.lp-settings-category')].find(node => node.textContent.includes('Device appearance')).click()
+dockRoot.querySelector('[data-image-target="device-chat"] .lp-wallpaper-presets-button').click()
+assert.equal(dockRoot.querySelectorAll('.lp-wallpaper-library-card').length, 14)
+;[...dockRoot.querySelectorAll('dialog .lp-chip')].find(node => node.textContent === 'Patterns').click()
+assert.equal(dockRoot.querySelectorAll('.lp-wallpaper-library-card:not([hidden])').length, 6)
+dockRoot.querySelector('[data-wallpaper-id="sage-check"]').click()
+assert.equal(dockRoot.querySelector('.lp-wallpaper-library-caption').textContent, 'Sage Check')
+;[...dockRoot.querySelectorAll('dialog button')].find(node => node.textContent === 'Use for Chat').click()
+assert.equal(dockRoot.querySelector('dialog'), null)
+await new Promise(resolve => setTimeout(resolve, 300))
+assert.deepEqual(frontendSends.filter(message => message.type === 'lumiphone:save_preferences').at(-1).preferences.chatWallpaper.source, { kind: 'builtin', wallpaperId: 'sage-check' })
 const burstState = structuredClone(firstState)
 burstState.preferences.colors.accent = '#ffffff'
 burstState.state.conversations[0].messages = Array.from({ length: 5 }, (_, index) => ({

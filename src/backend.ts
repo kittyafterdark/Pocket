@@ -985,7 +985,7 @@ function assignWallpaper(preferences: DevicePreferences, payload: AnyRecord, for
 
 function imageSourceKey(source: DevicePreferences['homeWallpaper']['source']): string {
   if (!source) return ''
-  return source.kind === 'gallery' ? `gallery:${source.imageId}` : source.kind === 'asset' ? `asset:${source.assetId}` : `url:${source.url}`
+  return source.kind === 'builtin' ? `builtin:${source.wallpaperId}` : source.kind === 'gallery' ? `gallery:${source.imageId}` : source.kind === 'asset' ? `asset:${source.assetId}` : `url:${source.url}`
 }
 
 function candidateRuntimeKey(userId: string | undefined, generationId: string): string {

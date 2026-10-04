@@ -17,6 +17,19 @@ import { aspectDimensions, effectiveImageRequest } from '../src/backend/image-jo
 import type { SwarmVisualProfile, PocketContactGroup } from '../src/types.js'
 import { applyJevAnswer, jevQuestion, normalizeJevSettings } from '../src/domain/jev.js'
 import { runOpenJev } from '../src/backend/jev.js'
+import { BUILTIN_WALLPAPERS, builtinWallpaperUrl } from '../src/domain/wallpapers.js'
+import { normalizeImageSource } from '../src/domain/preferences.js'
+import { resolvePocketImageSource } from '../src/backend/image-sources.js'
+
+test('built-in wallpapers persist as portable IDs and resolve without host access', async () => {
+  expect(new Set(BUILTIN_WALLPAPERS.map(item => item.id)).size).toBe(BUILTIN_WALLPAPERS.length)
+  expect(normalizeImageSource({ kind: 'builtin', wallpaperId: '../unknown.svg' })).toBeNull()
+  const source = { kind: 'builtin' as const, wallpaperId: 'moonrise' }
+  expect(normalizePreferences({ homeWallpaper: { source } }).homeWallpaper.source).toEqual(source)
+  const resolved = await resolvePocketImageSource({} as any, source)
+  expect(resolved.status).toBe('ready'); expect(resolved.url).toBe(builtinWallpaperUrl('moonrise'))
+  expect((await resolvePocketImageSource({} as any, { kind: 'builtin', wallpaperId: 'missing' })).status).toBe('error')
+})
 
 describe('Open JEV tracker decisions', () => {
   const now = '2026-10-03T20:00:00.000Z'

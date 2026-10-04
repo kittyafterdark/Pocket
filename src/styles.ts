@@ -936,4 +936,15 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-npc-camera .lp-shutter { background:#17171c; }
   .lp-npc-camera .lp-shutter::after { background:#fff; }
   .lp-npc-camera .lp-shutter:focus-visible { outline:3px solid var(--lp-accent); outline-offset:5px; }
+  .lp-wallpaper-library { display:grid; gap:14px; }
+  .lp-wallpaper-presets-button { grid-column:1/-1; }
+  .lp-wallpaper-library-preview { min-height:190px; border-radius:18px; background-size:cover; background-position:center; display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:24px 16px 16px; color:#fff; box-shadow:inset 0 0 0 1px #ffffff18; }
+  .lp-wallpaper-library-clock { font-size:48px; font-weight:550; letter-spacing:-.06em; line-height:1; text-shadow:0 2px 16px #0005; }
+  .lp-wallpaper-library-caption { font-size:12px; padding:6px 12px; border-radius:20px; background:#10101899; color:#fff; }
+  .lp-wallpaper-library-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .lp-wallpaper-library-card { display:grid; gap:7px; background:none; color:var(--lp-text); border:0; border-radius:12px; padding:4px; font:inherit; font-size:10px; text-align:left; cursor:pointer; }
+  .lp-wallpaper-library-card[aria-pressed="true"] { background:var(--lp-surface); outline:2px solid var(--lp-accent); }
+  .lp-wallpaper-library-card:focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; }
+  .lp-wallpaper-library-art { display:block; width:100%; aspect-ratio:3/4; border-radius:9px; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px #ffffff16; }
+  .lp-wallpaper-library-card[hidden] { display:none; }
 `

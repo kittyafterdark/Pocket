@@ -1,6 +1,7 @@
 import type { PocketResolvedImage, PocketWallpaper } from '../../types.js'
 import { button, el } from '../shared.js'
 import { disclosure } from './ui.js'
+import { showWallpaperGallery } from './wallpaper-gallery.js'
 
 export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' | 'persona-chat' | 'contact-avatar'
 
@@ -43,6 +44,9 @@ export function wallpaperImageControl(
   preview.style.backgroundPosition = `${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%`
   preview.textContent = resolved.url ? '' : resolved.error || 'Theme background'
   const actions = el('div', 'lp-wallpaper-actions')
+  const presets = button('Pocket Wallpapers', 'lp-button lp-button-quiet lp-wallpaper-presets-button')
+  presets.addEventListener('click', () => showWallpaperGallery(presets, wallpaper, target.endsWith('chat') ? 'Chat' : 'Home', host.change))
+  actions.append(presets)
   for (const [mode, text] of [['gallery', 'Gallery'], ['upload', 'Upload'], ['url', 'Image URL']] as const) {
     const choose = button(text, 'lp-button lp-button-quiet')
     choose.addEventListener('click', () => host.choose(target, mode))

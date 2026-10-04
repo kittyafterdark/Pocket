@@ -1,4 +1,5 @@
 import type { PocketImageSource, PocketResolvedImage } from '../types.js'
+import { builtinWallpaper, builtinWallpaperUrl } from '../domain/wallpapers.js'
 
 type ImageApi = Pick<import('lumiverse-spindle-types').SpindleAPI, 'cors' | 'images' | 'permissions' | 'userStorage'>
 
@@ -15,6 +16,7 @@ interface UrlCache {
 
 const URL_CACHE_PATH = 'device/pocket-image-url-cache.json'
 const SOURCE_LABELS: Record<PocketImageSource['kind'], string> = {
+  builtin: 'Pocket wallpaper',
   gallery: 'Lumiverse Gallery',
   asset: 'Uploaded asset',
   url: 'Image URL',
@@ -102,6 +104,11 @@ async function resolveRemoteUrl(api: ImageApi, source: Extract<PocketImageSource
 export async function resolvePocketImageSource(api: ImageApi, source: PocketImageSource | null, userId?: string): Promise<PocketResolvedImage> {
   if (!source) return empty()
   try {
+    if (source.kind === 'builtin') {
+      const preset = builtinWallpaper(source.wallpaperId)
+      if (!preset) throw new Error('That Pocket wallpaper is unavailable.')
+      return { url: builtinWallpaperUrl(preset.id), status: 'ready', sourceKind: 'builtin', sourceLabel: preset.name }
+    }
     if (source.kind === 'url') return await resolveRemoteUrl(api, source, userId)
     return await getStoredImage(api, source, userId)
   } catch (error) {

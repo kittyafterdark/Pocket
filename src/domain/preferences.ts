@@ -1,5 +1,6 @@
 import type { DevicePreferences, PocketImageSource, PocketWallpaper, PhonePalette, PhoneTheme } from '../types.js'
 import { normalizeJevSettings } from './jev.js'
+import { builtinWallpaper } from './wallpapers.js'
 
 export const PREFERENCES_VERSION = 5 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
@@ -48,6 +49,10 @@ export function defaultWallpaper(): PocketWallpaper {
 
 export function normalizeImageSource(value: unknown): PocketImageSource | null {
   const raw = record(value)
+  if (raw.kind === 'builtin') {
+    const wallpaperId = text(raw.wallpaperId, '', 100)
+    return builtinWallpaper(wallpaperId) ? { kind: 'builtin', wallpaperId } : null
+  }
   if (raw.kind === 'gallery') {
     const imageId = text(raw.imageId, '', 180)
     return imageId ? { kind: 'gallery', imageId } : null

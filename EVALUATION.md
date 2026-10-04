@@ -27,6 +27,7 @@ Implemented from the pipeline/UX mapping, including the first Open JEV tracker p
 - Explicit create/configure/update commands, unique keys, validated configuration, history-producing operations and model write policy.
 
 ## Images
+- Ready-made Pocket Wallpapers: 14 bundled SVG patterns, gradients, and landscape scenes; category filters, selected preview and explicit apply for Home/Chat and Persona overrides. Stable catalog IDs survive exports without uploads or network access.
 - Camera and contact portrait camera: top/bottom strips, portrait viewfinder and floating prompt.
 - Subject selection for scene/Character/Persona; contacts and unsaved NPC drafts have their own identity path.
 - Framing, connection, checkpoint, enhancer; Swarm aspect becomes effective dimensions.

@@ -362,6 +362,34 @@ function applyJevAnswer(tracker, answer, sourceKey, now, roleplayNow) {
   return result(next === tracker ? "unchanged" : "applied", next === tracker ? "JEV agreed with the current value." : "Updated from the story.", confidence, next);
 }
 
+// src/domain/wallpapers.ts
+var frame = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="1067" viewBox="0 0 600 1067">${body}</svg>`;
+var gradient = (top, bottom) => `<defs><linearGradient id="g" x2=".75" y2="1"><stop stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs><path fill="url(#g)" d="M0 0h600v1067H0z"/>`;
+var pattern = (background, art, size = 60) => frame(`<defs><pattern id="p" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${art}</pattern></defs><path fill="${background}" d="M0 0h600v1067H0z"/><path fill="url(#p)" d="M0 0h600v1067H0z"/>`);
+var BUILTIN_WALLPAPERS = [
+  { id: "midnight-grid", name: "Midnight Grid", collection: "Patterns", scrim: 0.08, svg: pattern("#151b2c", '<path d="M60 0H0v60" fill="none" stroke="#8d9ab5" stroke-opacity=".18"/>') },
+  { id: "linen-dots", name: "Linen Dots", collection: "Patterns", scrim: 0.2, svg: pattern("#e7dfd2", '<circle cx="16" cy="16" r="2" fill="#86796b" opacity=".4"/>', 32) },
+  { id: "sage-check", name: "Sage Check", collection: "Patterns", scrim: 0.12, svg: pattern("#a8b6a0", '<path fill="#667b60" opacity=".2" d="M0 0h40v40H0zM40 40h40v40H40z"/><path d="M0 40h80M40 0v80" stroke="#fff" stroke-opacity=".15"/>', 80) },
+  { id: "blueprint", name: "Blueprint", collection: "Patterns", scrim: 0.06, svg: pattern("#17354a", '<path d="M0 0h80v80H0zM20 0v80M40 0v80M60 0v80M0 20h80M0 40h80M0 60h80" fill="none" stroke="#8eb9c8" stroke-opacity=".15"/><path d="M36 40h8M40 36v8" stroke="#8eb9c8" stroke-opacity=".55"/>', 80) },
+  { id: "rose-waves", name: "Rose Waves", collection: "Patterns", scrim: 0.12, svg: pattern("#482c3a", '<path d="M-30 30Q0 0 30 30T90 30M-30 60Q0 30 30 60T90 60M-30 0Q0-30 30 0T90 0" fill="none" stroke="#c48d9c" stroke-opacity=".26" stroke-width="2"/>') },
+  { id: "terrazzo", name: "Terrazzo", collection: "Patterns", scrim: 0.18, svg: pattern("#e8e2d9", '<path fill="#bd8f79" d="M12 12l17 5-9 16z"/><path fill="#738b84" d="M67 13l14 8-6 16-15-7z"/><path fill="#c7b67c" d="M41 58l20-8 7 13-22 9z"/><path fill="#8b879e" d="M10 82l10-8 8 11-14 7z"/><circle cx="82" cy="80" r="4" fill="#bd8f79"/>', 100) },
+  { id: "deep-tide", name: "Deep Tide", collection: "Gradients", scrim: 0.05, svg: frame(gradient("#243354", "#0e4d50")) },
+  { id: "dusk", name: "Dusk", collection: "Gradients", scrim: 0.1, svg: frame(gradient("#3d355d", "#a56872")) },
+  { id: "apricot", name: "Apricot Haze", collection: "Gradients", scrim: 0.18, svg: frame(gradient("#e6b8a1", "#a395b8")) },
+  { id: "aurora", name: "Aurora", collection: "Gradients", scrim: 0.1, svg: frame(gradient("#101b35", "#233d40") + '<defs><radialGradient id="a"><stop stop-color="#78c5aa" stop-opacity=".55"/><stop offset="1" stop-color="#78c5aa" stop-opacity="0"/></radialGradient><radialGradient id="b"><stop stop-color="#a58bd5" stop-opacity=".6"/><stop offset="1" stop-color="#a58bd5" stop-opacity="0"/></radialGradient></defs><ellipse cx="70" cy="350" rx="450" ry="600" fill="url(#a)"/><ellipse cx="550" cy="800" rx="450" ry="500" fill="url(#b)"/>') },
+  { id: "moonrise", name: "Moonrise", collection: "Scenes", scrim: 0.04, svg: frame(gradient("#101728", "#414364") + '<circle cx="430" cy="290" r="60" fill="#ede2bd"/><g fill="#dce4ec" opacity=".6"><circle cx="95" cy="130" r="2"/><circle cx="280" cy="210" r="2"/><circle cx="500" cy="110" r="2"/><circle cx="160" cy="400" r="2"/></g><path d="M0 820L160 560l210 300 140-190 90 140v257H0z" fill="#25293c"/><path d="M0 930l260-210 340 240v107H0z" fill="#171c2b"/>') },
+  { id: "coastal", name: "Coastal Morning", collection: "Scenes", scrim: 0.17, svg: frame(gradient("#94b7c6", "#edc9a5") + '<circle cx="170" cy="390" r="70" fill="#f4deae"/><path d="M0 640Q160 600 300 650T600 630v437H0z" fill="#7ea7ae"/><path d="M0 780Q160 720 330 790T600 770v297H0z" fill="#4f828e"/><path d="M0 930Q200 820 410 950T600 940v127H0z" fill="#315c6d"/>') },
+  { id: "desert", name: "Desert Light", collection: "Scenes", scrim: 0.15, svg: frame(gradient("#ddba9a", "#efdbbc") + '<circle cx="450" cy="320" r="85" fill="#f7e6be"/><path d="M0 700Q170 500 600 770v297H0z" fill="#ca9776"/><path d="M0 890Q290 590 600 830v237H0z" fill="#ac735c"/><path d="M0 940Q400 820 600 1040v27H0z" fill="#805746"/>') },
+  { id: "forest", name: "Forest Layers", collection: "Scenes", scrim: 0.05, svg: frame(gradient("#203c3c", "#8ba88b") + '<path d="M0 560Q200 470 600 660v407H0z" fill="#527966"/><path d="M0 790Q350 530 600 780v287H0z" fill="#315b50"/><path d="M0 940Q220 720 600 940v127H0z" fill="#1b3d38"/>') }
+];
+function builtinWallpaper(id) {
+  return BUILTIN_WALLPAPERS.find((entry) => entry.id === id);
+}
+function builtinWallpaperUrl(id) {
+  const item = builtinWallpaper(id);
+  return item ? `data:image/svg+xml,${encodeURIComponent(item.svg)}` : "";
+}
+
 // src/domain/preferences.ts
 var PREFERENCES_VERSION = 5;
 var PREFERENCES_PATH = "device/preferences.json";
@@ -430,6 +458,10 @@ function defaultWallpaper() {
 }
 function normalizeImageSource(value) {
   const raw = record2(value);
+  if (raw.kind === "builtin") {
+    const wallpaperId = text(raw.wallpaperId, "", 100);
+    return builtinWallpaper(wallpaperId) ? { kind: "builtin", wallpaperId } : null;
+  }
   if (raw.kind === "gallery") {
     const imageId = text(raw.imageId, "", 180);
     return imageId ? { kind: "gallery", imageId } : null;
@@ -2548,6 +2580,7 @@ function relayForGeneration(state, generationId) {
 // src/backend/image-sources.ts
 var URL_CACHE_PATH = "device/pocket-image-url-cache.json";
 var SOURCE_LABELS = {
+  builtin: "Pocket wallpaper",
   gallery: "Lumiverse Gallery",
   asset: "Uploaded asset",
   url: "Image URL"
@@ -2635,6 +2668,12 @@ async function resolvePocketImageSource(api, source, userId) {
   if (!source)
     return empty();
   try {
+    if (source.kind === "builtin") {
+      const preset = builtinWallpaper(source.wallpaperId);
+      if (!preset)
+        throw new Error("That Pocket wallpaper is unavailable.");
+      return { url: builtinWallpaperUrl(preset.id), status: "ready", sourceKind: "builtin", sourceLabel: preset.name };
+    }
     if (source.kind === "url")
       return await resolveRemoteUrl(api, source, userId);
     return await getStoredImage(api, source, userId);
@@ -3865,7 +3904,7 @@ function assignWallpaper(preferences, payload, forcedSource) {
 function imageSourceKey(source) {
   if (!source)
     return "";
-  return source.kind === "gallery" ? `gallery:${source.imageId}` : source.kind === "asset" ? `asset:${source.assetId}` : `url:${source.url}`;
+  return source.kind === "builtin" ? `builtin:${source.wallpaperId}` : source.kind === "gallery" ? `gallery:${source.imageId}` : source.kind === "asset" ? `asset:${source.assetId}` : `url:${source.url}`;
 }
 function candidateRuntimeKey(userId, generationId) {
   return `${viewKey(userId)}:${generationId}`;

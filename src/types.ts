@@ -62,6 +62,7 @@ export type ConversationAvailability =
 export type ReplyCadence = 'instant' | 'quick' | 'natural' | 'relaxed'
 
 export type PocketImageSource =
+  | { kind: 'builtin'; wallpaperId: string }
   | { kind: 'gallery'; imageId: string }
   | { kind: 'asset'; assetId: string }
   | { kind: 'url'; url: string }
