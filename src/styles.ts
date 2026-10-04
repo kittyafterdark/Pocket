@@ -897,6 +897,8 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-tracker-counter { grid-template-columns:minmax(0,1fr) auto; align-items:center; border-left-width:1px; }
   .lp-tracker-counter .lp-tracker-heading { grid-column:1/-1; }
   .lp-counter-caption { color:var(--lp-muted); font-size:10px; font-weight:800; letter-spacing:.12em; }
+  .lp-tracker-counter .lp-tracker-readout { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:6px; min-width:0; }
+  .lp-counter-unit { color:var(--lp-muted); font-size:12px; font-weight:600; overflow-wrap:anywhere; }
   .lp-tracker-counter > .lp-copy,.lp-tracker-counter .lp-tracker-meta,.lp-tracker-counter .lp-tracker-last-change { grid-column:1/-1; }
   .lp-tracker-last-change { color:var(--lp-muted); font-size:11px; }
   .lp-counter-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }

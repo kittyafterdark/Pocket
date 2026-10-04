@@ -60,8 +60,10 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
     card.append(dial, el('span', 'lp-tracker-stage', status))
     if (current.updateMode === 'automatic') card.append(el('span', 'lp-copy', `${Math.abs(current.ratePerHour)}${current.unit} per hour · ${current.clock === 'real' ? 'real time' : 'story time'}`))
   } else if (current.presentation === 'counter') {
+    value.textContent = String(Number(current.value.toFixed(2)))
+    if (current.unit) value.append(el('small', 'lp-counter-unit', current.unit))
     card.append(heading, el('span', 'lp-counter-caption', 'AVAILABLE'), value)
-    if (current.kind === 'counter') card.append(el('span', 'lp-copy', `Changes in ${current.step}${current.unit} steps`))
+    if (current.kind === 'counter') card.append(el('span', 'lp-copy', `Step size · ${current.step}${current.unit ? ` ${current.unit}` : ''}`))
   } else {
     card.append(heading, value)
     if (current.presentation === 'meter') {
