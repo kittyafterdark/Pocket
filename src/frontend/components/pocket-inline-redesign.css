@@ -1,0 +1,827 @@
+:root {
+  --pocket-inline-accent: #8b7dff;
+  --pocket-inline-text: #f5f2fb;
+  --pocket-inline-muted: #a8a2b3;
+  --pocket-inline-surface: #242129;
+  --pocket-inline-surface-2: #2b2731;
+  --pocket-inline-surface-3: #17151c;
+  --pocket-inline-border: rgba(255, 255, 255, .075);
+  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+
+.pocket-artifact-stack,
+.pocket-inline-frame {
+  box-sizing: border-box;
+}
+
+.pocket-inline-frame[data-appearance="cards"] {
+  width: min(100%, 470px);
+  color: var(--pocket-inline-text);
+}
+
+.pocket-inline-frame[data-appearance="cards"] .pocket-inline-artifact,
+.pocket-inline-frame[data-appearance="cards"] .pocket-inline-batch {
+  width: 100%;
+}
+
+.pocket-inline-artifact {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  color: var(--pocket-inline-text);
+  text-align: left;
+  font: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),
+    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);
+  border: 1px solid var(--pocket-inline-border);
+  border-radius: 18px;
+  box-shadow: var(--pocket-inline-shadow);
+  cursor: pointer;
+}
+
+.pocket-inline-artifact:hover {
+  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));
+}
+
+.pocket-inline-artifact:focus-visible,
+.pocket-inline-transcript-more:focus-visible,
+.pocket-phone-device button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);
+  outline-offset: 3px;
+}
+
+.pocket-inline-artifact-device {
+  display: block;
+  margin-bottom: -2px;
+  color: #8f8998;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .015em;
+}
+
+.pocket-inline-artifact-header,
+.pocket-inline-transcript-header,
+.pocket-inline-artifact-chrome {
+  min-width: 0;
+}
+
+.pocket-inline-artifact-header,
+.pocket-inline-transcript-header {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+
+.pocket-inline-artifact-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #a9a3b2;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.pocket-inline-artifact-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pocket-inline-artifact-app svg {
+  width: 14px;
+  height: 14px;
+  color: var(--pocket-inline-accent);
+}
+
+.pocket-inline-artifact-state,
+.pocket-inline-artifact-recipient {
+  color: #8e8897;
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.pocket-inline-artifact-recipient {
+  align-self: flex-end;
+  margin-top: -24px;
+}
+
+.pocket-inline-message-body {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+}
+
+.pocket-inline-message-content,
+.pocket-inline-transcript-content,
+.pocket-inline-call-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pocket-inline-avatar,
+.pocket-phone-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: white;
+  font-weight: 720;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);
+}
+
+.pocket-inline-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 13px;
+}
+
+.pocket-inline-avatar img,
+.pocket-phone-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pocket-inline-artifact-actors,
+.pocket-inline-transcript-title {
+  color: #fbf9ff;
+  font-weight: 760;
+  letter-spacing: -.01em;
+}
+
+.pocket-inline-artifact-actors {
+  font-size: 14px;
+}
+
+.pocket-inline-artifact-copy {
+  color: #e5e1ea;
+  font-size: 13px;
+  line-height: 1.46;
+}
+
+.pocket-inline-chat-bubble,
+.pocket-inline-transcript-bubble {
+  border: 1px solid rgba(255,255,255,.035);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);
+}
+
+.pocket-inline-chat-bubble {
+  align-self: flex-end;
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 15px 15px 5px 15px;
+  color: white;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, #a79cff 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #584fcf));
+}
+
+.pocket-inline-call {
+  align-items: center;
+  min-height: 180px;
+  justify-content: center;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),
+    linear-gradient(160deg, #28252e, #1d1b22);
+}
+
+.pocket-inline-call-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+.pocket-inline-call .pocket-inline-avatar {
+  width: 46px;
+  height: 46px;
+}
+
+.pocket-inline-call .pocket-inline-artifact-chrome {
+  justify-content: center;
+}
+
+.pocket-call-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-top: 4px;
+  color: #fff;
+  background: linear-gradient(145deg, #bd5d69, #974552);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);
+}
+
+.pocket-call-symbol svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pocket-inline-transcript-title {
+  font-size: 15px;
+}
+
+.pocket-inline-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pocket-inline-transcript-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {
+  visibility: hidden;
+}
+
+.pocket-inline-transcript-row .pocket-inline-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.pocket-inline-transcript-sender {
+  color: #aaa4b3;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pocket-inline-transcript-bubble {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 8px 11px;
+  color: #f0edf5;
+  font-size: 12px;
+  line-height: 1.38;
+  background: linear-gradient(145deg, #2c2933, #27242d);
+  border-radius: 5px 13px 13px 13px;
+}
+
+.pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, #6f61e8), color-mix(in srgb, var(--pocket-inline-accent) 64%, #5045ba));
+}
+
+.pocket-inline-batch {
+  border-radius: 18px;
+  overflow: hidden;
+  background: #1e1c23;
+  border: 1px solid var(--pocket-inline-border);
+  box-shadow: var(--pocket-inline-shadow);
+}
+
+.pocket-inline-batch .pocket-inline-artifact {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.pocket-inline-transcript-more {
+  width: 100%;
+  padding: 11px 14px;
+  color: #a8a2b2;
+  font: inherit;
+  font-size: 11px;
+  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));
+  border: 0;
+  border-top: 1px solid rgba(255,255,255,.055);
+  cursor: pointer;
+}
+
+/* Full-phone renderer */
+.pocket-phone-device {
+  box-sizing: border-box;
+  width: min(360px, 92vw);
+  aspect-ratio: 9 / 18.4;
+  padding: 5px;
+  color: var(--pocket-inline-text);
+  background:
+    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 42px;
+  box-shadow:
+    0 32px 70px rgba(0,0,0,.48),
+    0 8px 24px rgba(0,0,0,.3),
+    inset 0 1px 0 rgba(255,255,255,.18),
+    inset 0 -1px 0 rgba(255,255,255,.04);
+  overflow: hidden;
+}
+
+.pocket-phone-screen {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: #f7f5fb;
+  background:
+    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),
+    linear-gradient(180deg, #15131a 0%, #100f14 100%);
+  border-radius: 36px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+}
+
+.pocket-phone-status {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  flex: 0 0 35px;
+  padding: 0 17px;
+  color: rgba(255,255,255,.92);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.pocket-phone-status-time {
+  justify-self: start;
+}
+
+.pocket-phone-island {
+  width: 76px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.82);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);
+}
+
+.pocket-phone-indicators {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 5px;
+}
+
+.pocket-phone-indicators svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pocket-phone-indicators svg:last-child {
+  width: 18px;
+}
+
+.pocket-phone-home-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  width: 92px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(255,255,255,.64);
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+
+/* Lock screen */
+.pocket-phone-lock {
+  background:
+    radial-gradient(circle at 68% 8%, rgba(147,124,255,.34), transparent 28%),
+    radial-gradient(circle at 18% 44%, rgba(97,74,178,.22), transparent 34%),
+    linear-gradient(155deg, #241b35 0%, #171320 44%, #0d0c11 100%);
+}
+
+.pocket-phone-lock::after {
+  content: '';
+  position: absolute;
+  inset: 35px 0 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));
+}
+
+.pocket-phone-lock-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 40px 18px 26px;
+  text-shadow: 0 2px 14px rgba(0,0,0,.28);
+}
+
+.pocket-phone-lock-label {
+  color: rgba(255,255,255,.64);
+  font-size: 11px;
+  font-weight: 580;
+}
+
+.pocket-phone-clock {
+  color: #fff;
+  font-size: 54px;
+  font-weight: 280;
+  line-height: 1;
+  letter-spacing: -.045em;
+}
+
+.pocket-phone-lock-caption {
+  color: rgba(255,255,255,.74);
+  font-size: 12px;
+}
+
+.pocket-phone-notification {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: calc(100% - 28px);
+  margin: 0 14px;
+  padding: 13px 14px 14px;
+  color: #f7f4fb;
+  text-align: left;
+  font: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),
+    rgba(28,25,34,.86);
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 18px;
+  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+}
+
+.pocket-phone-notification-app {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,.68);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.pocket-phone-notification-app svg {
+  width: 14px;
+  height: 14px;
+  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);
+}
+
+.pocket-phone-notification-body {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pocket-phone-notification-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pocket-phone-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 12px;
+}
+
+.pocket-phone-notification-sender {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.pocket-phone-notification-copy {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(255,255,255,.9);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+/* Open chat */
+.pocket-phone-chat {
+  background:
+    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),
+    #0c0b0f;
+}
+
+.pocket-phone-app-header {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 36px minmax(0,1fr) 36px;
+  align-items: center;
+  flex: 0 0 78px;
+  width: 100%;
+  padding: 8px 12px 10px;
+  color: inherit;
+  text-align: center;
+  font: inherit;
+  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.065);
+  box-shadow: 0 9px 18px rgba(0,0,0,.12);
+  cursor: pointer;
+}
+
+.pocket-phone-header-back,
+.pocket-phone-header-action {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);
+  border-radius: 50%;
+}
+
+.pocket-phone-header-back svg,
+.pocket-phone-header-action svg {
+  width: 20px;
+  height: 20px;
+}
+
+.pocket-phone-header-action {
+  background: rgba(255,255,255,.055);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+}
+
+.pocket-phone-header-identity {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-self: center;
+  column-gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.pocket-phone-header-identity .pocket-phone-avatar {
+  grid-row: 1 / 3;
+}
+
+.pocket-phone-conversation-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-phone-subtitle {
+  color: #918b99;
+  font-size: 9px;
+}
+
+.pocket-phone-thread {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 12px 18px;
+  scrollbar-color: rgba(255,255,255,.18) transparent;
+  scrollbar-width: thin;
+}
+
+.pocket-phone-message {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  width: 100%;
+}
+
+.pocket-phone-message[data-direction="sent"] {
+  justify-content: flex-end;
+}
+
+.pocket-phone-message[data-continuation="true"] .pocket-phone-avatar {
+  visibility: hidden;
+}
+
+.pocket-phone-message-content {
+  display: flex;
+  max-width: 79%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pocket-phone-sender {
+  margin-left: 3px;
+  color: #948e9c;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.pocket-phone-bubble {
+  display: block;
+  padding: 9px 11px;
+  color: #f3eff7;
+  font-size: 12px;
+  line-height: 1.36;
+  background: linear-gradient(145deg, #2b2731, #232029);
+  border: 1px solid rgba(255,255,255,.045);
+  border-radius: 6px 15px 15px 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);
+}
+
+.pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));
+  border-radius: 15px 15px 5px 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);
+}
+
+.pocket-phone-delivery {
+  align-self: flex-end;
+  margin: -3px 3px 0 0;
+  color: #77727f;
+  font-size: 8px;
+  font-weight: 680;
+  text-transform: uppercase;
+}
+
+.pocket-phone-composer {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr) 32px;
+  align-items: center;
+  flex: 0 0 58px;
+  gap: 7px;
+  padding: 8px 10px 13px;
+  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));
+  border-top: 1px solid rgba(255,255,255,.065);
+}
+
+.pocket-phone-composer-action,
+.pocket-phone-composer-send {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #aaa4b3;
+  background: #24212a;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+
+.pocket-phone-composer-send {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));
+}
+
+.pocket-phone-composer-action svg,
+.pocket-phone-composer-send svg {
+  width: 16px;
+  height: 16px;
+}
+
+.pocket-phone-composer-field {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  color: #797480;
+  font-size: 11px;
+  background: #131117;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);
+}
+
+/* Dedicated call screen */
+.pocket-phone-call {
+  background:
+    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
+    radial-gradient(circle at 80% 75%, rgba(84,58,140,.18), transparent 30%),
+    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
+}
+
+.pocket-phone-call-header {
+  grid-template-columns: 36px 1fr;
+  justify-items: start;
+  flex-basis: 54px;
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.pocket-phone-call-header .pocket-phone-app-label {
+  color: #aaa4b3;
+  font-size: 11px;
+}
+
+.pocket-phone-call-identity {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 24px 40px;
+  text-align: center;
+}
+
+.pocket-phone-call-identity .pocket-phone-avatar {
+  width: 86px;
+  height: 86px;
+  margin-bottom: 9px;
+  font-size: 28px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);
+}
+
+.pocket-phone-call-name {
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: -.025em;
+}
+
+.pocket-phone-call-status {
+  color: #a39dab;
+  font-size: 12px;
+}
+
+.pocket-phone-call-controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+  flex: 0 0 auto;
+  padding: 0 18px 36px;
+}
+
+.pocket-phone-call-control {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #aaa4b3;
+  font-size: 9px;
+}
+
+.pocket-phone-call-control-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: #f8f6fb;
+  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);
+}
+
+.pocket-phone-call-control-icon > svg,
+.pocket-phone-call-control-icon .pocket-call-symbol svg {
+  width: 19px;
+  height: 19px;
+}
+
+.pocket-phone-call-control.is-danger .pocket-phone-call-control-icon {
+  background: linear-gradient(145deg, #c35d69, #984651);
+}
+
+.pocket-phone-call-control-icon .pocket-call-symbol {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 560px) {
+  .pocket-inline-frame[data-appearance="cards"] {
+    width: 100%;
+  }
+
+  .pocket-inline-artifact {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .pocket-phone-device {
+    width: min(340px, 94vw);
+  }
+}

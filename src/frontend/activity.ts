@@ -108,12 +108,15 @@ function buildBatchArtifact(
   primary.type = 'button'
   primary.className = 'pocket-inline-artifact pocket-inline-chat-transcript'
   primary.dataset.kind = 'batch'
-  primary.appendChild(messageChrome(`${presentation.batchMessages.length} messages`))
 
+  const header = document.createElement('span')
+  header.className = 'pocket-inline-transcript-header'
+  header.appendChild(messageChrome(`${presentation.batchMessages.length} messages`))
   const title = document.createElement('strong')
   title.className = 'pocket-inline-transcript-title'
   title.textContent = presentation.conversationTitle || activity.title || 'Group chat'
-  primary.appendChild(title)
+  header.appendChild(title)
+  primary.appendChild(header)
 
   const transcript = document.createElement('span')
   transcript.className = 'pocket-inline-transcript'
@@ -126,6 +129,8 @@ function buildBatchArtifact(
     row.dataset.continuation = String(Boolean(previous && (previous.senderActorId || previous.senderName) === (item.senderActorId || item.senderName)))
     row.hidden = index >= 3
 
+    const content = document.createElement('span')
+    content.className = 'pocket-inline-transcript-content'
     const sender = document.createElement('strong')
     sender.className = 'pocket-inline-transcript-sender'
     sender.textContent = item.senderName
@@ -134,7 +139,8 @@ function buildBatchArtifact(
     bubble.className = 'pocket-inline-transcript-bubble lp-message-surface'
     bubble.textContent = item.text
 
-    row.append(avatar(item.senderName, options.avatars?.[item.senderActorId || '']), sender, bubble)
+    content.append(sender, bubble)
+    row.append(avatar(item.senderName, options.avatars?.[item.senderActorId || '']), content)
     transcript.appendChild(row)
   }
   primary.appendChild(transcript)
@@ -171,21 +177,27 @@ function buildMessageArtifact(
 
   if (presentation.call) {
     primary.classList.add('pocket-inline-call'); primary.dataset.callStatus = presentation.call.status
-    primary.append(avatar(presentation.senderName || 'Call', options.avatarUrl), messageChrome('', 'Phone'))
+    const identity = document.createElement('span'); identity.className = 'pocket-inline-call-identity'
+    identity.append(avatar(presentation.senderName || 'Call', options.avatarUrl))
+    const details = document.createElement('span'); details.className = 'pocket-inline-call-details'
+    details.append(messageChrome('', 'Phone'))
     const name = document.createElement('strong'); name.className = 'pocket-inline-artifact-actors'; name.textContent = actorLine(activity) || activity.title
     const status = document.createElement('span'); status.className = 'pocket-inline-artifact-copy'; status.textContent = callSummary(presentation.call)
-    primary.append(name, status, callSymbol())
+    details.append(name, status); identity.append(details)
+    primary.append(identity, callSymbol())
   } else if (presentation.kind === 'sent') {
+    const header = document.createElement('span'); header.className = 'pocket-inline-artifact-header'
     const recipient = document.createElement('span')
     recipient.className = 'pocket-inline-artifact-recipient'
     const recipientName = recipientLine(activity)
     recipient.textContent = recipientName ? `To ${recipientName}` : 'Sent message'
+    header.append(messageChrome('sent'), recipient)
 
     const bubble = document.createElement('span')
     bubble.className = 'pocket-inline-chat-bubble lp-message-surface'
     bubble.append(copy)
 
-    primary.append(messageChrome('sent'), recipient, bubble)
+    primary.append(header, bubble)
   } else {
     if (presentation.kind === 'observed') {
       const device = document.createElement('span')
@@ -195,12 +207,13 @@ function buildMessageArtifact(
     }
 
     primary.appendChild(messageChrome(presentation.storyAt?.slice(11, 16) || ''))
-    primary.append(avatar(presentation.senderName || 'Messages', options.avatarUrl))
-
+    const body = document.createElement('span'); body.className = 'pocket-inline-message-body'
+    body.append(avatar(presentation.senderName || 'Messages', options.avatarUrl))
+    const content = document.createElement('span'); content.className = 'pocket-inline-message-content'
     const sender = document.createElement('strong')
     sender.className = 'pocket-inline-artifact-actors'
     sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title
-    primary.append(sender, copy)
+    content.append(sender, copy); body.append(content); primary.append(body)
   }
 
   primary.setAttribute('aria-label', `Open ${presentation.kind === 'observed' ? `${observedDeviceLine(activity)} · ` : ''}${presentation.conversationTitle || activity.title} in Pocket`)

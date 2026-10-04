@@ -4077,17 +4077,120 @@ function portrait(name, url) {
   }
   return avatar;
 }
+var ICON_PATHS = {
+  wifi: ["M3 9.5a14.5 14.5 0 0 1 18 0", "M6.5 13a9 9 0 0 1 11 0", "M10 16.5a3.6 3.6 0 0 1 4 0", "M12 20h.01"],
+  back: ["m15 18-6-6 6-6"],
+  video: ["M15 10l4.6-2.6A1 1 0 0 1 21 8.3v7.4a1 1 0 0 1-1.4.9L15 14", "M4 6.5h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"],
+  plus: ["M12 5v14", "M5 12h14"],
+  send: ["M12 19V5", "m6 11 6-6 6 6"],
+  message: ["M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"],
+  phone: ["M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z"],
+  mute: ["M11 5 6 9H3v6h3l5 4V5Z", "m19 9-6 6", "m13 9 6 6"],
+  speaker: ["M11 5 6 9H3v6h3l5 4V5Z", "M15 9a4 4 0 0 1 0 6", "M17.8 6.5a8 8 0 0 1 0 11"],
+  contacts: ["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M22 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"]
+};
+function icon(name, className = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  if (className)
+    svg.setAttribute("class", className);
+  if (name === "signal") {
+    [[4, 15, 2, 5], [8, 12, 2, 8], [12, 9, 2, 11], [16, 6, 2, 14]].forEach(([x, y, width, height]) => {
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", String(x));
+      rect.setAttribute("y", String(y));
+      rect.setAttribute("width", String(width));
+      rect.setAttribute("height", String(height));
+      rect.setAttribute("rx", "1");
+      rect.setAttribute("fill", "currentColor");
+      rect.setAttribute("stroke", "none");
+      svg.append(rect);
+    });
+    return svg;
+  }
+  if (name === "battery") {
+    const shell = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    shell.setAttribute("x", "3");
+    shell.setAttribute("y", "7");
+    shell.setAttribute("width", "16");
+    shell.setAttribute("height", "10");
+    shell.setAttribute("rx", "2");
+    const nub = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    nub.setAttribute("d", "M21 10v4");
+    const fill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    fill.setAttribute("x", "5");
+    fill.setAttribute("y", "9");
+    fill.setAttribute("width", "11");
+    fill.setAttribute("height", "6");
+    fill.setAttribute("rx", "1");
+    fill.setAttribute("fill", "currentColor");
+    fill.setAttribute("stroke", "none");
+    svg.append(shell, nub, fill);
+    return svg;
+  }
+  for (const pathData of ICON_PATHS[name]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathData);
+    svg.append(path);
+  }
+  return svg;
+}
 function callSymbol() {
-  const icon = node("span", "pocket-call-symbol");
-  icon.setAttribute("aria-hidden", "true");
-  const handset = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  for (const [key, value] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round" }))
-    handset.setAttribute(key, value);
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M3 15.5v-3a2 2 0 0 1 .7-1.5c4.7-4 11.9-4 16.6 0a2 2 0 0 1 .7 1.5v3a1 1 0 0 1-1.2 1l-4-.8a1 1 0 0 1-.8-1v-2.3a12 12 0 0 0-6 0v2.3a1 1 0 0 1-.8 1l-4 .8a1 1 0 0 1-1.2-1Z");
-  handset.append(path);
-  icon.append(handset);
-  return icon;
+  const symbol = node("span", "pocket-call-symbol");
+  symbol.setAttribute("aria-hidden", "true");
+  const handset = icon("phone");
+  handset.style.transform = "rotate(135deg)";
+  symbol.append(handset);
+  return symbol;
+}
+function phoneStatus(time) {
+  const status = node("div", "pocket-phone-status");
+  status.append(node("span", "pocket-phone-status-time", time || "Pocket"), node("span", "pocket-phone-island"));
+  const indicators = node("span", "pocket-phone-indicators");
+  indicators.append(icon("signal"), icon("wifi"), icon("battery"));
+  status.append(indicators);
+  return status;
+}
+function lockDate(storyAt) {
+  if (!storyAt)
+    return "";
+  const value = new Date(storyAt);
+  if (Number.isNaN(value.getTime()))
+    return "";
+  return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(value);
+}
+function appHeader(title, subtitle, openRoute, avatarUrl) {
+  const header = node("button", "pocket-phone-app-header");
+  header.type = "button";
+  header.setAttribute("aria-label", `Open ${title} in Pocket`);
+  header.addEventListener("click", openRoute);
+  const back = node("span", "pocket-phone-header-back");
+  back.append(icon("back"));
+  const identity = node("span", "pocket-phone-header-identity");
+  identity.append(portrait(title, avatarUrl), node("strong", "pocket-phone-conversation-title", title));
+  if (subtitle)
+    identity.append(node("span", "pocket-phone-subtitle", subtitle));
+  const video = node("span", "pocket-phone-header-action");
+  video.append(icon("video"));
+  header.append(back, identity, video);
+  return header;
+}
+function composer() {
+  const bar = node("span", "pocket-mock-composer pocket-phone-composer");
+  bar.setAttribute("aria-hidden", "true");
+  const add = node("span", "pocket-phone-composer-action");
+  add.append(icon("plus"));
+  const field = node("span", "pocket-phone-composer-field", "Message");
+  const send = node("span", "pocket-phone-composer-send");
+  send.append(icon("send"));
+  bar.append(add, field, send);
+  return bar;
 }
 function buildPhoneScreen(activity, openRoute, options) {
   const presentation = activity.presentation;
@@ -4098,13 +4201,14 @@ function buildPhoneScreen(activity, openRoute, options) {
   phone.dataset.appearance = "phone";
   phone.dataset.screen = type;
   phone.style.setProperty("--pocket-inline-accent", options.accent || "#8b7dff");
-  const time = presentation.storyAt?.slice(11, 16);
-  const status = node("div", "pocket-phone-status", time || "Pocket");
-  const indicators = node("span", "pocket-phone-indicators", "▮▮▮  ▰");
-  indicators.setAttribute("aria-hidden", "true");
-  status.append(indicators);
+  if (options.textColor)
+    phone.style.setProperty("--pocket-inline-text", options.textColor);
+  if (options.surfaceColor)
+    phone.style.setProperty("--pocket-inline-surface", options.surfaceColor);
+  const time = presentation.storyAt?.slice(11, 16) || "";
   const screen = node("div", "pocket-phone-screen");
-  phone.append(status, screen);
+  screen.append(phoneStatus(time));
+  phone.append(screen);
   const routeButton = (label, className, aria) => {
     const button = node("button", className, label);
     button.type = "button";
@@ -4117,30 +4221,48 @@ function buildPhoneScreen(activity, openRoute, options) {
   if (type === "lock") {
     screen.classList.add("pocket-phone-lock");
     if (options.background)
-      screen.style.background = options.background;
+      screen.style.backgroundImage = `linear-gradient(rgba(12, 10, 18, .18), rgba(12, 10, 18, .36)), ${options.background}`;
     screen.style.backgroundSize = options.backgroundSize || "cover";
     screen.style.backgroundPosition = options.backgroundPosition || "center";
-    screen.append(node("span", "pocket-phone-lock-label", presentation.kind === "observed" ? `${recipients || "Another actor"}'s phone` : "Locked"));
-    screen.append(node("span", "pocket-phone-clock", time || "Locked"));
-    screen.append(node("span", "pocket-phone-lock-caption", "Tap notification to open"));
+    const lockHero = node("div", "pocket-phone-lock-hero");
+    const deviceLabel = presentation.kind === "observed" ? `${recipients || "Another actor"}'s phone` : recipients ? `${recipients}'s phone` : "Pocket";
+    lockHero.append(node("span", "pocket-phone-lock-label", deviceLabel), node("span", "pocket-phone-clock", time || "—:—"));
+    const date = lockDate(presentation.storyAt);
+    if (date)
+      lockHero.append(node("span", "pocket-phone-lock-caption", date));
     const notification = routeButton("", "pocket-phone-notification", `Open ${presentation.kind === "observed" ? `${recipients}'s phone · ` : ""}${title} in Pocket`);
-    notification.append(node("span", "pocket-phone-app-label", "Messages"), portrait(presentation.senderName || "?", options.avatarUrl), node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", activity.summary || ""));
-    screen.append(notification);
+    const app = node("span", "pocket-phone-notification-app");
+    app.append(icon("message"), node("span", "pocket-phone-app-label", "Messages"));
+    const body = node("span", "pocket-phone-notification-body");
+    body.append(portrait(presentation.senderName || "?", options.avatarUrl));
+    const copy = node("span", "pocket-phone-notification-content");
+    copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", activity.summary || ""));
+    body.append(copy);
+    notification.append(app, body);
+    screen.append(lockHero, notification, node("span", "pocket-phone-home-indicator"));
   } else if (type === "call") {
     screen.classList.add("pocket-phone-call");
     screen.dataset.callStatus = presentation.call.status;
-    screen.append(routeButton("Phone · Call history ↗", "pocket-phone-app-header", "Open call history in Pocket"));
+    const callHeader = routeButton("", "pocket-phone-app-header pocket-phone-call-header", "Open call history in Pocket");
+    const back = node("span", "pocket-phone-header-back");
+    back.append(icon("back"));
+    callHeader.append(back, node("span", "pocket-phone-app-label", "Phone"));
     const identity = node("div", "pocket-phone-call-identity");
-    identity.append(portrait(presentation.senderName || "Call", options.avatarUrl), node("span", "pocket-phone-call-label", "Phone"), node("strong", "pocket-phone-call-name", [presentation.senderName, recipients].filter(Boolean).join(" → ") || activity.title), node("span", "pocket-phone-call-status", callSummary(presentation.call)));
+    identity.append(portrait(presentation.senderName || "Call", options.avatarUrl), node("strong", "pocket-phone-call-name", [presentation.senderName, recipients].filter(Boolean).join(" → ") || activity.title), node("span", "pocket-phone-call-status", callSummary(presentation.call)));
     const controls = node("div", "pocket-phone-call-controls");
-    controls.append(callSymbol(), node("span", "pocket-phone-control-caption", presentation.call.status === "connected" ? "Connected" : presentation.call.status === "ended" ? "Call ended" : "Missed call"));
-    screen.append(identity, controls);
+    const control = (name, label, danger = false) => {
+      const item = node("span", `pocket-phone-call-control${danger ? " is-danger" : ""}`);
+      const glyph = node("span", "pocket-phone-call-control-icon");
+      glyph.append(name === "phone" ? callSymbol() : icon(name));
+      item.append(glyph, node("span", "pocket-phone-control-caption", label));
+      return item;
+    };
+    controls.append(control("mute", "Mute"), control("speaker", "Speaker"), control("message", "Message"), control("phone", presentation.call.status === "ended" ? "Ended" : "End", true));
+    screen.append(callHeader, identity, controls, node("span", "pocket-phone-home-indicator"));
   } else {
     screen.classList.add("pocket-phone-chat");
-    const header = routeButton("", "pocket-phone-app-header", `Open ${title} in Pocket`);
-    header.append(node("span", "pocket-phone-app-label", "‹  Messages"), node("strong", "pocket-phone-conversation-title", title));
-    if (type === "group")
-      header.append(node("span", "pocket-phone-subtitle", `${presentation.batchMessages?.length || 0} messages`));
+    const subtitle = type === "group" ? `${presentation.batchMessages?.length || 0} messages` : recipients ? "Messages" : "";
+    screen.append(appHeader(title, subtitle, () => openRoute(activity.route), type === "chat" ? options.avatarUrl : undefined));
     const thread = node("div", "pocket-phone-thread");
     thread.tabIndex = 0;
     thread.setAttribute("role", "region");
@@ -4151,16 +4273,23 @@ function buildPhoneScreen(activity, openRoute, options) {
       row.dataset.direction = message.direction;
       const previous = messages[index - 1];
       row.dataset.continuation = String(Boolean(previous && previous.senderName === message.senderName));
-      if (message.direction !== "sent")
-        row.append(portrait(message.senderName, options.avatars?.[message.senderActorId || ""]), node("strong", "pocket-phone-sender", message.senderName));
-      row.append(node("span", "pocket-phone-bubble", message.text));
+      if (message.direction !== "sent") {
+        row.append(portrait(message.senderName, options.avatars?.[message.senderActorId || ""]));
+        const content = node("span", "pocket-phone-message-content");
+        if (row.dataset.continuation !== "true")
+          content.append(node("strong", "pocket-phone-sender", message.senderName));
+        content.append(node("span", "pocket-phone-bubble", message.text));
+        row.append(content);
+      } else {
+        const content = node("span", "pocket-phone-message-content");
+        content.append(node("span", "pocket-phone-bubble", message.text));
+        row.append(content);
+      }
       thread.append(row);
     }
     if (type === "chat")
-      thread.append(node("span", "pocket-phone-delivery", "Sent"));
-    const composer = node("span", "pocket-mock-composer pocket-phone-composer", "＋    Message");
-    composer.setAttribute("aria-hidden", "true");
-    screen.append(header, thread, composer);
+      thread.append(node("span", "pocket-phone-delivery", "Delivered"));
+    screen.append(thread, composer(), node("span", "pocket-phone-home-indicator"));
   }
   return phone;
 }
@@ -4283,11 +4412,14 @@ function buildBatchArtifact(activity, openRoute, options) {
   primary.type = "button";
   primary.className = "pocket-inline-artifact pocket-inline-chat-transcript";
   primary.dataset.kind = "batch";
-  primary.appendChild(messageChrome(`${presentation.batchMessages.length} messages`));
+  const header = document.createElement("span");
+  header.className = "pocket-inline-transcript-header";
+  header.appendChild(messageChrome(`${presentation.batchMessages.length} messages`));
   const title = document.createElement("strong");
   title.className = "pocket-inline-transcript-title";
   title.textContent = presentation.conversationTitle || activity.title || "Group chat";
-  primary.appendChild(title);
+  header.appendChild(title);
+  primary.appendChild(header);
   const transcript = document.createElement("span");
   transcript.className = "pocket-inline-transcript";
   const visible = presentation.batchMessages;
@@ -4298,13 +4430,16 @@ function buildBatchArtifact(activity, openRoute, options) {
     const previous = visible[index - 1];
     row.dataset.continuation = String(Boolean(previous && (previous.senderActorId || previous.senderName) === (item.senderActorId || item.senderName)));
     row.hidden = index >= 3;
+    const content = document.createElement("span");
+    content.className = "pocket-inline-transcript-content";
     const sender = document.createElement("strong");
     sender.className = "pocket-inline-transcript-sender";
     sender.textContent = item.senderName;
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-transcript-bubble lp-message-surface";
     bubble.textContent = item.text;
-    row.append(avatar2(item.senderName, options.avatars?.[item.senderActorId || ""]), sender, bubble);
+    content.append(sender, bubble);
+    row.append(avatar2(item.senderName, options.avatars?.[item.senderActorId || ""]), content);
     transcript.appendChild(row);
   }
   primary.appendChild(transcript);
@@ -4345,23 +4480,33 @@ function buildMessageArtifact(activity, openRoute, options) {
   if (presentation.call) {
     primary.classList.add("pocket-inline-call");
     primary.dataset.callStatus = presentation.call.status;
-    primary.append(avatar2(presentation.senderName || "Call", options.avatarUrl), messageChrome("", "Phone"));
+    const identity = document.createElement("span");
+    identity.className = "pocket-inline-call-identity";
+    identity.append(avatar2(presentation.senderName || "Call", options.avatarUrl));
+    const details = document.createElement("span");
+    details.className = "pocket-inline-call-details";
+    details.append(messageChrome("", "Phone"));
     const name = document.createElement("strong");
     name.className = "pocket-inline-artifact-actors";
     name.textContent = actorLine(activity) || activity.title;
     const status = document.createElement("span");
     status.className = "pocket-inline-artifact-copy";
     status.textContent = callSummary(presentation.call);
-    primary.append(name, status, callSymbol());
+    details.append(name, status);
+    identity.append(details);
+    primary.append(identity, callSymbol());
   } else if (presentation.kind === "sent") {
+    const header = document.createElement("span");
+    header.className = "pocket-inline-artifact-header";
     const recipient = document.createElement("span");
     recipient.className = "pocket-inline-artifact-recipient";
     const recipientName = recipientLine(activity);
     recipient.textContent = recipientName ? `To ${recipientName}` : "Sent message";
+    header.append(messageChrome("sent"), recipient);
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-chat-bubble lp-message-surface";
     bubble.append(copy);
-    primary.append(messageChrome("sent"), recipient, bubble);
+    primary.append(header, bubble);
   } else {
     if (presentation.kind === "observed") {
       const device = document.createElement("span");
@@ -4370,11 +4515,17 @@ function buildMessageArtifact(activity, openRoute, options) {
       primary.appendChild(device);
     }
     primary.appendChild(messageChrome(presentation.storyAt?.slice(11, 16) || ""));
-    primary.append(avatar2(presentation.senderName || "Messages", options.avatarUrl));
+    const body = document.createElement("span");
+    body.className = "pocket-inline-message-body";
+    body.append(avatar2(presentation.senderName || "Messages", options.avatarUrl));
+    const content = document.createElement("span");
+    content.className = "pocket-inline-message-content";
     const sender = document.createElement("strong");
     sender.className = "pocket-inline-artifact-actors";
     sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title;
-    primary.append(sender, copy);
+    content.append(sender, copy);
+    body.append(content);
+    primary.append(body);
   }
   primary.setAttribute("aria-label", `Open ${presentation.kind === "observed" ? `${observedDeviceLine(activity)} · ` : ""}${presentation.conversationTitle || activity.title} in Pocket`);
   primary.addEventListener("click", () => openRoute(activity.route));
@@ -4486,7 +4637,7 @@ var APP_META = [
   { app: "trackers", label: "Trackers", icon: "trackers" },
   { app: "settings", label: "Settings", icon: "settings" }
 ];
-function icon(name) {
+function icon2(name) {
   const node = el("span");
   node.innerHTML = ICONS2[name] || ICONS2.home;
   return node;
@@ -4494,7 +4645,7 @@ function icon(name) {
 function iconButton(name, label) {
   const node = button("", "lp-button lp-button-icon");
   node.setAttribute("aria-label", label);
-  node.appendChild(icon(name));
+  node.appendChild(icon2(name));
   return node;
 }
 
@@ -5927,7 +6078,7 @@ class PocketController {
     this.shell.querySelector(".lp-floating-notification")?.remove();
     const toast = button("", "lp-floating-notification");
     toast.setAttribute("role", "status");
-    toast.append(icon(notification.app), el("span", "lp-grow", ""), el("span", "lp-home-activity-arrow", "›"));
+    toast.append(icon2(notification.app), el("span", "lp-grow", ""), el("span", "lp-home-activity-arrow", "›"));
     const copy = toast.children[1];
     copy.append(el("strong", "", notification.title), el("span", "", notification.body));
     toast.addEventListener("click", () => {
@@ -6381,7 +6532,7 @@ class PocketController {
     left.append(el("div", "lp-home-date", formatDate(state.roleplayNow, false)), el("div", "lp-home-clock", roleplayClockText));
     const weather = el("button", "lp-home-weather");
     weather.type = "button";
-    weather.append(icon("weather"), el("span", "", `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`));
+    weather.append(icon2("weather"), el("span", "", `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`));
     weather.addEventListener("click", () => this.openApp("weather"));
     head.append(left, weather);
     const grid = el("div", "lp-app-grid");
@@ -6419,7 +6570,7 @@ class PocketController {
     node.type = "button";
     node.setAttribute("aria-label", meta.label);
     const box = el("span", `lp-app-icon-box lp-icon-${meta.icon}`);
-    box.appendChild(icon(meta.icon));
+    box.appendChild(icon2(meta.icon));
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
     const unread = meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
     if (unread)
@@ -7812,7 +7963,7 @@ ${body}`;
   empty(iconName, title, copy) {
     const node = el("div", "lp-empty");
     const inner = el("div");
-    inner.append(icon(iconName), el("h3", "lp-title", title), el("p", "lp-copy", copy));
+    inner.append(icon2(iconName), el("h3", "lp-title", title), el("p", "lp-copy", copy));
     node.appendChild(inner);
     return node;
   }
@@ -7834,6 +7985,836 @@ function setupPhone(ctx) {
   ctx.ready();
   return () => controller.destroy();
 }
+
+// src/frontend/components/pocket-inline-redesign.css
+var pocket_inline_redesign_default = `:root {
+  --pocket-inline-accent: #8b7dff;
+  --pocket-inline-text: #f5f2fb;
+  --pocket-inline-muted: #a8a2b3;
+  --pocket-inline-surface: #242129;
+  --pocket-inline-surface-2: #2b2731;
+  --pocket-inline-surface-3: #17151c;
+  --pocket-inline-border: rgba(255, 255, 255, .075);
+  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+
+.pocket-artifact-stack,
+.pocket-inline-frame {
+  box-sizing: border-box;
+}
+
+.pocket-inline-frame[data-appearance="cards"] {
+  width: min(100%, 470px);
+  color: var(--pocket-inline-text);
+}
+
+.pocket-inline-frame[data-appearance="cards"] .pocket-inline-artifact,
+.pocket-inline-frame[data-appearance="cards"] .pocket-inline-batch {
+  width: 100%;
+}
+
+.pocket-inline-artifact {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  color: var(--pocket-inline-text);
+  text-align: left;
+  font: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),
+    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);
+  border: 1px solid var(--pocket-inline-border);
+  border-radius: 18px;
+  box-shadow: var(--pocket-inline-shadow);
+  cursor: pointer;
+}
+
+.pocket-inline-artifact:hover {
+  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));
+}
+
+.pocket-inline-artifact:focus-visible,
+.pocket-inline-transcript-more:focus-visible,
+.pocket-phone-device button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);
+  outline-offset: 3px;
+}
+
+.pocket-inline-artifact-device {
+  display: block;
+  margin-bottom: -2px;
+  color: #8f8998;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .015em;
+}
+
+.pocket-inline-artifact-header,
+.pocket-inline-transcript-header,
+.pocket-inline-artifact-chrome {
+  min-width: 0;
+}
+
+.pocket-inline-artifact-header,
+.pocket-inline-transcript-header {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+
+.pocket-inline-artifact-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #a9a3b2;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.pocket-inline-artifact-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pocket-inline-artifact-app svg {
+  width: 14px;
+  height: 14px;
+  color: var(--pocket-inline-accent);
+}
+
+.pocket-inline-artifact-state,
+.pocket-inline-artifact-recipient {
+  color: #8e8897;
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.pocket-inline-artifact-recipient {
+  align-self: flex-end;
+  margin-top: -24px;
+}
+
+.pocket-inline-message-body {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+}
+
+.pocket-inline-message-content,
+.pocket-inline-transcript-content,
+.pocket-inline-call-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pocket-inline-avatar,
+.pocket-phone-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: white;
+  font-weight: 720;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);
+}
+
+.pocket-inline-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 13px;
+}
+
+.pocket-inline-avatar img,
+.pocket-phone-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pocket-inline-artifact-actors,
+.pocket-inline-transcript-title {
+  color: #fbf9ff;
+  font-weight: 760;
+  letter-spacing: -.01em;
+}
+
+.pocket-inline-artifact-actors {
+  font-size: 14px;
+}
+
+.pocket-inline-artifact-copy {
+  color: #e5e1ea;
+  font-size: 13px;
+  line-height: 1.46;
+}
+
+.pocket-inline-chat-bubble,
+.pocket-inline-transcript-bubble {
+  border: 1px solid rgba(255,255,255,.035);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);
+}
+
+.pocket-inline-chat-bubble {
+  align-self: flex-end;
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 15px 15px 5px 15px;
+  color: white;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, #a79cff 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #584fcf));
+}
+
+.pocket-inline-call {
+  align-items: center;
+  min-height: 180px;
+  justify-content: center;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),
+    linear-gradient(160deg, #28252e, #1d1b22);
+}
+
+.pocket-inline-call-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+.pocket-inline-call .pocket-inline-avatar {
+  width: 46px;
+  height: 46px;
+}
+
+.pocket-inline-call .pocket-inline-artifact-chrome {
+  justify-content: center;
+}
+
+.pocket-call-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-top: 4px;
+  color: #fff;
+  background: linear-gradient(145deg, #bd5d69, #974552);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);
+}
+
+.pocket-call-symbol svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pocket-inline-transcript-title {
+  font-size: 15px;
+}
+
+.pocket-inline-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pocket-inline-transcript-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {
+  visibility: hidden;
+}
+
+.pocket-inline-transcript-row .pocket-inline-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.pocket-inline-transcript-sender {
+  color: #aaa4b3;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pocket-inline-transcript-bubble {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 8px 11px;
+  color: #f0edf5;
+  font-size: 12px;
+  line-height: 1.38;
+  background: linear-gradient(145deg, #2c2933, #27242d);
+  border-radius: 5px 13px 13px 13px;
+}
+
+.pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, #6f61e8), color-mix(in srgb, var(--pocket-inline-accent) 64%, #5045ba));
+}
+
+.pocket-inline-batch {
+  border-radius: 18px;
+  overflow: hidden;
+  background: #1e1c23;
+  border: 1px solid var(--pocket-inline-border);
+  box-shadow: var(--pocket-inline-shadow);
+}
+
+.pocket-inline-batch .pocket-inline-artifact {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.pocket-inline-transcript-more {
+  width: 100%;
+  padding: 11px 14px;
+  color: #a8a2b2;
+  font: inherit;
+  font-size: 11px;
+  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));
+  border: 0;
+  border-top: 1px solid rgba(255,255,255,.055);
+  cursor: pointer;
+}
+
+/* Full-phone renderer */
+.pocket-phone-device {
+  box-sizing: border-box;
+  width: min(360px, 92vw);
+  aspect-ratio: 9 / 18.4;
+  padding: 5px;
+  color: var(--pocket-inline-text);
+  background:
+    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 42px;
+  box-shadow:
+    0 32px 70px rgba(0,0,0,.48),
+    0 8px 24px rgba(0,0,0,.3),
+    inset 0 1px 0 rgba(255,255,255,.18),
+    inset 0 -1px 0 rgba(255,255,255,.04);
+  overflow: hidden;
+}
+
+.pocket-phone-screen {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: #f7f5fb;
+  background:
+    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),
+    linear-gradient(180deg, #15131a 0%, #100f14 100%);
+  border-radius: 36px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+}
+
+.pocket-phone-status {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  flex: 0 0 35px;
+  padding: 0 17px;
+  color: rgba(255,255,255,.92);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.pocket-phone-status-time {
+  justify-self: start;
+}
+
+.pocket-phone-island {
+  width: 76px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.82);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);
+}
+
+.pocket-phone-indicators {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 5px;
+}
+
+.pocket-phone-indicators svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pocket-phone-indicators svg:last-child {
+  width: 18px;
+}
+
+.pocket-phone-home-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  width: 92px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(255,255,255,.64);
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+
+/* Lock screen */
+.pocket-phone-lock {
+  background:
+    radial-gradient(circle at 68% 8%, rgba(147,124,255,.34), transparent 28%),
+    radial-gradient(circle at 18% 44%, rgba(97,74,178,.22), transparent 34%),
+    linear-gradient(155deg, #241b35 0%, #171320 44%, #0d0c11 100%);
+}
+
+.pocket-phone-lock::after {
+  content: '';
+  position: absolute;
+  inset: 35px 0 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));
+}
+
+.pocket-phone-lock-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 40px 18px 26px;
+  text-shadow: 0 2px 14px rgba(0,0,0,.28);
+}
+
+.pocket-phone-lock-label {
+  color: rgba(255,255,255,.64);
+  font-size: 11px;
+  font-weight: 580;
+}
+
+.pocket-phone-clock {
+  color: #fff;
+  font-size: 54px;
+  font-weight: 280;
+  line-height: 1;
+  letter-spacing: -.045em;
+}
+
+.pocket-phone-lock-caption {
+  color: rgba(255,255,255,.74);
+  font-size: 12px;
+}
+
+.pocket-phone-notification {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: calc(100% - 28px);
+  margin: 0 14px;
+  padding: 13px 14px 14px;
+  color: #f7f4fb;
+  text-align: left;
+  font: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),
+    rgba(28,25,34,.86);
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 18px;
+  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+}
+
+.pocket-phone-notification-app {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,.68);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.pocket-phone-notification-app svg {
+  width: 14px;
+  height: 14px;
+  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);
+}
+
+.pocket-phone-notification-body {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pocket-phone-notification-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pocket-phone-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 12px;
+}
+
+.pocket-phone-notification-sender {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.pocket-phone-notification-copy {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(255,255,255,.9);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+/* Open chat */
+.pocket-phone-chat {
+  background:
+    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),
+    #0c0b0f;
+}
+
+.pocket-phone-app-header {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 36px minmax(0,1fr) 36px;
+  align-items: center;
+  flex: 0 0 78px;
+  width: 100%;
+  padding: 8px 12px 10px;
+  color: inherit;
+  text-align: center;
+  font: inherit;
+  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.065);
+  box-shadow: 0 9px 18px rgba(0,0,0,.12);
+  cursor: pointer;
+}
+
+.pocket-phone-header-back,
+.pocket-phone-header-action {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);
+  border-radius: 50%;
+}
+
+.pocket-phone-header-back svg,
+.pocket-phone-header-action svg {
+  width: 20px;
+  height: 20px;
+}
+
+.pocket-phone-header-action {
+  background: rgba(255,255,255,.055);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+}
+
+.pocket-phone-header-identity {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-self: center;
+  column-gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.pocket-phone-header-identity .pocket-phone-avatar {
+  grid-row: 1 / 3;
+}
+
+.pocket-phone-conversation-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-phone-subtitle {
+  color: #918b99;
+  font-size: 9px;
+}
+
+.pocket-phone-thread {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 12px 18px;
+  scrollbar-color: rgba(255,255,255,.18) transparent;
+  scrollbar-width: thin;
+}
+
+.pocket-phone-message {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  width: 100%;
+}
+
+.pocket-phone-message[data-direction="sent"] {
+  justify-content: flex-end;
+}
+
+.pocket-phone-message[data-continuation="true"] .pocket-phone-avatar {
+  visibility: hidden;
+}
+
+.pocket-phone-message-content {
+  display: flex;
+  max-width: 79%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pocket-phone-sender {
+  margin-left: 3px;
+  color: #948e9c;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.pocket-phone-bubble {
+  display: block;
+  padding: 9px 11px;
+  color: #f3eff7;
+  font-size: 12px;
+  line-height: 1.36;
+  background: linear-gradient(145deg, #2b2731, #232029);
+  border: 1px solid rgba(255,255,255,.045);
+  border-radius: 6px 15px 15px 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);
+}
+
+.pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));
+  border-radius: 15px 15px 5px 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);
+}
+
+.pocket-phone-delivery {
+  align-self: flex-end;
+  margin: -3px 3px 0 0;
+  color: #77727f;
+  font-size: 8px;
+  font-weight: 680;
+  text-transform: uppercase;
+}
+
+.pocket-phone-composer {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr) 32px;
+  align-items: center;
+  flex: 0 0 58px;
+  gap: 7px;
+  padding: 8px 10px 13px;
+  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));
+  border-top: 1px solid rgba(255,255,255,.065);
+}
+
+.pocket-phone-composer-action,
+.pocket-phone-composer-send {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #aaa4b3;
+  background: #24212a;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+
+.pocket-phone-composer-send {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));
+}
+
+.pocket-phone-composer-action svg,
+.pocket-phone-composer-send svg {
+  width: 16px;
+  height: 16px;
+}
+
+.pocket-phone-composer-field {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  color: #797480;
+  font-size: 11px;
+  background: #131117;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);
+}
+
+/* Dedicated call screen */
+.pocket-phone-call {
+  background:
+    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
+    radial-gradient(circle at 80% 75%, rgba(84,58,140,.18), transparent 30%),
+    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
+}
+
+.pocket-phone-call-header {
+  grid-template-columns: 36px 1fr;
+  justify-items: start;
+  flex-basis: 54px;
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.pocket-phone-call-header .pocket-phone-app-label {
+  color: #aaa4b3;
+  font-size: 11px;
+}
+
+.pocket-phone-call-identity {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 24px 40px;
+  text-align: center;
+}
+
+.pocket-phone-call-identity .pocket-phone-avatar {
+  width: 86px;
+  height: 86px;
+  margin-bottom: 9px;
+  font-size: 28px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);
+}
+
+.pocket-phone-call-name {
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: -.025em;
+}
+
+.pocket-phone-call-status {
+  color: #a39dab;
+  font-size: 12px;
+}
+
+.pocket-phone-call-controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+  flex: 0 0 auto;
+  padding: 0 18px 36px;
+}
+
+.pocket-phone-call-control {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #aaa4b3;
+  font-size: 9px;
+}
+
+.pocket-phone-call-control-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: #f8f6fb;
+  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);
+}
+
+.pocket-phone-call-control-icon > svg,
+.pocket-phone-call-control-icon .pocket-call-symbol svg {
+  width: 19px;
+  height: 19px;
+}
+
+.pocket-phone-call-control.is-danger .pocket-phone-call-control-icon {
+  background: linear-gradient(145deg, #c35d69, #984651);
+}
+
+.pocket-phone-call-control-icon .pocket-call-symbol {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 560px) {
+  .pocket-inline-frame[data-appearance="cards"] {
+    width: 100%;
+  }
+
+  .pocket-inline-artifact {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .pocket-phone-device {
+    width: min(340px, 94vw);
+  }
+}
+`;
 
 // src/frontend/components/design-system.ts
 var POCKET_DESIGN_SYSTEM = `
@@ -7972,33 +8953,6 @@ var POCKET_DESIGN_SYSTEM = `
   .lp-media-viewer { --lp-text:#f7f5ff; --lp-bg:#141319; --lp-muted:#b9b5c5; --lp-border:#ffffff22; }
   .lp-media-viewer .lp-gallery-actions { display:flex; flex-wrap:wrap; justify-content:space-around; gap:8px; padding:16px 0; }
   .lp-media-viewer .lp-button { min-height:44px; font-size:13px; color:var(--lp-text); background:#ffffff0b; }
-  .pocket-inline-anchor { margin:14px 0; }
-  .pocket-artifact-stack { gap:4px; }
-  .pocket-inline-artifact { width:min(100%,480px); min-height:0; padding:12px 13px; gap:6px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 14%,transparent); border-radius:18px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 88%,transparent); color:var(--lumiverse-text,#f7f5ff); box-shadow:none; backdrop-filter:none; }
-  .pocket-inline-artifact[data-kind="received"] { background:var(--lumiverse-fill,#202127); }
-  .pocket-inline-artifact[data-kind="observed"] { width:min(100%,460px); opacity:1; border-style:solid; background:var(--lumiverse-fill,#202127); }
-  .pocket-inline-artifact-chrome { min-height:18px; gap:10px; }
-  .pocket-inline-artifact-app { display:inline-flex; align-items:center; gap:6px; font-size:10px; font-weight:650; color:inherit; opacity:.72; letter-spacing:0; }
-  .pocket-inline-artifact-app svg { width:15px; height:15px; flex:none; color:var(--pocket-inline-accent,var(--lumiverse-primary,#8b7dff)); }
-  .pocket-inline-artifact-state { font-size:9px; text-transform:none; letter-spacing:0; opacity:.48; }
-  .pocket-inline-artifact-device { display:block; margin-bottom:1px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; font-weight:600; opacity:.55; }
-  .pocket-inline-artifact-actors { display:block; margin-top:1px; white-space:normal; font-size:13px; line-height:1.3; font-weight:720; }
-  .pocket-inline-artifact-copy { display:block; overflow:visible; font-size:13px; line-height:1.5; opacity:.94; -webkit-line-clamp:unset; }
-  .pocket-inline-artifact[data-kind="sent"] { width:min(100%,420px); margin-left:0; padding:12px 14px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 14%,transparent); border-radius:20px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 90%,transparent); box-shadow:none; backdrop-filter:none; gap:5px; }
-  .pocket-inline-artifact-recipient { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:10px; text-align:left; opacity:.58; }
-  .pocket-inline-chat-bubble { justify-self:start; width:auto; max-width:100%; padding:0; background:transparent; color:inherit; border-radius:0; box-shadow:none; }
-  .pocket-inline-chat-bubble .pocket-inline-artifact-copy { font-size:13px; line-height:1.48; opacity:1; }
-  .pocket-inline-sent-status { display:block; padding-right:4px; color:var(--lumiverse-text,#f7f5ff); font-size:9px; text-align:right; opacity:.42; }
-  .pocket-inline-chat-transcript { width:min(100%,500px); padding:12px 13px 14px; gap:8px; cursor:pointer; }
-  .pocket-inline-transcript-title { display:block; font-size:13px; line-height:1.3; font-weight:760; }
-  .pocket-inline-transcript { display:grid; gap:7px; margin-top:2px; }
-  .pocket-inline-transcript-row { display:grid; gap:3px; justify-items:start; max-width:86%; }
-  .pocket-inline-transcript-row[data-direction="sent"] { justify-self:end; justify-items:end; }
-  .pocket-inline-transcript-row[data-direction="observed"] { opacity:.82; }
-  .pocket-inline-transcript-sender { padding:0 5px; font-size:9px; line-height:1.2; font-weight:650; opacity:.58; }
-  .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 76%,white 5%); color:var(--lumiverse-text,#f7f5ff); font-size:12px; line-height:1.42; text-align:left; }
-  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 58%,var(--lumiverse-fill,#17151d)); color:#fff; }
-  .pocket-inline-transcript-more { display:block; padding:5px 4px 0; border-top:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 10%,transparent); font-size:9px; opacity:.48; text-align:center; }
   .pocket-receipt { width:min(100%,420px); min-height:52px; padding:10px 12px; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; border-radius:18px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 12%,transparent); box-shadow:none; background:#222027; backdrop-filter:none; opacity:1; }
   button.pocket-receipt:hover { background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 85%,var(--lumiverse-primary,#8b7dff)); }
   .pocket-receipt-kind { padding:7px; border-radius:10px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 22%,transparent); font-size:9px; font-weight:750; }
@@ -8009,90 +8963,6 @@ var POCKET_DESIGN_SYSTEM = `
   .pocket-receipt-details { margin:0 2px; font-size:9px; opacity:.42; order:3; }
   .pocket-receipt-details summary { width:max-content; cursor:pointer; }
   .pocket-receipt-details > span { display:block; margin-top:3px; max-width:460px; line-height:1.35; }
-  .pocket-inline-frame { width:min(100%,460px); min-width:0; box-sizing:border-box; margin:6px auto; padding:12px; border:1px solid color-mix(in srgb,var(--pocket-inline-text,#fff) 12%,transparent); border-radius:22px; background:var(--pocket-inline-bg,linear-gradient(145deg,#171327,#123a4a)); background-size:cover; background-position:center; color:var(--pocket-inline-text,#f7f5ff); overflow:hidden; }
-  .pocket-inline-frame .pocket-inline-artifact { width:100%; box-sizing:border-box; grid-template-columns:32px minmax(0,1fr); background:#242229; color:#f2f0f5; border-color:rgba(255,255,255,.08); box-shadow:0 2px 6px #00000012; backdrop-filter:none; border-radius:15px; }
-  .pocket-inline-frame[data-appearance="cards"] { padding:5px; border-radius:18px; background:#201e25; color:#f2f0f5; border-color:rgba(255,255,255,.08); box-shadow:0 3px 10px #00000024,0 12px 28px #00000012; }
-  .pocket-inline-frame[data-appearance="cards"] .pocket-inline-artifact { border:0; padding:12px; background:#242229; box-shadow:none; }
-  .pocket-inline-frame[data-appearance="cards"] .pocket-inline-transcript-more { border-top:1px solid color-mix(in srgb,currentColor 10%,transparent); border-radius:0 0 13px 13px; margin-top:0; opacity:.8; background:transparent; }
-  .pocket-inline-frame .pocket-inline-artifact-chrome,.pocket-inline-frame .pocket-inline-artifact-device { grid-column:1/-1; }
-  .pocket-inline-frame .pocket-inline-artifact-copy { grid-column:2; }
-  .pocket-inline-avatar { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; grid-row:auto/span 2; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 60%,#333); color:white; font-size:12px; font-weight:750; overflow:hidden; }
-  .pocket-inline-avatar img { width:100%; height:100%; object-fit:cover; }
-  .pocket-inline-frame[data-kind="sent"] .pocket-inline-artifact { width:100%; grid-template-columns:minmax(0,1fr); background:transparent; border:0; padding:2px; backdrop-filter:none; }
-  .pocket-inline-frame[data-kind="sent"] .pocket-inline-artifact-recipient { text-align:right; }
-  .pocket-inline-frame .pocket-inline-transcript-bubble { background:#29272f; color:#f2f0f5; }
-  .pocket-inline-frame[data-kind="sent"] .pocket-inline-chat-bubble { justify-self:end; max-width:88%; padding:10px 13px; border-radius:17px 17px 5px 17px; background:var(--pocket-inline-accent,#51459c); color:white; }
-  .pocket-inline-frame[data-kind="sent"] .pocket-inline-artifact-copy { grid-column:auto; }
-  .pocket-inline-frame .pocket-inline-chat-transcript { display:grid; grid-template-columns:minmax(0,1fr); padding:10px; }
-  .pocket-inline-frame .pocket-inline-transcript { max-height:330px; overflow:auto; overscroll-behavior:contain; }
-  .pocket-inline-frame .pocket-inline-transcript-row { grid-template-columns:24px minmax(0,1fr); gap:4px 7px; max-width:94%; }
-  .pocket-inline-frame .pocket-inline-transcript-row[hidden] { display:none; }
-  .pocket-inline-transcript-row .pocket-inline-avatar { width:24px; height:24px; font-size:10px; grid-row:1/span 2; }
-  .pocket-inline-frame .pocket-inline-transcript-sender,.pocket-inline-frame .pocket-inline-transcript-bubble { grid-column:2; }
-  .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] { grid-template-columns:minmax(0,1fr); }
-  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-avatar { display:none; }
-  .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar { visibility:hidden; }
-  .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-transcript-sender { display:none; }
-  .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] :is(.pocket-inline-transcript-sender,.pocket-inline-transcript-bubble) { grid-column:1; }
-  .pocket-inline-frame .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { background:var(--pocket-inline-accent,#51459c); }
-  button.pocket-inline-transcript-more { display:block; width:100%; padding:10px; margin-top:5px; border:0; border-radius:12px; background:var(--pocket-inline-surface,#202127); color:inherit; font:inherit; font-size:11px; cursor:pointer; }
-  button.pocket-inline-transcript-more:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:2px; }
-  .pocket-inline-frame.pocket-phone-device { width:min(100%,320px); aspect-ratio:9/19.5; min-height:0; padding:0 0 18px; border:5px solid #29262e; outline:1px solid #ffffff14; border-radius:34px; background:#17151b; color:#f2f0f5; box-shadow:0 8px 24px #0003; position:relative; display:flex; flex-direction:column; container-type:inline-size; }
-  .pocket-phone-device::after { content:''; position:absolute; width:70px; height:3px; background:#dedbe5; opacity:.6; border-radius:4px; bottom:7px; left:calc(50% - 35px); pointer-events:none; }
-  .pocket-phone-status { display:flex; justify-content:space-between; align-items:center; padding:13px 18px 9px; min-height:32px; flex:none; font-size:10px; font-weight:650; }
-  .pocket-phone-indicators { letter-spacing:1px; font-size:9px; }
-  .pocket-phone-screen { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
-  .pocket-phone-lock { padding:18px 12px; align-items:center; }
-  .pocket-phone-lock-label { font-size:11px; color:#b9b4c3; margin-top:24px; }
-  .pocket-phone-clock { font-size:52px; line-height:1.2; font-weight:300; letter-spacing:-2px; margin-top:10px; }
-  .pocket-phone-lock-caption { font-size:10px; color:#b9b4c3; margin:8px 0 36px; }
-  .pocket-phone-notification { appearance:none; display:grid; grid-template-columns:30px minmax(0,1fr); gap:4px 8px; width:100%; padding:12px; background:#242229; color:#f2f0f5; border:1px solid #ffffff14; border-radius:15px; text-align:left; font:inherit; cursor:pointer; box-shadow:0 3px 10px #0002; }
-  .pocket-phone-app-label { display:block; font-size:10px; font-weight:600; color:#b9b4c3; }
-  .pocket-phone-notification .pocket-phone-app-label { grid-column:1/-1; margin-bottom:5px; }
-  .pocket-phone-notification-sender { font-size:12px; align-self:center; }
-  .pocket-phone-notification-copy { grid-column:2; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
-  .pocket-phone-avatar { display:grid; place-items:center; width:30px; height:30px; flex:none; grid-row:auto/span 2; border-radius:50%; background:color-mix(in srgb,var(--pocket-inline-accent,#8b7dff) 48%,#29272f); color:#f7f5ff; font-size:12px; font-weight:650; overflow:hidden; }
-  .pocket-phone-avatar img { width:100%; height:100%; object-fit:cover; }
-  .pocket-phone-app-header { appearance:none; display:block; flex:none; width:100%; padding:12px 14px; background:#211e27; color:#f2f0f5; border:0; border-bottom:1px solid #ffffff14; font:inherit; text-align:left; cursor:pointer; }
-  .pocket-phone-conversation-title { display:block; margin-top:5px; font-size:14px; line-height:1.3; overflow-wrap:anywhere; }
-  .pocket-phone-subtitle { display:block; font-size:10px; color:#b9b4c3; margin-top:3px; }
-  .pocket-phone-thread { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#514b5f transparent; padding:16px 12px; display:flex; flex-direction:column; gap:9px; }
-  .pocket-phone-message { display:grid; grid-template-columns:24px minmax(0,1fr); align-self:flex-start; max-width:94%; gap:3px 7px; }
-  .pocket-phone-message .pocket-phone-avatar { width:24px; height:24px; font-size:10px; }
-  .pocket-phone-sender { grid-column:2; font-size:10px; color:#b9b4c3; font-weight:600; }
-  .pocket-phone-bubble { grid-column:2; display:block; width:fit-content; background:#282430; border-radius:13px 13px 13px 4px; padding:8px 10px; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
-  .pocket-phone-message[data-direction="sent"] { align-self:flex-end; display:block; max-width:88%; }
-  .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble { background:var(--pocket-inline-accent,#8b7dff); color:white; border-radius:13px 13px 4px 13px; }
-  .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar { visibility:hidden; }
-  .pocket-phone-message[data-continuation="true"] .pocket-phone-sender { display:none; }
-  .pocket-phone-delivery { text-align:right; font-size:9px; color:#b9b4c3; margin-top:-4px; }
-  .pocket-phone-composer { flex:none; margin:0; padding:14px; border:0; border-top:1px solid #ffffff14; border-radius:0; background:#211e27; color:#b9b4c3; font-size:12px; }
-  .pocket-phone-composer::after { content:'↑'; float:right; color:var(--pocket-inline-accent,#8b7dff); }
-  .pocket-phone-call .pocket-phone-app-header { background:transparent; border:0; font-size:10px; color:#b9b4c3; }
-  .pocket-phone-call-identity { display:flex; flex:1; min-height:0; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:20px 18px; text-align:center; }
-  .pocket-phone-call-identity .pocket-phone-avatar { width:76px; height:76px; font-size:30px; margin-bottom:12px; }
-  .pocket-phone-call-label { font-size:11px; color:#b9b4c3; }
-  .pocket-phone-call-name { font-size:20px; line-height:1.3; font-weight:600; overflow-wrap:anywhere; }
-  .pocket-phone-call-status { font-size:12px; line-height:1.5; color:#b9b4c3; }
-  .pocket-phone-call-controls { display:flex; flex:none; flex-direction:column; align-items:center; gap:10px; padding:12px 12px 48px; }
-  .pocket-phone-call-controls .pocket-call-symbol { width:52px; height:52px; margin:0; }
-  .pocket-phone-call-controls .pocket-call-symbol svg { width:26px; height:26px; }
-  .pocket-phone-call[data-call-status="ended"] .pocket-call-symbol,.pocket-phone-call[data-call-status="missed"] .pocket-call-symbol { background:#994c57; }
-  .pocket-phone-call-speaker,.pocket-phone-control-caption { font-size:10px; color:#b9b4c3; }
-  @container (max-width:240px) {
-    .pocket-phone-call-identity { gap:7px; padding:10px 12px; }
-    .pocket-phone-call-identity .pocket-phone-avatar { width:56px; height:56px; font-size:24px; margin-bottom:4px; }
-    .pocket-phone-call-name { font-size:17px; }
-    .pocket-phone-call-status { font-size:11px; }
-    .pocket-phone-call-controls { padding:8px 12px 24px; gap:8px; }
-    .pocket-phone-call-controls .pocket-call-symbol { width:44px; height:44px; }
-  }
-  .pocket-phone-notification:focus-visible,.pocket-phone-app-header:focus-visible,.pocket-phone-thread:focus-visible { outline:2px solid var(--pocket-inline-accent,#8b7dff); outline-offset:-2px; }
-  .pocket-inline-frame .pocket-inline-call { display:flex; flex-direction:column; align-items:center; text-align:center; padding:18px; }
-  .pocket-inline-call .pocket-inline-avatar { width:44px; height:44px; font-size:18px; }
-  .pocket-call-symbol { display:grid; place-items:center; width:36px; height:36px; border-radius:50%; background:#476b54; color:white; margin-top:6px; }
-  .pocket-call-symbol svg { width:21px; height:21px; }
-  .pocket-inline-call[data-call-status="ended"] .pocket-call-symbol,.pocket-inline-call[data-call-status="missed"] .pocket-call-symbol { background:#994c57; }
   .lp-bubble.lp-call-history { align-self:center; max-width:90%; border-radius:16px; background:var(--lp-surface); border:1px solid var(--lp-border); text-align:center; }
   @container (max-width:360px) {
     .lumiphone-shell .lp-content { padding-inline:12px; }
@@ -8102,6 +8972,7 @@ var POCKET_DESIGN_SYSTEM = `
     .lumiphone-shell .lp-row { flex-wrap:wrap; }
   }
   @media (prefers-reduced-motion:reduce) { .lumiphone-shell *, .pocket-inline-artifact { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+${pocket_inline_redesign_default}
 `;
 
 // src/styles.ts
@@ -8547,26 +9418,8 @@ var PHONE_STYLES = `
   .pocket-inline-anchor[hidden] { display:none !important; }
   .pocket-inline-anchor .pocket-artifact-stack { width:100%; }
   .pocket-artifact-stack { display:grid; gap:5px; }
-  .pocket-inline-artifact { appearance:none; width:100%; min-height:62px; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 38%,transparent); border-radius:16px; display:grid; gap:5px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 92%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; box-shadow:0 10px 26px rgba(0,0,0,.16); overflow:hidden; }
-  button.pocket-inline-artifact { cursor:pointer; }
-  .pocket-inline-artifact[data-kind="received"] { background:linear-gradient(180deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 84%,white 5%),color-mix(in srgb,var(--lumiverse-fill,#17151d) 96%,transparent)); backdrop-filter:blur(14px); }
-  .pocket-inline-artifact[data-kind="sent"] { width:min(88%,420px); margin-left:auto; border:0; background:transparent; box-shadow:none; padding:2px 0; }
-  .pocket-inline-artifact[data-kind="observed"] { width:min(92%,430px); opacity:.92; border-style:dashed; background:linear-gradient(135deg,color-mix(in srgb,var(--lumiverse-fill,#17151d) 94%,transparent),color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 7%,var(--lumiverse-fill,#17151d))); }
-  .pocket-inline-artifact-chrome { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
-  .pocket-inline-artifact-app { color:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 74%,white); font-size:9px; font-weight:850; letter-spacing:.025em; }
-  .pocket-inline-artifact-state { opacity:.46; font-size:8px; text-transform:uppercase; letter-spacing:.04em; }
-  .pocket-inline-artifact-actors { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-  .pocket-inline-artifact-copy { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; opacity:.84; font-size:11px; line-height:1.38; }
-  .pocket-inline-chat-bubble { justify-self:end; max-width:100%; padding:8px 10px; border-radius:15px 15px 4px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 54%,var(--lumiverse-fill,#17151d)); box-shadow:0 7px 18px rgba(0,0,0,.14); }
-  .pocket-inline-chat-bubble .pocket-inline-artifact-copy { opacity:.96; }
-  .pocket-inline-chat-transcript { width:min(100%,500px); padding:11px 12px 13px; }
-  .pocket-inline-transcript { display:grid; gap:7px; }
-  .pocket-inline-transcript-row { display:grid; gap:3px; justify-items:start; max-width:86%; }
-  .pocket-inline-transcript-row[data-direction="sent"] { justify-self:end; justify-items:end; }
-  .pocket-inline-transcript-sender { padding-inline:5px; font-size:9px; opacity:.6; }
-  .pocket-inline-transcript-bubble { display:block; width:auto; max-width:100%; padding:8px 10px; border-radius:15px 15px 15px 6px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 80%,white 4%); font-size:12px; line-height:1.42; }
-  .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble { border-radius:15px 15px 6px 15px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 56%,var(--lumiverse-fill,#17151d)); color:#fff; }
-  .pocket-inline-transcript-more { display:block; padding-top:5px; font-size:9px; text-align:center; opacity:.5; }
+  .pocket-artifact-stack > .pocket-inline-frame { margin-inline:auto; }
+  .pocket-inline-transcript-row[hidden] { display:none; }
   .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
   button.pocket-receipt { cursor:pointer; }
   button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }
