@@ -14,6 +14,7 @@ import type {
   PocketContactDraft,
   PhoneEventSuggestion,
   PocketNpcBankEntry,
+  PocketContactGroup,
   PocketActivity,
   PocketTurnCandidateOrigin,
   PocketRoute,
@@ -33,6 +34,7 @@ import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
+import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
 import { activityReceipt, renderActivityHost } from './activity.js'
@@ -147,7 +149,12 @@ class PocketController {
   private pendingWallpaperTarget: PocketImageTarget | null = null
   private pendingContactPhotoId = ''
   private selectedContactId = ''
-  private selectedContactView: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' = 'list'
+  private selectedContactView: ContactView = 'list'
+  private selectedContactGroupId = ''
+  private npcBankGroups: PocketContactGroup[] = []
+  private collectionDrafts = new Map<string, Record<string, unknown>>()
+  private collectionRequest = ''
+  private collectionRequestKey = ''
   private npcBriefs = new Map<string, string>()
   private contactFormDrafts = new Map<string, Array<{ value: string; checked: boolean }>>()
   private npcDraft: PocketContactDraft | null = null
@@ -175,6 +182,11 @@ class PocketController {
   private cameraPreview = ''
   private cameraContactId = ''
   private cameraReady = false
+  private cameraImageId = ''
+  private cameraOptions = { purpose: 'scene', aspect: '', connectionId: '', model: '' }
+  private imageConnections: Array<{ id: string; name: string }> = []
+  private cameraFocus = { x: 50, y: 50 }
+  private cameraNpcDraft: PocketContactDraft | null = null
   private cameraProgress = ''
   private cameraBusy = false
   private cameraRequestId = ''
@@ -475,6 +487,8 @@ class PocketController {
         if (unread) meta.appendChild(el('span', 'lumiphone-device-unread', unread > 99 ? '99+' : String(unread)))
         row.append(identity, meta)
         row.addEventListener('click', () => {
+          if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
+          this.cameraRequestId = ''; this.cameraBusy = false; this.cameraReady = false; this.cameraPreview = ''; this.cameraContactId = ''; this.cameraNpcDraft = null
           this.deviceOwnerActorId = actorId
           this.syncSurfaceIdentity()
           this.selectedConversationId = ''
@@ -912,8 +926,10 @@ class PocketController {
       const previousUnread = this.unreadCount()
       if (payload.reason === 'host_swipe') this.clearActivitySurfaces(true)
       if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
+        this.collectionRequest = ''
         this.cameraDraft = { scene: '', enhance: undefined }
         this.cameraPreview = ''; this.cameraProgress = ''; this.cameraBusy = false; this.cameraRequestId = ''; this.cameraContactId = ''; this.cameraReady = false
+        this.cameraImageId = ''; this.cameraNpcDraft = null; this.cameraOptions = { purpose: 'scene', aspect: '', connectionId: '', model: '' }; this.cameraFocus = { x: 50, y: 50 }
         this.npcDraft = null; this.previousNpcDraft = null
       }
       this.state = payload.state as PhoneState
@@ -922,6 +938,7 @@ class PocketController {
       if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId)) this.deviceOwnerActorId = personaDeviceId
       this.syncSurfaceIdentity()
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries as PocketNpcBankEntry[] : []
+      this.npcBankGroups = Array.isArray(payload.npcBank?.groups) ? payload.npcBank.groups as PocketContactGroup[] : []
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
@@ -1109,6 +1126,15 @@ class PocketController {
       if (this.currentApp === 'settings') this.updateSettingsDiagnostics()
       return
     }
+    if (payload.type === 'lumiphone:collection_done') {
+      if (payload.requestId === this.collectionRequest) {
+        this.collectionRequest = ''
+        this.collectionDrafts.delete(this.collectionRequestKey)
+        this.openPocket(this.router.settle({ app: 'contacts', view: payload.view || 'groups' }), false)
+      }
+      this.showFeedback(payload.message || 'Contacts updated.')
+      return
+    }
     if (payload.type === 'lumiphone:gallery') {
       this.gallery = { data: payload.data || [], total: Number(payload.total) || 0 }
       if (this.currentApp === 'gallery') this.render(false)
@@ -1186,7 +1212,7 @@ class PocketController {
     if (payload.type === 'lumiphone:camera_progress') {
       if (payload.requestId !== this.cameraRequestId) return
       this.cameraBusy = true
-      this.cameraProgress = payload.message || (payload.phase === 'preview' ? 'Preview developing…' : 'Working…')
+      this.cameraProgress = (payload.message || (payload.phase === 'preview' ? 'Preview developing…' : 'Working…')) + (payload.totalSteps ? ` ${payload.step || 0}/${payload.totalSteps}` : '')
       if (payload.imageDataUrl) this.cameraPreview = payload.imageDataUrl
       if (payload.profile) this.swarmProfile = payload.profile
       if (this.currentApp === 'camera') this.render(false)
@@ -1206,7 +1232,13 @@ class PocketController {
       this.cameraProgress = 'Photo saved to Gallery'
       this.cameraPreview = payload.imageUrl || this.cameraPreview
       this.cameraReady = Boolean(payload.imageUrl)
+      this.cameraImageId = payload.imageId || ''
       if (payload.profile) this.swarmProfile = payload.profile
+      if (this.currentApp === 'camera') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:image_options') {
+      this.imageConnections = payload.connections || []
       if (this.currentApp === 'camera') this.render(false)
       return
     }
@@ -1228,9 +1260,10 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      if (payload.requestId === this.collectionRequest) this.collectionRequest = ''
       if (payload.requestId === this.groupSaveRequest) this.groupSaveRequest = ''
       if (payload.requestId === this.trackerSaveRequest) this.trackerSaveRequest = ''
-      if (payload.requestId === this.cameraRequestId) this.cameraBusy = false
+      if (payload.requestId === this.cameraRequestId) { this.cameraBusy = false; this.cameraReady = false; this.cameraProgress = payload.error || 'Image generation failed. Try again.' }
       this.messageRequests.delete(payload.requestId)
       const operation = this.operations.get(payload.requestId)
       if (operation) this.operations.set(payload.requestId, { ...operation, phase: 'error', message: payload.error || 'Operation failed' })
@@ -1468,7 +1501,8 @@ class PocketController {
       this.send('lumiphone:mark_read', conversation ? { app: 'messages', conversationId: conversation.id } : { app: 'messages' })
     } else if (route.app === 'contacts') {
       const contact = route.contactId ? this.state.contacts.find((entry) => entry.id === route.contactId) : null
-      this.selectedContactId = contact?.id || ''
+      this.selectedContactId = route.view === 'bank-entry' ? route.contactId || '' : contact?.id || ''
+      this.selectedContactGroupId = route.groupId || ''
       this.selectedContactView = contact ? route.view === 'config' ? 'config' : 'detail' : route.view || 'list'
       this.send('lumiphone:mark_read', { app: 'contacts' })
     } else if (route.app === 'trackers') {
@@ -1483,13 +1517,18 @@ class PocketController {
       this.selectedNoteId = route.noteId === '__new__' || (route.noteId && this.state.notes.some((entry) => entry.id === route.noteId)) ? route.noteId : ''
       this.send('lumiphone:mark_read', { app: 'notes' })
     } else if (route.app === 'camera') {
-      const contactId = route.contactId || ''
+      const contactId = route.draft ? '__draft__' : route.contactId || ''
       if (contactId !== this.cameraContactId) {
         this.cameraContactId = contactId
         this.cameraPreview = ''; this.cameraReady = false; this.cameraRequestId = ''; this.cameraBusy = false; this.cameraProgress = ''
         const contact = this.state.contacts.find(entry => entry.id === contactId)
-        this.cameraDraft = { scene: contact ? [`Portrait of ${contact.name}`, contact.phoneProfile?.appearance || contact.identityBrief || contact.description, 'Head and shoulders, one subject, looking at the camera, clean background'].filter(Boolean).map(part => part.trim().replace(/[.!]+$/, '')).join('. ') + '.' : '', enhance: false }
+        this.cameraNpcDraft = route.draft ? this.npcDraft : null
+        const subject = contact || this.cameraNpcDraft
+        this.cameraDraft = { scene: subject ? [`Portrait of ${subject.name}`, subject.phoneProfile?.appearance || subject.identityBrief, 'Head and shoulders, one subject, looking at the camera, clean background'].filter(Boolean).map(part => part.trim().replace(/[.!]+$/, '')).join('. ') + '.' : '', enhance: false }
+        this.cameraOptions = { purpose: route.draft ? 'draft' : contactId ? 'contact' : 'scene', aspect: contactId ? '1:1' : '', connectionId: '', model: '' }
+        this.cameraFocus = { x: 50, y: 50 }; this.cameraImageId = ''
       }
+      this.send('lumiphone:image_options')
       this.send('lumiphone:mark_read', { app: 'camera' })
     } else if (route.app === 'gallery') {
       this.selectedGalleryImageId = route.imageId || ''
@@ -1793,6 +1832,11 @@ class PocketController {
       groupSaving: Boolean(this.groupSaveRequest),
       saveGroup: (type, payload) => { if (this.groupSaveRequest) return; this.groupSaveDraftKey = `${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId || 'new'}`; this.groupSaveRequest = this.send(type, payload) },
       openContacts: () => this.openPocket({ app: 'contacts', view: 'import' }),
+      startContactGroup: (title, participants) => {
+        const actors = listPocketActors(this.state!)
+        this.groupDrafts.set(`${this.state!.chatId}:${this.state!.characterId}:new`, { title, participants: participants.map(id => actors.find(actor => actor.contact?.id === id)?.actorId || id) })
+        this.openPocket({ app: 'messages', view: 'group-editor' })
+      },
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || 'auto',
       draft: this.messageDrafts.get(this.selectedConversationId) || '',
@@ -2094,11 +2138,27 @@ class PocketController {
   }
 
   private renderContacts(): HTMLDivElement {
+    const collectionKey = `${this.state!.chatId}:${this.state!.characterId}:${this.selectedContactView}:${this.selectedContactGroupId}:${this.selectedContactId}`
     return renderContactsView({
       state: this.state!, selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
       generationBrief: this.npcBriefs.get(`${this.state!.chatId}:${this.state!.characterId}`) || '',
       updateGenerationBrief: brief => { this.npcBriefs.set(`${this.state!.chatId}:${this.state!.characterId}`, brief) },
       sources: this.contactSources, npcBank: this.npcBank, capabilities: this.caps,
+      selectedGroupId: this.selectedContactGroupId, bankGroups: this.npcBankGroups,
+      collectionDraft: this.collectionDrafts.get(collectionKey), collectionSaving: Boolean(this.collectionRequest),
+      updateCollectionDraft: draft => { this.collectionDrafts.set(collectionKey, draft) },
+      saveCollection: (type, payload) => {
+        if (this.collectionRequest) return
+        this.collectionRequestKey = collectionKey
+        this.collectionRequest = this.send(type, payload)
+        this.render(false)
+      },
+      selectGroup: (groupId, view) => this.openPocket({ app: 'contacts', groupId: groupId || undefined, view }),
+      startGroup: (title, participants) => {
+        const actors = listPocketActors(this.state!)
+        this.groupDrafts.set(`${this.state!.chatId}:${this.state!.characterId}:new`, { title, participants: participants.map(id => actors.find(actor => actor.contact?.id === id)?.actorId || id) })
+        this.openPocket({ app: 'messages', view: 'group-editor' })
+      },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('contacts', title, copy),
       operations: this.operations,
@@ -2114,6 +2174,7 @@ class PocketController {
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       generatePhoto: (contactId) => this.openPocket({ app: 'camera', contactId }),
+      generateDraftPhoto: () => this.openPocket({ app: 'camera', draft: true }),
       useSourcePhoto: (contactId) => this.send('lumiphone:set_contact_photo', { contactId, useSource: true }),
       requestSources: () => {
         if (this.contactSourcesRequested) return
@@ -2185,7 +2246,7 @@ class PocketController {
       const targetContact = this.state?.contacts.find((entry) => entry.id === contactId)
       const use = button(`Use for ${targetContact?.name || 'contact'}`, 'lp-button lp-button-primary')
       use.addEventListener('click', () => {
-        this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId, imageUrl: item.fullUrl || item.url })
+        this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url })
         this.pendingWallpaperTarget = null
         this.pendingContactPhotoId = ''
       })
@@ -2219,7 +2280,7 @@ class PocketController {
     const setPhoto = button('Set contact photo', 'lp-button lp-button-quiet')
     setPhoto.addEventListener('click', () => {
       if (!contact.value) { this.showError('Choose a contact first.'); return }
-      this.runGalleryAction(setPhoto, 'Applying…', 'lumiphone:set_contact_photo', { contactId: contact.value, imageUrl: item.fullUrl || item.url })
+      this.runGalleryAction(setPhoto, 'Applying…', 'lumiphone:set_contact_photo', { contactId: contact.value, imageId: item.id, imageUrl: item.fullUrl || item.url })
     })
     const uses = el('div', 'lp-sheet-actions')
     const useAs = button('Use as…', 'lp-button')
@@ -2293,12 +2354,13 @@ class PocketController {
   private renderCamera(): HTMLDivElement {
     const page = el('div', 'lp-camera lp-npc-camera')
     const contact = this.state!.contacts.find(entry => entry.id === this.cameraContactId)
+    const subject = contact || (this.cameraContactId === '__draft__' ? this.cameraNpcDraft : null)
     const nav = el('header', 'lp-nav')
     const back = button('‹ Back', 'lp-nav-action')
     back.addEventListener('click', () => this.back())
     const profileLabel = this.swarmProfile?.available ? 'Swarm profile linked' : 'Manual profile'
     const title = el('div', 'lp-nav-title', this.cameraContactId ? 'Quick Generate' : 'Camera')
-    title.appendChild(el('span', 'lp-nav-subtitle', contact ? `${contact.name} · Contact photo` : profileLabel))
+    title.appendChild(el('span', 'lp-nav-subtitle', subject ? `${subject.name} · Contact photo` : profileLabel))
     const gallery = button('Gallery', 'lp-nav-action')
     gallery.addEventListener('click', () => this.openApp('gallery'))
     nav.append(back, title, gallery)
@@ -2316,13 +2378,14 @@ class PocketController {
       const focus = el('div', 'lp-focus-frame')
       focus.append(el('div', 'lp-npc-camera-mark', '+'))
       const copy = el('div', 'lp-npc-camera-copy')
-      copy.append(el('strong', '', contact ? `Frame ${contact.name}` : 'Frame a moment'), el('p', '', 'Describe the photo, then tap the shutter.'))
+      copy.append(el('strong', '', subject ? `Frame ${subject.name}` : 'Frame a moment'), el('p', '', 'Describe the photo, then tap the shutter.'))
       placeholder.append(focus, copy)
       viewfinder.appendChild(placeholder)
     }
     const prompt = el('textarea', 'lp-textarea')
     prompt.placeholder = 'Describe the photo or moment…'
     prompt.rows = 2
+    prompt.maxLength = 12000
     prompt.value = this.cameraDraft.scene
     prompt.addEventListener('input', () => { this.cameraDraft.scene = prompt.value })
     const floating = fieldBlock('Photo description', prompt)
@@ -2338,6 +2401,16 @@ class PocketController {
     enhanceLabel.append(enhance, el('span', 'lp-copy', 'Enhance scene description'))
     const source = el('span', 'lp-copy', this.swarmProfile?.source === 'swarm_studio' ? 'Swarm Studio' : 'Manual profile')
     optionRow.append(enhanceLabel, source)
+    const makeChoice = (label: string, values: Array<[string, string]>, value: string, update: (value: string) => void) => {
+      const select = el('select', 'lp-select')
+      for (const [id, name] of values) { const option = el('option', '', name); option.value = id; option.selected = id === value; select.append(option) }
+      select.addEventListener('change', () => update(select.value))
+      return fieldBlock(label, select)
+    }
+    const purpose = makeChoice('Subject', this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || 'Contact']] : [['scene', 'Scene · character and persona'], ['character', this.state!.characterName], ['persona', this.state!.pocketPersona.displayName || 'Persona']], this.cameraOptions.purpose, value => { this.cameraOptions.purpose = value })
+    const aspect = makeChoice('Framing', [['', 'Profile default'], ['1:1', 'Square · avatar'], ['3:4', 'Portrait'], ['4:3', 'Landscape'], ['9:16', 'Tall'], ['16:9', 'Wide']], this.cameraOptions.aspect, value => { this.cameraOptions.aspect = value })
+    const connection = makeChoice('Image connection', [['', 'Profile default'], ...this.imageConnections.map(entry => [entry.id, entry.name] as [string, string])], this.cameraOptions.connectionId, value => { this.cameraOptions.connectionId = value })
+    const model = el('input', 'lp-input'); model.placeholder = 'Profile checkpoint'; model.value = this.cameraOptions.model; model.addEventListener('input', () => { this.cameraOptions.model = model.value })
     const shutterRow = el('div', 'lp-shutter-row')
     const cancel = button(this.cameraBusy ? 'Cancel' : '', 'lp-button')
     cancel.style.visibility = this.cameraBusy ? 'visible' : 'hidden'
@@ -2349,20 +2422,36 @@ class PocketController {
     })
     const shutter = el('button', 'lp-shutter')
     shutter.type = 'submit'
-    shutter.disabled = this.cameraBusy || !this.caps?.imageGen
+    shutter.disabled = this.cameraBusy || !this.caps?.imageGen || Boolean(this.cameraContactId && !subject)
+    shutter.dataset.busy = String(this.cameraBusy)
     const album = button('Gallery', 'lp-nav-action')
     album.addEventListener('click', () => this.openApp('gallery'))
     shutterRow.append(cancel, shutter, album)
     const progress = el('div', 'lp-camera-progress', this.cameraProgress || (!this.caps?.imageGen ? 'Grant Image Generation permission in Settings' : ''))
-    const optionsDrawer = disclosure('Camera options', optionRow)
+    progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite')
+    const optionsDrawer = disclosure('Camera options', purpose, aspect, connection, fieldBlock('Checkpoint override', model), optionRow)
     footer.append(el('p', 'lp-camera-caption', this.cameraContactId ? 'PORTRAIT' : 'PHOTO'), shutterRow, progress, optionsDrawer)
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button('Use photo', 'lp-button')
-      use.disabled = !contact
+      use.disabled = !subject || (this.cameraContactId === '__draft__' && this.npcDraft !== this.cameraNpcDraft)
       use.addEventListener('click', () => {
-        this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId: this.cameraContactId, imageUrl: this.cameraPreview })
+        if (this.cameraContactId === '__draft__') {
+          if (!this.npcDraft || this.npcDraft !== this.cameraNpcDraft) return
+          this.npcDraft.avatarUrl = this.cameraPreview
+          this.npcDraft.avatarSource = this.cameraImageId ? { kind: 'gallery', imageId: this.cameraImageId } : { kind: 'url', url: this.cameraPreview }
+          this.npcDraft.avatarFocus = { ...this.cameraFocus }
+          this.back()
+        } else this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId: this.cameraContactId, imageId: this.cameraImageId || undefined, imageUrl: this.cameraPreview, focus: this.cameraFocus })
       })
-      footer.append(use)
+      const crop = el('div', 'lp-avatar-framing')
+      const preview = el('img'); preview.src = this.cameraPreview; preview.alt = 'Contact avatar framing'; preview.style.objectPosition = `${this.cameraFocus.x}% ${this.cameraFocus.y}%`
+      crop.append(preview)
+      const framing = el('div', 'lp-avatar-framing-controls')
+      for (const [axis, label] of [['x', 'Horizontal focus'], ['y', 'Vertical focus']] as const) {
+        const slider = el('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.value = String(this.cameraFocus[axis]); slider.addEventListener('input', () => { this.cameraFocus[axis] = Number(slider.value); preview.style.objectPosition = `${this.cameraFocus.x}% ${this.cameraFocus.y}%` })
+        framing.append(fieldBlock(label, slider))
+      }
+      footer.append(disclosure('Avatar framing', crop, framing), use)
     }
     controls.append(mode, viewfinder, footer)
     shutter.setAttribute('aria-label', 'Take photo')
@@ -2375,7 +2464,7 @@ class PocketController {
       this.cameraBusy = true
       this.cameraReady = false
       this.cameraProgress = 'Sending scene to camera…'
-      this.send('lumiphone:camera_generate', { requestId: this.cameraRequestId, scene, enhance: enhance.checked, contactId: this.cameraContactId || undefined })
+      this.send('lumiphone:camera_generate', { requestId: this.cameraRequestId, scene, enhance: enhance.checked, ...this.cameraOptions, contactId: this.cameraContactId && this.cameraContactId !== '__draft__' ? this.cameraContactId : undefined, subject: this.cameraNpcDraft?.phoneProfile?.appearance || this.cameraNpcDraft?.identityBrief })
       this.render()
     })
     page.append(nav, controls)

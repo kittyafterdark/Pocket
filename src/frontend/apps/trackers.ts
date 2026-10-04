@@ -2,6 +2,7 @@ import type { PhoneState, PhoneTracker, TrackerKind, TrackerPresentation, Tracke
 import { materializeTracker, TRACKER_TEMPLATES, trackerBand, trackerKey } from '../../domain/trackers.js'
 import { button, el } from '../shared.js'
 import { trackerEditor, trackerTemplates } from './tracker-editor.js'
+import { trackerDisplay, refreshTrackerDisplay } from '../components/tracker-display.js'
 import type { PageAction } from '../shared.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
@@ -49,53 +50,7 @@ function toggle(labelText: string, initial: boolean): { row: HTMLDivElement; but
   return { row, button: control }
 }
 
-function displayValue(tracker: PhoneTracker): string {
-  return tracker.kind === 'state' ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit}`
-}
-
-function liveTracker(tracker: PhoneTracker, roleplayNow: string): PhoneTracker {
-  return tracker.clock === 'real' ? materializeTracker(tracker, roleplayNow).tracker : tracker
-}
-
-function percent(tracker: PhoneTracker): number {
-  return Math.max(0, Math.min(100, ((tracker.value - tracker.min) / Math.max(.00001, tracker.max - tracker.min)) * 100))
-}
-
-function targetLabel(target: TrackerTarget): string {
-  return `${target.type[0].toUpperCase()}${target.type.slice(1)} · ${target.label || target.id || 'Unassigned'}`
-}
-
-function renderPresentation(tracker: PhoneTracker, roleplayNow: string): HTMLDivElement {
-  const current = liveTracker(tracker, roleplayNow)
-  const card = el('div', `lp-card lp-tracker-card lp-tracker-${current.presentation}`)
-  card.dataset.trackerId = current.id
-  card.dataset.kind = current.kind
-  card.dataset.target = current.target.type
-  const heading = el('div', 'lp-row-between')
-  const left = el('div')
-  left.append(el('div', 'lp-eyebrow', targetLabel(current.target)), el('h3', 'lp-title', current.label))
-  const value = el('div', 'lp-tracker-value', displayValue(current))
-  value.dataset.trackerLiveValue = current.id
-  heading.append(left, value)
-  card.appendChild(heading)
-  if (current.kind !== 'state' && current.presentation !== 'counter' && current.presentation !== 'compact') {
-    const progress = el('div', current.presentation === 'segmented' ? 'lp-progress lp-progress-segmented' : 'lp-progress')
-    const fill = el('span')
-    fill.dataset.trackerLiveFill = current.id
-    fill.style.setProperty('--progress', `${percent(current)}%`)
-    fill.style.setProperty('--tracker-color', current.color)
-    progress.appendChild(fill)
-    card.appendChild(progress)
-  }
-  const band = current.kind === 'state' ? null : trackerBand(current)
-  const footer = el('div', 'lp-tracker-meta')
-  footer.append(
-    el('span', '', band?.label || current.kind),
-    el('span', '', current.updateMode === 'automatic' ? `${current.clock === 'roleplay' ? 'Roleplay' : 'Human'} clock` : current.updateMode),
-  )
-  card.appendChild(footer)
-  return card
-}
+function targetLabel(target: TrackerTarget): string { return target.label || target.type }
 
 function dashboard(host: TrackerViewHost): HTMLDivElement {
   const { page, content } = host.page('Trackers', 'Live roleplay state', { label: 'Add', callback: () => host.select('__templates', 'config') })
@@ -118,7 +73,7 @@ function dashboard(host: TrackerViewHost): HTMLDivElement {
   for (const filter of filters.querySelectorAll<HTMLButtonElement>('[data-filter]')) filter.addEventListener('click', () => applyFilter(filter.dataset.filter))
   content.appendChild(filters)
   for (const tracker of host.state.trackers) {
-    const card = renderPresentation(tracker, host.state.roleplayNow)
+    const card = trackerDisplay(tracker, host.state)
     card.dataset.clickable = 'true'
     card.tabIndex = 0
     card.setAttribute('role', 'button')
@@ -134,21 +89,23 @@ function dashboard(host: TrackerViewHost): HTMLDivElement {
   }
   const timer = window.setInterval(() => {
     for (const tracker of host.state.trackers) {
-      if (tracker.clock !== 'real' || tracker.updateMode !== 'automatic') continue
-      const current = liveTracker(tracker, host.state.roleplayNow)
-      const value = content.querySelector<HTMLElement>(`[data-tracker-live-value="${CSS.escape(tracker.id)}"]`)
-      const fill = content.querySelector<HTMLElement>(`[data-tracker-live-fill="${CSS.escape(tracker.id)}"]`)
-      if (value) value.textContent = displayValue(current)
-      if (fill) fill.style.setProperty('--progress', `${percent(current)}%`)
+      if (tracker.updateMode !== 'automatic') continue
+      const card = content.querySelector<HTMLElement>(`[data-tracker-id="${CSS.escape(tracker.id)}"]`)
+      if (card) refreshTrackerDisplay(card, tracker, host.state)
     }
-  }, 15_000)
+  }, 1_000)
   host.onCleanup(() => window.clearInterval(timer))
   return page
 }
 
 function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
   const { page, content } = host.page(tracker.label, targetLabel(tracker.target), { label: '⚙', callback: () => host.select(tracker.id, 'config'), ariaLabel: 'Tracker settings' })
-  content.appendChild(renderPresentation(tracker, host.state.roleplayNow))
+  const display = trackerDisplay(tracker, host.state)
+  content.appendChild(display)
+  if (tracker.updateMode === 'automatic') {
+    const timer = window.setInterval(() => refreshTrackerDisplay(display, tracker, host.state), 1_000)
+    host.onCleanup(() => window.clearInterval(timer))
+  }
   const policy = el('div', 'lp-card lp-tracker-policy')
   policy.append(
     el('div', 'lp-row-between', ''),
@@ -163,7 +120,9 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
     const state = selectField('State', tracker.states.map((value) => [value, value]), tracker.state)
     const apply = button('Set state')
     apply.addEventListener('click', () => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, operation: 'set_state', state: state.select.value, reason: 'Changed in Pocket' } }))
-    operations.append(state.label, apply)
+    const reset = button(`Reset to ${tracker.initialState}`, 'lp-button lp-button-quiet')
+    reset.addEventListener('click', () => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, operation: 'reset', reason: 'Reset in Pocket' } }))
+    operations.append(state.label, apply, reset)
   } else {
     const amount = el('input', 'lp-input'); amount.type = 'number'; amount.step = 'any'; amount.value = tracker.kind === 'counter' ? String(tracker.step) : '1'
     amount.setAttribute('aria-label', 'Tracker amount')

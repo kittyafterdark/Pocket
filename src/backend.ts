@@ -39,7 +39,7 @@ import { defaultPreferences, isFuturePreferences, normalizeImageSource, normaliz
 import { projectPhoneContext } from './domain/projection.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
-import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
+import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeAvatarFocus, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
 import { applyNpcBankProfile, contactFromNpcBank, findNpcBankMatch, isFutureNpcBank, normalizeNpcBank, normalizeNpcBankName, NPC_BANK_PATH, removeNpcBankEntry, upsertNpcBankFromContact } from './domain/npc-bank.js'
 import { actorAsGenerationContact, conversationActorIds, ensureDirectActorConversation, ensureDiscoveredActor, ensureExternalDirectConversation, matchingActorIds, normalizeActorName, normalizeDiscoveredActors, promoteDiscoveredActor, resolvePocketActor } from './domain/actors.js'
 import { clearNotifications, destinationIsVisible, dismissNotification, markNotificationRead } from './domain/notifications.js'
@@ -53,11 +53,17 @@ import { assemblePocketContext } from './backend/roleplay-context.js'
 import { sanitizeNarrativeContent, stripPocketPresentationMarkup } from './backend/narrative-content.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
 import { assertPocketImageResolved, resolvePocketImageSource } from './backend/image-sources.js'
+import { effectiveImageRequest, runImageJob } from './backend/image-jobs.js'
+import type { ImagePurpose } from './backend/image-jobs.js'
+import { normalizeContactGroups, saveContactGroup } from './domain/contact-groups.js'
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
 
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 type AnyRecord = Record<string, unknown>
+function stringArray(value: unknown, limit: number, maxLength: number): string[] {
+  return [...new Set((Array.isArray(value) ? value : []).map(entry => text(entry, maxLength)).filter(Boolean))].slice(0, limit)
+}
 
 const STATE_VERSION = 11 as const
 const MAX_MESSAGES = 240
@@ -232,6 +238,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     suppressedContactSourceKeys: [],
     setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: 'unconfigured' },
     contacts: collections.contacts,
+    contactGroups: [],
     discoveredActors: [],
     conversations: collections.conversations,
     actorMemoryVersion: 1,
@@ -614,6 +621,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       worldSeededAt: text(setupValue.worldSeededAt, 80) || undefined,
     },
     contacts: collections.contacts,
+    contactGroups: normalizeContactGroups(value.contactGroups, collections.contacts.map(entry => entry.id), nowIso()),
     discoveredActors,
     conversations: collections.conversations,
     actorMemoryVersion: Math.max(0, Math.round(numberValue(value.actorMemoryVersion, 0))),
@@ -857,6 +865,8 @@ async function loadNpcBank(userId?: string): Promise<PocketNpcBank> {
   return bank
 }
 async function saveNpcBank(value: unknown, userId?: string): Promise<PocketNpcBank> {
+  const stored = await spindle.userStorage.getJson<unknown>(NPC_BANK_PATH, { fallback: null, userId })
+  if (isFutureNpcBank(stored)) throw new Error('This NPC Bank was created by a newer Pocket version. Update Pocket before editing it.')
   const bank = normalizeNpcBank(value, nowIso())
   await spindle.userStorage.setJson(NPC_BANK_PATH, bank, { indent: 2, userId })
   return bank
@@ -1150,7 +1160,15 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
   for (const [target, result] of Object.entries(resolvedWallpapers)) {
     if (result.status === 'error') spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || 'unknown error'}`)
   }
-  send({ type: 'lumiphone:state', state: projectSwipeScopedState(state), npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  const displayState = projectSwipeScopedState(structuredClone(state))
+  await Promise.all([...displayState.contacts, ...npcBank.entries].map(async contact => {
+    if (!contact.avatarSource) return
+    const image = await resolvePocketImageSource(spindle, contact.avatarSource, userId)
+    if (image.status !== 'ready') return
+    if ('avatarOverrideUrl' in contact) contact.avatarOverrideUrl = image.url
+    else contact.avatarUrl = image.url
+  }))
+  send({ type: 'lumiphone:state', state: displayState, npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -1441,6 +1459,7 @@ function upsertContact(state: PhoneState, contact: PocketContact, preserveCustom
     const preserved = preserveCustomization ? {
       createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy,
       avatarOverrideUrl: existing.avatarOverrideUrl, colorMode: existing.colorMode, sourceAccent: contact.sourceAccent || existing.sourceAccent,
+      avatarSource: existing.avatarSource, avatarFocus: existing.avatarFocus,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
@@ -1957,11 +1976,15 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   const contactId = text(input.contactId, 180)
   const portraitContact = contactId ? state.contacts.find(entry => entry.id === contactId) : undefined
   if (contactId && !portraitContact) throw new Error('That contact no longer exists.')
+  const purpose: ImagePurpose = portraitContact ? 'contact' : ['character', 'persona', 'draft'].includes(text(input.purpose, 30)) ? input.purpose as ImagePurpose : 'scene'
+  const subject = portraitContact ? portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description : text(input.subject, 2000)
   const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences, userId)
   const controller = new AbortController()
   const job: CameraJob = { controller, cancelled: false, chatId: context.chatId, characterId: context.characterId, userId }
-  cameraJobs.get(requestId)?.controller.abort()
-  cameraJobs.set(requestId, job)
+  const jobKey = `${viewKey(userId)}:${requestId}`
+  const previousJob = cameraJobs.get(jobKey)
+  if (previousJob) { previousJob.cancelled = true; previousJob.controller.abort() }
+  cameraJobs.set(jobKey, job)
   send({ type: 'lumiphone:camera_progress', requestId, phase: 'planning', message: 'Planning the scene…', profile }, userId)
   let expanded = scene
   if (bool(input.enhance, preferences.sceneEnhancer)) {
@@ -1972,75 +1995,42 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
     }
   }
   if (job.cancelled) return { ok: false, cancelled: true }
-  const presets = profile.presets ? `${profile.presets}, ` : ''
-  const prompt = portraitContact
-    ? [profile.presets, `Single-subject contact portrait. ${portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description}`, expanded].filter(Boolean).join(', ')
-    : [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(', ')
   const manual = preferences.manualVisualProfile
-  const parameters: AnyRecord = { ...manual.parameters, ...(isRecord(input.parameters) ? input.parameters : {}) }
-  if (manual.loras.length && parameters.loras === undefined) parameters.loras = manual.loras
+  const effective = effectiveImageRequest(expanded, purpose, subject, text(input.aspect, 40), profile, preferences, isRecord(input.parameters) ? input.parameters : {})
+  const generationInput: any = { ...effective, owner_character_id: context.characterId === '_none' ? undefined : context.characterId, owner_chat_id: context.chatId === '_lobby' ? undefined : context.chatId, userId, includeDataUrl: false }
   const connectionId = text(input.connectionId, 200) || manual.connectionId
   const model = text(input.model, 500) || profile.checkpoint
+  if (connectionId) generationInput.connection_id = connectionId
+  if (model) generationInput.model = model
   let result: any = null
   try {
-    let canStream = false
-    let resolvedConnection = connectionId
-    try {
-      const connections = await spindle.imageGen.listConnections(userId)
-      const connection = resolvedConnection
-        ? connections.find((item) => item.id === resolvedConnection)
-        : connections.find((item) => item.is_default) || connections[0]
-      resolvedConnection ||= connection?.id || ''
-      const providers = await spindle.imageGen.getProviders(userId)
-      const provider = providers.find((item) => item.id === connection?.provider)
-      canStream = Boolean(provider?.capabilities.websocketPreviewStreaming)
-    } catch { /* regular generation remains available */ }
-    const generationInput: any = {
-      prompt,
-      negativePrompt: profile.negative,
-      parameters,
-      owner_character_id: context.characterId === '_none' ? undefined : context.characterId,
-      owner_chat_id: context.chatId === '_lobby' ? undefined : context.chatId,
-      userId,
-      includeDataUrl: false,
-    }
-    if (resolvedConnection) generationInput.connection_id = resolvedConnection
-    if (model) generationInput.model = model
-    if (canStream) {
-      generationInput.signal = controller.signal
-      for await (const event of spindle.imageGen.generateStream(generationInput)) {
-        if (job.cancelled) break
-        if (event.type === 'status') {
-          send({ type: 'lumiphone:camera_progress', requestId, phase: 'generating', step: event.step, totalSteps: event.totalSteps, message: event.nodeId ? `Working on ${event.nodeId}…` : 'Developing the image…' }, userId)
-        } else if (event.type === 'preview') {
-          send({ type: 'lumiphone:camera_progress', requestId, phase: 'preview', imageDataUrl: event.imageDataUrl, step: event.step, totalSteps: event.totalSteps }, userId)
-        } else if (event.type === 'done') result = event.result
-      }
-    } else {
-      send({ type: 'lumiphone:camera_progress', requestId, phase: 'generating', message: 'Developing the image…' }, userId)
-      result = await spindle.imageGen.generate(generationInput)
-    }
+    result = await runImageJob(spindle, generationInput, controller.signal, event => send({ type: 'lumiphone:camera_progress', requestId, ...event }, userId))
+  } catch (error) {
+    if (!job.cancelled) throw error
   } finally {
-    if (cameraJobs.get(requestId) === job) cameraJobs.delete(requestId)
+    if (cameraJobs.get(jobKey) === job) cameraJobs.delete(jobKey)
   }
   if (job.cancelled) return { ok: false, cancelled: true }
   if (!result) throw new Error('The camera did not return an image.')
   const imageUrl = text(result.imageUrl, 2_000)
   const imageId = text(result.imageId, 200)
   const route: PocketRoute = imageId ? { app: 'gallery', imageId } : { app: 'gallery' }
-  const notification = addNotification(state, {
+  await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    const latest = await loadState(context.chatId, context.characterId, userId)
+  const notification = addNotification(latest, {
     app: 'camera', title: 'Photo ready', body: scene.slice(0, 180), route, source: 'system', severity: 'important',
   }, userId)
-  const command = state.processedCommands.find((entry) => entry.id === text(input.__commandId, 240))
-  const activity = addActivity(state, {
+  const command = latest.processedCommands.find((entry) => entry.id === text(input.__commandId, 240))
+  const activity = addActivity(latest, {
     kind: 'image', title: 'Photo ready', summary: scene.slice(0, 280), route,
     source: { messageId: text(input.__sourceMessageId, 180) || undefined, imageId: imageId || undefined },
   }, command)
-  await saveState(state, userId)
-  if (notification) await maybePush(state, preferences, notification, userId)
-  await sendState(state, userId, 'camera', false)
+  await saveState(latest, userId)
+  if (notification) await maybePush(latest, preferences, notification, userId)
+  await sendState(latest, userId, 'camera', false)
   sendActivity(activity, userId)
   sendNotification(notification, userId)
+  })
   send({ type: 'lumiphone:camera_done', requestId, imageId, imageUrl, prompt: expanded, profile }, userId)
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source }
 }
@@ -4621,6 +4611,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
             createdAt: existing?.createdAt || nowIso(), updatedAt: nowIso(),
           }, { characterId: state.characterId, characterName: state.characterName, now: nowIso(), makeId: id })
           if (!candidate) throw new Error('A contact needs a name.')
+          if (raw.avatarSource && candidate.avatarSource) {
+            const image = await resolvePocketImageSource(spindle, candidate.avatarSource, userId)
+            assertPocketImageResolved(image)
+            candidate.avatarOverrideUrl = image.url
+          }
           const contact = upsertContact(state, candidate, false)
           reconcileContactAvailability(state, contact)
           await saveState(state, userId)
@@ -4648,6 +4643,87 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           await sendState(state, userId, 'npc_bank')
           send({ type: 'lumiphone:npc_bank_saved', requestId, contactId: contact.id, bankId: savedEntry.id, name: savedEntry.name }, userId)
         })
+        break
+      }
+      case 'lumiphone:contact_group_save':
+      case 'lumiphone:contact_group_delete':
+      case 'lumiphone:contact_group_bank':
+      case 'lumiphone:npc_cast_import': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          state.contactGroups ||= []
+          let groupId = text(payload.groupId, 180)
+          if (payload.type === 'lumiphone:contact_group_save') {
+            const group = saveContactGroup(state.contactGroups, { id: groupId || undefined, name: text(payload.name, 120), memberIds: stringArray(payload.memberIds, 80, 180) }, state.contacts.map(entry => entry.id), nowIso(), id)
+            groupId = group.id
+          } else if (payload.type === 'lumiphone:contact_group_delete') {
+            if (!state.contactGroups.some(group => group.id === groupId)) throw new Error('That group no longer exists.')
+            state.contactGroups = state.contactGroups.filter(group => group.id !== groupId)
+          } else if (payload.type === 'lumiphone:contact_group_bank') {
+            const group = state.contactGroups.find(group => group.id === groupId)
+            if (!group) throw new Error('That group no longer exists.')
+            const members = group.memberIds.map(memberId => state.contacts.find(contact => contact.id === memberId)).filter((contact): contact is PocketContact => Boolean(contact))
+            if (!members.length || members.some(contact => contact.source.kind !== 'npc')) throw new Error('Portable casts contain Pocket NPCs. Choose an NPC-only group first.')
+            await withStateLock(`npc-bank:${viewKey(userId)}`, async () => {
+              const bank = await loadNpcBank(userId)
+              const memberIds = members.map(contact => {
+                const entry = upsertNpcBankFromContact(bank, contact, nowIso(), id)
+                if (contact.source.kind === 'npc') contact.source.bankId = entry.id
+                return entry.id
+              })
+              const existing = bank.groups.find(cast => cast.id === group.bankGroupId)
+              const cast = saveContactGroup(bank.groups, { id: existing?.id, name: group.name, memberIds }, bank.entries.map(entry => entry.id), nowIso(), id)
+              group.bankGroupId = cast.id
+              await saveNpcBank(bank, userId)
+            })
+          } else {
+            const bank = await loadNpcBank(userId)
+            const cast = bank.groups.find(group => group.id === groupId)
+            if (!cast) throw new Error('That saved cast no longer exists.')
+            const selected = stringArray(payload.memberIds, 80, 180)
+            if (!selected.length || selected.some(memberId => !cast.memberIds.includes(memberId))) throw new Error('Choose valid cast members to import.')
+            const entries = selected.map(memberId => bank.entries.find(entry => entry.id === memberId))
+            if (entries.some(entry => !entry)) throw new Error('A cast member no longer exists.')
+            const newCount = entries.filter(entry => !state.contacts.some(contact => contact.source.kind === 'npc' && contact.source.bankId === entry!.id)).length
+            if (state.contacts.length + newCount > 80) throw new Error('This cast would exceed the contact limit. Import fewer members.')
+            const memberIds = entries.map(entry => {
+              const existing = state.contacts.find(contact => contact.source.kind === 'npc' && contact.source.bankId === entry!.id)
+              return existing?.id || upsertContact(state, contactFromNpcBank(entry!, nowIso(), id), false).id
+            })
+            let local = state.contactGroups.find(group => group.bankGroupId === cast.id)
+            if (local) { local.memberIds = [...new Set([...local.memberIds, ...memberIds])]; local.updatedAt = nowIso() }
+            else local = saveContactGroup(state.contactGroups, { name: cast.name, memberIds, bankGroupId: cast.id }, state.contacts.map(entry => entry.id), nowIso(), id)
+            groupId = local.id
+          }
+          await saveState(state, userId)
+          await sendState(state, userId, 'contact_groups')
+          send({ type: 'lumiphone:collection_done', requestId, groupId, view: 'groups', message: payload.type === 'lumiphone:npc_cast_import' ? 'Cast imported. Existing local state was preserved.' : 'Contact group updated.' }, userId)
+        })
+        break
+      }
+      case 'lumiphone:npc_cast_save':
+      case 'lumiphone:npc_cast_delete':
+      case 'lumiphone:npc_bank_edit': {
+        await withStateLock(`npc-bank:${viewKey(userId)}`, async () => {
+          const bank = await loadNpcBank(userId)
+          const groupId = text(payload.groupId, 180)
+          if (payload.type === 'lumiphone:npc_cast_save') saveContactGroup(bank.groups, { id: groupId || undefined, name: text(payload.name, 120), memberIds: stringArray(payload.memberIds, 80, 180) }, bank.entries.map(entry => entry.id), nowIso(), id)
+          else if (payload.type === 'lumiphone:npc_cast_delete') {
+            if (!bank.groups.some(group => group.id === groupId)) throw new Error('That saved cast no longer exists.')
+            bank.groups = bank.groups.filter(group => group.id !== groupId)
+          } else {
+            const entry = bank.entries.find(entry => entry.id === text(payload.bankId, 180))
+            if (!entry) throw new Error('That NPC Bank profile no longer exists.')
+            const edit = isRecord(payload.entry) ? payload.entry : {}
+            const name = text(edit.name, 120)
+            if (!name) throw new Error('Give the NPC a name.')
+            const previousName = entry.name
+            Object.assign(entry, { name, normalizedName: normalizeNpcBankName(name), role: text(edit.role, 120), identityBrief: text(edit.identityBrief, 1200), phoneProfile: isRecord(edit.phoneProfile) ? edit.phoneProfile : entry.phoneProfile, aliases: [...new Set([...entry.aliases, ...(previousName !== name ? [previousName] : []), ...stringArray(edit.aliases, 24, 120)])], tags: stringArray(edit.tags, 24, 80), updatedAt: nowIso() })
+          }
+          await saveNpcBank(bank, userId)
+        })
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'npc_bank')
+        send({ type: 'lumiphone:collection_done', requestId, view: 'bank', message: 'NPC Bank updated. Existing chats keep their local state.' }, userId)
         break
       }
       case 'lumiphone:npc_bank_add': {
@@ -5172,7 +5248,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const state = await loadState(context.chatId, context.characterId, userId)
           const contact = state.contacts.find((entry) => entry.id === text(payload.contactId, 180))
           if (!contact) throw new Error('That contact no longer exists.')
-          contact.avatarOverrideUrl = payload.useSource === true ? '' : text(payload.imageUrl, 2_000)
+          const source = payload.useSource === true ? null : normalizeImageSource(payload.source) || normalizeImageSource(payload.imageId ? { kind: 'gallery', imageId: payload.imageId } : { kind: 'url', url: payload.imageUrl })
+          let imageUrl = ''
+          if (source) { const image = await resolvePocketImageSource(spindle, source, userId); assertPocketImageResolved(image); imageUrl = image.url }
+          else if (payload.useSource !== true) throw new Error('Choose a valid contact image.')
+          contact.avatarSource = source
+          contact.avatarOverrideUrl = imageUrl
+          contact.avatarFocus = normalizeAvatarFocus(payload.focus)
           contact.updatedAt = nowIso()
           await saveState(state, userId)
           await sendState(state, userId, 'contact_photo')
@@ -5183,11 +5265,17 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:camera_generate':
         await cameraGenerate(payload, userId)
         break
+      case 'lumiphone:image_options': {
+        const connections = spindle.permissions.has('image_gen') ? await spindle.imageGen.listConnections(userId) : []
+        send({ type: 'lumiphone:image_options', requestId, connections: connections.map(entry => ({ id: entry.id, name: entry.name })) }, userId)
+        break
+      }
       case 'lumiphone:camera_cancel': {
-        const job = cameraJobs.get(requestId)
+        const jobKey = `${viewKey(userId)}:${requestId}`
+        const job = cameraJobs.get(jobKey)
         if (job) job.cancelled = true
         job?.controller.abort()
-        cameraJobs.delete(requestId)
+        cameraJobs.delete(jobKey)
         send({ type: 'lumiphone:camera_cancelled', requestId }, userId)
         break
       }

@@ -871,6 +871,36 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-band-editor .lp-input { min-width:0; padding:8px; }
   .lp-band-editor .lp-color-input { width:28px; }
   .lp-tracker-config-fields { display:grid; gap:12px; }
+  .lp-tracker-heading { min-width:0; display:grid; gap:5px; }
+  .lp-tracker-readout { font-size:32px; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .lp-tracker-stage { color:var(--tracker-color); font-size:13px; font-weight:700; }
+  .lp-tracker-pair { display:flex; justify-content:center; gap:12px; }
+  .lp-tracker-avatar { width:46px; height:46px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb,var(--tracker-color) 22%,var(--lp-surface)); font-size:20px; }
+  .lp-tracker-avatar img { width:100%; height:100%; object-fit:cover; }
+  .lp-tracker-relationship { text-align:center; }
+  .lp-tracker-relationship .lp-tracker-readout { font-size:20px; }
+  .lp-vital-gauge { width:120px; height:120px; border-radius:50%; display:grid; place-items:center; justify-self:center; background:radial-gradient(circle,var(--lp-surface) 61%,transparent 63%),conic-gradient(var(--tracker-color) var(--tracker-percent),color-mix(in srgb,var(--tracker-color) 12%,var(--lp-surface)) 0); }
+  .lp-vital-gauge .lp-tracker-readout { font-size:26px; }
+  .lp-tracker-vitals { text-align:center; }
+  .lp-tracker-counter .lp-tracker-readout { font-size:42px; }
+  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:34px; letter-spacing:.035em; }
+  .lp-state-path { display:flex; flex-wrap:wrap; gap:6px; }
+  .lp-state-path span { border-radius:10px; padding:5px 9px; font-size:10px; background:var(--lp-bg); color:var(--lp-muted); }
+  .lp-state-path span[data-active="true"] { background:var(--tracker-color); color:#101014; font-weight:700; }
+  .lp-tracker-state .lp-tracker-readout { font-size:24px; color:var(--tracker-color); }
+  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,1fr); gap:4px; }
+  .lp-tracker-segments span { height:22px; border-radius:4px; background:color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)); }
+  .lp-tracker-segments span[data-filled="true"] { background:var(--tracker-color); }
+  .lumiphone-shell .lp-tracker-compact { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; padding:12px; }
+  .lp-tracker-compact .lp-tracker-readout { font-size:20px; }
+  .lp-tracker-compact .lp-tracker-meta { grid-column:1/-1; }
+  .lp-tracker-preview { padding:0; background:transparent; border:0; }
+  .lp-selected-members { display:flex; gap:6px; flex-wrap:wrap; }
+  .lp-selected-members:empty { display:none; }
+  .lp-band-meaning { grid-column:1/-1; }
+  .lp-tracker-card[data-meaning="bad"] { border-color:color-mix(in srgb,var(--tracker-color) 65%,var(--lp-border)); }
+  .lp-contact-group .lp-actions,.lp-bank-profile .lp-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .lp-contact-group .lp-button,.lp-bank-profile .lp-button { flex:1 1 auto; }
   .lumiphone-shell .lp-npc-camera { height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); background:#08080a; }
   .lumiphone-shell .lp-npc-camera .lp-nav { background:#08080a; border-color:#ffffff12; }
   .lumiphone-shell .lp-npc-camera .lp-content { min-height:0; padding:0; display:grid; grid-template-rows:36px minmax(320px,1fr) auto; gap:0; overflow:auto; background:#08080a; }
@@ -887,6 +917,12 @@ ${POCKET_DESIGN_SYSTEM}
   .lumiphone-shell .lp-camera-bottom-strip .lp-copy { color:#ffffff9e; }
   .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
   .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
+  .lp-avatar-framing { display:grid; place-items:center; padding:12px; }
+  .lp-avatar-framing img { width:96px; height:96px; border-radius:50%; object-fit:cover; }
+  .lp-avatar-framing-controls { display:grid; gap:12px; }
+  .lp-draft-portrait { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.45; }
+  .lp-shutter:disabled::after { animation:none; }
+  .lp-shutter[data-busy="true"]::after { animation:lp-pulse 1s ease-in-out infinite; }
   .lp-camera-bottom-strip { background:#08080a; border-top:1px solid #ffffff12; padding:14px 18px 18px; }
   .lp-camera-caption { margin:0; text-align:center; color:#f8d670; font-size:9px; letter-spacing:.1em; font-weight:750; }
   .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }

@@ -17,12 +17,12 @@ export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 export type PocketRoute =
   | { app: 'home' }
   | { app: 'messages'; conversationId?: string; contactId?: string; messageId?: string; view?: 'thread' | 'new-group' | 'group-editor' | 'group-detail' }
-  | { app: 'contacts'; contactId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' }
+  | { app: 'contacts'; contactId?: string; groupId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' | 'groups' | 'group-config' | 'bank' | 'cast-config' | 'cast-import' | 'bank-entry' }
   | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
   | { app: 'calendar'; eventId?: string }
   | { app: 'notes'; noteId?: string }
   | { app: 'gallery'; imageId?: string }
-  | { app: 'camera'; contactId?: string }
+  | { app: 'camera'; contactId?: string; draft?: boolean }
   | { app: 'weather' }
   | { app: 'notifications' }
   | { app: 'settings'; section?: string }
@@ -431,6 +431,8 @@ export interface PocketNpcBankEntry {
   identityBrief: string
   phoneProfile?: PocketPhoneProfile
   avatarUrl: string
+  avatarSource?: PocketImageSource | null
+  avatarFocus?: { x: number; y: number }
   accent: string
   messagingStyle: PocketMessagingStyle
   tags: string[]
@@ -438,8 +440,19 @@ export interface PocketNpcBankEntry {
   updatedAt: string
 }
 export interface PocketNpcBank {
-  version: 1
+  version: 2
   entries: PocketNpcBankEntry[]
+  groups: PocketContactGroup[]
+  updatedAt: string
+}
+
+/** IDs are local contact IDs in PhoneState and stable Bank entry IDs in NPC Bank. */
+export interface PocketContactGroup {
+  id: string
+  name: string
+  memberIds: string[]
+  bankGroupId?: string
+  createdAt: string
   updatedAt: string
 }
 
@@ -451,6 +464,9 @@ export interface PocketContactDraft {
   accent: string
   messagingStyle: PocketMessagingStyle
   sourceDescription: string
+  avatarUrl?: string
+  avatarSource?: PocketImageSource | null
+  avatarFocus?: { x: number; y: number }
 }
 
 export interface PocketContact {
@@ -466,6 +482,8 @@ export interface PocketContact {
   avatarUrl: string
   sourceAvatarUrl: string
   avatarOverrideUrl: string
+  avatarSource?: PocketImageSource | null
+  avatarFocus?: { x: number; y: number }
   accent: string
   sourceAccent: string
   colorMode: 'pocket' | 'source'
@@ -711,6 +729,7 @@ export interface TrackerBand {
   max: number
   label: string
   color: string
+  meaning?: 'good' | 'bad' | 'neutral'
 }
 
 export interface TrackerHistoryEntry {
@@ -870,6 +889,7 @@ export interface PhoneState {
   /** Linked source keys explicitly deleted by the user and therefore not auto-recreated. */
   suppressedContactSourceKeys: string[]
   contacts: PocketContact[]
+  contactGroups?: PocketContactGroup[]
   discoveredActors: DiscoveredActor[]
   conversations: PocketConversation[]
   /** RP-local phone knowledge. Stable profile lives elsewhere; these memories never cross RP state files. */

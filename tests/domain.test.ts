@@ -12,6 +12,42 @@ import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMe
 import { generatedEventSuggestion, normalizeEventSuggestion } from '../src/domain/scheduler.js'
 import { contactFromNpcBank, findNpcBankMatch, normalizeNpcBank, upsertNpcBankFromContact } from '../src/domain/npc-bank.js'
 import { PocketRouteHistory } from '../src/frontend/router.js'
+import { normalizeContactGroups, saveContactGroup } from '../src/domain/contact-groups.js'
+import { aspectDimensions, effectiveImageRequest } from '../src/backend/image-jobs.js'
+import type { SwarmVisualProfile, PocketContactGroup } from '../src/types.js'
+
+describe('portable casts and image purposes', () => {
+  test('migrates old banks and prunes invalid cast members without merging identities', () => {
+    const bank = normalizeNpcBank({ version: 1, entries: [{ id: 'a', name: 'Ada' }, { id: 'b', name: 'Ada' }], groups: [{ id: 'cast', name: 'Crew', memberIds: ['a', 'a', 'missing', 'b'] }] })
+    expect(bank.version).toBe(2)
+    expect(bank.entries.length).toBe(2)
+    expect(bank.groups[0].memberIds).toEqual(['a', 'b'])
+    expect(normalizeContactGroups(bank.groups, ['b'], '2026-10-03T00:00:00Z')[0].memberIds).toEqual(['b'])
+  })
+  test('rejects stale membership before changing a group', () => {
+    const groups: PocketContactGroup[] = []
+    const group = saveContactGroup(groups, { name: 'Crew', memberIds: ['a', 'a'] }, ['a'], '2026-10-03T00:00:00Z', () => 'cast')
+    expect(group.memberIds).toEqual(['a'])
+    expect(() => saveContactGroup(groups, { id: 'cast', name: 'Changed', memberIds: ['missing'] }, ['a'], '2026-10-03T00:00:00Z', () => 'unused')).toThrow()
+    expect(group.name).toBe('Crew')
+  })
+  test('applies aspect choices and isolates contact, character, and persona identities', () => {
+    const profile = { presets: 'film style', characterPositive: 'CHARACTER_IDENTITY', personaPositive: 'PERSONA_IDENTITY', negative: 'blur', aspect: '3:4' } as SwarmVisualProfile
+    const prefs = defaultPreferences()
+    const scene = effectiveImageRequest('scene', 'scene', '', '', profile, prefs)
+    expect(scene.parameters).toMatchObject({ width: 768, height: 1024 })
+    expect(scene.prompt).toContain('PERSONA_IDENTITY')
+    const portrait = effectiveImageRequest('headshot', 'contact', 'red hair', '1:1', profile, prefs)
+    expect(portrait.parameters).toMatchObject({ width: 1024, height: 1024 })
+    expect(portrait.prompt).toContain('red hair')
+    expect(portrait.prompt).not.toContain('CHARACTER_IDENTITY')
+    expect(portrait.prompt).not.toContain('PERSONA_IDENTITY')
+    expect(effectiveImageRequest('headshot', 'character', '', '', profile, prefs).prompt).not.toContain('PERSONA_IDENTITY')
+    expect(effectiveImageRequest('headshot', 'persona', '', '', profile, prefs).prompt).not.toContain('CHARACTER_IDENTITY')
+    expect(aspectDimensions('nonsense')).toBeNull()
+    expect(aspectDimensions('0:4')).toBeNull()
+  })
+})
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import { sanitizeNarrativeContent } from '../src/backend/narrative-content.js'

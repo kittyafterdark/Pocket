@@ -22,7 +22,8 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
   if (app === 'contacts') return {
     app,
     contactId: shortId(raw.contactId),
-    view: raw.view === 'detail' || raw.view === 'config' || raw.view === 'import' || raw.view === 'quick-gen' || raw.view === 'new' || raw.view === 'draft' || raw.view === 'list' ? raw.view : undefined,
+    groupId: shortId(raw.groupId),
+    view: ['detail', 'config', 'import', 'quick-gen', 'new', 'draft', 'list', 'groups', 'group-config', 'bank', 'cast-config', 'cast-import', 'bank-entry'].includes(String(raw.view)) ? raw.view as Extract<PocketRoute, { app: 'contacts' }>['view'] : undefined,
   }
   if (app === 'trackers') return {
     app,
@@ -33,7 +34,7 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
   if (app === 'notes') return { app, noteId: shortId(raw.noteId) }
   if (app === 'gallery') return { app, imageId: shortId(raw.imageId) }
   if (app === 'settings') return { app, section: shortId(raw.section) }
-  if (app === 'camera') return { app, contactId: shortId(raw.contactId) }
+  if (app === 'camera') return { app, contactId: shortId(raw.contactId), ...(raw.draft === true ? { draft: true } : {}) }
   if (app === 'weather' || app === 'notifications' || app === 'home') return { app }
   return fallback
 }

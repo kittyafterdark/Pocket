@@ -4,6 +4,7 @@ import { listPocketActors } from '../../domain/actors.js'
 import { button, el } from '../shared.js'
 import { controlRow, disclosure, fieldBlock, sectionBlock } from '../components/ui.js'
 import type { TrackerViewHost } from './trackers.js'
+import { trackerDisplay } from '../components/tracker-display.js'
 
 function choice(label: string, values: Array<[string, string]>, value: string) {
   const control = el('select', 'lp-select')
@@ -12,7 +13,7 @@ function choice(label: string, values: Array<[string, string]>, value: string) {
 }
 
 export function trackerTemplates(host: TrackerViewHost): HTMLDivElement {
-  const { page, content } = host.page('New Tracker', 'A little dashboard for your story')
+  const { page, content } = host.page('New Tracker', 'Track your story')
   content.append(el('p', 'lp-copy', 'Pick a starting point. You can make it yours next.'))
   const grid = el('div', 'lp-template-grid')
   const marks = ['♡', '◔', '✿', '♥', 'ϟ', '▥', '◈', '◷', '✧', '＋']
@@ -32,7 +33,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const seed = normalizeTracker({ ...template.values, target, color: host.accent }, { roleplayNow: host.state.roleplayNow })!
   const source = { ...(current || seed), ...host.draft } as PhoneTracker
   let commit = () => {}
-  const { page, content } = host.page(current ? 'Edit Tracker' : template.name, 'Make room for the little things', { label: host.saving ? 'Saving…' : 'Save', enabled: !host.saving, callback: () => commit() })
+  const { page, content } = host.page(current ? 'Edit Tracker' : template.name, 'Choose a target and update behavior', { label: host.saving ? 'Saving…' : 'Save', enabled: !host.saving, callback: () => commit() })
   const preview = el('div', 'lp-tracker-preview')
   const error = el('p', 'lp-warning'); error.setAttribute('role', 'alert'); error.hidden = true
   const name = el('input', 'lp-input'); name.value = source.label
@@ -75,17 +76,19 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const presentation = choice('Display', [], source.presentation)
   const range = el('div', 'lp-tracker-config-fields'); range.append(fieldBlock('Minimum', min), fieldBlock('Maximum', max), fieldBlock('Reset value', initial), fieldBlock('Unit', unit), stepField)
   const bandList = el('div', 'lp-band-list')
-  const bandRows: Array<{ row: HTMLElement; min: HTMLInputElement; max: HTMLInputElement; label: HTMLInputElement; color: HTMLInputElement }> = []
-  const addBand = (band: { min: number; max: number; label: string; color: string }) => {
+  const bandRows: Array<{ row: HTMLElement; min: HTMLInputElement; max: HTMLInputElement; label: HTMLInputElement; color: HTMLInputElement; meaning: HTMLSelectElement }> = []
+  const addBand = (band: { min: number; max: number; label: string; color: string; meaning?: string }) => {
     const row = el('div', 'lp-band-editor')
     const low = el('input', 'lp-input'); low.type = 'number'; low.step = 'any'; low.value = String(band.min); low.setAttribute('aria-label', 'Band minimum')
     const high = el('input', 'lp-input'); high.type = 'number'; high.step = 'any'; high.value = String(band.max); high.setAttribute('aria-label', 'Band maximum')
     const label = el('input', 'lp-input'); label.value = band.label; label.placeholder = 'Band name'; label.setAttribute('aria-label', 'Band name')
     const hue = el('input', 'lp-color-input'); hue.type = 'color'; hue.value = /^#[0-9a-f]{6}$/i.test(band.color) ? band.color : host.accent; hue.setAttribute('aria-label', 'Band color')
     const remove = button('×', 'lp-button lp-button-quiet'); remove.setAttribute('aria-label', 'Remove band')
-    const entry = { row, min: low, max: high, label, color: hue }; bandRows.push(entry)
+    const meaning = choice('Meaning', [['neutral', 'Neutral'], ['good', 'Favorable'], ['bad', 'Warning']], band.meaning || 'neutral')
+    meaning.field.classList.add('lp-band-meaning')
+    const entry = { row, min: low, max: high, label, color: hue, meaning: meaning.control }; bandRows.push(entry)
     remove.addEventListener('click', () => { bandRows.splice(bandRows.indexOf(entry), 1); row.remove(); remember() })
-    row.append(label, low, high, hue, remove); bandList.append(row)
+    row.append(label, low, high, hue, remove, meaning.field); bandList.append(row)
   }
   for (const band of source.bands) addBand(band)
   const bands = sectionBlock('Meaningful ranges', 'Name what each range means. High does not always mean good.')
@@ -106,7 +109,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
       step: Number(step.value), direction: direction.control.value, color: color.value,
       updateMode: mode.control.value, allowModelWrite: mode.control.value === 'model', visibleToModel: visible.checked, clock: clock.control.value,
       ratePerHour: kindValue === 'timer' ? Math.abs(Number(rate.value)) * (direction.control.value === 'down' ? -1 : 1) : Number(rate.value),
-      bands: kindValue === 'state' ? [] : bandRows.map(entry => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value })),
+      bands: kindValue === 'state' ? [] : bandRows.map(entry => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value, meaning: entry.meaning.value })),
     }
   }
   const refreshFields = () => {
@@ -128,7 +131,8 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const remember = () => {
     refreshFields()
     const draft = collect(); host.updateDraft(draft)
-    preview.replaceChildren(el('span', 'lp-eyebrow', draft.target.label), el('strong', 'lp-preview-name', draft.label || 'Your tracker'), el('span', 'lp-preview-value', draft.kind === 'state' ? draft.state || 'Choose a state' : `${draft.value}${draft.unit}`), el('small', '', draft.updateMode === 'model' ? 'Changes with the story ✦' : draft.updateMode === 'automatic' ? 'A little timekeeper ◷' : 'Made for your story ♡'))
+    const sample = normalizeTracker({ ...source, ...draft }, { roleplayNow: host.state.roleplayNow })!
+    preview.replaceChildren(trackerDisplay(sample, host.state))
     preview.style.setProperty('--tracker-color', draft.color)
   }
   content.append(preview, error, basic.section, automatic.section, advanced)

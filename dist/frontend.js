@@ -288,7 +288,8 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return {
       app,
       contactId: shortId(raw.contactId),
-      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "quick-gen" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
+      groupId: shortId(raw.groupId),
+      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -305,7 +306,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
   if (app === "settings")
     return { app, section: shortId(raw.section) };
   if (app === "camera")
-    return { app, contactId: shortId(raw.contactId) };
+    return { app, contactId: shortId(raw.contactId), ...raw.draft === true ? { draft: true } : {} };
   if (app === "weather" || app === "notifications" || app === "home")
     return { app };
   return fallback;
@@ -1575,15 +1576,15 @@ function normalizeBands(value, min, max, color) {
     const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
     const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
     const label = clean(item.label, 80);
-    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color }] : [];
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color, meaning: item.meaning === "good" || item.meaning === "bad" ? item.meaning : "neutral" }] : [];
   }).slice(0, 12);
   if (bands.length || max <= min)
     return bands;
   const span = max - min;
   return [
-    { min, max: min + span * 0.33, label: "Low", color: "#ef6b73" },
+    { min, max: min + span * 0.33, label: "Low", color },
     { min: min + span * 0.33, max: min + span * 0.67, label: "Steady", color },
-    { min: min + span * 0.67, max, label: "High", color: "#62c994" }
+    { min: min + span * 0.67, max, label: "High", color }
   ];
 }
 function normalizeHistory(value) {
@@ -1664,11 +1665,11 @@ function normalizeTracker(value, context = {}) {
   return { ...base, kind };
 }
 var TRACKER_TEMPLATES = [
-  { group: "Character", name: "Health", values: { kind: "meter", label: "Health", key: "health", value: 100, initialValue: 100, min: 0, max: 100, unit: "%", presentation: "vitals" } },
-  { group: "Character", name: "Hunger", values: { kind: "meter", label: "Hunger", key: "hunger", value: 20, initialValue: 20, min: 0, max: 100, unit: "%", updateMode: "automatic", ratePerHour: 3, clock: "roleplay" } },
-  { group: "Relationship", name: "Trust", values: { kind: "meter", label: "Trust", key: "trust", value: 50, initialValue: 50, min: 0, max: 100, unit: "%", presentation: "relationship", target: { type: "relationship", id: "", label: "Current relationship" } } },
+  { group: "Character", name: "Health", values: { kind: "meter", label: "Health", key: "health", value: 100, initialValue: 100, min: 0, max: 100, unit: "%", presentation: "vitals", bands: [{ min: 0, max: 35, label: "Critical", color: "#ef6b73", meaning: "bad" }, { min: 35, max: 70, label: "Recovering", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Healthy", color: "#62c994", meaning: "good" }] } },
+  { group: "Character", name: "Hunger", values: { kind: "meter", label: "Hunger", key: "hunger", value: 20, initialValue: 20, min: 0, max: 100, unit: "%", updateMode: "automatic", ratePerHour: 3, clock: "roleplay", bands: [{ min: 0, max: 30, label: "Sated", color: "#62c994", meaning: "good" }, { min: 30, max: 70, label: "Hungry", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Starving", color: "#ef6b73", meaning: "bad" }] } },
+  { group: "Relationship", name: "Trust", values: { kind: "meter", label: "Trust", key: "trust", value: 50, initialValue: 50, min: 0, max: 100, unit: "%", presentation: "relationship", bands: [{ min: 0, max: 30, label: "Wary", color: "#ef6b73", meaning: "bad" }, { min: 30, max: 70, label: "Building trust", color: "#8b7dff", meaning: "neutral" }, { min: 70, max: 100, label: "Trusted", color: "#62c994", meaning: "good" }], target: { type: "relationship", id: "", label: "Current relationship" } } },
   { group: "Relationship", name: "Relationship Status", values: { kind: "state", label: "Relationship Status", key: "relationship_status", state: "Acquaintances", initialState: "Acquaintances", states: ["Strangers", "Acquaintances", "Friends", "Close", "Partners"], presentation: "state", target: { type: "relationship", id: "", label: "Current relationship" } } },
-  { group: "Scene", name: "Tension", values: { kind: "meter", label: "Scene Tension", key: "scene_tension", value: 10, initialValue: 10, min: 0, max: 100, unit: "%", target: { type: "scene", id: "", label: "Current scene" } } },
+  { group: "Scene", name: "Tension", values: { kind: "meter", label: "Scene Tension", key: "scene_tension", value: 10, initialValue: 10, min: 0, max: 100, unit: "%", bands: [{ min: 0, max: 30, label: "Calm", color: "#62c994", meaning: "good" }, { min: 30, max: 70, label: "Uneasy", color: "#e2b85c", meaning: "neutral" }, { min: 70, max: 100, label: "Flashpoint", color: "#ef6b73", meaning: "bad" }], target: { type: "scene", id: "", label: "Current scene" } } },
   { group: "Resource", name: "Ammo", values: { kind: "counter", label: "Ammo", key: "ammo", value: 12, initialValue: 12, min: 0, max: 999, unit: " rounds", presentation: "counter" } },
   { group: "World", name: "World Alert", values: { kind: "state", label: "World Alert", key: "world_alert", state: "Calm", initialState: "Calm", states: ["Calm", "Watchful", "Alarmed", "Crisis"], target: { type: "world", id: "", label: "Current world" } } },
   { group: "Timer", name: "Countdown", values: { kind: "timer", label: "Countdown", key: "countdown", value: 60, initialValue: 60, min: 0, max: 60, unit: " min", direction: "down", updateMode: "automatic", ratePerHour: -60, clock: "roleplay", presentation: "timer" } },
@@ -1728,6 +1729,104 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
   return { tracker: next, changed: true };
 }
 
+// src/frontend/components/tracker-display.ts
+function trackerPercent(tracker) {
+  return Math.max(0, Math.min(100, (tracker.value - tracker.min) / Math.max(0.00001, tracker.max - tracker.min) * 100));
+}
+function trackerDisplayValue(tracker) {
+  if (tracker.kind === "state")
+    return tracker.state;
+  if (tracker.kind === "timer") {
+    const unit = tracker.unit.trim().toLowerCase();
+    const factor = /^(min|minutes?|m)$/.test(unit) ? 60 : /^(h|hours?|hr)$/.test(unit) ? 3600 : /^(s|seconds?|sec)$/.test(unit) ? 1 : 0;
+    if (factor) {
+      const seconds = Math.max(0, Math.round(tracker.value * factor));
+      return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60].map((n) => String(n).padStart(2, "0")).join(":");
+    }
+  }
+  return `${Number(tracker.value.toFixed(2))}${tracker.unit}`;
+}
+function trackerDisplay(tracker, state) {
+  const current = materializeTracker(tracker, state.roleplayNow).tracker;
+  const card = el("div", `lp-card lp-tracker-card lp-tracker-${current.presentation}`);
+  card.dataset.trackerId = current.id;
+  card.dataset.kind = current.kind;
+  card.dataset.target = current.target.type;
+  const band = current.kind === "state" ? null : trackerBand(current);
+  card.style.setProperty("--tracker-color", band?.color || current.color);
+  card.dataset.meaning = band?.meaning || "neutral";
+  card.style.setProperty("--tracker-percent", `${trackerPercent(current)}%`);
+  const heading = el("div", "lp-tracker-heading");
+  heading.append(el("span", "lp-eyebrow", current.target.label || current.target.type), el("h3", "lp-title", current.label));
+  const value = el("strong", "lp-tracker-readout", trackerDisplayValue(current));
+  const status = current.pausedReason || (current.kind === "timer" && current.direction === "down" && current.value <= current.min ? "Finished" : band?.label || current.kind);
+  if (current.presentation === "relationship") {
+    const pair = el("div", "lp-tracker-pair");
+    const other = resolvePocketActor(state, current.target.id);
+    for (const subject of [{ name: state.pocketPersona.displayName || "You", avatarUrl: state.pocketPersona.avatarUrl }, { name: other?.name || current.target.label, avatarUrl: other?.avatarUrl }]) {
+      const avatar = el("span", "lp-tracker-avatar", subject.name.slice(0, 1).toUpperCase());
+      if (subject.avatarUrl) {
+        const image = el("img");
+        image.src = subject.avatarUrl;
+        image.alt = subject.name;
+        avatar.replaceChildren(image);
+      }
+      pair.append(avatar);
+    }
+    card.append(pair, heading, el("div", "lp-tracker-stage", status), value);
+  } else if (current.presentation === "vitals") {
+    const gauge = el("div", "lp-vital-gauge");
+    gauge.append(value);
+    card.append(heading, gauge, el("span", "lp-tracker-stage", status));
+  } else if (current.presentation === "state" && current.kind === "state") {
+    card.append(heading, value);
+    const path = el("div", "lp-state-path");
+    for (const label of current.states) {
+      const tag = el("span", "", label);
+      tag.dataset.active = String(label === current.state);
+      path.append(tag);
+    }
+    card.append(path);
+  } else if (current.presentation === "segmented") {
+    card.append(heading, value);
+    const segments = el("div", "lp-tracker-segments");
+    for (let index = 0;index < 10; index++) {
+      const segment = el("span");
+      segment.dataset.filled = String(trackerPercent(current) >= (index + 1) * 10);
+      segments.append(segment);
+    }
+    card.append(segments, el("span", "lp-tracker-stage", status));
+  } else {
+    card.append(heading, value);
+    if (current.presentation === "meter") {
+      const rail = el("div", "lp-progress");
+      const fill = el("span");
+      fill.style.setProperty("--progress", `${trackerPercent(current)}%`);
+      fill.style.setProperty("--tracker-color", band?.color || current.color);
+      rail.append(fill);
+      const limits = el("div", "lp-row-between lp-copy");
+      limits.append(el("span", "", `${current.min}${current.unit}`), el("span", "", `${current.max}${current.unit}`));
+      card.append(rail, limits);
+    }
+    if (current.presentation === "timer")
+      card.append(el("span", "lp-tracker-stage", status === "timer" ? current.kind === "timer" && current.direction === "down" ? "Counting down" : "Counting up" : status));
+    if (current.presentation === "counter" && current.kind === "counter")
+      card.append(el("span", "lp-copy", `Step ${current.step}${current.unit} · ${current.min}–${current.max}`));
+  }
+  const latest = current.history.at(-1);
+  const footer = el("div", "lp-tracker-meta");
+  footer.append(el("span", "", current.presentation === "timer" ? `${current.clock === "real" ? "Real" : "Story"} time` : status), el("span", "", current.updateMode === "model" ? "Story updates" : current.updateMode === "automatic" ? "Automatic" : "Manual"));
+  card.append(footer);
+  if (latest && current.presentation === "relationship")
+    card.append(el("p", "lp-copy lp-tracker-change", `${latest.previous} → ${latest.next}${latest.reason ? ` · ${latest.reason}` : ""}`));
+  return card;
+}
+function refreshTrackerDisplay(card, tracker, state) {
+  const fresh = trackerDisplay(tracker, state);
+  card.replaceChildren(...fresh.childNodes);
+  card.style.cssText = fresh.style.cssText;
+}
+
 // src/frontend/apps/tracker-editor.ts
 function choice(label, values, value) {
   const control = el("select", "lp-select");
@@ -1740,7 +1839,7 @@ function choice(label, values, value) {
   return { control, field: fieldBlock(label, control) };
 }
 function trackerTemplates(host) {
-  const { page, content } = host.page("New Tracker", "A little dashboard for your story");
+  const { page, content } = host.page("New Tracker", "Track your story");
   content.append(el("p", "lp-copy", "Pick a starting point. You can make it yours next."));
   const grid = el("div", "lp-template-grid");
   const marks = ["♡", "◔", "✿", "♥", "ϟ", "▥", "◈", "◷", "✧", "＋"];
@@ -1759,7 +1858,7 @@ function trackerEditor(host, current, templateIndex = 9) {
   const seed = normalizeTracker({ ...template.values, target, color: host.accent }, { roleplayNow: host.state.roleplayNow });
   const source = { ...current || seed, ...host.draft };
   let commit = () => {};
-  const { page, content } = host.page(current ? "Edit Tracker" : template.name, "Make room for the little things", { label: host.saving ? "Saving…" : "Save", enabled: !host.saving, callback: () => commit() });
+  const { page, content } = host.page(current ? "Edit Tracker" : template.name, "Choose a target and update behavior", { label: host.saving ? "Saving…" : "Save", enabled: !host.saving, callback: () => commit() });
   const preview = el("div", "lp-tracker-preview");
   const error = el("p", "lp-warning");
   error.setAttribute("role", "alert");
@@ -1863,14 +1962,16 @@ Recovering`;
     hue.setAttribute("aria-label", "Band color");
     const remove = button("×", "lp-button lp-button-quiet");
     remove.setAttribute("aria-label", "Remove band");
-    const entry = { row, min: low, max: high, label, color: hue };
+    const meaning = choice("Meaning", [["neutral", "Neutral"], ["good", "Favorable"], ["bad", "Warning"]], band.meaning || "neutral");
+    meaning.field.classList.add("lp-band-meaning");
+    const entry = { row, min: low, max: high, label, color: hue, meaning: meaning.control };
     bandRows.push(entry);
     remove.addEventListener("click", () => {
       bandRows.splice(bandRows.indexOf(entry), 1);
       row.remove();
       remember();
     });
-    row.append(label, low, high, hue, remove);
+    row.append(label, low, high, hue, remove, meaning.field);
     bandList.append(row);
   };
   for (const band of source.bands)
@@ -1910,7 +2011,7 @@ Recovering`;
       visibleToModel: visible.checked,
       clock: clock.control.value,
       ratePerHour: kindValue === "timer" ? Math.abs(Number(rate.value)) * (direction.control.value === "down" ? -1 : 1) : Number(rate.value),
-      bands: kindValue === "state" ? [] : bandRows.map((entry) => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value }))
+      bands: kindValue === "state" ? [] : bandRows.map((entry) => ({ min: Number(entry.min.value), max: Number(entry.max.value), label: entry.label.value.trim(), color: entry.color.value, meaning: entry.meaning.value }))
     };
   };
   const refreshFields = () => {
@@ -1950,7 +2051,8 @@ Recovering`;
     refreshFields();
     const draft = collect();
     host.updateDraft(draft);
-    preview.replaceChildren(el("span", "lp-eyebrow", draft.target.label), el("strong", "lp-preview-name", draft.label || "Your tracker"), el("span", "lp-preview-value", draft.kind === "state" ? draft.state || "Choose a state" : `${draft.value}${draft.unit}`), el("small", "", draft.updateMode === "model" ? "Changes with the story ✦" : draft.updateMode === "automatic" ? "A little timekeeper ◷" : "Made for your story ♡"));
+    const sample = normalizeTracker({ ...source, ...draft }, { roleplayNow: host.state.roleplayNow });
+    preview.replaceChildren(trackerDisplay(sample, host.state));
     preview.style.setProperty("--tracker-color", draft.color);
   };
   content.append(preview, error, basic.section, automatic.section, advanced);
@@ -1996,45 +2098,8 @@ function selectField(labelText, options, selected) {
   label.appendChild(select);
   return { label, select };
 }
-function displayValue(tracker) {
-  return tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit}`;
-}
-function liveTracker(tracker, roleplayNow) {
-  return tracker.clock === "real" ? materializeTracker(tracker, roleplayNow).tracker : tracker;
-}
-function percent(tracker) {
-  return Math.max(0, Math.min(100, (tracker.value - tracker.min) / Math.max(0.00001, tracker.max - tracker.min) * 100));
-}
 function targetLabel(target) {
-  return `${target.type[0].toUpperCase()}${target.type.slice(1)} · ${target.label || target.id || "Unassigned"}`;
-}
-function renderPresentation(tracker, roleplayNow) {
-  const current = liveTracker(tracker, roleplayNow);
-  const card = el("div", `lp-card lp-tracker-card lp-tracker-${current.presentation}`);
-  card.dataset.trackerId = current.id;
-  card.dataset.kind = current.kind;
-  card.dataset.target = current.target.type;
-  const heading = el("div", "lp-row-between");
-  const left = el("div");
-  left.append(el("div", "lp-eyebrow", targetLabel(current.target)), el("h3", "lp-title", current.label));
-  const value = el("div", "lp-tracker-value", displayValue(current));
-  value.dataset.trackerLiveValue = current.id;
-  heading.append(left, value);
-  card.appendChild(heading);
-  if (current.kind !== "state" && current.presentation !== "counter" && current.presentation !== "compact") {
-    const progress = el("div", current.presentation === "segmented" ? "lp-progress lp-progress-segmented" : "lp-progress");
-    const fill = el("span");
-    fill.dataset.trackerLiveFill = current.id;
-    fill.style.setProperty("--progress", `${percent(current)}%`);
-    fill.style.setProperty("--tracker-color", current.color);
-    progress.appendChild(fill);
-    card.appendChild(progress);
-  }
-  const band = current.kind === "state" ? null : trackerBand(current);
-  const footer = el("div", "lp-tracker-meta");
-  footer.append(el("span", "", band?.label || current.kind), el("span", "", current.updateMode === "automatic" ? `${current.clock === "roleplay" ? "Roleplay" : "Human"} clock` : current.updateMode));
-  card.appendChild(footer);
-  return card;
+  return target.label || target.type;
 }
 function dashboard(host) {
   const { page, content } = host.page("Trackers", "Live roleplay state", { label: "Add", callback: () => host.select("__templates", "config") });
@@ -2060,7 +2125,7 @@ function dashboard(host) {
     filter.addEventListener("click", () => applyFilter(filter.dataset.filter));
   content.appendChild(filters);
   for (const tracker of host.state.trackers) {
-    const card = renderPresentation(tracker, host.state.roleplayNow);
+    const card = trackerDisplay(tracker, host.state);
     card.dataset.clickable = "true";
     card.tabIndex = 0;
     card.setAttribute("role", "button");
@@ -2081,23 +2146,24 @@ function dashboard(host) {
   }
   const timer = window.setInterval(() => {
     for (const tracker of host.state.trackers) {
-      if (tracker.clock !== "real" || tracker.updateMode !== "automatic")
+      if (tracker.updateMode !== "automatic")
         continue;
-      const current = liveTracker(tracker, host.state.roleplayNow);
-      const value = content.querySelector(`[data-tracker-live-value="${CSS.escape(tracker.id)}"]`);
-      const fill = content.querySelector(`[data-tracker-live-fill="${CSS.escape(tracker.id)}"]`);
-      if (value)
-        value.textContent = displayValue(current);
-      if (fill)
-        fill.style.setProperty("--progress", `${percent(current)}%`);
+      const card = content.querySelector(`[data-tracker-id="${CSS.escape(tracker.id)}"]`);
+      if (card)
+        refreshTrackerDisplay(card, tracker, host.state);
     }
-  }, 15000);
+  }, 1000);
   host.onCleanup(() => window.clearInterval(timer));
   return page;
 }
 function detail(host, tracker) {
   const { page, content } = host.page(tracker.label, targetLabel(tracker.target), { label: "⚙", callback: () => host.select(tracker.id, "config"), ariaLabel: "Tracker settings" });
-  content.appendChild(renderPresentation(tracker, host.state.roleplayNow));
+  const display = trackerDisplay(tracker, host.state);
+  content.appendChild(display);
+  if (tracker.updateMode === "automatic") {
+    const timer = window.setInterval(() => refreshTrackerDisplay(display, tracker, host.state), 1000);
+    host.onCleanup(() => window.clearInterval(timer));
+  }
   const policy = el("div", "lp-card lp-tracker-policy");
   policy.append(el("div", "lp-row-between", ""), el("p", "lp-copy", `${tracker.visibleToModel ? "Visible" : "Hidden"} in model context · ${tracker.allowModelWrite ? "Model may write" : "Model read-only"} · ${tracker.updateMode} updates`));
   if (tracker.pausedReason)
@@ -2109,7 +2175,9 @@ function detail(host, tracker) {
     const state = selectField("State", tracker.states.map((value) => [value, value]), tracker.state);
     const apply = button("Set state");
     apply.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "set_state", state: state.select.value, reason: "Changed in Pocket" } }));
-    operations.append(state.label, apply);
+    const reset = button(`Reset to ${tracker.initialState}`, "lp-button lp-button-quiet");
+    reset.addEventListener("click", () => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, operation: "reset", reason: "Reset in Pocket" } }));
+    operations.append(state.label, apply, reset);
   } else {
     const amount = el("input", "lp-input");
     amount.type = "number";
@@ -2181,9 +2249,34 @@ function newConversationView(host) {
   startGroup.disabled = listPocketActors(host.state).length < 2;
   startGroup.addEventListener("click", () => host.selectConversation("", "group-editor"));
   content.append(search, startGroup);
+  const collections = host.state.contactGroups || [];
+  if (collections.length) {
+    const { section, body } = sectionBlock("Your contact groups", "Start a chat with a saved collection.");
+    for (const group of collections) {
+      const start = button(`${group.name} · ${group.memberIds.length}`, "lp-button lp-button-quiet");
+      start.disabled = group.memberIds.length < 2;
+      start.addEventListener("click", () => host.startContactGroup(group.name, group.memberIds));
+      body.append(start);
+    }
+    content.append(section);
+  }
   const { section: directSection, body: directBody } = sectionBlock("Direct message", "Start or reopen a private Pocket conversation.");
-  const contacts = [...host.state.contacts].sort((a, b) => a.name.localeCompare(b.name));
+  const latest = new Map;
+  for (const conversation of host.state.conversations) {
+    if (conversation.kind !== "direct" || !conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId))
+      continue;
+    const time = Date.parse(conversation.messages.at(-1)?.createdAt || conversation.updatedAt || "") || 0;
+    for (const id of conversationActorIds(conversation))
+      latest.set(id, Math.max(latest.get(id) || 0, time));
+  }
+  const contacts = [...host.state.contacts].sort((a, b) => (latest.get(b.id) || 0) - (latest.get(a.id) || 0) || a.name.localeCompare(b.name));
+  let sectionLabel = "";
   for (const contact of contacts) {
+    const label = latest.has(contact.id) ? "Recent" : "All contacts";
+    if (label !== sectionLabel) {
+      directBody.append(el("div", "lp-eyebrow", label));
+      sectionLabel = label;
+    }
     const row = button("", "lp-message-picker-row");
     row.type = "button";
     const actor = resolvePocketActor(host.state, contact.id);
@@ -2194,6 +2287,7 @@ function newConversationView(host) {
       const image = el("img");
       image.src = actor.avatarUrl;
       image.alt = "";
+      image.style.objectPosition = `${contact.avatarFocus?.x ?? 50}% ${contact.avatarFocus?.y ?? 50}%`;
       avatar.replaceChildren(image);
     }
     row.append(avatar, identityBlock({ name: contact.name, meta: contact.role }), el("span", "lp-message-picker-chevron", "›"));
@@ -2233,16 +2327,25 @@ function groupEditor(host, conversation) {
   const choices = el("div", "lp-contact-checklist lp-participant-picker");
   const selected = new Set(host.groupDraft?.participants ?? (conversation ? conversationActorIds(conversation) : []));
   const count = el("p", "lp-copy");
+  const selectedNames = el("div", "lp-selected-members");
   const save = page.querySelector(".lp-nav-action:last-child");
   const remember = () => {
     const participants = [...choices.querySelectorAll("input:checked")].map((entry) => entry.value);
     host.updateGroupDraft({ title: title.value, participants });
     count.textContent = `${participants.length} selected · choose at least two people`;
+    selectedNames.replaceChildren(...participants.map((id) => el("span", "lp-chip", resolvePocketActor(host.state, id)?.name || id)));
     save.disabled = participants.length < 2 || host.groupSaving;
     if (host.groupSaving)
       save.textContent = "Saving…";
   };
   title.addEventListener("input", remember);
+  const search = el("input", "lp-input");
+  search.type = "search";
+  search.placeholder = "Search group members";
+  search.addEventListener("input", () => {
+    for (const row of choices.querySelectorAll(".lp-picker-row"))
+      row.hidden = !row.textContent.toLowerCase().includes(search.value.trim().toLowerCase());
+  });
   for (const actor of listPocketActors(host.state)) {
     const row = el("label", "lp-picker-row");
     const checkbox = el("input", "lp-visually-hidden");
@@ -2285,7 +2388,7 @@ function groupEditor(host, conversation) {
       participantActorIds
     });
   };
-  content.append(fieldBlock("Group name", title), count, choices);
+  content.append(fieldBlock("Group name", title), count, selectedNames, search, choices);
   remember();
   if (conversation) {
     const remove = button("Delete group", "lp-button lp-button-danger");
@@ -2795,6 +2898,183 @@ function renderMessagesView(host) {
   return page;
 }
 
+// src/frontend/apps/contact-groups.ts
+function members(host, bank) {
+  return bank ? host.npcBank : host.state.contacts;
+}
+function groupEditor2(host, bank, importing = false) {
+  const group = (bank ? host.bankGroups : host.state.contactGroups || []).find((group) => group.id === host.selectedGroupId);
+  if (host.selectedGroupId && !group)
+    return host.empty("Group unavailable", "This group has been removed.");
+  const { page, content } = host.page(importing ? "Import Cast" : group ? `Edit ${group.name}` : bank ? "New Portable Cast" : "New Contact Group", bank ? "Saved NPC identities across chats" : "Contacts in this roleplay");
+  const name = el("input", "lp-input");
+  name.value = host.collectionDraft?.name ?? group?.name ?? "";
+  name.placeholder = "Group name";
+  const selected = new Set(host.collectionDraft?.memberIds ?? group?.memberIds ?? []);
+  const choices = el("div", "lp-contact-checklist lp-participant-picker");
+  const available = members(host, bank).filter((entry) => !importing || group?.memberIds.includes(entry.id));
+  const count = el("p", "lp-copy");
+  const actions = actionGroup();
+  const save = button(host.collectionSaving ? "Saving…" : importing ? "Import selected" : "Save group", "lp-button");
+  const remember = () => {
+    const memberIds = [...choices.querySelectorAll("input:checked")].map((input) => input.value);
+    host.updateCollectionDraft({ name: name.value, memberIds });
+    count.textContent = `${memberIds.length} selected${importing ? " · linked members will be reused" : ""}`;
+    save.disabled = host.collectionSaving || !memberIds.length || !importing && !name.value.trim();
+  };
+  for (const entry of available) {
+    const row = el("label", "lp-picker-row");
+    const check = el("input");
+    check.type = "checkbox";
+    check.value = entry.id;
+    check.checked = selected.has(entry.id);
+    const linked = bank && host.state.contacts.some((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
+    row.append(check, identityBlock({ name: entry.name, meta: `${entry.role}${linked ? " · already in this chat" : ""}` }));
+    check.addEventListener("change", remember);
+    choices.append(row);
+  }
+  const all = button("Select all", "lp-button lp-button-quiet");
+  all.addEventListener("click", () => {
+    for (const input of choices.querySelectorAll("input"))
+      input.checked = true;
+    remember();
+  });
+  const none = button("Clear", "lp-button lp-button-quiet");
+  none.addEventListener("click", () => {
+    for (const input of choices.querySelectorAll("input"))
+      input.checked = false;
+    remember();
+  });
+  actions.append(all, none);
+  name.addEventListener("input", remember);
+  save.addEventListener("click", () => {
+    const memberIds = [...choices.querySelectorAll("input:checked")].map((input) => input.value);
+    host.saveCollection(importing ? "lumiphone:npc_cast_import" : bank ? "lumiphone:npc_cast_save" : "lumiphone:contact_group_save", { groupId: group?.id, name: name.value.trim(), memberIds });
+  });
+  if (!importing)
+    content.append(fieldBlock("Name", name));
+  else
+    content.append(el("p", "lp-copy", "Import stable profiles and photos. Presence, relationships, messages, and tracker values stay in their original chats."));
+  content.append(count, actions, choices, save);
+  if (!available.length)
+    content.append(el("p", "lp-copy", bank ? "Save some NPC profiles to the Bank first." : "Add contacts first."));
+  remember();
+  return page;
+}
+function bankEditor(host) {
+  const entry = host.npcBank.find((entry) => entry.id === host.selectedContactId);
+  if (!entry)
+    return host.empty("Profile unavailable", "This NPC Bank profile has been removed.");
+  const { page, content } = host.page("Edit Bank Profile", "Changes affect future imports");
+  const source = { ...entry, ...host.collectionDraft };
+  const fields = {};
+  for (const [key, label, multiline, value] of [
+    ["name", "Name", false, source.name],
+    ["role", "Role", false, source.role],
+    ["identityBrief", "Compact profile", true, source.identityBrief],
+    ["personality", "Personality", true, source.phoneProfile?.personality],
+    ["appearance", "Appearance", true, source.phoneProfile?.appearance],
+    ["textingStyle", "Texting style", true, source.phoneProfile?.textingStyle],
+    ["aliases", "Aliases · one per line", true, source.aliases.join(`
+`)],
+    ["tags", "Tags · one per line", true, source.tags.join(`
+`)]
+  ]) {
+    const input = multiline ? el("textarea", "lp-textarea") : el("input", "lp-input");
+    input.value = String(value || "");
+    fields[key] = input;
+    content.append(fieldBlock(label, input));
+  }
+  const collect = () => ({ name: fields.name.value, role: fields.role.value, identityBrief: fields.identityBrief.value, phoneProfile: { personality: fields.personality.value, appearance: fields.appearance.value, textingStyle: fields.textingStyle.value }, aliases: fields.aliases.value.split(`
+`).filter(Boolean), tags: fields.tags.value.split(`
+`).filter(Boolean) });
+  content.addEventListener("input", () => host.updateCollectionDraft(collect()));
+  const save = button(host.collectionSaving ? "Saving…" : "Save Bank profile");
+  save.disabled = host.collectionSaving;
+  save.addEventListener("click", () => host.saveCollection("lumiphone:npc_bank_edit", { bankId: entry.id, entry: collect() }));
+  content.append(save);
+  return page;
+}
+function renderContactGroups(host) {
+  if (host.selectedView === "group-config")
+    return groupEditor2(host, false);
+  if (host.selectedView === "cast-config")
+    return groupEditor2(host, true);
+  if (host.selectedView === "cast-import")
+    return groupEditor2(host, true, true);
+  if (host.selectedView === "bank-entry")
+    return bankEditor(host);
+  const bank = host.selectedView === "bank";
+  const { page, content } = host.page(bank ? "NPC Bank" : "Contact Groups", bank ? `${host.npcBank.length} reusable profiles` : "Collections for this roleplay", { label: "New", callback: () => host.selectGroup("", bank ? "cast-config" : "group-config") });
+  const groups = bank ? host.bankGroups : host.state.contactGroups || [];
+  const search = el("input", "lp-input");
+  search.type = "search";
+  search.placeholder = bank ? "Search casts and saved NPCs" : "Search contact groups";
+  const cards = [];
+  content.append(search);
+  if (!bank) {
+    const portable = button("NPC Bank & portable casts", "lp-button lp-button-quiet");
+    portable.addEventListener("click", () => host.selectGroup("", "bank"));
+    content.append(portable);
+  }
+  for (const group of groups) {
+    const people = group.memberIds.map((id) => members(host, bank).find((entry) => entry.id === id)).filter((entry) => Boolean(entry));
+    const { section, body } = sectionBlock(group.name, `${people.length} members${bank ? " · portable cast" : ""}`, "lp-card lp-contact-group");
+    body.append(el("p", "lp-copy", people.map((entry) => entry.name).join(" · ") || "No members left. Edit this group to add people."));
+    const actions = actionGroup();
+    const edit = button("Edit", "lp-button lp-button-quiet");
+    edit.addEventListener("click", () => host.selectGroup(group.id, bank ? "cast-config" : "group-config"));
+    actions.append(edit);
+    if (bank) {
+      const importCast = button("Import…");
+      importCast.disabled = !people.length;
+      importCast.addEventListener("click", () => host.selectGroup(group.id, "cast-import"));
+      actions.append(importCast);
+    } else {
+      const chat = button("Start group chat");
+      chat.disabled = group.memberIds.length < 2;
+      chat.addEventListener("click", () => host.startGroup(group.name, group.memberIds));
+      actions.append(chat);
+      const save = button(group.bankGroupId ? "Update saved cast" : "Save as portable cast", "lp-button lp-button-quiet");
+      save.disabled = !people.length || people.some((entry) => !entry || !("source" in entry) || entry.source.kind !== "npc") || host.collectionSaving;
+      save.addEventListener("click", () => host.saveCollection("lumiphone:contact_group_bank", { groupId: group.id }));
+      actions.append(save);
+      if (save.disabled && people.length)
+        body.append(el("p", "lp-copy", "Portable casts contain Pocket NPCs. Linked Characters stay local."));
+    }
+    const remove = button("Remove group", "lp-button lp-button-danger");
+    remove.disabled = host.collectionSaving;
+    remove.addEventListener("click", () => host.saveCollection(bank ? "lumiphone:npc_cast_delete" : "lumiphone:contact_group_delete", { groupId: group.id }));
+    actions.append(remove);
+    body.append(actions);
+    content.append(section);
+    cards.push({ node: section, terms: `${group.name} ${people.map((entry) => entry.name).join(" ")}`.toLowerCase() });
+  }
+  if (!groups.length)
+    content.append(el("p", "lp-copy", bank ? "Save a cast to reuse the same NPCs in other chats." : "Organize a cast, family, team, or faction here."));
+  if (bank)
+    for (const entry of host.npcBank) {
+      const row = el("div", "lp-card lp-bank-profile");
+      row.append(identityBlock({ name: entry.name, meta: entry.role, description: entry.identityBrief }));
+      const actions = actionGroup();
+      const edit = button("Edit saved profile", "lp-button lp-button-quiet");
+      edit.addEventListener("click", () => host.select(entry.id, "bank-entry"));
+      actions.append(edit);
+      const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
+      const add = button(linked ? "Open local contact" : "Add to this chat");
+      add.addEventListener("click", () => linked ? host.select(linked.id, "detail") : host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
+      actions.append(add);
+      row.append(actions);
+      content.append(row);
+      cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.tags.join(" ")}`.toLowerCase() });
+    }
+  search.addEventListener("input", () => {
+    for (const card of cards)
+      card.node.hidden = !card.terms.includes(search.value.trim().toLowerCase());
+  });
+  return page;
+}
+
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
@@ -2803,6 +3083,7 @@ function avatar(contact) {
     const image = el("img");
     image.src = contactAvatar(contact);
     image.alt = "";
+    image.style.objectPosition = `${contact.avatarFocus?.x ?? 50}% ${contact.avatarFocus?.y ?? 50}%`;
     node.replaceChildren(image);
   }
   return node;
@@ -2817,6 +3098,9 @@ function draftPayload(draft) {
     accent: draft.accent,
     colorMode: "pocket",
     messagingStyle: draft.messagingStyle,
+    avatarOverrideUrl: draft.avatarUrl || "",
+    avatarSource: draft.avatarSource,
+    avatarFocus: draft.avatarFocus,
     source: { kind: "npc", origin: "generated", description: draft.identityBrief },
     presence: { inScene: false, lastSceneAt: "" },
     contextPolicy: { pinned: false },
@@ -2974,6 +3258,7 @@ function contactEditor(host, contact, draft = null) {
         lastInitiatedRoleplayAt: contact?.messagingPolicy.lastInitiatedRoleplayAt || ""
       },
       messagingStyle: { talkativeness: Number(talkativeness.value), fragmentation: Number(fragmentation.value) },
+      ...draft ? { avatarOverrideUrl: draft.avatarUrl || "", avatarSource: draft.avatarSource, avatarFocus: draft.avatarFocus } : {},
       source: contact?.source || (draft ? { kind: "npc", origin: "generated", description: description.value.trim() } : { kind: "npc", origin: "manual", description: description.value.trim() })
     } });
   };
@@ -3075,10 +3360,7 @@ function importView(host) {
       actions.style.minWidth = "0";
       const edit = button("Edit", "lp-button lp-button-quiet");
       edit.addEventListener("click", () => {
-        if (linked)
-          host.select(linked.id, "config");
-        else
-          host.send("lumiphone:npc_bank_add", { bankId: entry.id, openConfig: true });
+        host.select(entry.id, "bank-entry");
       });
       const add = button(linked ? "Added" : "Add", "lp-button lp-button-quiet");
       add.disabled = Boolean(linked);
@@ -3205,6 +3487,15 @@ function quickGenerateView(host) {
       host.send("lumiphone:save_contact", { contact: draftPayload(draft) });
     });
     actions.append(use);
+    const photo = button(draft.avatarUrl ? "Retake portrait" : "Generate portrait", "lp-button lp-button-quiet");
+    photo.addEventListener("click", () => host.generateDraftPhoto());
+    actions.append(photo);
+    if (draft.avatarUrl) {
+      const image = el("img", "lp-draft-portrait");
+      image.src = draft.avatarUrl;
+      image.alt = `${draft.name} portrait`;
+      finder.prepend(image);
+    }
     if (host.previousNpcDraft) {
       const undo = button("Previous", "lp-button lp-button-quiet");
       undo.addEventListener("click", () => host.restorePreviousNpcDraft());
@@ -3217,6 +3508,8 @@ function quickGenerateView(host) {
   return page;
 }
 function renderContactsView(host) {
+  if (["groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(host.selectedView))
+    return renderContactGroups(host);
   if (host.selectedView === "quick-gen")
     return quickGenerateView(host);
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null;
@@ -3295,6 +3588,11 @@ function renderContactsView(host) {
   const recent = button("Recent", "lp-chip");
   all.setAttribute("aria-pressed", "true");
   filters.append(all, here, recent);
+  const groups = button("Groups", "lp-chip");
+  groups.addEventListener("click", () => host.selectGroup("", "groups"));
+  const bank = button("NPC Bank", "lp-chip");
+  bank.addEventListener("click", () => host.selectGroup("", "bank"));
+  filters.append(groups, bank);
   const sync = button("Sync current scene", "lp-button lp-button-quiet");
   const sceneOperation = [...host.operations.values()].find((entry) => entry.task === "scene-sync" && entry.phase !== "complete" && entry.phase !== "error");
   sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation);
@@ -3765,6 +4063,11 @@ class PocketController {
   pendingContactPhotoId = "";
   selectedContactId = "";
   selectedContactView = "list";
+  selectedContactGroupId = "";
+  npcBankGroups = [];
+  collectionDrafts = new Map;
+  collectionRequest = "";
+  collectionRequestKey = "";
   npcBriefs = new Map;
   contactFormDrafts = new Map;
   npcDraft = null;
@@ -3792,6 +4095,11 @@ class PocketController {
   cameraPreview = "";
   cameraContactId = "";
   cameraReady = false;
+  cameraImageId = "";
+  cameraOptions = { purpose: "scene", aspect: "", connectionId: "", model: "" };
+  imageConnections = [];
+  cameraFocus = { x: 50, y: 50 };
+  cameraNpcDraft = null;
   cameraProgress = "";
   cameraBusy = false;
   cameraRequestId = "";
@@ -4123,6 +4431,14 @@ class PocketController {
           meta.appendChild(el("span", "lumiphone-device-unread", unread > 99 ? "99+" : String(unread)));
         row.append(identity, meta);
         row.addEventListener("click", () => {
+          if (this.cameraBusy)
+            this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
+          this.cameraRequestId = "";
+          this.cameraBusy = false;
+          this.cameraReady = false;
+          this.cameraPreview = "";
+          this.cameraContactId = "";
+          this.cameraNpcDraft = null;
           this.deviceOwnerActorId = actorId;
           this.syncSurfaceIdentity();
           this.selectedConversationId = "";
@@ -4565,6 +4881,7 @@ class PocketController {
       if (payload.reason === "host_swipe")
         this.clearActivitySurfaces(true);
       if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
+        this.collectionRequest = "";
         this.cameraDraft = { scene: "", enhance: undefined };
         this.cameraPreview = "";
         this.cameraProgress = "";
@@ -4572,6 +4889,10 @@ class PocketController {
         this.cameraRequestId = "";
         this.cameraContactId = "";
         this.cameraReady = false;
+        this.cameraImageId = "";
+        this.cameraNpcDraft = null;
+        this.cameraOptions = { purpose: "scene", aspect: "", connectionId: "", model: "" };
+        this.cameraFocus = { x: 50, y: 50 };
         this.npcDraft = null;
         this.previousNpcDraft = null;
       }
@@ -4582,6 +4903,7 @@ class PocketController {
         this.deviceOwnerActorId = personaDeviceId;
       this.syncSurfaceIdentity();
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries : [];
+      this.npcBankGroups = Array.isArray(payload.npcBank?.groups) ? payload.npcBank.groups : [];
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId);
         if (!conversation || conversation.availability.state !== "local")
@@ -4800,6 +5122,15 @@ class PocketController {
         this.updateSettingsDiagnostics();
       return;
     }
+    if (payload.type === "lumiphone:collection_done") {
+      if (payload.requestId === this.collectionRequest) {
+        this.collectionRequest = "";
+        this.collectionDrafts.delete(this.collectionRequestKey);
+        this.openPocket(this.router.settle({ app: "contacts", view: payload.view || "groups" }), false);
+      }
+      this.showFeedback(payload.message || "Contacts updated.");
+      return;
+    }
     if (payload.type === "lumiphone:gallery") {
       this.gallery = { data: payload.data || [], total: Number(payload.total) || 0 };
       if (this.currentApp === "gallery")
@@ -4893,7 +5224,7 @@ class PocketController {
       if (payload.requestId !== this.cameraRequestId)
         return;
       this.cameraBusy = true;
-      this.cameraProgress = payload.message || (payload.phase === "preview" ? "Preview developing…" : "Working…");
+      this.cameraProgress = (payload.message || (payload.phase === "preview" ? "Preview developing…" : "Working…")) + (payload.totalSteps ? ` ${payload.step || 0}/${payload.totalSteps}` : "");
       if (payload.imageDataUrl)
         this.cameraPreview = payload.imageDataUrl;
       if (payload.profile)
@@ -4921,8 +5252,15 @@ class PocketController {
       this.cameraProgress = "Photo saved to Gallery";
       this.cameraPreview = payload.imageUrl || this.cameraPreview;
       this.cameraReady = Boolean(payload.imageUrl);
+      this.cameraImageId = payload.imageId || "";
       if (payload.profile)
         this.swarmProfile = payload.profile;
+      if (this.currentApp === "camera")
+        this.render(false);
+      return;
+    }
+    if (payload.type === "lumiphone:image_options") {
+      this.imageConnections = payload.connections || [];
       if (this.currentApp === "camera")
         this.render(false);
       return;
@@ -4947,12 +5285,17 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      if (payload.requestId === this.collectionRequest)
+        this.collectionRequest = "";
       if (payload.requestId === this.groupSaveRequest)
         this.groupSaveRequest = "";
       if (payload.requestId === this.trackerSaveRequest)
         this.trackerSaveRequest = "";
-      if (payload.requestId === this.cameraRequestId)
+      if (payload.requestId === this.cameraRequestId) {
         this.cameraBusy = false;
+        this.cameraReady = false;
+        this.cameraProgress = payload.error || "Image generation failed. Try again.";
+      }
       this.messageRequests.delete(payload.requestId);
       const operation = this.operations.get(payload.requestId);
       if (operation)
@@ -5188,7 +5531,8 @@ class PocketController {
       this.send("lumiphone:mark_read", conversation ? { app: "messages", conversationId: conversation.id } : { app: "messages" });
     } else if (route.app === "contacts") {
       const contact = route.contactId ? this.state.contacts.find((entry) => entry.id === route.contactId) : null;
-      this.selectedContactId = contact?.id || "";
+      this.selectedContactId = route.view === "bank-entry" ? route.contactId || "" : contact?.id || "";
+      this.selectedContactGroupId = route.groupId || "";
       this.selectedContactView = contact ? route.view === "config" ? "config" : "detail" : route.view || "list";
       this.send("lumiphone:mark_read", { app: "contacts" });
     } else if (route.app === "trackers") {
@@ -5203,7 +5547,7 @@ class PocketController {
       this.selectedNoteId = route.noteId === "__new__" || route.noteId && this.state.notes.some((entry) => entry.id === route.noteId) ? route.noteId : "";
       this.send("lumiphone:mark_read", { app: "notes" });
     } else if (route.app === "camera") {
-      const contactId = route.contactId || "";
+      const contactId = route.draft ? "__draft__" : route.contactId || "";
       if (contactId !== this.cameraContactId) {
         this.cameraContactId = contactId;
         this.cameraPreview = "";
@@ -5212,8 +5556,14 @@ class PocketController {
         this.cameraBusy = false;
         this.cameraProgress = "";
         const contact = this.state.contacts.find((entry) => entry.id === contactId);
-        this.cameraDraft = { scene: contact ? [`Portrait of ${contact.name}`, contact.phoneProfile?.appearance || contact.identityBrief || contact.description, "Head and shoulders, one subject, looking at the camera, clean background"].filter(Boolean).map((part) => part.trim().replace(/[.!]+$/, "")).join(". ") + "." : "", enhance: false };
+        this.cameraNpcDraft = route.draft ? this.npcDraft : null;
+        const subject = contact || this.cameraNpcDraft;
+        this.cameraDraft = { scene: subject ? [`Portrait of ${subject.name}`, subject.phoneProfile?.appearance || subject.identityBrief, "Head and shoulders, one subject, looking at the camera, clean background"].filter(Boolean).map((part) => part.trim().replace(/[.!]+$/, "")).join(". ") + "." : "", enhance: false };
+        this.cameraOptions = { purpose: route.draft ? "draft" : contactId ? "contact" : "scene", aspect: contactId ? "1:1" : "", connectionId: "", model: "" };
+        this.cameraFocus = { x: 50, y: 50 };
+        this.cameraImageId = "";
       }
+      this.send("lumiphone:image_options");
       this.send("lumiphone:mark_read", { app: "camera" });
     } else if (route.app === "gallery") {
       this.selectedGalleryImageId = route.imageId || "";
@@ -5526,6 +5876,11 @@ class PocketController {
         this.groupSaveRequest = this.send(type, payload);
       },
       openContacts: () => this.openPocket({ app: "contacts", view: "import" }),
+      startContactGroup: (title, participants) => {
+        const actors = listPocketActors(this.state);
+        this.groupDrafts.set(`${this.state.chatId}:${this.state.characterId}:new`, { title, participants: participants.map((id) => actors.find((actor) => actor.contact?.id === id)?.actorId || id) });
+        this.openPocket({ app: "messages", view: "group-editor" });
+      },
       generationAvailable: Boolean(this.caps?.generation),
       busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || "auto",
@@ -5879,6 +6234,7 @@ ${body}`;
     this.render();
   }
   renderContacts() {
+    const collectionKey = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactView}:${this.selectedContactGroupId}:${this.selectedContactId}`;
     return renderContactsView({
       state: this.state,
       selectedContactId: this.selectedContactId,
@@ -5890,6 +6246,26 @@ ${body}`;
       sources: this.contactSources,
       npcBank: this.npcBank,
       capabilities: this.caps,
+      selectedGroupId: this.selectedContactGroupId,
+      bankGroups: this.npcBankGroups,
+      collectionDraft: this.collectionDrafts.get(collectionKey),
+      collectionSaving: Boolean(this.collectionRequest),
+      updateCollectionDraft: (draft) => {
+        this.collectionDrafts.set(collectionKey, draft);
+      },
+      saveCollection: (type, payload) => {
+        if (this.collectionRequest)
+          return;
+        this.collectionRequestKey = collectionKey;
+        this.collectionRequest = this.send(type, payload);
+        this.render(false);
+      },
+      selectGroup: (groupId, view) => this.openPocket({ app: "contacts", groupId: groupId || undefined, view }),
+      startGroup: (title, participants) => {
+        const actors = listPocketActors(this.state);
+        this.groupDrafts.set(`${this.state.chatId}:${this.state.characterId}:new`, { title, participants: participants.map((id) => actors.find((actor) => actor.contact?.id === id)?.actorId || id) });
+        this.openPocket({ app: "messages", view: "group-editor" });
+      },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty("contacts", title, copy),
       operations: this.operations,
@@ -5907,6 +6283,7 @@ ${body}`;
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       generatePhoto: (contactId) => this.openPocket({ app: "camera", contactId }),
+      generateDraftPhoto: () => this.openPocket({ app: "camera", draft: true }),
       useSourcePhoto: (contactId) => this.send("lumiphone:set_contact_photo", { contactId, useSource: true }),
       requestSources: () => {
         if (this.contactSourcesRequested)
@@ -5982,7 +6359,7 @@ ${body}`;
       const targetContact = this.state?.contacts.find((entry) => entry.id === contactId);
       const use = button(`Use for ${targetContact?.name || "contact"}`, "lp-button lp-button-primary");
       use.addEventListener("click", () => {
-        this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId, imageUrl: item.fullUrl || item.url });
+        this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url });
         this.pendingWallpaperTarget = null;
         this.pendingContactPhotoId = "";
       });
@@ -6025,7 +6402,7 @@ ${body}`;
         this.showError("Choose a contact first.");
         return;
       }
-      this.runGalleryAction(setPhoto, "Applying…", "lumiphone:set_contact_photo", { contactId: contact.value, imageUrl: item.fullUrl || item.url });
+      this.runGalleryAction(setPhoto, "Applying…", "lumiphone:set_contact_photo", { contactId: contact.value, imageId: item.id, imageUrl: item.fullUrl || item.url });
     });
     const uses = el("div", "lp-sheet-actions");
     const useAs = button("Use as…", "lp-button");
@@ -6104,12 +6481,13 @@ ${body}`;
   renderCamera() {
     const page = el("div", "lp-camera lp-npc-camera");
     const contact = this.state.contacts.find((entry) => entry.id === this.cameraContactId);
+    const subject = contact || (this.cameraContactId === "__draft__" ? this.cameraNpcDraft : null);
     const nav = el("header", "lp-nav");
     const back = button("‹ Back", "lp-nav-action");
     back.addEventListener("click", () => this.back());
     const profileLabel = this.swarmProfile?.available ? "Swarm profile linked" : "Manual profile";
     const title = el("div", "lp-nav-title", this.cameraContactId ? "Quick Generate" : "Camera");
-    title.appendChild(el("span", "lp-nav-subtitle", contact ? `${contact.name} · Contact photo` : profileLabel));
+    title.appendChild(el("span", "lp-nav-subtitle", subject ? `${subject.name} · Contact photo` : profileLabel));
     const gallery = button("Gallery", "lp-nav-action");
     gallery.addEventListener("click", () => this.openApp("gallery"));
     nav.append(back, title, gallery);
@@ -6127,13 +6505,14 @@ ${body}`;
       const focus = el("div", "lp-focus-frame");
       focus.append(el("div", "lp-npc-camera-mark", "+"));
       const copy = el("div", "lp-npc-camera-copy");
-      copy.append(el("strong", "", contact ? `Frame ${contact.name}` : "Frame a moment"), el("p", "", "Describe the photo, then tap the shutter."));
+      copy.append(el("strong", "", subject ? `Frame ${subject.name}` : "Frame a moment"), el("p", "", "Describe the photo, then tap the shutter."));
       placeholder.append(focus, copy);
       viewfinder.appendChild(placeholder);
     }
     const prompt = el("textarea", "lp-textarea");
     prompt.placeholder = "Describe the photo or moment…";
     prompt.rows = 2;
+    prompt.maxLength = 12000;
     prompt.value = this.cameraDraft.scene;
     prompt.addEventListener("input", () => {
       this.cameraDraft.scene = prompt.value;
@@ -6153,6 +6532,32 @@ ${body}`;
     enhanceLabel.append(enhance, el("span", "lp-copy", "Enhance scene description"));
     const source = el("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Manual profile");
     optionRow.append(enhanceLabel, source);
+    const makeChoice = (label, values, value, update) => {
+      const select = el("select", "lp-select");
+      for (const [id, name] of values) {
+        const option = el("option", "", name);
+        option.value = id;
+        option.selected = id === value;
+        select.append(option);
+      }
+      select.addEventListener("change", () => update(select.value));
+      return fieldBlock(label, select);
+    };
+    const purpose = makeChoice("Subject", this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || "Contact"]] : [["scene", "Scene · character and persona"], ["character", this.state.characterName], ["persona", this.state.pocketPersona.displayName || "Persona"]], this.cameraOptions.purpose, (value) => {
+      this.cameraOptions.purpose = value;
+    });
+    const aspect = makeChoice("Framing", [["", "Profile default"], ["1:1", "Square · avatar"], ["3:4", "Portrait"], ["4:3", "Landscape"], ["9:16", "Tall"], ["16:9", "Wide"]], this.cameraOptions.aspect, (value) => {
+      this.cameraOptions.aspect = value;
+    });
+    const connection = makeChoice("Image connection", [["", "Profile default"], ...this.imageConnections.map((entry) => [entry.id, entry.name])], this.cameraOptions.connectionId, (value) => {
+      this.cameraOptions.connectionId = value;
+    });
+    const model = el("input", "lp-input");
+    model.placeholder = "Profile checkpoint";
+    model.value = this.cameraOptions.model;
+    model.addEventListener("input", () => {
+      this.cameraOptions.model = model.value;
+    });
     const shutterRow = el("div", "lp-shutter-row");
     const cancel = button(this.cameraBusy ? "Cancel" : "", "lp-button");
     cancel.style.visibility = this.cameraBusy ? "visible" : "hidden";
@@ -6164,20 +6569,50 @@ ${body}`;
     });
     const shutter = el("button", "lp-shutter");
     shutter.type = "submit";
-    shutter.disabled = this.cameraBusy || !this.caps?.imageGen;
+    shutter.disabled = this.cameraBusy || !this.caps?.imageGen || Boolean(this.cameraContactId && !subject);
+    shutter.dataset.busy = String(this.cameraBusy);
     const album = button("Gallery", "lp-nav-action");
     album.addEventListener("click", () => this.openApp("gallery"));
     shutterRow.append(cancel, shutter, album);
     const progress = el("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
-    const optionsDrawer = disclosure("Camera options", optionRow);
+    progress.setAttribute("role", "status");
+    progress.setAttribute("aria-live", "polite");
+    const optionsDrawer = disclosure("Camera options", purpose, aspect, connection, fieldBlock("Checkpoint override", model), optionRow);
     footer.append(el("p", "lp-camera-caption", this.cameraContactId ? "PORTRAIT" : "PHOTO"), shutterRow, progress, optionsDrawer);
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button("Use photo", "lp-button");
-      use.disabled = !contact;
+      use.disabled = !subject || this.cameraContactId === "__draft__" && this.npcDraft !== this.cameraNpcDraft;
       use.addEventListener("click", () => {
-        this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId: this.cameraContactId, imageUrl: this.cameraPreview });
+        if (this.cameraContactId === "__draft__") {
+          if (!this.npcDraft || this.npcDraft !== this.cameraNpcDraft)
+            return;
+          this.npcDraft.avatarUrl = this.cameraPreview;
+          this.npcDraft.avatarSource = this.cameraImageId ? { kind: "gallery", imageId: this.cameraImageId } : { kind: "url", url: this.cameraPreview };
+          this.npcDraft.avatarFocus = { ...this.cameraFocus };
+          this.back();
+        } else
+          this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId: this.cameraContactId, imageId: this.cameraImageId || undefined, imageUrl: this.cameraPreview, focus: this.cameraFocus });
       });
-      footer.append(use);
+      const crop = el("div", "lp-avatar-framing");
+      const preview = el("img");
+      preview.src = this.cameraPreview;
+      preview.alt = "Contact avatar framing";
+      preview.style.objectPosition = `${this.cameraFocus.x}% ${this.cameraFocus.y}%`;
+      crop.append(preview);
+      const framing = el("div", "lp-avatar-framing-controls");
+      for (const [axis, label] of [["x", "Horizontal focus"], ["y", "Vertical focus"]]) {
+        const slider = el("input");
+        slider.type = "range";
+        slider.min = "0";
+        slider.max = "100";
+        slider.value = String(this.cameraFocus[axis]);
+        slider.addEventListener("input", () => {
+          this.cameraFocus[axis] = Number(slider.value);
+          preview.style.objectPosition = `${this.cameraFocus.x}% ${this.cameraFocus.y}%`;
+        });
+        framing.append(fieldBlock(label, slider));
+      }
+      footer.append(disclosure("Avatar framing", crop, framing), use);
     }
     controls.append(mode, viewfinder, footer);
     shutter.setAttribute("aria-label", "Take photo");
@@ -6194,7 +6629,7 @@ ${body}`;
       this.cameraBusy = true;
       this.cameraReady = false;
       this.cameraProgress = "Sending scene to camera…";
-      this.send("lumiphone:camera_generate", { requestId: this.cameraRequestId, scene, enhance: enhance.checked, contactId: this.cameraContactId || undefined });
+      this.send("lumiphone:camera_generate", { requestId: this.cameraRequestId, scene, enhance: enhance.checked, ...this.cameraOptions, contactId: this.cameraContactId && this.cameraContactId !== "__draft__" ? this.cameraContactId : undefined, subject: this.cameraNpcDraft?.phoneProfile?.appearance || this.cameraNpcDraft?.identityBrief });
       this.render();
     });
     page.append(nav, controls);
@@ -7855,6 +8290,36 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-band-editor .lp-input { min-width:0; padding:8px; }
   .lp-band-editor .lp-color-input { width:28px; }
   .lp-tracker-config-fields { display:grid; gap:12px; }
+  .lp-tracker-heading { min-width:0; display:grid; gap:5px; }
+  .lp-tracker-readout { font-size:32px; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .lp-tracker-stage { color:var(--tracker-color); font-size:13px; font-weight:700; }
+  .lp-tracker-pair { display:flex; justify-content:center; gap:12px; }
+  .lp-tracker-avatar { width:46px; height:46px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb,var(--tracker-color) 22%,var(--lp-surface)); font-size:20px; }
+  .lp-tracker-avatar img { width:100%; height:100%; object-fit:cover; }
+  .lp-tracker-relationship { text-align:center; }
+  .lp-tracker-relationship .lp-tracker-readout { font-size:20px; }
+  .lp-vital-gauge { width:120px; height:120px; border-radius:50%; display:grid; place-items:center; justify-self:center; background:radial-gradient(circle,var(--lp-surface) 61%,transparent 63%),conic-gradient(var(--tracker-color) var(--tracker-percent),color-mix(in srgb,var(--tracker-color) 12%,var(--lp-surface)) 0); }
+  .lp-vital-gauge .lp-tracker-readout { font-size:26px; }
+  .lp-tracker-vitals { text-align:center; }
+  .lp-tracker-counter .lp-tracker-readout { font-size:42px; }
+  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:34px; letter-spacing:.035em; }
+  .lp-state-path { display:flex; flex-wrap:wrap; gap:6px; }
+  .lp-state-path span { border-radius:10px; padding:5px 9px; font-size:10px; background:var(--lp-bg); color:var(--lp-muted); }
+  .lp-state-path span[data-active="true"] { background:var(--tracker-color); color:#101014; font-weight:700; }
+  .lp-tracker-state .lp-tracker-readout { font-size:24px; color:var(--tracker-color); }
+  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,1fr); gap:4px; }
+  .lp-tracker-segments span { height:22px; border-radius:4px; background:color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)); }
+  .lp-tracker-segments span[data-filled="true"] { background:var(--tracker-color); }
+  .lumiphone-shell .lp-tracker-compact { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; padding:12px; }
+  .lp-tracker-compact .lp-tracker-readout { font-size:20px; }
+  .lp-tracker-compact .lp-tracker-meta { grid-column:1/-1; }
+  .lp-tracker-preview { padding:0; background:transparent; border:0; }
+  .lp-selected-members { display:flex; gap:6px; flex-wrap:wrap; }
+  .lp-selected-members:empty { display:none; }
+  .lp-band-meaning { grid-column:1/-1; }
+  .lp-tracker-card[data-meaning="bad"] { border-color:color-mix(in srgb,var(--tracker-color) 65%,var(--lp-border)); }
+  .lp-contact-group .lp-actions,.lp-bank-profile .lp-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .lp-contact-group .lp-button,.lp-bank-profile .lp-button { flex:1 1 auto; }
   .lumiphone-shell .lp-npc-camera { height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); background:#08080a; }
   .lumiphone-shell .lp-npc-camera .lp-nav { background:#08080a; border-color:#ffffff12; }
   .lumiphone-shell .lp-npc-camera .lp-content { min-height:0; padding:0; display:grid; grid-template-rows:36px minmax(320px,1fr) auto; gap:0; overflow:auto; background:#08080a; }
@@ -7871,6 +8336,12 @@ ${POCKET_DESIGN_SYSTEM}
   .lumiphone-shell .lp-camera-bottom-strip .lp-copy { color:#ffffff9e; }
   .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
   .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
+  .lp-avatar-framing { display:grid; place-items:center; padding:12px; }
+  .lp-avatar-framing img { width:96px; height:96px; border-radius:50%; object-fit:cover; }
+  .lp-avatar-framing-controls { display:grid; gap:12px; }
+  .lp-draft-portrait { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.45; }
+  .lp-shutter:disabled::after { animation:none; }
+  .lp-shutter[data-busy="true"]::after { animation:lp-pulse 1s ease-in-out infinite; }
   .lp-camera-bottom-strip { background:#08080a; border-top:1px solid #ffffff12; padding:14px 18px 18px; }
   .lp-camera-caption { margin:0; text-align:center; color:#f8d670; font-size:9px; letter-spacing:.1em; font-weight:750; }
   .lp-focus-frame { position:relative; width:84px; height:84px; display:grid; place-items:center; color:#f8d670; background:linear-gradient(#f8d670,#f8d670) left top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right top/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right top/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) left bottom/2px 16px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/16px 2px no-repeat,linear-gradient(#f8d670,#f8d670) right bottom/2px 16px no-repeat; }

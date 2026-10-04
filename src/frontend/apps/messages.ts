@@ -20,6 +20,7 @@ export interface MessagesViewHost {
   groupSaving: boolean
   saveGroup(type: string, payload: Record<string, unknown>): void
   openContacts(): void
+  startContactGroup(title: string, participants: string[]): void
   generationAvailable: boolean
   busyConversations: Map<string, { speakerContactId: string; phase: 'checking' | 'pending' }>
   selectedGroupSpeakerId: string
@@ -82,20 +83,40 @@ function newConversationView(host: MessagesViewHost): HTMLDivElement {
   startGroup.disabled = listPocketActors(host.state).length < 2
   startGroup.addEventListener('click', () => host.selectConversation('', 'group-editor'))
   content.append(search, startGroup)
+  const collections = host.state.contactGroups || []
+  if (collections.length) {
+    const { section, body } = sectionBlock('Your contact groups', 'Start a chat with a saved collection.')
+    for (const group of collections) {
+      const start = button(`${group.name} · ${group.memberIds.length}`, 'lp-button lp-button-quiet')
+      start.disabled = group.memberIds.length < 2
+      start.addEventListener('click', () => host.startContactGroup(group.name, group.memberIds))
+      body.append(start)
+    }
+    content.append(section)
+  }
 
   const { section: directSection, body: directBody } = sectionBlock(
     'Direct message',
     'Start or reopen a private Pocket conversation.',
   )
-  const contacts = [...host.state.contacts].sort((a, b) => a.name.localeCompare(b.name))
+  const latest = new Map<string, number>()
+  for (const conversation of host.state.conversations) {
+    if (conversation.kind !== 'direct' || !conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)) continue
+    const time = Date.parse(conversation.messages.at(-1)?.createdAt || conversation.updatedAt || '') || 0
+    for (const id of conversationActorIds(conversation)) latest.set(id, Math.max(latest.get(id) || 0, time))
+  }
+  const contacts = [...host.state.contacts].sort((a, b) => (latest.get(b.id) || 0) - (latest.get(a.id) || 0) || a.name.localeCompare(b.name))
+  let sectionLabel = ''
   for (const contact of contacts) {
+    const label = latest.has(contact.id) ? 'Recent' : 'All contacts'
+    if (label !== sectionLabel) { directBody.append(el('div', 'lp-eyebrow', label)); sectionLabel = label }
     const row = button('', 'lp-message-picker-row')
     row.type = 'button'
     const actor = resolvePocketActor(host.state, contact.id)
     const avatar = el('span', 'lp-avatar', contact.name.slice(0, 1).toUpperCase())
     if (actor?.accent) avatar.style.setProperty('--contact-accent', actor.accent)
     if (actor?.avatarUrl) {
-      const image = el('img'); image.src = actor.avatarUrl; image.alt = ''; avatar.replaceChildren(image)
+      const image = el('img'); image.src = actor.avatarUrl; image.alt = ''; image.style.objectPosition = `${contact.avatarFocus?.x ?? 50}% ${contact.avatarFocus?.y ?? 50}%`; avatar.replaceChildren(image)
     }
     row.append(
       avatar,
@@ -141,15 +162,19 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
   const choices = el('div', 'lp-contact-checklist lp-participant-picker')
   const selected = new Set(host.groupDraft?.participants ?? (conversation ? conversationActorIds(conversation) : []))
   const count = el('p', 'lp-copy')
+  const selectedNames = el('div', 'lp-selected-members')
   const save = page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!
   const remember = () => {
     const participants = [...choices.querySelectorAll<HTMLInputElement>('input:checked')].map(entry => entry.value)
     host.updateGroupDraft({ title: title.value, participants })
     count.textContent = `${participants.length} selected · choose at least two people`
+    selectedNames.replaceChildren(...participants.map(id => el('span', 'lp-chip', resolvePocketActor(host.state, id)?.name || id)))
     save.disabled = participants.length < 2 || host.groupSaving
     if (host.groupSaving) save.textContent = 'Saving…'
   }
   title.addEventListener('input', remember)
+  const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = 'Search group members'
+  search.addEventListener('input', () => { for (const row of choices.querySelectorAll<HTMLElement>('.lp-picker-row')) row.hidden = !row.textContent!.toLowerCase().includes(search.value.trim().toLowerCase()) })
 
   for (const actor of listPocketActors(host.state)) {
     const row = el('label', 'lp-picker-row')
@@ -187,7 +212,7 @@ function groupEditor(host: MessagesViewHost, conversation: PocketConversation | 
     })
   }
 
-  content.append(fieldBlock('Group name', title), count, choices)
+  content.append(fieldBlock('Group name', title), count, selectedNames, search, choices)
   remember()
   if (conversation) {
     const remove = button('Delete group', 'lp-button lp-button-danger')

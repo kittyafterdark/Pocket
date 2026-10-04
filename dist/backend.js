@@ -359,15 +359,15 @@ function normalizeBands(value, min, max, color) {
     const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
     const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
     const label = clean(item.label, 80);
-    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color }] : [];
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color, meaning: item.meaning === "good" || item.meaning === "bad" ? item.meaning : "neutral" }] : [];
   }).slice(0, 12);
   if (bands.length || max <= min)
     return bands;
   const span = max - min;
   return [
-    { min, max: min + span * 0.33, label: "Low", color: "#ef6b73" },
+    { min, max: min + span * 0.33, label: "Low", color },
     { min: min + span * 0.33, max: min + span * 0.67, label: "Steady", color },
-    { min: min + span * 0.67, max, label: "High", color: "#62c994" }
+    { min: min + span * 0.67, max, label: "High", color }
   ];
 }
 function normalizeHistory(value) {
@@ -653,7 +653,8 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return {
       app,
       contactId: shortId(raw.contactId),
-      view: raw.view === "detail" || raw.view === "config" || raw.view === "import" || raw.view === "quick-gen" || raw.view === "new" || raw.view === "draft" || raw.view === "list" ? raw.view : undefined
+      groupId: shortId(raw.groupId),
+      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -670,7 +671,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
   if (app === "settings")
     return { app, section: shortId(raw.section) };
   if (app === "camera")
-    return { app, contactId: shortId(raw.contactId) };
+    return { app, contactId: shortId(raw.contactId), ...raw.draft === true ? { draft: true } : {} };
   if (app === "weather" || app === "notifications" || app === "home")
     return { app };
   return fallback;
@@ -754,6 +755,11 @@ function generatedEventSuggestion(value, makeId) {
 }
 
 // src/domain/contacts.ts
+function normalizeAvatarFocus(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const coord = (n) => Number.isFinite(Number(n)) ? Math.min(100, Math.max(0, Number(n))) : 50;
+  return { x: coord(raw.x), y: coord(raw.y) };
+}
 var MAX_CONTACTS = 80;
 var MAX_CONVERSATIONS = 80;
 var MAX_MESSAGES = 240;
@@ -854,6 +860,8 @@ function normalizePocketContact(value, context) {
     avatarUrl: clean3(value.avatarUrl, 2000),
     sourceAvatarUrl: clean3(value.sourceAvatarUrl, 2000) || clean3(value.avatarUrl, 2000),
     avatarOverrideUrl: clean3(value.avatarOverrideUrl, 2000),
+    ...value.avatarSource || clean3(value.avatarOverrideUrl, 2000) ? { avatarSource: normalizeImageSource(value.avatarSource) || normalizeImageSource({ kind: "url", url: value.avatarOverrideUrl }) } : {},
+    ...value.avatarFocus ? { avatarFocus: normalizeAvatarFocus(value.avatarFocus) } : {},
     accent: /^#[0-9a-f]{6}$/i.test(clean3(value.accent, 20)) ? clean3(value.accent, 20) : stableContactAccent(contactId),
     sourceAccent: /^#[0-9a-f]{6}$/i.test(clean3(value.sourceAccent, 20)) ? clean3(value.sourceAccent, 20) : "",
     colorMode: value.colorMode === "source" ? "source" : "pocket",
@@ -1162,8 +1170,44 @@ function normalizeContactCollections(value, context) {
   return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy };
 }
 
+// src/domain/contact-groups.ts
+function normalizeContactGroups(value, validIds, now) {
+  const ids = new Set(validIds), seen = new Set;
+  return (Array.isArray(value) ? value : []).slice(0, 80).flatMap((raw) => {
+    if (!raw || typeof raw !== "object")
+      return [];
+    const id = typeof raw.id === "string" ? raw.id.trim().slice(0, 180) : "";
+    const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 120) : "";
+    if (!id || !name || seen.has(id))
+      return [];
+    seen.add(id);
+    return [{ id, name, memberIds: [...new Set((Array.isArray(raw.memberIds) ? raw.memberIds : []).filter((id) => typeof id === "string" && ids.has(id)))], bankGroupId: typeof raw.bankGroupId === "string" ? raw.bankGroupId.slice(0, 180) : undefined, createdAt: Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : now, updatedAt: Number.isFinite(Date.parse(raw.updatedAt)) ? raw.updatedAt : now }];
+  });
+}
+function saveContactGroup(groups, input, validIds, now, makeId) {
+  const name = input.name.trim().slice(0, 120);
+  if (!name)
+    throw new Error("Give the group a name.");
+  const memberIds = [...new Set(input.memberIds)];
+  if (!memberIds.length)
+    throw new Error("Choose at least one member.");
+  if (memberIds.some((id) => !validIds.includes(id)))
+    throw new Error("A selected member no longer exists. Refresh the group.");
+  const existing = input.id ? groups.find((group) => group.id === input.id) : undefined;
+  if (input.id && !existing)
+    throw new Error("That group no longer exists.");
+  const group = { id: existing?.id || makeId("cast"), name, memberIds, bankGroupId: input.bankGroupId || existing?.bankGroupId, createdAt: existing?.createdAt || now, updatedAt: now };
+  if (!existing && groups.length >= 80)
+    throw new Error("The group limit has been reached.");
+  if (existing)
+    Object.assign(existing, group);
+  else
+    groups.push(group);
+  return group;
+}
+
 // src/domain/npc-bank.ts
-var NPC_BANK_VERSION = 1;
+var NPC_BANK_VERSION = 2;
 var NPC_BANK_PATH = "device/npc-bank.json";
 var MAX_NPC_BANK_ENTRIES = 240;
 function record5(value) {
@@ -1196,7 +1240,7 @@ function normalizeNpcBankName(value) {
   return clean4(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
 }
 function emptyNpcBank(now = new Date().toISOString()) {
-  return { version: NPC_BANK_VERSION, entries: [], updatedAt: now };
+  return { version: NPC_BANK_VERSION, entries: [], groups: [], updatedAt: now };
 }
 function isFutureNpcBank(value) {
   return record5(value) && Number(value.version) > NPC_BANK_VERSION;
@@ -1224,6 +1268,8 @@ function normalizeNpcBank(value, now = new Date().toISOString()) {
       identityBrief: clean4(raw.identityBrief ?? raw.description, 1200),
       phoneProfile: phoneProfile(raw.phoneProfile),
       avatarUrl: clean4(raw.avatarUrl, 2000),
+      avatarSource: normalizeImageSource(raw.avatarSource) || normalizeImageSource({ kind: "url", url: raw.avatarUrl }),
+      avatarFocus: normalizeAvatarFocus(raw.avatarFocus),
       accent: accent(raw.accent),
       messagingStyle: {
         talkativeness: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
@@ -1234,7 +1280,7 @@ function normalizeNpcBank(value, now = new Date().toISOString()) {
       updatedAt: timestamp2(raw.updatedAt, now)
     }];
   });
-  return { version: NPC_BANK_VERSION, entries, updatedAt: timestamp2(value.updatedAt, now) };
+  return { version: NPC_BANK_VERSION, entries, groups: normalizeContactGroups(value.groups, entries.map((entry) => entry.id), now), updatedAt: timestamp2(value.updatedAt, now) };
 }
 function findNpcBankMatch(bank, name) {
   const normalized = normalizeNpcBankName(name);
@@ -1250,6 +1296,8 @@ function upsertNpcBankFromContact(bank, contact, now, makeId) {
   const byId = sourceBankId ? bank.entries.find((entry) => entry.id === sourceBankId) : undefined;
   const byName = findNpcBankMatch(bank, contact.name);
   const existing = byId || byName || undefined;
+  if (!existing && bank.entries.length >= MAX_NPC_BANK_ENTRIES)
+    throw new Error("The NPC Bank is full. Remove an unused profile before saving another.");
   const name = contact.name.trim().replace(/\s+/g, " ").slice(0, 120);
   if (!name)
     throw new Error("NPC Bank entries need a name.");
@@ -1267,6 +1315,8 @@ function upsertNpcBankFromContact(bank, contact, now, makeId) {
     identityBrief: contact.identityBrief || contact.description || "",
     phoneProfile: contact.phoneProfile ? { ...contact.phoneProfile } : undefined,
     avatarUrl: contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl || "",
+    avatarSource: contact.avatarSource || normalizeImageSource({ kind: "url", url: contact.sourceAvatarUrl || contact.avatarUrl }),
+    avatarFocus: contact.avatarFocus,
     accent: accent(contact.accent),
     messagingStyle: {
       talkativeness: percentage2(contact.messagingStyle?.talkativeness, 50),
@@ -1292,6 +1342,8 @@ function contactFromNpcBank(entry, now, makeId) {
     avatarUrl: entry.avatarUrl,
     sourceAvatarUrl: entry.avatarUrl,
     avatarOverrideUrl: "",
+    avatarSource: entry.avatarSource,
+    avatarFocus: entry.avatarFocus,
     accent: entry.accent,
     sourceAccent: "",
     colorMode: "pocket",
@@ -1315,6 +1367,10 @@ function applyNpcBankProfile(contact, entry, now) {
   contact.identityBrief = entry.identityBrief;
   contact.phoneProfile = entry.phoneProfile ? { ...entry.phoneProfile } : contact.phoneProfile;
   contact.avatarUrl = entry.avatarUrl;
+  if (!contact.avatarOverrideUrl) {
+    contact.avatarSource = entry.avatarSource;
+    contact.avatarFocus = entry.avatarFocus;
+  }
   contact.sourceAvatarUrl = entry.avatarUrl;
   contact.accent = entry.accent;
   contact.messagingStyle = { ...entry.messagingStyle };
@@ -1325,6 +1381,8 @@ function applyNpcBankProfile(contact, entry, now) {
 function removeNpcBankEntry(bank, bankId, now) {
   const before = bank.entries.length;
   bank.entries = bank.entries.filter((entry) => entry.id !== bankId);
+  for (const group of bank.groups)
+    group.memberIds = group.memberIds.filter((id) => id !== bankId);
   if (bank.entries.length === before)
     return false;
   bank.updatedAt = now;
@@ -2498,6 +2556,56 @@ function assertPocketImageResolved(result) {
     throw new Error(result.error || "Pocket could not resolve that image.");
 }
 
+// src/backend/image-jobs.ts
+function aspectDimensions(value) {
+  const match = String(value || "").trim().match(/^(\d+(?:\.\d+)?)\s*[:/x\u00D7]\s*(\d+(?:\.\d+)?)$/i);
+  if (!match)
+    return null;
+  const ratio = Number(match[1]) / Number(match[2]);
+  if (!Number.isFinite(ratio) || ratio < 0.25 || ratio > 4)
+    return null;
+  return ratio <= 1 ? { width: Math.max(256, Math.round(1024 * ratio / 64) * 64), height: 1024 } : { width: 1024, height: Math.max(256, Math.round(1024 / ratio / 64) * 64) };
+}
+function effectiveImageRequest(scene, purpose, subject, aspect, profile, preferences, overrides = {}) {
+  const identity = purpose === "scene" ? [profile.characterPositive, profile.personaPositive] : purpose === "character" ? [profile.characterPositive] : purpose === "persona" ? [profile.personaPositive] : [`Single-subject contact portrait. ${subject}`];
+  const dimensions = aspectDimensions(aspect || (purpose === "contact" || purpose === "draft" ? "1:1" : profile.aspect));
+  const parameters = { ...dimensions || {}, ...preferences.manualVisualProfile.parameters, ...overrides };
+  if (aspect && dimensions)
+    Object.assign(parameters, dimensions);
+  if (preferences.manualVisualProfile.loras.length && parameters.loras === undefined)
+    parameters.loras = preferences.manualVisualProfile.loras;
+  return { prompt: [profile.presets, ...identity, scene].filter(Boolean).join(", "), negativePrompt: profile.negative, parameters };
+}
+async function runImageJob(api, input, signal, progress) {
+  let canStream = false;
+  try {
+    const connections = await api.imageGen.listConnections(input.userId);
+    const connection = input.connection_id ? connections.find((item) => item.id === input.connection_id) : connections.find((item) => item.is_default) || connections[0];
+    if (!input.connection_id && connection)
+      input.connection_id = connection.id;
+    const providers = await api.imageGen.getProviders(input.userId);
+    canStream = Boolean(providers.find((item) => item.id === connection?.provider)?.capabilities.websocketPreviewStreaming);
+  } catch {}
+  if (signal.aborted)
+    return null;
+  if (!canStream) {
+    progress({ phase: "generating", message: "Developing the image\u2026" });
+    return api.imageGen.generate(input);
+  }
+  let result = null;
+  for await (const event of api.imageGen.generateStream({ ...input, signal })) {
+    if (signal.aborted)
+      return null;
+    if (event.type === "status")
+      progress({ phase: "generating", message: "Developing the image\u2026", step: event.step, totalSteps: event.totalSteps });
+    else if (event.type === "preview")
+      progress({ phase: "preview", imageDataUrl: event.imageDataUrl, step: event.step, totalSteps: event.totalSteps });
+    else if (event.type === "done")
+      result = event.result;
+  }
+  return result;
+}
+
 // src/backend/references.ts
 function compact2(value, max) {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
@@ -2614,6 +2722,9 @@ function latestArmedReference(state) {
 }
 
 // src/backend.ts
+function stringArray(value, limit, maxLength) {
+  return [...new Set((Array.isArray(value) ? value : []).map((entry) => text2(entry, maxLength)).filter(Boolean))].slice(0, limit);
+}
 var STATE_VERSION = 11;
 var MAX_MESSAGES2 = 240;
 var MAX_NOTIFICATIONS = 80;
@@ -2765,6 +2876,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
     suppressedContactSourceKeys: [],
     setup: { initialized: false, dismissed: false, personaConfigured: false, worldStatus: "unconfigured" },
     contacts: collections.contacts,
+    contactGroups: [],
     discoveredActors: [],
     conversations: collections.conversations,
     actorMemoryVersion: 1,
@@ -3215,6 +3327,7 @@ function normalizeState(value, chatId, characterId, characterName) {
       worldSeededAt: text2(setupValue.worldSeededAt, 80) || undefined
     },
     contacts: collections.contacts,
+    contactGroups: normalizeContactGroups(value.contactGroups, collections.contacts.map((entry) => entry.id), nowIso()),
     discoveredActors,
     conversations: collections.conversations,
     actorMemoryVersion: Math.max(0, Math.round(numberValue(value.actorMemoryVersion, 0))),
@@ -3464,6 +3577,9 @@ async function loadNpcBank(userId) {
   return bank;
 }
 async function saveNpcBank(value, userId) {
+  const stored = await spindle.userStorage.getJson(NPC_BANK_PATH, { fallback: null, userId });
+  if (isFutureNpcBank(stored))
+    throw new Error("This NPC Bank was created by a newer Pocket version. Update Pocket before editing it.");
   const bank = normalizeNpcBank(value, nowIso());
   await spindle.userStorage.setJson(NPC_BANK_PATH, bank, { indent: 2, userId });
   return bank;
@@ -3782,7 +3898,19 @@ async function sendState(state, userId, reason = "refresh", open = false) {
     if (result.status === "error")
       spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || "unknown error"}`);
   }
-  send({ type: "lumiphone:state", state: projectSwipeScopedState(state), npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
+  const displayState = projectSwipeScopedState(structuredClone(state));
+  await Promise.all([...displayState.contacts, ...npcBank.entries].map(async (contact) => {
+    if (!contact.avatarSource)
+      return;
+    const image = await resolvePocketImageSource(spindle, contact.avatarSource, userId);
+    if (image.status !== "ready")
+      return;
+    if ("avatarOverrideUrl" in contact)
+      contact.avatarOverrideUrl = image.url;
+    else
+      contact.avatarUrl = image.url;
+  }));
+  send({ type: "lumiphone:state", state: displayState, npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
 }
 function viewKey(userId) {
   return userId || "_default";
@@ -4066,6 +4194,8 @@ function upsertContact(state, contact, preserveCustomization = true) {
       avatarOverrideUrl: existing.avatarOverrideUrl,
       colorMode: existing.colorMode,
       sourceAccent: contact.sourceAccent || existing.sourceAccent,
+      avatarSource: existing.avatarSource,
+      avatarFocus: existing.avatarFocus,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
@@ -4665,11 +4795,18 @@ async function cameraGenerate(input, userId) {
   const portraitContact = contactId ? state.contacts.find((entry) => entry.id === contactId) : undefined;
   if (contactId && !portraitContact)
     throw new Error("That contact no longer exists.");
+  const purpose = portraitContact ? "contact" : ["character", "persona", "draft"].includes(text2(input.purpose, 30)) ? input.purpose : "scene";
+  const subject = portraitContact ? portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description : text2(input.subject, 2000);
   const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences, userId);
   const controller = new AbortController;
   const job = { controller, cancelled: false, chatId: context.chatId, characterId: context.characterId, userId };
-  cameraJobs.get(requestId)?.controller.abort();
-  cameraJobs.set(requestId, job);
+  const jobKey = `${viewKey(userId)}:${requestId}`;
+  const previousJob = cameraJobs.get(jobKey);
+  if (previousJob) {
+    previousJob.cancelled = true;
+    previousJob.controller.abort();
+  }
+  cameraJobs.set(jobKey, job);
   send({ type: "lumiphone:camera_progress", requestId, phase: "planning", message: "Planning the scene\u2026", profile }, userId);
   let expanded = scene;
   if (bool2(input.enhance, preferences.sceneEnhancer)) {
@@ -4681,58 +4818,24 @@ async function cameraGenerate(input, userId) {
   }
   if (job.cancelled)
     return { ok: false, cancelled: true };
-  const presets = profile.presets ? `${profile.presets}, ` : "";
-  const prompt = portraitContact ? [profile.presets, `Single-subject contact portrait. ${portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description}`, expanded].filter(Boolean).join(", ") : [presets + profile.characterPositive, profile.personaPositive, expanded].filter(Boolean).join(", ");
   const manual = preferences.manualVisualProfile;
-  const parameters = { ...manual.parameters, ...isRecord2(input.parameters) ? input.parameters : {} };
-  if (manual.loras.length && parameters.loras === undefined)
-    parameters.loras = manual.loras;
+  const effective = effectiveImageRequest(expanded, purpose, subject, text2(input.aspect, 40), profile, preferences, isRecord2(input.parameters) ? input.parameters : {});
+  const generationInput = { ...effective, owner_character_id: context.characterId === "_none" ? undefined : context.characterId, owner_chat_id: context.chatId === "_lobby" ? undefined : context.chatId, userId, includeDataUrl: false };
   const connectionId = text2(input.connectionId, 200) || manual.connectionId;
   const model = text2(input.model, 500) || profile.checkpoint;
+  if (connectionId)
+    generationInput.connection_id = connectionId;
+  if (model)
+    generationInput.model = model;
   let result = null;
   try {
-    let canStream = false;
-    let resolvedConnection = connectionId;
-    try {
-      const connections = await spindle.imageGen.listConnections(userId);
-      const connection = resolvedConnection ? connections.find((item) => item.id === resolvedConnection) : connections.find((item) => item.is_default) || connections[0];
-      resolvedConnection ||= connection?.id || "";
-      const providers = await spindle.imageGen.getProviders(userId);
-      const provider = providers.find((item) => item.id === connection?.provider);
-      canStream = Boolean(provider?.capabilities.websocketPreviewStreaming);
-    } catch {}
-    const generationInput = {
-      prompt,
-      negativePrompt: profile.negative,
-      parameters,
-      owner_character_id: context.characterId === "_none" ? undefined : context.characterId,
-      owner_chat_id: context.chatId === "_lobby" ? undefined : context.chatId,
-      userId,
-      includeDataUrl: false
-    };
-    if (resolvedConnection)
-      generationInput.connection_id = resolvedConnection;
-    if (model)
-      generationInput.model = model;
-    if (canStream) {
-      generationInput.signal = controller.signal;
-      for await (const event of spindle.imageGen.generateStream(generationInput)) {
-        if (job.cancelled)
-          break;
-        if (event.type === "status") {
-          send({ type: "lumiphone:camera_progress", requestId, phase: "generating", step: event.step, totalSteps: event.totalSteps, message: event.nodeId ? `Working on ${event.nodeId}\u2026` : "Developing the image\u2026" }, userId);
-        } else if (event.type === "preview") {
-          send({ type: "lumiphone:camera_progress", requestId, phase: "preview", imageDataUrl: event.imageDataUrl, step: event.step, totalSteps: event.totalSteps }, userId);
-        } else if (event.type === "done")
-          result = event.result;
-      }
-    } else {
-      send({ type: "lumiphone:camera_progress", requestId, phase: "generating", message: "Developing the image\u2026" }, userId);
-      result = await spindle.imageGen.generate(generationInput);
-    }
+    result = await runImageJob(spindle, generationInput, controller.signal, (event) => send({ type: "lumiphone:camera_progress", requestId, ...event }, userId));
+  } catch (error) {
+    if (!job.cancelled)
+      throw error;
   } finally {
-    if (cameraJobs.get(requestId) === job)
-      cameraJobs.delete(requestId);
+    if (cameraJobs.get(jobKey) === job)
+      cameraJobs.delete(jobKey);
   }
   if (job.cancelled)
     return { ok: false, cancelled: true };
@@ -4741,28 +4844,31 @@ async function cameraGenerate(input, userId) {
   const imageUrl = text2(result.imageUrl, 2000);
   const imageId = text2(result.imageId, 200);
   const route = imageId ? { app: "gallery", imageId } : { app: "gallery" };
-  const notification = addNotification(state, {
-    app: "camera",
-    title: "Photo ready",
-    body: scene.slice(0, 180),
-    route,
-    source: "system",
-    severity: "important"
-  }, userId);
-  const command = state.processedCommands.find((entry) => entry.id === text2(input.__commandId, 240));
-  const activity = addActivity(state, {
-    kind: "image",
-    title: "Photo ready",
-    summary: scene.slice(0, 280),
-    route,
-    source: { messageId: text2(input.__sourceMessageId, 180) || undefined, imageId: imageId || undefined }
-  }, command);
-  await saveState(state, userId);
-  if (notification)
-    await maybePush(state, preferences, notification, userId);
-  await sendState(state, userId, "camera", false);
-  sendActivity(activity, userId);
-  sendNotification(notification, userId);
+  await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+    const latest = await loadState(context.chatId, context.characterId, userId);
+    const notification = addNotification(latest, {
+      app: "camera",
+      title: "Photo ready",
+      body: scene.slice(0, 180),
+      route,
+      source: "system",
+      severity: "important"
+    }, userId);
+    const command = latest.processedCommands.find((entry) => entry.id === text2(input.__commandId, 240));
+    const activity = addActivity(latest, {
+      kind: "image",
+      title: "Photo ready",
+      summary: scene.slice(0, 280),
+      route,
+      source: { messageId: text2(input.__sourceMessageId, 180) || undefined, imageId: imageId || undefined }
+    }, command);
+    await saveState(latest, userId);
+    if (notification)
+      await maybePush(latest, preferences, notification, userId);
+    await sendState(latest, userId, "camera", false);
+    sendActivity(activity, userId);
+    sendNotification(notification, userId);
+  });
   send({ type: "lumiphone:camera_done", requestId, imageId, imageUrl, prompt: expanded, profile }, userId);
   return { ok: true, imageId, imageUrl, prompt: expanded, profileSource: profile.source };
 }
@@ -7500,6 +7606,11 @@ async function handleFrontend(payload, userId) {
           }, { characterId: state.characterId, characterName: state.characterName, now: nowIso(), makeId: id });
           if (!candidate)
             throw new Error("A contact needs a name.");
+          if (raw.avatarSource && candidate.avatarSource) {
+            const image = await resolvePocketImageSource(spindle, candidate.avatarSource, userId);
+            assertPocketImageResolved(image);
+            candidate.avatarOverrideUrl = image.url;
+          }
           const contact = upsertContact(state, candidate, false);
           reconcileContactAvailability(state, contact);
           await saveState(state, userId);
@@ -7529,6 +7640,102 @@ async function handleFrontend(payload, userId) {
           await sendState(state, userId, "npc_bank");
           send({ type: "lumiphone:npc_bank_saved", requestId, contactId: contact.id, bankId: savedEntry.id, name: savedEntry.name }, userId);
         });
+        break;
+      }
+      case "lumiphone:contact_group_save":
+      case "lumiphone:contact_group_delete":
+      case "lumiphone:contact_group_bank":
+      case "lumiphone:npc_cast_import": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          state.contactGroups ||= [];
+          let groupId = text2(payload.groupId, 180);
+          if (payload.type === "lumiphone:contact_group_save") {
+            const group = saveContactGroup(state.contactGroups, { id: groupId || undefined, name: text2(payload.name, 120), memberIds: stringArray(payload.memberIds, 80, 180) }, state.contacts.map((entry) => entry.id), nowIso(), id);
+            groupId = group.id;
+          } else if (payload.type === "lumiphone:contact_group_delete") {
+            if (!state.contactGroups.some((group) => group.id === groupId))
+              throw new Error("That group no longer exists.");
+            state.contactGroups = state.contactGroups.filter((group) => group.id !== groupId);
+          } else if (payload.type === "lumiphone:contact_group_bank") {
+            const group = state.contactGroups.find((group) => group.id === groupId);
+            if (!group)
+              throw new Error("That group no longer exists.");
+            const members = group.memberIds.map((memberId) => state.contacts.find((contact) => contact.id === memberId)).filter((contact) => Boolean(contact));
+            if (!members.length || members.some((contact) => contact.source.kind !== "npc"))
+              throw new Error("Portable casts contain Pocket NPCs. Choose an NPC-only group first.");
+            await withStateLock(`npc-bank:${viewKey(userId)}`, async () => {
+              const bank = await loadNpcBank(userId);
+              const memberIds = members.map((contact) => {
+                const entry = upsertNpcBankFromContact(bank, contact, nowIso(), id);
+                if (contact.source.kind === "npc")
+                  contact.source.bankId = entry.id;
+                return entry.id;
+              });
+              const existing = bank.groups.find((cast) => cast.id === group.bankGroupId);
+              const cast = saveContactGroup(bank.groups, { id: existing?.id, name: group.name, memberIds }, bank.entries.map((entry) => entry.id), nowIso(), id);
+              group.bankGroupId = cast.id;
+              await saveNpcBank(bank, userId);
+            });
+          } else {
+            const bank = await loadNpcBank(userId);
+            const cast = bank.groups.find((group) => group.id === groupId);
+            if (!cast)
+              throw new Error("That saved cast no longer exists.");
+            const selected = stringArray(payload.memberIds, 80, 180);
+            if (!selected.length || selected.some((memberId) => !cast.memberIds.includes(memberId)))
+              throw new Error("Choose valid cast members to import.");
+            const entries = selected.map((memberId) => bank.entries.find((entry) => entry.id === memberId));
+            if (entries.some((entry) => !entry))
+              throw new Error("A cast member no longer exists.");
+            const newCount = entries.filter((entry) => !state.contacts.some((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id)).length;
+            if (state.contacts.length + newCount > 80)
+              throw new Error("This cast would exceed the contact limit. Import fewer members.");
+            const memberIds = entries.map((entry) => {
+              const existing = state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
+              return existing?.id || upsertContact(state, contactFromNpcBank(entry, nowIso(), id), false).id;
+            });
+            let local = state.contactGroups.find((group) => group.bankGroupId === cast.id);
+            if (local) {
+              local.memberIds = [...new Set([...local.memberIds, ...memberIds])];
+              local.updatedAt = nowIso();
+            } else
+              local = saveContactGroup(state.contactGroups, { name: cast.name, memberIds, bankGroupId: cast.id }, state.contacts.map((entry) => entry.id), nowIso(), id);
+            groupId = local.id;
+          }
+          await saveState(state, userId);
+          await sendState(state, userId, "contact_groups");
+          send({ type: "lumiphone:collection_done", requestId, groupId, view: "groups", message: payload.type === "lumiphone:npc_cast_import" ? "Cast imported. Existing local state was preserved." : "Contact group updated." }, userId);
+        });
+        break;
+      }
+      case "lumiphone:npc_cast_save":
+      case "lumiphone:npc_cast_delete":
+      case "lumiphone:npc_bank_edit": {
+        await withStateLock(`npc-bank:${viewKey(userId)}`, async () => {
+          const bank = await loadNpcBank(userId);
+          const groupId = text2(payload.groupId, 180);
+          if (payload.type === "lumiphone:npc_cast_save")
+            saveContactGroup(bank.groups, { id: groupId || undefined, name: text2(payload.name, 120), memberIds: stringArray(payload.memberIds, 80, 180) }, bank.entries.map((entry) => entry.id), nowIso(), id);
+          else if (payload.type === "lumiphone:npc_cast_delete") {
+            if (!bank.groups.some((group) => group.id === groupId))
+              throw new Error("That saved cast no longer exists.");
+            bank.groups = bank.groups.filter((group) => group.id !== groupId);
+          } else {
+            const entry = bank.entries.find((entry) => entry.id === text2(payload.bankId, 180));
+            if (!entry)
+              throw new Error("That NPC Bank profile no longer exists.");
+            const edit = isRecord2(payload.entry) ? payload.entry : {};
+            const name = text2(edit.name, 120);
+            if (!name)
+              throw new Error("Give the NPC a name.");
+            const previousName = entry.name;
+            Object.assign(entry, { name, normalizedName: normalizeNpcBankName(name), role: text2(edit.role, 120), identityBrief: text2(edit.identityBrief, 1200), phoneProfile: isRecord2(edit.phoneProfile) ? edit.phoneProfile : entry.phoneProfile, aliases: [...new Set([...entry.aliases, ...previousName !== name ? [previousName] : [], ...stringArray(edit.aliases, 24, 120)])], tags: stringArray(edit.tags, 24, 80), updatedAt: nowIso() });
+          }
+          await saveNpcBank(bank, userId);
+        });
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, "npc_bank");
+        send({ type: "lumiphone:collection_done", requestId, view: "bank", message: "NPC Bank updated. Existing chats keep their local state." }, userId);
         break;
       }
       case "lumiphone:npc_bank_add": {
@@ -8130,7 +8337,17 @@ ${marker}`;
           const contact = state.contacts.find((entry) => entry.id === text2(payload.contactId, 180));
           if (!contact)
             throw new Error("That contact no longer exists.");
-          contact.avatarOverrideUrl = payload.useSource === true ? "" : text2(payload.imageUrl, 2000);
+          const source = payload.useSource === true ? null : normalizeImageSource(payload.source) || normalizeImageSource(payload.imageId ? { kind: "gallery", imageId: payload.imageId } : { kind: "url", url: payload.imageUrl });
+          let imageUrl = "";
+          if (source) {
+            const image = await resolvePocketImageSource(spindle, source, userId);
+            assertPocketImageResolved(image);
+            imageUrl = image.url;
+          } else if (payload.useSource !== true)
+            throw new Error("Choose a valid contact image.");
+          contact.avatarSource = source;
+          contact.avatarOverrideUrl = imageUrl;
+          contact.avatarFocus = normalizeAvatarFocus(payload.focus);
           contact.updatedAt = nowIso();
           await saveState(state, userId);
           await sendState(state, userId, "contact_photo");
@@ -8141,12 +8358,18 @@ ${marker}`;
       case "lumiphone:camera_generate":
         await cameraGenerate(payload, userId);
         break;
+      case "lumiphone:image_options": {
+        const connections = spindle.permissions.has("image_gen") ? await spindle.imageGen.listConnections(userId) : [];
+        send({ type: "lumiphone:image_options", requestId, connections: connections.map((entry) => ({ id: entry.id, name: entry.name })) }, userId);
+        break;
+      }
       case "lumiphone:camera_cancel": {
-        const job = cameraJobs.get(requestId);
+        const jobKey = `${viewKey(userId)}:${requestId}`;
+        const job = cameraJobs.get(jobKey);
         if (job)
           job.cancelled = true;
         job?.controller.abort();
-        cameraJobs.delete(requestId);
+        cameraJobs.delete(jobKey);
         send({ type: "lumiphone:camera_cancelled", requestId }, userId);
         break;
       }

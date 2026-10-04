@@ -1,6 +1,9 @@
 import type { PocketContact, PocketNpcBank, PocketNpcBankEntry } from '../types.js'
+import { normalizeImageSource } from './preferences.js'
+import { normalizeAvatarFocus } from './contacts.js'
+import { normalizeContactGroups } from './contact-groups.js'
 
-export const NPC_BANK_VERSION = 1 as const
+export const NPC_BANK_VERSION = 2 as const
 export const NPC_BANK_PATH = 'device/npc-bank.json'
 export const MAX_NPC_BANK_ENTRIES = 240
 
@@ -36,7 +39,7 @@ export function normalizeNpcBankName(value: unknown): string {
 }
 
 export function emptyNpcBank(now = new Date().toISOString()): PocketNpcBank {
-  return { version: NPC_BANK_VERSION, entries: [], updatedAt: now }
+  return { version: NPC_BANK_VERSION, entries: [], groups: [], updatedAt: now }
 }
 
 export function isFutureNpcBank(value: unknown): boolean {
@@ -65,6 +68,8 @@ export function normalizeNpcBank(value: unknown, now = new Date().toISOString())
       identityBrief: clean(raw.identityBrief ?? raw.description, 1_200),
       phoneProfile: phoneProfile(raw.phoneProfile),
       avatarUrl: clean(raw.avatarUrl, 2_000),
+      avatarSource: normalizeImageSource(raw.avatarSource) || normalizeImageSource({ kind: 'url', url: raw.avatarUrl }),
+      avatarFocus: normalizeAvatarFocus(raw.avatarFocus),
       accent: accent(raw.accent),
       messagingStyle: {
         talkativeness: percentage(record(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
@@ -75,7 +80,7 @@ export function normalizeNpcBank(value: unknown, now = new Date().toISOString())
       updatedAt: timestamp(raw.updatedAt, now),
     }]
   })
-  return { version: NPC_BANK_VERSION, entries, updatedAt: timestamp(value.updatedAt, now) }
+  return { version: NPC_BANK_VERSION, entries, groups: normalizeContactGroups(value.groups, entries.map(entry => entry.id), now), updatedAt: timestamp(value.updatedAt, now) }
 }
 
 export function findNpcBankMatch(bank: PocketNpcBank, name: string): PocketNpcBankEntry | null {
@@ -97,6 +102,7 @@ export function upsertNpcBankFromContact(
   const byId = sourceBankId ? bank.entries.find((entry) => entry.id === sourceBankId) : undefined
   const byName = findNpcBankMatch(bank, contact.name)
   const existing = byId || byName || undefined
+  if (!existing && bank.entries.length >= MAX_NPC_BANK_ENTRIES) throw new Error('The NPC Bank is full. Remove an unused profile before saving another.')
   const name = contact.name.trim().replace(/\s+/g, ' ').slice(0, 120)
   if (!name) throw new Error('NPC Bank entries need a name.')
   const previousName = existing?.name || ''
@@ -113,6 +119,8 @@ export function upsertNpcBankFromContact(
     identityBrief: contact.identityBrief || contact.description || '',
     phoneProfile: contact.phoneProfile ? { ...contact.phoneProfile } : undefined,
     avatarUrl: contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl || '',
+    avatarSource: contact.avatarSource || normalizeImageSource({ kind: 'url', url: contact.sourceAvatarUrl || contact.avatarUrl }),
+    avatarFocus: contact.avatarFocus,
     accent: accent(contact.accent),
     messagingStyle: {
       talkativeness: percentage(contact.messagingStyle?.talkativeness, 50),
@@ -139,6 +147,8 @@ export function contactFromNpcBank(entry: PocketNpcBankEntry, now: string, makeI
     avatarUrl: entry.avatarUrl,
     sourceAvatarUrl: entry.avatarUrl,
     avatarOverrideUrl: '',
+    avatarSource: entry.avatarSource,
+    avatarFocus: entry.avatarFocus,
     accent: entry.accent,
     sourceAccent: '',
     colorMode: 'pocket',
@@ -162,6 +172,7 @@ export function applyNpcBankProfile(contact: PocketContact, entry: PocketNpcBank
   contact.identityBrief = entry.identityBrief
   contact.phoneProfile = entry.phoneProfile ? { ...entry.phoneProfile } : contact.phoneProfile
   contact.avatarUrl = entry.avatarUrl
+  if (!contact.avatarOverrideUrl) { contact.avatarSource = entry.avatarSource; contact.avatarFocus = entry.avatarFocus }
   contact.sourceAvatarUrl = entry.avatarUrl
   contact.accent = entry.accent
   contact.messagingStyle = { ...entry.messagingStyle }
@@ -173,6 +184,7 @@ export function applyNpcBankProfile(contact: PocketContact, entry: PocketNpcBank
 export function removeNpcBankEntry(bank: PocketNpcBank, bankId: string, now: string): boolean {
   const before = bank.entries.length
   bank.entries = bank.entries.filter((entry) => entry.id !== bankId)
+  for (const group of bank.groups) group.memberIds = group.memberIds.filter(id => id !== bankId)
   if (bank.entries.length === before) return false
   bank.updatedAt = now
   return true

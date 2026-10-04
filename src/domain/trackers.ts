@@ -78,14 +78,14 @@ function normalizeBands(value: unknown, min: number, max: number, color: string)
     const bandMin = Math.max(min, Math.min(max, finite(item.min, min)))
     const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)))
     const label = clean(item.label, 80)
-    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color }] : []
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color, meaning: (item.meaning === 'good' || item.meaning === 'bad' ? item.meaning : 'neutral') as TrackerBand['meaning'] }] : []
   }).slice(0, 12)
   if (bands.length || max <= min) return bands
   const span = max - min
   return [
-    { min, max: min + span * .33, label: 'Low', color: '#ef6b73' },
+    { min, max: min + span * .33, label: 'Low', color },
     { min: min + span * .33, max: min + span * .67, label: 'Steady', color },
-    { min: min + span * .67, max, label: 'High', color: '#62c994' },
+    { min: min + span * .67, max, label: 'High', color },
   ]
 }
 
@@ -164,11 +164,11 @@ export interface TrackerTemplate {
 }
 
 export const TRACKER_TEMPLATES: TrackerTemplate[] = [
-  { group: 'Character', name: 'Health', values: { kind: 'meter', label: 'Health', key: 'health', value: 100, initialValue: 100, min: 0, max: 100, unit: '%', presentation: 'vitals' } },
-  { group: 'Character', name: 'Hunger', values: { kind: 'meter', label: 'Hunger', key: 'hunger', value: 20, initialValue: 20, min: 0, max: 100, unit: '%', updateMode: 'automatic', ratePerHour: 3, clock: 'roleplay' } },
-  { group: 'Relationship', name: 'Trust', values: { kind: 'meter', label: 'Trust', key: 'trust', value: 50, initialValue: 50, min: 0, max: 100, unit: '%', presentation: 'relationship', target: { type: 'relationship', id: '', label: 'Current relationship' } } },
+  { group: 'Character', name: 'Health', values: { kind: 'meter', label: 'Health', key: 'health', value: 100, initialValue: 100, min: 0, max: 100, unit: '%', presentation: 'vitals', bands: [{ min: 0, max: 35, label: 'Critical', color: '#ef6b73', meaning: 'bad' }, { min: 35, max: 70, label: 'Recovering', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Healthy', color: '#62c994', meaning: 'good' }] } },
+  { group: 'Character', name: 'Hunger', values: { kind: 'meter', label: 'Hunger', key: 'hunger', value: 20, initialValue: 20, min: 0, max: 100, unit: '%', updateMode: 'automatic', ratePerHour: 3, clock: 'roleplay', bands: [{ min: 0, max: 30, label: 'Sated', color: '#62c994', meaning: 'good' }, { min: 30, max: 70, label: 'Hungry', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Starving', color: '#ef6b73', meaning: 'bad' }] } },
+  { group: 'Relationship', name: 'Trust', values: { kind: 'meter', label: 'Trust', key: 'trust', value: 50, initialValue: 50, min: 0, max: 100, unit: '%', presentation: 'relationship', bands: [{ min: 0, max: 30, label: 'Wary', color: '#ef6b73', meaning: 'bad' }, { min: 30, max: 70, label: 'Building trust', color: '#8b7dff', meaning: 'neutral' }, { min: 70, max: 100, label: 'Trusted', color: '#62c994', meaning: 'good' }], target: { type: 'relationship', id: '', label: 'Current relationship' } } },
   { group: 'Relationship', name: 'Relationship Status', values: { kind: 'state', label: 'Relationship Status', key: 'relationship_status', state: 'Acquaintances', initialState: 'Acquaintances', states: ['Strangers', 'Acquaintances', 'Friends', 'Close', 'Partners'], presentation: 'state', target: { type: 'relationship', id: '', label: 'Current relationship' } } },
-  { group: 'Scene', name: 'Tension', values: { kind: 'meter', label: 'Scene Tension', key: 'scene_tension', value: 10, initialValue: 10, min: 0, max: 100, unit: '%', target: { type: 'scene', id: '', label: 'Current scene' } } },
+  { group: 'Scene', name: 'Tension', values: { kind: 'meter', label: 'Scene Tension', key: 'scene_tension', value: 10, initialValue: 10, min: 0, max: 100, unit: '%', bands: [{ min: 0, max: 30, label: 'Calm', color: '#62c994', meaning: 'good' }, { min: 30, max: 70, label: 'Uneasy', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Flashpoint', color: '#ef6b73', meaning: 'bad' }], target: { type: 'scene', id: '', label: 'Current scene' } } },
   { group: 'Resource', name: 'Ammo', values: { kind: 'counter', label: 'Ammo', key: 'ammo', value: 12, initialValue: 12, min: 0, max: 999, unit: ' rounds', presentation: 'counter' } },
   { group: 'World', name: 'World Alert', values: { kind: 'state', label: 'World Alert', key: 'world_alert', state: 'Calm', initialState: 'Calm', states: ['Calm', 'Watchful', 'Alarmed', 'Crisis'], target: { type: 'world', id: '', label: 'Current world' } } },
   { group: 'Timer', name: 'Countdown', values: { kind: 'timer', label: 'Countdown', key: 'countdown', value: 60, initialValue: 60, min: 0, max: 60, unit: ' min', direction: 'down', updateMode: 'automatic', ratePerHour: -60, clock: 'roleplay', presentation: 'timer' } },

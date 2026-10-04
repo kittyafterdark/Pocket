@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom'
 
 const root = new URL('../', import.meta.url)
 const manifest = JSON.parse(await readFile(new URL('spindle.json', root), 'utf8'))
-const backendSource = await readFile(new URL('src/backend.ts', root), 'utf8')
+const backendSource = await readFile(new URL('src/backend.ts', root), 'utf8') + await readFile(new URL('src/backend/image-jobs.ts', root), 'utf8')
 const frontendSource = await readFile(new URL('src/frontend.ts', root), 'utf8')
 const controllerSource = await readFile(new URL('src/frontend/controller.ts', root), 'utf8')
 const messagesSource = await readFile(new URL('src/frontend/apps/messages.ts', root), 'utf8')
@@ -1334,6 +1334,27 @@ assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:camera_
 spindle.generate.quiet = originalQuiet
 
 const originalImageGenerate = spindle.imageGen.generate
+const castMembers = storage.get('phones/chat-a__char-a.json').contacts.filter(contact => contact.source.kind === 'npc').slice(0, 2)
+assert.equal(castMembers.length, 2)
+await frontendHandler({ type: 'lumiphone:contact_group_save', requestId: 'cast-local', chatId: 'chat-a', characterId: 'char-a', name: 'Test Crew', memberIds: castMembers.map(contact => contact.id) }, 'user-a')
+const localCast = storage.get('phones/chat-a__char-a.json').contactGroups.find(group => group.name === 'Test Crew')
+await frontendHandler({ type: 'lumiphone:contact_group_bank', requestId: 'cast-save', chatId: 'chat-a', characterId: 'char-a', groupId: localCast.id }, 'user-a')
+const savedCast = storage.get('device/npc-bank.json').groups.find(group => group.name === 'Test Crew')
+assert.equal(savedCast.memberIds.length, 2)
+await frontendHandler({ type: 'lumiphone:npc_cast_import', requestId: 'cast-import', chatId: 'chat-cast', characterId: 'char-a', groupId: savedCast.id, memberIds: savedCast.memberIds }, 'user-a')
+const importedCastState = storage.get('phones/chat-cast__char-a.json')
+assert.equal(importedCastState.contactGroups[0].memberIds.length, 2)
+for (const contact of importedCastState.contacts.filter(contact => contact.source.kind === 'npc')) { assert.equal(contact.presence.inScene, false); assert.equal(contact.sceneNote, '') }
+const localCastActor = importedCastState.contacts.find(contact => contact.source.kind === 'npc')
+await frontendHandler({ type: 'lumiphone:save_contact', requestId: 'cast-local-edit', chatId: 'chat-cast', characterId: 'char-a', contact: { ...localCastActor, sceneNote: 'Only this chat', presence: { inScene: true, lastSceneAt: new Date().toISOString() } } }, 'user-a')
+const beforeCastRetry = storage.get('phones/chat-cast__char-a.json').contacts.length
+await frontendHandler({ type: 'lumiphone:npc_cast_import', requestId: 'cast-import-again', chatId: 'chat-cast', characterId: 'char-a', groupId: savedCast.id, memberIds: savedCast.memberIds }, 'user-a')
+assert.equal(storage.get('phones/chat-cast__char-a.json').contacts.length, beforeCastRetry)
+assert.equal(storage.get('phones/chat-cast__char-a.json').contacts.find(contact => contact.id === localCastActor.id).sceneNote, 'Only this chat', 'cast reuse must not reset local scene state')
+const castBankEntry = storage.get('device/npc-bank.json').entries.find(entry => entry.id === savedCast.memberIds[0])
+await frontendHandler({ type: 'lumiphone:npc_bank_edit', requestId: 'cast-bank-edit', chatId: 'chat-a', characterId: 'char-a', bankId: castBankEntry.id, entry: { ...castBankEntry, name: 'Bank only rename' } }, 'user-a')
+assert.notEqual(storage.get('phones/chat-a__char-a.json').contacts.find(contact => contact.source.kind === 'npc' && contact.source.bankId === castBankEntry.id).name, 'Bank only rename', 'bank editing must not edit the local contact')
+
 let portraitInput
 spindle.imageGen.generate = async input => { portraitInput = input; return { imageId: 'portrait-image', imageUrl: '/api/v1/image-gen/results/portrait-image' } }
 const portraitContact = storage.get('phones/chat-a__char-a.json').contacts[0]
@@ -1345,6 +1366,17 @@ portraitInput = null
 await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'portrait-missing', chatId: 'chat-a', characterId: 'char-a', contactId: 'missing-contact', scene: 'Portrait', enhance: false }, 'user-a')
 assert.equal(portraitInput, null, 'missing portrait target must fail before image generation')
 assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'portrait-missing'))
+spindle.imageGen.generate = originalImageGenerate
+
+let completeConcurrentImage
+spindle.imageGen.generate = async () => new Promise(resolve => { completeConcurrentImage = resolve })
+const concurrentCamera = frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'camera-concurrent', chatId: 'chat-a', characterId: 'char-a', scene: 'A new photo', enhance: false }, 'user-a')
+await new Promise(resolve => setTimeout(resolve, 0))
+const concurrentContact = storage.get('phones/chat-a__char-a.json').contacts[0]
+await frontendHandler({ type: 'lumiphone:save_contact', requestId: 'during-camera', chatId: 'chat-a', characterId: 'char-a', contact: { ...concurrentContact, sceneNote: 'Changed during image generation' } }, 'user-a')
+completeConcurrentImage({ imageId: 'concurrent-image', imageUrl: '/api/v1/images/concurrent-image' })
+await concurrentCamera
+assert.equal(storage.get('phones/chat-a__char-a.json').contacts[0].sceneNote, 'Changed during image generation', 'image completion must not overwrite concurrent edits')
 spindle.imageGen.generate = originalImageGenerate
 
 let resolveLateImage
@@ -1993,6 +2025,59 @@ assert.equal(dockRoot.querySelectorAll('.lp-content input').length, 0, 'Weather 
 ;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'Edit').click()
 assert.ok(dockRoot.querySelectorAll('.lp-content input').length >= 5, 'Weather edit retains all fields')
 assert.ok(dockRoot.querySelector('.lumiphone-app-view[data-pocket-app="weather"]'), 'Weather edit must remain inside the scrollable app-view container')
+
+// Collection routes keep unsaved membership and seed the real message-group editor.
+backendReceiver(savedDraftState)
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Groups').click()
+;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'New').click()
+const collectionName = dockRoot.querySelector('input[placeholder="Group name"]')
+collectionName.value = 'UI cast'
+collectionName.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+for (const check of [...dockRoot.querySelectorAll('input[type="checkbox"]')].slice(0, 2)) { check.checked = true; check.dispatchEvent(new dom.window.Event('change', { bubbles: true })) }
+backendReceiver(savedDraftState)
+assert.equal(dockRoot.querySelector('input[placeholder="Group name"]').value, 'UI cast')
+assert.equal(dockRoot.querySelectorAll('input:checked').length, 2)
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Save group').click()
+const uiCollectionSave = frontendSends.filter(message => message.type === 'lumiphone:contact_group_save').at(-1)
+const uiCollections = structuredClone(savedDraftState)
+uiCollections.state.contactGroups = [{ id: 'ui-cast', name: 'UI cast', memberIds: uiCollectionSave.memberIds, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
+backendReceiver(uiCollections)
+backendReceiver({ type: 'lumiphone:collection_done', requestId: uiCollectionSave.requestId, view: 'groups' })
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Start group chat').click()
+assert.equal(dockRoot.querySelector('input[placeholder="Group name"]').value, 'UI cast')
+assert.equal(dockRoot.querySelectorAll('input:checked').length, 2)
+assert.equal(dockRoot.querySelectorAll('.lp-selected-members .lp-chip').length, 2)
+
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
+const uiBank = { ...uiCollections, npcBank: storage.get('device/npc-bank.json') }
+backendReceiver(uiBank)
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'NPC Bank').click()
+const importsBeforeBankEdit = frontendSends.filter(message => message.type === 'lumiphone:npc_bank_add').length
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Edit saved profile').click()
+assert.match(dockRoot.textContent, /Edit Bank Profile/)
+assert.equal(frontendSends.filter(message => message.type === 'lumiphone:npc_bank_add').length, importsBeforeBankEdit)
+
+// A generated NPC can accept a portrait without first being persisted as a contact.
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
+;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'Add').click()
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Generate NPC').click()
+backendReceiver({ type: 'lumiphone:contact_draft', requestId: 'draft-with-photo', draft: { ...draftOne, name: 'Portrait Draft' } })
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Generate portrait').click()
+dockRoot.querySelector('form.lp-camera-body').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+const draftPortraitRequest = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
+assert.equal(draftPortraitRequest.purpose, 'draft')
+assert.equal(draftPortraitRequest.contactId, undefined)
+backendReceiver({ type: 'lumiphone:camera_done', requestId: draftPortraitRequest.requestId, imageId: 'draft-photo', imageUrl: '/api/v1/images/draft-photo' })
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
+assert.ok(dockRoot.querySelector('.lp-draft-portrait'))
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use Portrait Draft').click()
+const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:save_contact').at(-1).contact
+assert.deepEqual(withPhoto.avatarSource, { kind: 'gallery', imageId: 'draft-photo' })
+assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/draft-photo')
 
 cleanup()
 

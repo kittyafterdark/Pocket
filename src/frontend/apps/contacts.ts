@@ -1,15 +1,25 @@
-import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketNpcBankEntry, PocketOperationProgress } from '../../types.js'
+import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketNpcBankEntry, PocketOperationProgress, PocketRoute, PocketContactGroup } from '../../types.js'
+import { renderContactGroups } from './contact-groups.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { actionGroup, controlRow, disclosure, fieldBlock, identityBlock, sectionBlock, statusBadge } from '../components/ui.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
+export type ContactView = NonNullable<Extract<PocketRoute, { app: 'contacts' }>['view']>
 
 export interface ContactsViewHost {
   state: PhoneState
   selectedContactId: string
-  selectedView: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft'
+  selectedView: ContactView
+  selectedGroupId: string
+  bankGroups: PocketContactGroup[]
+  collectionDraft: Record<string, unknown> | undefined
+  collectionSaving: boolean
+  updateCollectionDraft(draft: Record<string, unknown>): void
+  saveCollection(type: string, payload: Record<string, unknown>): void
+  selectGroup(id: string, view: ContactView): void
+  startGroup(name: string, memberIds: string[]): void
   generationBrief: string
   updateGenerationBrief(brief: string): void
   npcDraft: PocketContactDraft | null
@@ -20,11 +30,12 @@ export interface ContactsViewHost {
   operations: Map<string, PocketOperationProgress>
   page(title: string, subtitle?: string, action?: PageAction): Page
   empty(title: string, copy: string): HTMLDivElement
-  select(contactId: string, view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft', replace?: boolean): void
+  select(contactId: string, view?: ContactView, replace?: boolean): void
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
   choosePhoto(contactId: string): void
   generatePhoto(contactId: string): void
+  generateDraftPhoto(): void
   useSourcePhoto(contactId: string): void
   requestSources(): void
   send(type: string, payload?: Record<string, unknown>): void
@@ -35,7 +46,7 @@ function avatar(contact: PocketContact): HTMLDivElement {
   const node = el('div', 'lp-avatar', contact.name.slice(0, 1).toUpperCase())
   node.style.setProperty('--contact-accent', contactAccent(contact))
   if (contactAvatar(contact)) {
-    const image = el('img'); image.src = contactAvatar(contact); image.alt = ''; node.replaceChildren(image)
+      const image = el('img'); image.src = contactAvatar(contact); image.alt = ''; image.style.objectPosition = `${contact.avatarFocus?.x ?? 50}% ${contact.avatarFocus?.y ?? 50}%`; node.replaceChildren(image)
   }
   return node
 }
@@ -44,6 +55,7 @@ function draftPayload(draft: PocketContactDraft): Record<string, unknown> {
   return {
     name: draft.name, role: draft.role, identityBrief: draft.identityBrief, description: draft.identityBrief, phoneProfile: draft.phoneProfile,
     accent: draft.accent, colorMode: 'pocket', messagingStyle: draft.messagingStyle,
+    avatarOverrideUrl: draft.avatarUrl || '', avatarSource: draft.avatarSource, avatarFocus: draft.avatarFocus,
     source: { kind: 'npc', origin: 'generated', description: draft.identityBrief },
     presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
     messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
@@ -135,6 +147,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
         lastInitiatedRoleplayAt: contact?.messagingPolicy.lastInitiatedRoleplayAt || '',
       },
       messagingStyle: { talkativeness: Number(talkativeness.value), fragmentation: Number(fragmentation.value) },
+      ...(draft ? { avatarOverrideUrl: draft.avatarUrl || '', avatarSource: draft.avatarSource, avatarFocus: draft.avatarFocus } : {}),
       source: contact?.source || (draft ? { kind: 'npc', origin: 'generated', description: description.value.trim() } : { kind: 'npc', origin: 'manual', description: description.value.trim() }),
     } })
   }
@@ -249,8 +262,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
 
       const edit = button('Edit', 'lp-button lp-button-quiet')
       edit.addEventListener('click', () => {
-        if (linked) host.select(linked.id, 'config')
-        else host.send('lumiphone:npc_bank_add', { bankId: entry.id, openConfig: true })
+        host.select(entry.id, 'bank-entry')
       })
 
       const add = button(linked ? 'Added' : 'Add', 'lp-button lp-button-quiet')
@@ -353,6 +365,8 @@ function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
     const actions = actionGroup('lp-draft-actions')
     const use = button(`Use ${draft.name}`, 'lp-button lp-button-primary'); use.disabled = Boolean(active); use.addEventListener('click', () => { use.disabled = true; host.send('lumiphone:save_contact', { contact: draftPayload(draft) }) })
     actions.append(use)
+    const photo = button(draft.avatarUrl ? 'Retake portrait' : 'Generate portrait', 'lp-button lp-button-quiet'); photo.addEventListener('click', () => host.generateDraftPhoto()); actions.append(photo)
+    if (draft.avatarUrl) { const image = el('img', 'lp-draft-portrait'); image.src = draft.avatarUrl; image.alt = `${draft.name} portrait`; finder.prepend(image) }
     if (host.previousNpcDraft) { const undo = button('Previous', 'lp-button lp-button-quiet'); undo.addEventListener('click', () => host.restorePreviousNpcDraft()); actions.append(undo) }
     footer.append(actions)
   }
@@ -361,6 +375,7 @@ function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
 }
 
 export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
+  if (['groups', 'group-config', 'bank', 'cast-config', 'cast-import', 'bank-entry'].includes(host.selectedView)) return renderContactGroups(host)
   if (host.selectedView === 'quick-gen') return quickGenerateView(host)
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null
   if (host.selectedView === 'import') { host.requestSources(); return importView(host) }
@@ -425,6 +440,8 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   const filters = el('div', 'lp-chipbar')
   const all = button('All', 'lp-chip'); const here = button('Here', 'lp-chip'); const recent = button('Recent', 'lp-chip')
   all.setAttribute('aria-pressed', 'true'); filters.append(all, here, recent)
+  const groups = button('Groups', 'lp-chip'); groups.addEventListener('click', () => host.selectGroup('', 'groups'))
+  const bank = button('NPC Bank', 'lp-chip'); bank.addEventListener('click', () => host.selectGroup('', 'bank')); filters.append(groups, bank)
   const sync = button('Sync current scene', 'lp-button lp-button-quiet')
   const sceneOperation = [...host.operations.values()].find((entry) => entry.task === 'scene-sync' && entry.phase !== 'complete' && entry.phase !== 'error')
   sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation)

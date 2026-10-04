@@ -1,5 +1,12 @@
 import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
 import { normalizeEventSuggestion } from './scheduler.js'
+import { normalizeImageSource } from './preferences.js'
+
+export function normalizeAvatarFocus(value: unknown): { x: number; y: number } {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const coord = (n: unknown) => Number.isFinite(Number(n)) ? Math.min(100, Math.max(0, Number(n))) : 50
+  return { x: coord(raw.x), y: coord(raw.y) }
+}
 
 const MAX_CONTACTS = 80
 const MAX_CONVERSATIONS = 80
@@ -112,6 +119,8 @@ export function normalizePocketContact(value: unknown, context: {
     avatarUrl: clean(value.avatarUrl, 2_000),
     sourceAvatarUrl: clean(value.sourceAvatarUrl, 2_000) || clean(value.avatarUrl, 2_000),
     avatarOverrideUrl: clean(value.avatarOverrideUrl, 2_000),
+    ...(value.avatarSource || clean(value.avatarOverrideUrl, 2_000) ? { avatarSource: normalizeImageSource(value.avatarSource) || normalizeImageSource({ kind: 'url', url: value.avatarOverrideUrl }) } : {}),
+    ...(value.avatarFocus ? { avatarFocus: normalizeAvatarFocus(value.avatarFocus) } : {}),
     accent: /^#[0-9a-f]{6}$/i.test(clean(value.accent, 20)) ? clean(value.accent, 20) : stableContactAccent(contactId),
     sourceAccent: /^#[0-9a-f]{6}$/i.test(clean(value.sourceAccent, 20)) ? clean(value.sourceAccent, 20) : '',
     colorMode: value.colorMode === 'source' ? 'source' : 'pocket',
