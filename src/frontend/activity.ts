@@ -184,7 +184,13 @@ function buildMessageArtifact(
     primary.append(avatar(presentation.senderName || 'Call', options.avatarUrl), messageChrome('', 'Phone'))
     const name = document.createElement('strong'); name.className = 'pocket-inline-artifact-actors'; name.textContent = actorLine(activity) || activity.title
     const status = document.createElement('span'); status.className = 'pocket-inline-artifact-copy'; status.textContent = callSummary(presentation.call)
-    const icon = document.createElement('span'); icon.className = 'pocket-call-symbol'; icon.textContent = '☎'; icon.setAttribute('aria-hidden', 'true'); primary.append(name, status, icon)
+    const icon = document.createElement('span'); icon.className = 'pocket-call-symbol'; icon.setAttribute('aria-hidden', 'true')
+    const handset = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    handset.setAttribute('viewBox', '0 0 24 24'); handset.setAttribute('fill', 'none'); handset.setAttribute('stroke', 'currentColor')
+    handset.setAttribute('stroke-width', '1.8'); handset.setAttribute('stroke-linecap', 'round'); handset.setAttribute('stroke-linejoin', 'round')
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.setAttribute('d', 'M3 15.5v-3a2 2 0 0 1 .7-1.5c4.7-4 11.9-4 16.6 0a2 2 0 0 1 .7 1.5v3a1 1 0 0 1-1.2 1l-4-.8a1 1 0 0 1-.8-1v-2.3a12 12 0 0 0-6 0v2.3a1 1 0 0 1-.8 1l-4 .8a1 1 0 0 1-1.2-1Z')
+    handset.append(path); icon.append(handset); primary.append(name, status, icon)
   } else if (presentation.kind === 'sent') {
     const recipient = document.createElement('span')
     recipient.className = 'pocket-inline-artifact-recipient'
