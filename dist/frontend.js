@@ -830,7 +830,7 @@ function notificationBelongsToDevice(state, deviceOwnerActorId, targetOwnerActor
 }
 
 // src/frontend/surface.ts
-var PHONE_ASPECT = 9 / 16;
+var PHONE_ASPECT = 9 / 18.4;
 var PHONE_BASE_WIDTH = 360;
 var PHONE_SCALE_MIN = 0.8;
 var PHONE_SCALE_MAX = 1.25;
@@ -5459,11 +5459,11 @@ var PHONE_STYLES = `
     --lp-chat-wallpaper: linear-gradient(180deg,rgba(139,125,255,.16),rgba(19,17,28,.03));
     --lp-bg: #0d0c12; --lp-surface: rgba(31,29,40,.88); --lp-surface-2: rgba(50,47,62,.78);
     --lp-text: #f7f5ff; --lp-muted: #aaa5b6; --lp-border: rgba(255,255,255,.11); --lp-shadow: rgba(0,0,0,.45);
-    --lp-animation-ms: 280ms; --pocket-ui-scale:1;
+    --lp-animation-ms: 280ms; --pocket-ui-scale:1; --pocket-device-ratio:9 / 18.4;
     --pocket-font-xs:calc(8px * var(--pocket-ui-scale)); --pocket-font-sm:calc(10px * var(--pocket-ui-scale));
     --pocket-font-md:calc(13px * var(--pocket-ui-scale)); --pocket-control-h:calc(38px * var(--pocket-ui-scale));
     --pocket-gap:calc(10px * var(--pocket-ui-scale)); --pocket-icon:calc(54px * var(--pocket-ui-scale));
-    width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: 9 / 16; overflow: hidden; position: relative; isolation: isolate;
+    width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: var(--pocket-device-ratio); overflow: hidden; position: relative; isolation: isolate;
     border: 8px solid var(--lp-bezel); border-radius: 45px; background: var(--lp-bg); color: var(--lp-text);
     box-shadow: 0 36px 90px var(--lp-shadow), 0 0 0 1px rgba(255,255,255,.09) inset;
     display: grid; grid-template-rows: 34px minmax(0,1fr) 24px;
@@ -7274,7 +7274,7 @@ class PocketController {
         tooltip: "Pocket",
         chromeless: true,
         resizable: false,
-        aspectLock: 9 / 16,
+        aspectLock: PHONE_ASPECT,
         persistGeometry: false
       });
       this.widgetRoot = el("div", "lumiphone-widget-root");
@@ -7451,7 +7451,7 @@ class PocketController {
     const geometry = calculatePhoneSurface(this.preferences.handsetScale, { width: Math.min(viewport.width, 620), height: Math.max(320, viewport.height - 130) }, false);
     host.style.width = geometry.fullscreen ? "100%" : `${geometry.width}px`;
     host.style.height = geometry.fullscreen ? "calc(100dvh - 110px)" : `${geometry.height}px`;
-    host.style.aspectRatio = "9 / 16";
+    host.style.aspectRatio = String(PHONE_ASPECT);
     host.dataset.fullscreen = "false";
     this.drawer.root.appendChild(host);
     host.replaceChildren(this.shell);

@@ -1,6 +1,6 @@
 import type { SpindleFloatWidgetHandle } from 'lumiverse-spindle-types'
 
-export const PHONE_ASPECT = 9 / 16
+export const PHONE_ASPECT = 9 / 18.4
 export const PHONE_BASE_WIDTH = 360
 export const PHONE_SCALE_MIN = 0.8
 export const PHONE_SCALE_MAX = 1.25

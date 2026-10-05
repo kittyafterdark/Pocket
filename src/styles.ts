@@ -36,11 +36,11 @@ export const PHONE_STYLES = `
     --lp-chat-wallpaper: linear-gradient(180deg,rgba(139,125,255,.16),rgba(19,17,28,.03));
     --lp-bg: #0d0c12; --lp-surface: rgba(31,29,40,.88); --lp-surface-2: rgba(50,47,62,.78);
     --lp-text: #f7f5ff; --lp-muted: #aaa5b6; --lp-border: rgba(255,255,255,.11); --lp-shadow: rgba(0,0,0,.45);
-    --lp-animation-ms: 280ms; --pocket-ui-scale:1;
+    --lp-animation-ms: 280ms; --pocket-ui-scale:1; --pocket-device-ratio:9 / 18.4;
     --pocket-font-xs:calc(8px * var(--pocket-ui-scale)); --pocket-font-sm:calc(10px * var(--pocket-ui-scale));
     --pocket-font-md:calc(13px * var(--pocket-ui-scale)); --pocket-control-h:calc(38px * var(--pocket-ui-scale));
     --pocket-gap:calc(10px * var(--pocket-ui-scale)); --pocket-icon:calc(54px * var(--pocket-ui-scale));
-    width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: 9 / 16; overflow: hidden; position: relative; isolation: isolate;
+    width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: var(--pocket-device-ratio); overflow: hidden; position: relative; isolation: isolate;
     border: 8px solid var(--lp-bezel); border-radius: 45px; background: var(--lp-bg); color: var(--lp-text);
     box-shadow: 0 36px 90px var(--lp-shadow), 0 0 0 1px rgba(255,255,255,.09) inset;
     display: grid; grid-template-rows: 34px minmax(0,1fr) 24px;

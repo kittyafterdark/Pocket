@@ -463,20 +463,20 @@ describe('Pocket image source resolution', () => {
 })
 
 describe('phone surface', () => {
-  test('derives a fresh 9:16 desktop rectangle from semantic scale', () => {
+  test('derives a fresh 9:18.4 desktop rectangle from semantic scale', () => {
     const normal = calculatePhoneSurface(1, { width: 1440, height: 900 })
     const large = calculatePhoneSurface(1.2, { width: 1440, height: 900 })
     expect(normal.fullscreen).toBe(false)
-    expect(normal.width / normal.height).toBeCloseTo(9 / 16, 2)
+    expect(normal.width / normal.height).toBeCloseTo(9 / 18.4, 2)
     expect(large.width).toBeGreaterThan(normal.width)
-    expect(large.width / large.height).toBeCloseTo(9 / 16, 2)
+    expect(large.width / large.height).toBeCloseTo(9 / 18.4, 2)
   })
 
   test('recalculates against viewport constraints and uses fullscreen on mobile', () => {
     const short = calculatePhoneSurface(1.25, { width: 1000, height: 600 })
     const mobile = calculatePhoneSurface(1, { width: 390, height: 844 })
     expect(short.height).toBeLessThanOrEqual(576)
-    expect(short.width / short.height).toBeCloseTo(9 / 16, 2)
+    expect(short.width / short.height).toBeCloseTo(9 / 18.4, 2)
     expect(mobile.fullscreen).toBe(true)
     expect(calculatePhoneSurface(.7, { width: 390, height: 844 })).toEqual(calculatePhoneSurface(1.3, { width: 390, height: 844 }))
   })

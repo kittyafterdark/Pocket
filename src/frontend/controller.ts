@@ -29,7 +29,7 @@ import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domai
 import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
 import { activityDeviceOwner, conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
-import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize } from './surface.js'
+import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize, PHONE_ASPECT } from './surface.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
@@ -443,7 +443,7 @@ class PocketController {
         tooltip: 'Pocket',
         chromeless: true,
         resizable: false,
-        aspectLock: 9 / 16,
+        aspectLock: PHONE_ASPECT,
         persistGeometry: false,
       } as any)
       this.widgetRoot = el('div', 'lumiphone-widget-root')
@@ -594,7 +594,7 @@ class PocketController {
     const geometry = calculatePhoneSurface(this.preferences.handsetScale, { width: Math.min(viewport.width, 620), height: Math.max(320, viewport.height - 130) }, false)
     host.style.width = geometry.fullscreen ? '100%' : `${geometry.width}px`
     host.style.height = geometry.fullscreen ? 'calc(100dvh - 110px)' : `${geometry.height}px`
-    host.style.aspectRatio = '9 / 16'
+    host.style.aspectRatio = String(PHONE_ASPECT)
     host.dataset.fullscreen = 'false'
     this.drawer.root.appendChild(host)
     host.replaceChildren(this.shell)
