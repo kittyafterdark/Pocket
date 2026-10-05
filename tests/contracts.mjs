@@ -1597,6 +1597,7 @@ Object.assign(globalThis, {
   CustomEvent: dom.window.CustomEvent,
   MutationObserver: dom.window.MutationObserver,
   Option: dom.window.Option,
+  getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
   CSS: { escape: value => String(value).replace(/[^a-zA-Z0-9_-]/g, character => `\\${character}`) },
   requestAnimationFrame: (callback) => { callback(0); return 1 },
   cancelAnimationFrame: () => {},
@@ -1778,6 +1779,17 @@ assert.equal(delayedSettingsPicker.dataset.imagePickerMounted, undefined, 'setti
 document.body.append(dockRoot)
 await new Promise(resolve => setTimeout(resolve, 0))
 assert.equal(delayedSettingsPicker.dataset.imagePickerMounted, 'true', 'settings picker must mount when the host attaches its dock later')
+const originalViewportWidth = window.innerWidth
+Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
+window.dispatchEvent(new Event('resize'))
+await new Promise(resolve => setTimeout(resolve, 0))
+const mobileSettingsPicker = widgetRoot.querySelector('.lp-model-combobox')
+assert.ok(mobileSettingsPicker && mobileSettingsPicker !== delayedSettingsPicker, 'moving to mobile must recreate placement-bound settings controls')
+assert.equal(mobileSettingsPicker.dataset.imagePickerMounted, 'true')
+Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalViewportWidth })
+window.dispatchEvent(new Event('resize'))
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.equal(dockRoot.querySelector('.lp-model-combobox').dataset.imagePickerMounted, 'true', 'returning to desktop must remount its settings picker')
 dockRoot.querySelector('.lp-nav-action').click()
 dockRoot.remove()
 dockRoot.querySelector('[data-settings-category="camera"]').click()

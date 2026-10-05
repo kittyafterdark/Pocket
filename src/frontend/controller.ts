@@ -1523,7 +1523,10 @@ class PocketController {
 
   private resizeExpanded(): void {
     if (!this.expanded) return
+    const previousRoot = this.handsetHost.parentElement
     this.mountInteractiveSurface()
+    // Shared host controls belong to their placement root; remount after a device moves.
+    if (this.currentApp === 'settings' && previousRoot !== this.handsetHost.parentElement) this.render(false)
   }
 
   private openApp(app: PhoneApp): void {

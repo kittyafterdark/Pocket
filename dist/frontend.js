@@ -8657,7 +8657,10 @@ class PocketController {
   resizeExpanded() {
     if (!this.expanded)
       return;
+    const previousRoot = this.handsetHost.parentElement;
     this.mountInteractiveSurface();
+    if (this.currentApp === "settings" && previousRoot !== this.handsetHost.parentElement)
+      this.render(false);
   }
   openApp(app) {
     this.openPocket({ app });
