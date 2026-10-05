@@ -2527,7 +2527,6 @@ class PocketController {
       modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: 'image', id: this.cameraOptions.connectionId || undefined }, placeholder: 'Use native checkpoint', onChange: value => { this.cameraOptions.model = value } })
     }
     let modelHandle: ReturnType<typeof this.ctx.components.mountModelCombobox> | undefined
-    mountModel()
     this.viewCleanups.push(() => modelHandle?.destroy())
     connection.querySelector('select')?.addEventListener('change', () => { this.cameraOptions.model = ''; mountModel() })
     const nativeSettings = button('Lumiverse image settings', 'lp-button lp-button-quiet')
@@ -2547,7 +2546,7 @@ class PocketController {
     const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
     const optionFields = el('div', 'lp-camera-sheet-fields')
     optionFields.append(pipelineCopy, nativeSettings, purpose, aspect, connection, (() => { const row = el('div', 'lp-field'); row.append(el('div', 'lp-label', 'Checkpoint override'), model); return row })(), optionRow)
-    optionsDrawer.addEventListener('click', () => showPocketSheet(optionsDrawer, 'Camera options', optionFields))
+    optionsDrawer.addEventListener('click', () => { showPocketSheet(optionsDrawer, 'Camera options', optionFields); mountModel() })
     footer.append(el('p', 'lp-camera-caption', this.cameraContactId ? 'PORTRAIT' : 'PHOTO'), shutterRow, progress, optionsDrawer)
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button('Use photo', 'lp-button lp-camera-accept')

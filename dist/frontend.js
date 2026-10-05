@@ -9741,7 +9741,6 @@ ${body}`;
       } });
     };
     let modelHandle;
-    mountModel();
     this.viewCleanups.push(() => modelHandle?.destroy());
     connection.querySelector("select")?.addEventListener("change", () => {
       this.cameraOptions.model = "";
@@ -9773,7 +9772,10 @@ ${body}`;
       row.append(el("div", "lp-label", "Checkpoint override"), model);
       return row;
     })(), optionRow);
-    optionsDrawer.addEventListener("click", () => showPocketSheet(optionsDrawer, "Camera options", optionFields));
+    optionsDrawer.addEventListener("click", () => {
+      showPocketSheet(optionsDrawer, "Camera options", optionFields);
+      mountModel();
+    });
     footer.append(el("p", "lp-camera-caption", this.cameraContactId ? "PORTRAIT" : "PHOTO"), shutterRow, progress, optionsDrawer);
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button("Use photo", "lp-button lp-camera-accept");
