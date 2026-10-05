@@ -5818,32 +5818,48 @@ var PHONE_STYLES = `
   .lumiphone-drawer-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
   .lumiphone-drawer-button { appearance:none; min-height:36px; padding:8px 13px; border:1px solid var(--lumiverse-border,rgba(127,127,127,.3)); border-radius:11px; background:var(--lumiverse-fill,rgba(127,127,127,.14)); color:inherit; font:inherit; font-size:11px; font-weight:720; cursor:pointer; }
   .lumiphone-drawer-button[data-primary="true"] { border-color:transparent; background:var(--lumiverse-primary,#7866e8); color:white; }
-  .lumiphone-device-card { align-content:start; justify-items:stretch; text-align:left; gap:10px; padding:20px; background:#201e25; border:1px solid rgba(255,255,255,.08); border-radius:18px; box-shadow:0 8px 26px rgba(0,0,0,.18); color:#f0edf5; }
-  .lumiphone-device-card .lumiphone-drawer-icon { width:38px; height:38px; border-radius:11px; background:#302a42; color:#b8aaff; box-shadow:none; }
-  .lumiphone-device-card .lumiphone-drawer-icon svg { width:22px; height:22px; }
-  .lumiphone-device-card .lumiphone-drawer-title { font-size:18px; }
-  .lumiphone-device-card .lumiphone-drawer-copy { color:#a9a3b3; font-size:11px; }
-  .lumiphone-device-card .lumiphone-drawer-actions { justify-content:flex-start; margin-top:8px; }
-  .lumiphone-device-list { width:100%; display:grid; gap:9px; margin-top:8px; }
-  .lumiphone-device-item { min-width:0; overflow:hidden; border:1px solid rgba(255,255,255,.07); border-radius:12px; background:#242229; box-shadow:0 2px 5px rgba(0,0,0,.10); }
-  .lumiphone-device-item[data-selected="true"] { border-color:rgba(184,170,255,.40); }
-  .lumiphone-device-row { appearance:none; width:100%; padding:11px 12px; border:0; display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:10px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-  .lumiphone-device-row:hover,.lumiphone-device-jump:hover { background:rgba(255,255,255,.035); }
-  .lumiphone-device-row:focus-visible,.lumiphone-device-jump:focus-visible { outline:2px solid #b8aaff; outline-offset:-3px; border-radius:10px; }
-  .lumiphone-device-avatar { position:relative; width:36px; height:36px; overflow:hidden; display:grid; place-items:center; border-radius:11px; background:#35303f; color:#d6cbed; font-size:14px; font-weight:700; }
+  .lumiphone-device-drawer {
+    --pocket-accent:var(--lumiverse-primary,var(--accent-color,var(--lumi-accent,currentColor)));
+    --pocket-surface:var(--lumiverse-fill-subtle,rgba(127,127,127,.06));
+    --pocket-hover:var(--lumiverse-fill,rgba(127,127,127,.12));
+    --pocket-border:var(--lumiverse-border,rgba(127,127,127,.16));
+    --pocket-muted:var(--lumiverse-text-muted,inherit);
+    --pocket-text:var(--lumiverse-text,inherit);
+    display:block; padding:20px 16px; color:var(--pocket-text);
+  }
+  .lumiphone-device-switcher { width:100%; display:grid; gap:8px; }
+  .lumiphone-device-heading { display:flex; align-items:center; gap:8px; }
+  .lumiphone-device-mark { display:flex; color:var(--pocket-accent); }
+  .lumiphone-device-mark svg { width:16px; height:16px; }
+  .lumiphone-device-title { margin:0; font-family:inherit; font-weight:700; line-height:1.4; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+  .lumiphone-device-copy { margin:0; color:var(--pocket-muted); font-size:11px; line-height:1.5; }
+  .lumiphone-device-list { width:100%; display:grid; gap:22px; margin-top:14px; }
+  .lumiphone-device-section { display:grid; gap:3px; min-width:0; }
+  .lumiphone-device-section-title { display:flex; align-items:center; gap:10px; margin:0 0 6px; color:var(--pocket-muted); font-size:10px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; }
+  .lumiphone-device-section-title::after { content:""; flex:1; height:1px; background:var(--pocket-border); }
+  .lumiphone-device-row { appearance:none; width:100%; min-height:48px; padding:8px 10px; border:0; border-left:2px solid transparent; border-radius:7px; display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center; gap:10px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+  .lumiphone-device-row[data-persona="true"] { padding-block:13px; background:var(--pocket-surface); }
+  .lumiphone-device-row[data-recent="true"] { min-height:70px; }
+  .lumiphone-device-row[data-selected="true"] { border-left-color:var(--pocket-accent); background:color-mix(in srgb,var(--pocket-accent) 8%,transparent); }
+  .lumiphone-device-row:hover { background:var(--pocket-hover); }
+  .lumiphone-device-row:focus-visible,.lumiphone-device-access:focus-visible { outline:2px solid var(--pocket-accent); outline-offset:2px; }
+  .lumiphone-device-avatar { position:relative; width:32px; height:32px; overflow:hidden; display:grid; place-items:center; border-radius:10px; background:var(--pocket-hover); color:var(--pocket-text); font-size:12px; font-weight:650; }
   .lumiphone-device-avatar img { position:absolute; width:100%; height:100%; object-fit:cover; }
   .lumiphone-device-identity { min-width:0; display:grid; gap:3px; }
-  .lumiphone-device-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-  .lumiphone-device-identity span { color:#a9a3b3; font-size:10px; }
-  .lumiphone-device-meta { display:flex; align-items:center; gap:6px; }
-  .lumiphone-device-rp,.lumiphone-device-unread { padding:3px 6px; border-radius:6px; background:#35303f; color:#d6cbed; font-size:9px; font-weight:700; text-align:center; }
-  .lumiphone-device-unread { min-width:20px; border-radius:999px; background:#d84f68; color:#fff; }
-  .lumiphone-device-chevron svg { width:16px; height:16px; color:#8e879b; }
-  .lumiphone-device-jump { appearance:none; display:grid; gap:4px; width:100%; min-width:0; padding:9px 12px 11px 58px; border:0; border-top:1px solid rgba(255,255,255,.05); background:#29272f; color:inherit; text-align:left; font:inherit; cursor:pointer; }
-  .lumiphone-device-jump-label { color:#b8aaff; font-size:9px; font-weight:650; }
-  .lumiphone-device-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:#b2acbd; }
-  .lumiphone-device-empty { display:block; padding:0 12px 11px 58px; color:#8e879b; font-size:10px; }
-  @media(max-width:420px) { .lumiphone-drawer { padding:10px; } .lumiphone-device-card { padding:14px; } .lumiphone-device-row { gap:8px; } .lumiphone-device-rp { max-width:40px; } }
+  .lumiphone-device-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:650; }
+  .lumiphone-device-role { color:var(--pocket-muted); font-size:10px; }
+  .lumiphone-device-meta { display:grid; justify-items:end; gap:5px; color:var(--pocket-muted); }
+  .lumiphone-device-current { display:inline-flex; align-items:center; gap:4px; color:var(--pocket-accent); font-size:9px; font-weight:650; }
+  .lumiphone-device-unread { min-width:18px; padding:2px 5px; border-radius:999px; background:color-mix(in srgb,var(--pocket-accent) 16%,transparent); color:var(--pocket-text); font-size:9px; font-weight:750; text-align:center; }
+  .lumiphone-device-glyph { display:inline-flex; flex-shrink:0; }
+  .lumiphone-device-glyph svg { width:13px; height:13px; }
+  .lumiphone-device-preview { display:flex; align-items:center; gap:5px; min-width:0; margin-top:2px; color:var(--pocket-muted); font-size:10px; line-height:1.4; }
+  .lumiphone-device-preview > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lumiphone-device-time { font-size:9px; white-space:nowrap; }
+  .lumiphone-device-footer { padding-top:14px; margin-top:10px; border-top:1px solid var(--pocket-border); }
+  .lumiphone-device-access { appearance:none; padding:7px 0; border:0; background:transparent; color:var(--pocket-muted); font:inherit; font-size:11px; cursor:pointer; }
+  .lumiphone-device-access:hover { color:var(--pocket-text); }
+  @media(max-width:420px) { .lumiphone-device-drawer { padding:16px 12px; } .lumiphone-device-row { min-height:52px; gap:8px; } }
 
   .lumiphone-sync-indicator { position:absolute; z-index:44; top:104px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); min-height:22px; padding:5px 10px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
   .lumiphone-shell:has(.lp-home) .lumiphone-sync-indicator { top:42px; }
@@ -6739,25 +6755,46 @@ function activityReceipt(ctx, activity, openRoute, options = {}) {
 }
 
 // src/frontend/components/device-picker.ts
+var GLYPHS = {
+  phone: '<rect x="7" y="2" width="10" height="20" rx="3"/><path d="M10 18h4"/>',
+  message: '<path d="M20 11a8 8 0 0 1-8 8H4l1-4a8 8 0 1 1 15-4Z"/>',
+  call: '<path d="m5 3 4 1 1 5-2 2a15 15 0 0 0 5 5l2-2 5 1 1 4c-7 4-22-11-16-16Z"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>'
+};
+function glyph(kind) {
+  const node = el("span", "lumiphone-device-glyph");
+  node.setAttribute("aria-hidden", "true");
+  node.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${GLYPHS[kind]}</svg>`;
+  return node;
+}
 function renderDevicePicker(state, selected, deviceKey, select) {
   const personaId = pocketPersonaActorId(state);
   const ids = new Set([personaId]);
   for (const conversation of state.conversations)
     for (const id of conversationDeviceActorIds(state, conversation))
       ids.add(id);
+  const entries = [...ids].map((actorId) => ({ actorId, actor: resolvePocketActor(state, actorId), latest: latestDeviceInteraction(state, actorId) })).filter((entry) => entry.actor);
   const list = el("div", "lumiphone-device-list");
-  for (const actorId of ids) {
-    const actor = resolvePocketActor(state, actorId);
+  const section = (title, kind) => {
+    const group = el("section", "lumiphone-device-section");
+    group.dataset.section = kind;
+    group.append(el("h3", "lumiphone-device-section-title", title));
+    list.append(group);
+    return group;
+  };
+  const addRow = (entry, group) => {
+    const { actorId, actor, latest } = entry;
     if (!actor)
-      continue;
+      return;
     const isPersona = actorId === personaId;
-    const item = el("div", "lumiphone-device-item");
-    item.dataset.selected = String(actorId === selected);
     const row = button("", "lumiphone-device-row");
     row.dataset.selected = String(actorId === selected);
+    row.dataset.recent = String(Boolean(latest) && !isPersona);
+    row.dataset.persona = String(isPersona);
     row.dataset.pocketDeviceOwner = actorId;
     row.dataset.pocketDeviceKey = deviceKey(actorId);
-    row.setAttribute("aria-label", `Open ${actor.name}'s phone${actorId === selected ? ", selected" : ""}`);
+    row.setAttribute("aria-label", `${isPersona || !latest ? "Open" : "Last interaction on"} ${actor.name}'s phone${actorId === selected ? ", current device" : ""}`);
+    row.setAttribute("aria-pressed", String(actorId === selected));
     const avatar = el("span", "lumiphone-device-avatar", actor.name.trim().slice(0, 1).toUpperCase() || "?");
     if (actor.avatarUrl) {
       const image = el("img");
@@ -6768,10 +6805,13 @@ function renderDevicePicker(state, selected, deviceKey, select) {
       avatar.append(image);
     }
     const identity = el("span", "lumiphone-device-identity");
-    identity.append(el("strong", "", actor.name), el("span", "", isPersona ? "Roleplay Persona" : actor.role || "Pocket actor"));
+    identity.append(el("strong", "", actor.name), el("span", "lumiphone-device-role", isPersona ? "Roleplay Persona" : actor.role || "Pocket actor"));
     const meta = el("span", "lumiphone-device-meta");
     if (isPersona) {
-      meta.append(el("span", "lumiphone-device-rp", "Your phone"));
+      row.classList.add("lumiphone-device-rp");
+      const status = el("span", "lumiphone-device-current", actorId === selected ? "Current" : "Open phone");
+      status.prepend(glyph("phone"));
+      meta.append(status);
       const messages = state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(state, conversation, actorId), 0);
       const notifications = state.notifications.filter((entry) => !entry.read && !entry.dismissedAt && notificationBelongsToDevice(state, actorId, entry.deviceOwnerActorId)).length;
       const unread = Math.max(messages, notifications);
@@ -6781,27 +6821,42 @@ function renderDevicePicker(state, selected, deviceKey, select) {
         meta.append(badge);
       }
     } else {
-      const arrow = el("span", "lumiphone-device-chevron");
-      arrow.setAttribute("aria-hidden", "true");
-      arrow.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 6 6 6-6 6"/></svg>';
-      meta.append(arrow);
+      if (latest) {
+        const preview = latest.message.call ? `Call ${latest.message.call.status}` : latest.message.text || (latest.message.imageId || latest.message.imageUrl ? "Photo" : "Message");
+        const line = el("span", "lumiphone-device-preview");
+        line.append(glyph(latest.message.call ? "call" : "message"), el("span", "", preview));
+        identity.append(line);
+        row.title = `${conversationTitleForDevice(state, latest.conversation, actorId)}: ${preview}`;
+        if (Number.isFinite(Date.parse(latest.message.createdAt))) {
+          const time = el("time", "lumiphone-device-time", formatDate(latest.message.createdAt));
+          time.dateTime = latest.message.createdAt;
+          time.title = formatDate(latest.message.createdAt, true);
+          meta.append(time);
+        }
+      }
+      if (actorId === selected)
+        meta.append(el("span", "lumiphone-device-current", "Viewing"));
+      else
+        meta.append(glyph("chevron"));
     }
     row.append(avatar, identity, meta);
-    row.addEventListener("click", () => select(actorId));
-    item.append(row);
-    if (!isPersona) {
-      const latest = latestDeviceInteraction(state, actorId);
-      if (latest) {
-        const jump = button("", "lumiphone-device-jump");
-        jump.setAttribute("aria-label", `Last interaction on ${actor.name}'s phone: ${conversationTitleForDevice(state, latest.conversation, actorId)}`);
-        const preview = latest.message.call ? `Call ${latest.message.call.status}` : latest.message.text || (latest.message.imageId || latest.message.imageUrl ? "Photo" : "Message");
-        jump.append(el("span", "lumiphone-device-jump-label", "Last interaction"), el("span", "lumiphone-device-preview", `${conversationTitleForDevice(state, latest.conversation, actorId)} · ${preview}`));
-        jump.addEventListener("click", () => select(actorId, { app: "messages", conversationId: latest.conversation.id, messageId: latest.message.id, view: "thread" }));
-        item.append(jump);
-      } else
-        item.append(el("span", "lumiphone-device-empty", "No interactions yet"));
-    }
-    list.append(item);
+    row.addEventListener("click", () => select(actorId, !isPersona && latest ? { app: "messages", conversationId: latest.conversation.id, messageId: latest.message.id, view: "thread" } : undefined));
+    group.append(row);
+  };
+  const own = entries.find((entry) => entry.actorId === personaId);
+  if (own)
+    addRow(own, section("Your phone", "persona"));
+  const recent = entries.filter((entry) => entry.actorId !== personaId && entry.latest).sort((a, b) => (Date.parse(b.latest.message.createdAt) || 0) - (Date.parse(a.latest.message.createdAt) || 0));
+  if (recent.length) {
+    const group = section("Recent", "recent");
+    for (const entry of recent)
+      addRow(entry, group);
+  }
+  const others = entries.filter((entry) => entry.actorId !== personaId && !entry.latest);
+  if (others.length) {
+    const group = section("Others", "others");
+    for (const entry of others)
+      addRow(entry, group);
   }
   return list;
 }
@@ -7240,13 +7295,15 @@ class PocketController {
   }
   renderDrawerLanding() {
     this.drawer.root.replaceChildren();
-    const outer = el("div", "lumiphone-drawer");
-    const card = el("div", "lumiphone-drawer-card lumiphone-device-card");
-    const logo = el("div", "lumiphone-drawer-icon");
+    const outer = el("div", "lumiphone-drawer lumiphone-device-drawer");
+    const card = el("div", "lumiphone-device-switcher");
+    const logo = el("div", "lumiphone-device-mark");
     logo.innerHTML = PHONE_ICON;
-    const title = el("h2", "lumiphone-drawer-title", "Pocket devices");
-    const copy = el("p", "lumiphone-drawer-copy", "Your phone keeps its unread alerts. Explore other phones or jump to their last interaction; your roleplay Persona stays the same.");
-    card.append(logo, title, copy);
+    const title = el("h2", "lumiphone-device-title", "Pocket devices");
+    const copy = el("p", "lumiphone-device-copy", "Switch devices without changing your roleplay Persona.");
+    const header = el("div", "lumiphone-device-heading");
+    header.append(logo, title);
+    card.append(header, copy);
     if (this.state) {
       const personaId = pocketPersonaActorId(this.state);
       const selected = this.currentDeviceOwnerActorId() || personaId;
@@ -7279,13 +7336,10 @@ class PocketController {
     } else {
       card.appendChild(el("p", "lumiphone-drawer-copy", "Pocket is still loading this chat."));
     }
-    const actions = el("div", "lumiphone-drawer-actions");
-    const open = button("Open selected phone", "lumiphone-drawer-button");
-    open.dataset.primary = "true";
-    open.addEventListener("click", () => this.open());
-    const permission = button("Manage access", "lumiphone-drawer-button");
+    const actions = el("div", "lumiphone-device-footer");
+    const permission = button("Manage access", "lumiphone-device-access");
     permission.addEventListener("click", () => this.requestPermissions());
-    actions.append(open, permission);
+    actions.append(permission);
     card.appendChild(actions);
     outer.appendChild(card);
     this.drawer.root.appendChild(outer);

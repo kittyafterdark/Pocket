@@ -395,32 +395,48 @@ export const PHONE_STYLES = `
   .lumiphone-drawer-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
   .lumiphone-drawer-button { appearance:none; min-height:36px; padding:8px 13px; border:1px solid var(--lumiverse-border,rgba(127,127,127,.3)); border-radius:11px; background:var(--lumiverse-fill,rgba(127,127,127,.14)); color:inherit; font:inherit; font-size:11px; font-weight:720; cursor:pointer; }
   .lumiphone-drawer-button[data-primary="true"] { border-color:transparent; background:var(--lumiverse-primary,#7866e8); color:white; }
-  .lumiphone-device-card { align-content:start; justify-items:stretch; text-align:left; gap:10px; padding:20px; background:#201e25; border:1px solid rgba(255,255,255,.08); border-radius:18px; box-shadow:0 8px 26px rgba(0,0,0,.18); color:#f0edf5; }
-  .lumiphone-device-card .lumiphone-drawer-icon { width:38px; height:38px; border-radius:11px; background:#302a42; color:#b8aaff; box-shadow:none; }
-  .lumiphone-device-card .lumiphone-drawer-icon svg { width:22px; height:22px; }
-  .lumiphone-device-card .lumiphone-drawer-title { font-size:18px; }
-  .lumiphone-device-card .lumiphone-drawer-copy { color:#a9a3b3; font-size:11px; }
-  .lumiphone-device-card .lumiphone-drawer-actions { justify-content:flex-start; margin-top:8px; }
-  .lumiphone-device-list { width:100%; display:grid; gap:9px; margin-top:8px; }
-  .lumiphone-device-item { min-width:0; overflow:hidden; border:1px solid rgba(255,255,255,.07); border-radius:12px; background:#242229; box-shadow:0 2px 5px rgba(0,0,0,.10); }
-  .lumiphone-device-item[data-selected="true"] { border-color:rgba(184,170,255,.40); }
-  .lumiphone-device-row { appearance:none; width:100%; padding:11px 12px; border:0; display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:10px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-  .lumiphone-device-row:hover,.lumiphone-device-jump:hover { background:rgba(255,255,255,.035); }
-  .lumiphone-device-row:focus-visible,.lumiphone-device-jump:focus-visible { outline:2px solid #b8aaff; outline-offset:-3px; border-radius:10px; }
-  .lumiphone-device-avatar { position:relative; width:36px; height:36px; overflow:hidden; display:grid; place-items:center; border-radius:11px; background:#35303f; color:#d6cbed; font-size:14px; font-weight:700; }
+  .lumiphone-device-drawer {
+    --pocket-accent:var(--lumiverse-primary,var(--accent-color,var(--lumi-accent,currentColor)));
+    --pocket-surface:var(--lumiverse-fill-subtle,rgba(127,127,127,.06));
+    --pocket-hover:var(--lumiverse-fill,rgba(127,127,127,.12));
+    --pocket-border:var(--lumiverse-border,rgba(127,127,127,.16));
+    --pocket-muted:var(--lumiverse-text-muted,inherit);
+    --pocket-text:var(--lumiverse-text,inherit);
+    display:block; padding:20px 16px; color:var(--pocket-text);
+  }
+  .lumiphone-device-switcher { width:100%; display:grid; gap:8px; }
+  .lumiphone-device-heading { display:flex; align-items:center; gap:8px; }
+  .lumiphone-device-mark { display:flex; color:var(--pocket-accent); }
+  .lumiphone-device-mark svg { width:16px; height:16px; }
+  .lumiphone-device-title { margin:0; font-family:inherit; font-weight:700; line-height:1.4; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+  .lumiphone-device-copy { margin:0; color:var(--pocket-muted); font-size:11px; line-height:1.5; }
+  .lumiphone-device-list { width:100%; display:grid; gap:22px; margin-top:14px; }
+  .lumiphone-device-section { display:grid; gap:3px; min-width:0; }
+  .lumiphone-device-section-title { display:flex; align-items:center; gap:10px; margin:0 0 6px; color:var(--pocket-muted); font-size:10px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; }
+  .lumiphone-device-section-title::after { content:""; flex:1; height:1px; background:var(--pocket-border); }
+  .lumiphone-device-row { appearance:none; width:100%; min-height:48px; padding:8px 10px; border:0; border-left:2px solid transparent; border-radius:7px; display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center; gap:10px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+  .lumiphone-device-row[data-persona="true"] { padding-block:13px; background:var(--pocket-surface); }
+  .lumiphone-device-row[data-recent="true"] { min-height:70px; }
+  .lumiphone-device-row[data-selected="true"] { border-left-color:var(--pocket-accent); background:color-mix(in srgb,var(--pocket-accent) 8%,transparent); }
+  .lumiphone-device-row:hover { background:var(--pocket-hover); }
+  .lumiphone-device-row:focus-visible,.lumiphone-device-access:focus-visible { outline:2px solid var(--pocket-accent); outline-offset:2px; }
+  .lumiphone-device-avatar { position:relative; width:32px; height:32px; overflow:hidden; display:grid; place-items:center; border-radius:10px; background:var(--pocket-hover); color:var(--pocket-text); font-size:12px; font-weight:650; }
   .lumiphone-device-avatar img { position:absolute; width:100%; height:100%; object-fit:cover; }
   .lumiphone-device-identity { min-width:0; display:grid; gap:3px; }
-  .lumiphone-device-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-  .lumiphone-device-identity span { color:#a9a3b3; font-size:10px; }
-  .lumiphone-device-meta { display:flex; align-items:center; gap:6px; }
-  .lumiphone-device-rp,.lumiphone-device-unread { padding:3px 6px; border-radius:6px; background:#35303f; color:#d6cbed; font-size:9px; font-weight:700; text-align:center; }
-  .lumiphone-device-unread { min-width:20px; border-radius:999px; background:#d84f68; color:#fff; }
-  .lumiphone-device-chevron svg { width:16px; height:16px; color:#8e879b; }
-  .lumiphone-device-jump { appearance:none; display:grid; gap:4px; width:100%; min-width:0; padding:9px 12px 11px 58px; border:0; border-top:1px solid rgba(255,255,255,.05); background:#29272f; color:inherit; text-align:left; font:inherit; cursor:pointer; }
-  .lumiphone-device-jump-label { color:#b8aaff; font-size:9px; font-weight:650; }
-  .lumiphone-device-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:#b2acbd; }
-  .lumiphone-device-empty { display:block; padding:0 12px 11px 58px; color:#8e879b; font-size:10px; }
-  @media(max-width:420px) { .lumiphone-drawer { padding:10px; } .lumiphone-device-card { padding:14px; } .lumiphone-device-row { gap:8px; } .lumiphone-device-rp { max-width:40px; } }
+  .lumiphone-device-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:650; }
+  .lumiphone-device-role { color:var(--pocket-muted); font-size:10px; }
+  .lumiphone-device-meta { display:grid; justify-items:end; gap:5px; color:var(--pocket-muted); }
+  .lumiphone-device-current { display:inline-flex; align-items:center; gap:4px; color:var(--pocket-accent); font-size:9px; font-weight:650; }
+  .lumiphone-device-unread { min-width:18px; padding:2px 5px; border-radius:999px; background:color-mix(in srgb,var(--pocket-accent) 16%,transparent); color:var(--pocket-text); font-size:9px; font-weight:750; text-align:center; }
+  .lumiphone-device-glyph { display:inline-flex; flex-shrink:0; }
+  .lumiphone-device-glyph svg { width:13px; height:13px; }
+  .lumiphone-device-preview { display:flex; align-items:center; gap:5px; min-width:0; margin-top:2px; color:var(--pocket-muted); font-size:10px; line-height:1.4; }
+  .lumiphone-device-preview > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lumiphone-device-time { font-size:9px; white-space:nowrap; }
+  .lumiphone-device-footer { padding-top:14px; margin-top:10px; border-top:1px solid var(--pocket-border); }
+  .lumiphone-device-access { appearance:none; padding:7px 0; border:0; background:transparent; color:var(--pocket-muted); font:inherit; font-size:11px; cursor:pointer; }
+  .lumiphone-device-access:hover { color:var(--pocket-text); }
+  @media(max-width:420px) { .lumiphone-device-drawer { padding:16px 12px; } .lumiphone-device-row { min-height:52px; gap:8px; } }
 
   .lumiphone-sync-indicator { position:absolute; z-index:44; top:104px; left:50%; transform:translateX(-50%); max-width:calc(100% - 34px); min-height:22px; padding:5px 10px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); color:var(--lp-muted); box-shadow:0 8px 22px rgba(0,0,0,.18); backdrop-filter:blur(18px); font-size:8px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
   .lumiphone-shell:has(.lp-home) .lumiphone-sync-indicator { top:42px; }

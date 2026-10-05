@@ -463,13 +463,14 @@ class PocketController {
 
   private renderDrawerLanding(): void {
     this.drawer.root.replaceChildren()
-    const outer = el('div', 'lumiphone-drawer')
-    const card = el('div', 'lumiphone-drawer-card lumiphone-device-card')
-    const logo = el('div', 'lumiphone-drawer-icon')
+    const outer = el('div', 'lumiphone-drawer lumiphone-device-drawer')
+    const card = el('div', 'lumiphone-device-switcher')
+    const logo = el('div', 'lumiphone-device-mark')
     logo.innerHTML = PHONE_ICON
-    const title = el('h2', 'lumiphone-drawer-title', 'Pocket devices')
-    const copy = el('p', 'lumiphone-drawer-copy', 'Your phone keeps its unread alerts. Explore other phones or jump to their last interaction; your roleplay Persona stays the same.')
-    card.append(logo, title, copy)
+    const title = el('h2', 'lumiphone-device-title', 'Pocket devices')
+    const copy = el('p', 'lumiphone-device-copy', 'Switch devices without changing your roleplay Persona.')
+    const header = el('div', 'lumiphone-device-heading'); header.append(logo, title)
+    card.append(header, copy)
 
     if (this.state) {
       const personaId = pocketPersonaActorId(this.state)
@@ -497,13 +498,10 @@ class PocketController {
       card.appendChild(el('p', 'lumiphone-drawer-copy', 'Pocket is still loading this chat.'))
     }
 
-    const actions = el('div', 'lumiphone-drawer-actions')
-    const open = button('Open selected phone', 'lumiphone-drawer-button')
-    open.dataset.primary = 'true'
-    open.addEventListener('click', () => this.open())
-    const permission = button('Manage access', 'lumiphone-drawer-button')
+    const actions = el('div', 'lumiphone-device-footer')
+    const permission = button('Manage access', 'lumiphone-device-access')
     permission.addEventListener('click', () => this.requestPermissions())
-    actions.append(open, permission)
+    actions.append(permission)
     card.appendChild(actions)
     outer.appendChild(card)
     this.drawer.root.appendChild(outer)

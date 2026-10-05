@@ -1648,9 +1648,15 @@ assert.doesNotMatch(identityStyle.textContent, /@scope \(\.lumiphone-shell\)/, '
 
 const npcDeviceRow = [...drawerRoot.querySelectorAll('.lumiphone-device-row')].find((node) => node.textContent.includes('Alice') && !node.textContent.includes('Roleplay Persona'))
 assert.ok(npcDeviceRow, 'device selector must expose a non-Persona phone for isolation QA')
+assert.ok(drawerRoot.querySelector('[data-section="persona"] .lumiphone-device-rp'), 'your phone must have a dedicated section')
+assert.ok(drawerRoot.querySelector('[data-section="recent"] .lumiphone-device-preview'), 'recent phones must show their interaction preview')
+assert.equal(drawerRoot.querySelector('.lumiphone-drawer-card'), null, 'switcher must not nest an outer card inside the sidebar')
+assert.equal([...drawerRoot.querySelectorAll('button')].some(node => node.textContent === 'Open selected phone'), false, 'row selection replaces the redundant footer CTA')
+assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-footer button').length, 1, 'Manage access must be the sole persistent footer action')
+
 assert.ok(npcDeviceRow.dataset.pocketDeviceKey, 'device selector rows must expose the logical phone id before opening them')
-assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-item:not(:has(.lumiphone-device-rp)) .lumiphone-device-unread').length, 0, 'inspected actor phones must not show unread badges in the picker')
-const npcLatestJump = npcDeviceRow.parentElement.querySelector('.lumiphone-device-jump')
+assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-row:not(.lumiphone-device-rp) .lumiphone-device-unread').length, 0, 'inspected actor phones must not show unread badges in the picker')
+const npcLatestJump = npcDeviceRow
 assert.ok(npcLatestJump, 'actor phone with history must offer a latest-interaction jump')
 npcLatestJump.click()
 assert.ok(dockRoot.querySelector('[data-message-id="picker-message"][data-selected="true"]'), 'jump must render and highlight the exact latest message')
