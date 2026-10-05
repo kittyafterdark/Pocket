@@ -2920,19 +2920,26 @@ class PocketController {
       chooseImage: (target, mode) => { void this.chooseImage(target, mode) },
       mountModelCombobox: (target, options) => {
         let stopped = false
+        let observer: MutationObserver | undefined
         let handle: ReturnType<typeof this.ctx.components.mountModelCombobox> | undefined
-        const stop = () => { stopped = true; handle?.destroy(); handle = undefined }
+        const stop = () => { stopped = true; observer?.disconnect(); handle?.destroy(); handle = undefined }
         this.viewCleanups.push(stop)
-        queueMicrotask(() => {
-          if (stopped || !target.isConnected) return
+        const mount = () => {
+          if (stopped || handle || !target.isConnected) return
+          observer?.disconnect()
           handle = this.ctx.components.mountModelCombobox(target, {
-          value: options.value,
-          connection: options.connection,
-          appearance: 'standard',
-          placeholder: 'Use connection model',
-          disabled: options.disabled,
-          onChange: options.onChange,
-        })
+            value: options.value,
+            connection: options.connection,
+            appearance: 'standard',
+            placeholder: 'Use connection model',
+            disabled: options.disabled,
+            onChange: options.onChange,
+          })
+        }
+        queueMicrotask(() => {
+          if (stopped) return
+          if (target.isConnected) mount()
+          else { observer = new MutationObserver(mount); observer.observe(document.body, { childList: true, subtree: true }) }
         })
         return stop
       },

@@ -1596,6 +1596,7 @@ Object.assign(globalThis, {
   Event: dom.window.Event,
   CustomEvent: dom.window.CustomEvent,
   MutationObserver: dom.window.MutationObserver,
+  Option: dom.window.Option,
   CSS: { escape: value => String(value).replace(/[^a-zA-Z0-9_-]/g, character => `\\${character}`) },
   requestAnimationFrame: (callback) => { callback(0); return 1 },
   cancelAnimationFrame: () => {},
@@ -1769,6 +1770,23 @@ assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
 const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Settings'))
 settingsIcon.click()
 assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
+dockRoot.remove()
+dockRoot.querySelector('[data-settings-category="camera"]').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const delayedSettingsPicker = dockRoot.querySelector('.lp-model-combobox')
+assert.equal(delayedSettingsPicker.dataset.imagePickerMounted, undefined, 'settings picker must wait for a connected dock')
+document.body.append(dockRoot)
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.equal(delayedSettingsPicker.dataset.imagePickerMounted, 'true', 'settings picker must mount when the host attaches its dock later')
+dockRoot.querySelector('.lp-nav-action').click()
+dockRoot.remove()
+dockRoot.querySelector('[data-settings-category="camera"]').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const cancelledSettingsPicker = dockRoot.querySelector('.lp-model-combobox')
+dockRoot.querySelector('.lp-nav-action').click()
+document.body.append(dockRoot)
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.equal(cancelledSettingsPicker.dataset.imagePickerMounted, undefined, 'leaving settings must cancel its deferred picker mount')
 dockRoot.querySelector('[data-settings-category="personalization"]').click()
 ;[...dockRoot.querySelectorAll('.lp-settings-category')].find(node => node.textContent.includes('Device appearance')).click()
 const uiScaleInput = [...dockRoot.querySelectorAll('input[type="range"]')].find((node) => node.min === '0.7' && node.max === '1.3')

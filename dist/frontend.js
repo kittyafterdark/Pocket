@@ -10259,16 +10259,19 @@ ${body}`;
       },
       mountModelCombobox: (target, options) => {
         let stopped = false;
+        let observer;
         let handle;
         const stop = () => {
           stopped = true;
+          observer?.disconnect();
           handle?.destroy();
           handle = undefined;
         };
         this.viewCleanups.push(stop);
-        queueMicrotask(() => {
-          if (stopped || !target.isConnected)
+        const mount = () => {
+          if (stopped || handle || !target.isConnected)
             return;
+          observer?.disconnect();
           handle = this.ctx.components.mountModelCombobox(target, {
             value: options.value,
             connection: options.connection,
@@ -10277,6 +10280,16 @@ ${body}`;
             disabled: options.disabled,
             onChange: options.onChange
           });
+        };
+        queueMicrotask(() => {
+          if (stopped)
+            return;
+          if (target.isConnected)
+            mount();
+          else {
+            observer = new MutationObserver(mount);
+            observer.observe(document.body, { childList: true, subtree: true });
+          }
         });
         return stop;
       }
