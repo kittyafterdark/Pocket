@@ -1,0 +1,59 @@
+import { describe, expect, test } from 'bun:test'
+import { runPocketGeneration } from '../src/backend/generation.js'
+import { defaultPreferences } from '../src/domain/preferences.js'
+import { applyVisualViewportSurface } from '../src/frontend/surface.js'
+
+describe('generation lifecycle', () => {
+  test('reports thinking and writing without exposing tokens; uses the current sidecar model', async () => {
+    let preferences = { ...defaultPreferences(), generationMode: 'sidecar' as const, sidecarConnectionId: 'connection', sidecarModelOverride: 'fresh-model' }
+    const events: any[] = []; let request: any
+    const host = {
+      loadPreferences: async () => structuredClone(preferences),
+      savePreferences: async (next: any) => (preferences = next),
+      send: (event: any) => events.push(event),
+      spindle: { permissions: { has: () => true }, connections: { list: async () => [{ id: 'connection', model: 'old-model', has_api_key: true }] }, generate: {
+        async *quietStream(input: any) {
+          request = input
+          yield { type: 'reasoning', token: 'private reasoning' }
+          yield { type: 'token', token: '{' }
+          yield { type: 'done', content: '{"displayName":"Test"}', finish_reason: 'stop' }
+        },
+      } },
+    }
+    const result = await runPocketGeneration(host, 'persona-profile', 'profile-test', { parameters: {} })
+    expect(request.parameters.model).toBe('fresh-model')
+    expect(request.connection_id).toBe('connection')
+    expect(result.content).toContain('Test')
+    expect(events.filter(event => event.type === 'lumiphone:operation_progress').map(event => event.phase)).toEqual(['thinking', 'writing'])
+    expect(JSON.stringify(events)).not.toContain('private reasoning')
+    expect(events.at(-1).run.status).toBe('completed')
+  })
+
+  test('a stream without a terminal response fails and unlocks retry through a failure status', async () => {
+    let preferences = defaultPreferences(); const events: any[] = []
+    const host = {
+      loadPreferences: async () => structuredClone(preferences), savePreferences: async (next: any) => (preferences = next), send: (event: any) => events.push(event),
+      spindle: { permissions: { has: () => true }, connections: { list: async () => [{ id: 'main', is_default: true, model: 'main-model' }] }, generate: {
+        async *quietStream() { yield { type: 'token', token: 'partial' } },
+      } },
+    }
+    await expect(runPocketGeneration(host, 'persona-profile', 'missing-done', {})).rejects.toThrow('without a completed response')
+    expect(events.at(-1).run.status).toBe('failed')
+  })
+})
+
+test('fullscreen converts viewport dimensions and keyboard offsets into host layout pixels', () => {
+  const previous = globalThis.window
+  const values = new Map<string, string>()
+  const style: any = { setProperty: (name: string, value: string) => values.set(name, value) }
+  try {
+    ;(globalThis as any).window = { innerWidth: 556, innerHeight: 930, visualViewport: { width: 556, height: 520, offsetLeft: 8, offsetTop: 90 } }
+    for (const scale of [.7, .9, 1, 1.25]) {
+      applyVisualViewportSurface({ style } as HTMLElement, pixels => pixels / scale)
+      expect(parseFloat(style.width) * scale).toBeCloseTo(556, 5)
+      expect(parseFloat(style.height) * scale).toBeCloseTo(520, 5)
+      expect(style.transform).toBe(`translate3d(${8 / scale}px,${90 / scale}px,0)`)
+      expect(parseFloat(values.get('--lp-visual-height')!) * scale).toBeCloseTo(520, 5)
+    }
+  } finally { (globalThis as any).window = previous }
+})

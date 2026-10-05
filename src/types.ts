@@ -203,7 +203,7 @@ export interface PocketContextDiagnostics {
 export interface PocketOperationProgress {
   task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'world-seed' | 'persona-profile'
   requestId: string
-  phase: 'request' | 'generating' | 'parsing' | 'saving' | 'complete' | 'error'
+  phase: 'request' | 'generating' | 'thinking' | 'writing' | 'parsing' | 'saving' | 'complete' | 'error'
   message: string
 }
 
@@ -213,7 +213,7 @@ export interface DevicePreferences {
   colors: PhonePalette
   homeWallpaper: PocketWallpaper
   chatWallpaper: PocketWallpaper
-  /** Desktop-only physical size of the 9:16 handset. */
+  /** Desktop-only physical size of the 9:18.4 handset. */
   handsetScale: number
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
   uiScale: number

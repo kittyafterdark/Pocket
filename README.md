@@ -16,7 +16,7 @@ The extension identifier and storage namespace intentionally remain `lumiphone` 
 - **Trackers** — bounded values with optional automatic change-per-hour and model visibility.
 - **Settings** — device-wide theme colors, home/chat image wallpapers, separate desktop handset and cross-device UI scales, real animation timing, context inspection, discovered-model selection, notification behavior, visual profiles, backup, import, and separate reset controls.
 
-On desktop, the 58px draggable launcher opens a centered strict 9:16 phone in an opt-in transparent/chromeless host dock. Closing Pocket destroys that dock, and reopening creates a fresh one. `handsetScale` (`0.80`–`1.25`) controls only the physical desktop handset; pixel dimensions are derived again from the current viewport on every mount, open, resize, keyboard viewport change, and scale edit. `uiScale` (`0.70`–`1.30`) controls Pocket's primitive sizes and density on desktop and mobile. Narrow/mobile viewports always use the host's full available viewport and safe-area/visual-viewport handling rather than shrinking the surface. Use the visible top-left dismiss button or a deliberate up/left status-area gesture; the home indicator returns to Home first, then closes the phone.
+On desktop, the 58px draggable launcher opens a centered strict 9:18.4 phone in an opt-in transparent/chromeless host dock. Closing Pocket destroys that dock, and reopening creates a fresh one. `handsetScale` (`0.80`–`1.25`) controls only the physical desktop handset; pixel dimensions are derived again from the current viewport on every mount, open, resize, keyboard viewport change, and scale edit. `uiScale` (`0.70`–`1.30`) controls Pocket's primitive sizes and density on desktop and mobile. Narrow/mobile viewports always use the host's full available viewport and safe-area/visual-viewport handling rather than shrinking the surface. Use the visible top-left dismiss button or a deliberate up/left status-area gesture; the home indicator returns to Home first, then closes the phone.
 
 Each visible phone now has two explicit frontend identities. Its logical device key is derived from `chatId + characterId + deviceOwnerActorId`, so the Persona phone and every inspected NPC phone are distinct devices even inside the same roleplay. Each mounted controller also owns a unique `surfaceId`; all dynamic CSS is scoped to that surface rather than the generic `.lumiphone-shell`. Persona appearance overrides, Persona wallpapers, and Persona custom CSS apply only when the current device owner is the Pocket Persona. NPC inspection falls back to device-wide appearance and cannot inherit the active Persona skin.
 
@@ -150,7 +150,7 @@ State arrays and text fields are normalized and bounded on every read. Tracker r
 
 - `src/frontend.ts` — small host bootstrap and teardown relay.
 - `src/frontend/controller.ts` — host lifecycle, scope switching, action routing, and app orchestration.
-- `src/frontend/surface.ts` — semantic scale and fresh viewport-to-9:16 geometry.
+- `src/frontend/surface.ts` — semantic scale and fresh viewport-to-9:18.4 geometry.
 - `src/frontend/apps/settings.ts` — Settings view and device-management controls.
 - `src/frontend/apps/messages.ts` — conversation list, threads, group editing, compose, and reply controls.
 - `src/frontend/apps/contacts.ts` — contact discovery, presence, import, detail, and configuration flows.

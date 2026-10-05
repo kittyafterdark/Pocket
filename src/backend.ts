@@ -5273,7 +5273,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const started = Date.now()
         const response: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'connection-test', testRequestId, {
           type: 'quiet', messages: [{ role: 'user', content: 'Reply with exactly POCKET_OK' }],
-          parameters: { temperature: 0, max_tokens: 16 }, userId,
+          parameters: { temperature: 0, max_tokens: 32 }, reasoning: { source: 'off' }, userId,
         }, userId)
         send({ type: 'lumiphone:generation_test_result', requestId: testRequestId, ok: text(response.content, 100).includes('POCKET_OK'), latencyMs: Date.now() - started }, userId)
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'generation_test')

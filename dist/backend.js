@@ -2085,7 +2085,7 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
     connectionId: info.effective.id,
     connectionName: info.effective.name,
     provider: info.effective.provider,
-    model: preferences.sidecarModelOverride || info.effective.model,
+    model: preferences.generationMode === "sidecar" ? preferences.sidecarModelOverride || info.effective.model : info.effective.model,
     status: "started",
     startedAt
   };
@@ -2099,7 +2099,23 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
       if (preferences.sidecarModelOverride)
         request.parameters = { ...request.parameters || {}, model: preferences.sidecarModelOverride };
     }
-    const result = await host.spindle.generate.quiet(request);
+    let result;
+    const profileTask = ["persona-profile", "npc-contact", "profile-refresh", "scene-sync"].includes(task);
+    if (profileTask && typeof host.spindle.generate.quietStream === "function") {
+      let phase = "";
+      for await (const chunk of host.spindle.generate.quietStream(request)) {
+        const next = chunk.type === "reasoning" ? "thinking" : chunk.type === "token" ? "writing" : "";
+        if (next && next !== phase) {
+          phase = next;
+          host.send({ type: "lumiphone:operation_progress", task, requestId, phase: next, message: next === "thinking" ? "Thinking\u2026" : "Writing profile\u2026" }, userId);
+        }
+        if (chunk.type === "done")
+          result = chunk;
+      }
+      if (!result)
+        throw new Error("The provider stream ended without a completed response. Retry enrichment.");
+    } else
+      result = await host.spindle.generate.quiet(request);
     const completed = { ...run, status: "completed", completedAt: new Date().toISOString(), latencyMs: Date.now() - started };
     await writeRun(host, completed, userId);
     host.send({ type: "lumiphone:generation_status", run: completed }, userId);
@@ -8600,7 +8616,8 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
         const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "connection-test", testRequestId, {
           type: "quiet",
           messages: [{ role: "user", content: "Reply with exactly POCKET_OK" }],
-          parameters: { temperature: 0, max_tokens: 16 },
+          parameters: { temperature: 0, max_tokens: 32 },
+          reasoning: { source: "off" },
           userId
         }, userId);
         send({ type: "lumiphone:generation_test_result", requestId: testRequestId, ok: text2(response.content, 100).includes("POCKET_OK"), latencyMs: Date.now() - started }, userId);

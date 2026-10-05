@@ -282,7 +282,7 @@
   padding: 9px 13px;
   border-radius: 15px 15px 5px 15px;
   color: white;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, #a79cff 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #584fcf));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {
@@ -376,7 +376,7 @@
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
   color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, #6f61e8), color-mix(in srgb, var(--pocket-inline-accent) 64%, #5045ba));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {
@@ -496,9 +496,9 @@
 /* Lock screen */
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {
   background:
-    radial-gradient(circle at 68% 8%, rgba(147,124,255,.34), transparent 28%),
-    radial-gradient(circle at 18% 44%, rgba(97,74,178,.22), transparent 34%),
-    linear-gradient(155deg, #241b35 0%, #171320 44%, #0d0c11 100%);
+    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),
+    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),
+    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {
@@ -829,7 +829,7 @@
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {
   background:
     radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
-    radial-gradient(circle at 80% 75%, rgba(84,58,140,.18), transparent 30%),
+    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),
     linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
 }
 

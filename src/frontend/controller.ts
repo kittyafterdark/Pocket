@@ -226,6 +226,8 @@ class PocketController {
   private setupModalBody: HTMLDivElement | null = null
   private setupModalDismiss: (() => void) | null = null
   private setupPersonaEditing = false
+  private setupControlCleanups: Cleanup[] = []
+  private setupAwaitingGreeting = false
   private composerReferencePill: HTMLDivElement | null = null
   private composerSyncFrame = 0
   private lastComposerReferenceId = ''
@@ -309,6 +311,7 @@ class PocketController {
   }
 
   destroy(): void {
+    this.setupModalDismiss?.()
     this.destroyed = true
     window.clearTimeout(this.collapseTimer)
     window.clearTimeout(this.alertTimer)
@@ -380,6 +383,10 @@ class PocketController {
     this.installInlineArtifactObserver()
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
+      this.setupModalDismiss?.()
+      this.setupAwaitingGreeting = false
+      this.operations.clear()
+      this.personaPreview = null
       this.clearActivitySurfaces(true, true)
       this.hideComposerReferencePill()
       this.refresh()
@@ -394,6 +401,11 @@ class PocketController {
     const resize = () => { if (this.expanded) this.resizeExpanded() }
     window.addEventListener('resize', resize)
     this.cleanups.push(() => window.removeEventListener('resize', resize))
+    // CSS zoom changes don't fire window.resize. Host tokens live on the root.
+    const scaleObserver = new MutationObserver(resize)
+    scaleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] })
+    scaleObserver.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] })
+    this.cleanups.push(() => scaleObserver.disconnect())
     window.visualViewport?.addEventListener('resize', resize)
     this.cleanups.push(() => window.visualViewport?.removeEventListener('resize', resize))
     window.visualViewport?.addEventListener('scroll', resize)
@@ -504,6 +516,18 @@ class PocketController {
     const permission = button('Manage access', 'lumiphone-device-access')
     permission.addEventListener('click', () => this.requestPermissions())
     actions.append(permission)
+    const restore = button('Show launcher', 'lumiphone-device-access')
+    restore.addEventListener('click', async () => {
+      await this.ensureWidget()
+      this.widget?.setVisible(true)
+      if (!this.expanded) this.launcher.hidden = false
+    })
+    actions.append(restore)
+    if (this.state && !this.state.setup.initialized) {
+      const resume = button('Set up Pocket', 'lumiphone-device-access')
+      resume.addEventListener('click', () => this.showFirstChatSetup(true))
+      actions.append(resume)
+    }
     card.appendChild(actions)
     outer.appendChild(card)
     this.drawer.root.appendChild(outer)
@@ -564,7 +588,11 @@ class PocketController {
       if (this.shell.parentElement !== this.handsetHost) this.handsetHost.replaceChildren(this.shell)
       this.handsetHost.dataset.fullscreen = 'true'
       applyMobilePhoneSurface(mobile, 1)
-      applyVisualViewportSurface(this.handsetHost)
+      applyVisualViewportSurface(this.handsetHost, pixels => {
+        if (this.ctx.ui.geometry) return this.ctx.ui.geometry.toLayoutPx(pixels)
+        const scale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--lumiverse-ui-scale'))
+        return pixels / (Number.isFinite(scale) && scale > 0 ? scale : 1)
+      })
       mobile.setVisible(true)
       return true
     }
@@ -942,7 +970,7 @@ class PocketController {
       if ('activePersona' in payload) this.activePersona = payload.activePersona || null
       if (this.setupModalOpen && this.setupModalBody) {
         if (this.state.setup.initialized) this.setupModalDismiss?.()
-        else this.renderFirstChatSetupBody()
+        else if (!this.setupPersonaEditing) this.renderFirstChatSetupBody()
       }
       this.knownActivities.clear()
       for (const activity of this.state.activities || []) {
@@ -951,6 +979,7 @@ class PocketController {
       }
       this.pruneInactiveActivitySurfaces()
       this.mountInlineArtifacts()
+      if (this.setupAwaitingGreeting) this.showFirstChatSetup()
       for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
       this.applyAppearance()
       this.syncComposerReferencePill()
@@ -959,7 +988,7 @@ class PocketController {
       this.announceView()
       if (payload.open) this.open()
       if (
-        (payload.reason === 'chat_switched' || payload.reason === 'pocket_persona' || payload.reason === 'setup_world')
+        (payload.reason === 'chat_switched' || payload.reason === 'pocket_persona' || payload.reason === 'setup_world' || payload.reason === 'refresh')
         && !this.state.setup.initialized
         && !this.state.setup.dismissed
         && !this.setupModalOpen
@@ -1102,7 +1131,7 @@ class PocketController {
       if (this.currentApp === 'contacts' && !progressUpdated) this.render(false)
       if (operation.phase === 'complete' || operation.phase === 'error') window.setTimeout(() => {
         this.operations.delete(operation.requestId)
-        this.updateOperationProgress(null, operation.requestId)
+        if (operation.phase !== 'error') this.updateOperationProgress(null, operation.requestId)
 
         // Contacts generation/profile buttons derive their idle state from
         // this.operations, so redraw after cleanup. Setup World is safe to redraw
@@ -1308,6 +1337,12 @@ class PocketController {
     const label = node.querySelector<HTMLElement>('[data-operation-message]')
     if (label) label.textContent = operation.message
     node.dataset.phase = operation.phase
+    const action = this.setupModalBody?.querySelector<HTMLButtonElement>(`[data-operation-action="${CSS.escape(requestId)}"]`)
+    if (action && (operation.phase === 'complete' || operation.phase === 'error')) {
+      action.disabled = false
+      action.textContent = operation.phase === 'error' ? 'Retry enrichment' : 'Enrich with LLM'
+      delete action.dataset.operationAction
+    }
     return true
   }
 
@@ -1601,6 +1636,7 @@ class PocketController {
       firedSynchronously = true
       this.inlineMountFrame = 0
       this.mountInlineArtifacts()
+      if (this.setupAwaitingGreeting) this.showFirstChatSetup()
     })
     // Browser RAF is asynchronous, but test hosts/polyfills may invoke the
     // callback synchronously. Do not overwrite the callback's reset with the
@@ -2827,6 +2863,7 @@ class PocketController {
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
+      resumeSetup: () => this.showFirstChatSetup(true),
       chooseImage: (target, mode) => { void this.chooseImage(target, mode) },
       mountModelCombobox: (target, options) => {
         const handle = this.ctx.components.mountModelCombobox(target, {
@@ -2842,17 +2879,23 @@ class PocketController {
     })
   }
 
-  private showFirstChatSetup(): void {
-    if (this.setupModalOpen || !this.state || this.state.setup.initialized || this.state.setup.dismissed) return
+  private showFirstChatSetup(manual = false): void {
+    if (this.setupModalOpen || !this.state || this.state.setup.initialized || (!manual && this.state.setup.dismissed)) return
+    // An empty host chat may still be choosing its greeting. Never cover that choice.
+    const active = this.ctx.getActiveChat()
+    if (active.chatId !== this.state.chatId) return
+    if (!this.ctx.messages.getLatestMessageId()) { this.setupAwaitingGreeting = true; return }
+    this.setupAwaitingGreeting = false
     this.setupModalOpen = true
     this.setupPersonaEditing = false
     const modal = this.ctx.ui.showModal({ title: 'Set up Pocket', width: 500, maxHeight: 680 })
-    const body = el('div', 'lp-settings-section')
+    const body = el('div', 'lp-settings-section lp-setup')
     this.setupModalBody = body
     this.setupModalDismiss = () => modal.dismiss()
     modal.root.appendChild(body)
     this.renderFirstChatSetupBody()
     modal.onDismiss(() => {
+      for (const cleanup of this.setupControlCleanups.splice(0)) cleanup()
       this.setupModalOpen = false
       this.setupPersonaEditing = false
       this.setupModalBody = null
@@ -2864,13 +2907,14 @@ class PocketController {
     const body = this.setupModalBody
     const state = this.state
     if (!body || !state) return
+    for (const cleanup of this.setupControlCleanups.splice(0)) cleanup()
     body.replaceChildren()
 
     body.appendChild(el('p', 'lp-copy', 'Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline.'))
     const authorship = el('section', 'lp-card lp-settings-section')
     authorship.append(el('div', 'lp-eyebrow', 'Who writes your character?'))
     const mode = el('select', 'lp-select'); mode.setAttribute('aria-label', 'Character authorship')
-    for (const [value, label] of [['roleplay', 'Roleplay — I write my side'], ['impersonation', 'Impersonation — AI can write my side too']] as const) {
+    for (const [value, label] of [['roleplay', 'Roleplay · I write my character'], ['impersonation', 'Impersonation · AI writes both sides']] as const) {
       const option = el('option', '', label); option.value = value; option.selected = (state.setup.authorship || 'roleplay') === value; mode.append(option)
     }
     mode.addEventListener('change', () => this.send('lumiphone:set_authorship', { authorship: mode.value }))
@@ -2914,6 +2958,38 @@ class PocketController {
     })
     llmActions.append(test, configureLlm)
     llm.appendChild(llmActions)
+    const sourceControls = el('div', 'lp-setup-generation')
+    const source = el('select', 'lp-select'); source.setAttribute('aria-label', 'Pocket generation source')
+    for (const [value, label] of [['roleplay', 'Follow roleplay connection'], ['sidecar', 'Choose a Pocket connection']]) {
+      const option = el('option', '', label); option.value = value; option.selected = this.preferences.generationMode === value; source.append(option)
+    }
+    source.addEventListener('change', () => {
+      this.updatePreferences({ ...this.preferences, generationMode: source.value === 'sidecar' ? 'sidecar' : 'roleplay' })
+      this.renderFirstChatSetupBody()
+    })
+    sourceControls.append(source)
+    if (this.preferences.generationMode === 'sidecar') {
+      const connectionMount = el('div', 'lp-model-combobox')
+      const connectionOptions = (this.generation?.connections || []).map(entry => ({ value: entry.id, label: entry.name, sublabel: `${entry.provider} · ${entry.model || 'Choose model'}` }))
+      const changeConnection = (value: string) => {
+        this.updatePreferences({ ...this.preferences, sidecarConnectionId: value, sidecarModelOverride: '' })
+        this.renderFirstChatSetupBody()
+      }
+      if (this.ctx.components.mountSelect) {
+        const handle = this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', onChange: changeConnection })
+        this.setupControlCleanups.push(() => handle.destroy())
+      } else {
+        const connection = el('select', 'lp-select'); connection.setAttribute('aria-label', 'Pocket connection')
+        connection.append(new Option('Choose connection', ''))
+        for (const entry of connectionOptions) connection.append(new Option(entry.label, entry.value, false, entry.value === this.preferences.sidecarConnectionId))
+        connection.addEventListener('change', () => changeConnection(connection.value)); connectionMount.append(connection)
+      }
+      const modelMount = el('div', 'lp-model-combobox')
+      const handle = this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: 'llm', id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: 'Use connection model', onChange: value => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) })
+      this.setupControlCleanups.push(() => handle.destroy())
+      sourceControls.append(connectionMount, modelMount)
+    }
+    llm.append(sourceControls)
 
     const personaReady = Boolean(state.setup.personaConfigured)
     const persona = el('section', 'lp-card lp-settings-section')
@@ -3088,6 +3164,7 @@ class PocketController {
       enrich.disabled = true
       enrich.textContent = 'Enriching…'
       const operationRequestId = this.send('lumiphone:generate_pocket_persona')
+      enrich.dataset.operationAction = operationRequestId
       const progress = el('div', 'lp-operation-progress')
       progress.dataset.operationRequest = operationRequestId
       progress.dataset.phase = 'generating'
@@ -3122,6 +3199,7 @@ class PocketController {
     actions.append(enrich, save)
     body.append(fields, actions)
     if (personaOperation) {
+      enrich.dataset.operationAction = personaOperation.requestId
       const progress = el('div', 'lp-operation-progress')
       progress.dataset.operationRequest = personaOperation.requestId
       progress.dataset.phase = personaOperation.phase

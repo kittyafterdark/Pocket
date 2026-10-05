@@ -62,7 +62,7 @@ export async function runPocketGeneration(
   const run: PocketGenerationRun = {
     requestId, task, mode: preferences.generationMode,
     connectionId: info.effective.id, connectionName: info.effective.name,
-    provider: info.effective.provider, model: preferences.sidecarModelOverride || info.effective.model,
+    provider: info.effective.provider, model: preferences.generationMode === 'sidecar' ? preferences.sidecarModelOverride || info.effective.model : info.effective.model,
     status: 'started', startedAt,
   }
   await writeRun(host, run, userId)
@@ -74,7 +74,21 @@ export async function runPocketGeneration(
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
     }
-    const result = await host.spindle.generate.quiet(request)
+    let result: any
+    const profileTask = ['persona-profile', 'npc-contact', 'profile-refresh', 'scene-sync'].includes(task)
+    if (profileTask && typeof host.spindle.generate.quietStream === 'function') {
+      let phase = ''
+      for await (const chunk of host.spindle.generate.quietStream(request)) {
+        const next = chunk.type === 'reasoning' ? 'thinking' : chunk.type === 'token' ? 'writing' : ''
+        if (next && next !== phase) {
+          phase = next
+          // Report activity, never private reasoning content.
+          host.send({ type: 'lumiphone:operation_progress', task, requestId, phase: next, message: next === 'thinking' ? 'Thinking…' : 'Writing profile…' }, userId)
+        }
+        if (chunk.type === 'done') result = chunk
+      }
+      if (!result) throw new Error('The provider stream ended without a completed response. Retry enrichment.')
+    } else result = await host.spindle.generate.quiet(request)
     const completed: PocketGenerationRun = { ...run, status: 'completed', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }
     await writeRun(host, completed, userId)
     host.send({ type: 'lumiphone:generation_status', run: completed }, userId)

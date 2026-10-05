@@ -6,6 +6,15 @@ export const PHONE_STYLES = `
     color: #f7f5ff; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .lumiphone-handset-host { margin:auto; cursor:default; overscroll-behavior:contain; }
+  .lp-setup { --lp-accent:var(--lumiverse-primary,currentColor); --lp-text:var(--lumiverse-text,#eee); --lp-muted:var(--lumiverse-text-muted,#999); --lp-border:var(--lumiverse-border,#ffffff14); font:400 14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--lp-text); display:grid; gap:20px; min-width:0; }
+  .lp-setup, .lp-setup * { box-sizing:border-box; }
+  .lp-setup > .lp-card { display:grid; gap:10px; padding:0 0 20px; border:0; border-bottom:1px solid var(--lp-border); border-radius:0; background:none; box-shadow:none; }
+  .lp-setup .lp-eyebrow { font-size:11px; font-weight:750; letter-spacing:.06em; color:var(--lp-muted); }
+  .lp-setup .lp-copy { font-size:12px; line-height:1.5; color:var(--lp-muted); margin:0; }
+  .lp-setup .lp-row { flex-wrap:wrap; gap:8px; }
+  .lp-setup :is(.lp-select,.lp-input,.lp-textarea) { width:100%; min-width:0; min-height:42px; font:inherit; color:var(--lp-text); padding:10px; background:var(--lumiverse-fill-subtle,#ffffff08); border:1px solid var(--lp-border); border-radius:10px; }
+  .lp-setup .lp-button { min-height:40px; font-size:12px; color:var(--lp-text); background:var(--lumiverse-fill,#ffffff0c); }
+  .lp-setup-generation { display:grid; gap:10px; min-width:0; }
   .lumiphone-launcher {
     appearance: none; width: 58px; height: 58px; padding: 0; border: 0;
     border-radius: 18px; display: grid; place-items: center; position: relative; cursor: pointer;

@@ -868,20 +868,20 @@ function applyMobilePhoneSurface(widget, _scale = 1) {
   }
   return geometry;
 }
-function applyVisualViewportSurface(host) {
+function applyVisualViewportSurface(host, toLayoutPx = (pixels) => pixels) {
   const visual = window.visualViewport;
   const width = Math.max(1, Math.round(visual?.width || window.innerWidth));
   const height = Math.max(1, Math.round(visual?.height || window.innerHeight));
   const offsetLeft = Math.round(visual?.offsetLeft || 0);
   const offsetTop = Math.round(visual?.offsetTop || 0);
-  host.style.width = `${width}px`;
-  host.style.height = `${height}px`;
+  host.style.width = `${toLayoutPx(width)}px`;
+  host.style.height = `${toLayoutPx(height)}px`;
   host.style.position = "absolute";
   host.style.left = "0";
   host.style.top = "0";
-  host.style.transform = `translate3d(${offsetLeft}px,${offsetTop}px,0)`;
+  host.style.transform = `translate3d(${toLayoutPx(offsetLeft)}px,${toLayoutPx(offsetTop)}px,0)`;
   host.style.margin = "0";
-  host.style.setProperty("--lp-visual-height", `${height}px`);
+  host.style.setProperty("--lp-visual-height", `${toLayoutPx(height)}px`);
   return { width, height, offsetLeft, offsetTop };
 }
 function clearVisualViewportSurface(host) {
@@ -1343,7 +1343,7 @@ function appearance(host) {
     next.uiScale = value;
   }), "Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport."), slider("Desktop phone size", settings.handsetScale, 0.8, 1.25, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
     next.handsetScale = value;
-  }, { resize: true }), "Controls only the physical 9:16 handset on desktop."));
+  }, { resize: true }), "Controls only the physical 9:18.4 handset on desktop."));
   const motion = el("section", "lp-card lp-settings-section");
   motion.append(el("div", "lp-eyebrow", "Motion"));
   const animation = el("select", "lp-select");
@@ -1668,10 +1668,11 @@ function messages(host) {
   return page;
 }
 function generation(host) {
-  const settings = host.draft;
+  let settings = host.draft;
   const commit = (mutate) => {
     const next = clone(settings);
     mutate(next);
+    settings = next;
     host.update(next);
   };
   const { page, content } = host.page("Pocket Generation", "Text model source");
@@ -1731,6 +1732,11 @@ function generation(host) {
   if (run)
     diagnostic.textContent = run.status === "started" ? "● Testing…" : run.status === "completed" ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || "Unknown provider error"}`;
   card.append(el("div", "lp-label", "Generation mode"), mode, el("div", "lp-label", "Connection profile"), connections, el("div", "lp-label", "Model override"), modelMount, el("p", "lp-copy", "Leave blank to use the model configured on the selected connection profile."), effectiveCard, test, diagnostic);
+  if (!host.state.setup.initialized && host.resumeSetup) {
+    const resume = button("Continue Pocket setup", "lp-button");
+    resume.addEventListener("click", host.resumeSetup);
+    card.append(resume);
+  }
   content.appendChild(card);
   return page;
 }
@@ -4599,7 +4605,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   padding: 9px 13px;
   border-radius: 15px 15px 5px 15px;
   color: white;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, #a79cff 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #584fcf));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {
@@ -4693,7 +4699,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
   color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, #6f61e8), color-mix(in srgb, var(--pocket-inline-accent) 64%, #5045ba));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {
@@ -4813,9 +4819,9 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 /* Lock screen */
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {
   background:
-    radial-gradient(circle at 68% 8%, rgba(147,124,255,.34), transparent 28%),
-    radial-gradient(circle at 18% 44%, rgba(97,74,178,.22), transparent 34%),
-    linear-gradient(155deg, #241b35 0%, #171320 44%, #0d0c11 100%);
+    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),
+    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),
+    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {
@@ -5146,7 +5152,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {
   background:
     radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
-    radial-gradient(circle at 80% 75%, rgba(84,58,140,.18), transparent 30%),
+    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),
     linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
 }
 
@@ -5267,8 +5273,8 @@ var POCKET_DESIGN_SYSTEM = `
   .lumiphone-shell, .lp-media-viewer {
     --lp-space-1:4px; --lp-space-2:8px; --lp-space-3:12px; --lp-space-4:16px; --lp-space-5:24px;
     --lp-radius:18px; --lp-radius-control:12px; --lp-radius-bubble:18px;
-    --lp-touch:44px; --lp-row-height:64px; --lp-outgoing:#51459c;
-    --lp-incoming:var(--lp-surface-2); --lp-destructive:#ed7c8c; --lp-success:#71cfa1;
+    --lp-touch:44px; --lp-row-height:64px; --lp-outgoing:var(--lp-accent);
+    --lp-incoming:color-mix(in srgb,var(--lp-text) 8%,var(--lp-bg)); --lp-destructive:#ed7c8c; --lp-success:#71cfa1;
     --lp-ease:cubic-bezier(.2,.8,.2,1); --lp-sheet-bg:var(--lp-bg,#141319);
     --lp-elevation:0 12px 36px #0002;
     --pocket-font-xs:calc(10px * var(--pocket-ui-scale,1));
@@ -5429,6 +5435,15 @@ var PHONE_STYLES = `
     color: #f7f5ff; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .lumiphone-handset-host { margin:auto; cursor:default; overscroll-behavior:contain; }
+  .lp-setup { --lp-accent:var(--lumiverse-primary,currentColor); --lp-text:var(--lumiverse-text,#eee); --lp-muted:var(--lumiverse-text-muted,#999); --lp-border:var(--lumiverse-border,#ffffff14); font:400 14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--lp-text); display:grid; gap:20px; min-width:0; }
+  .lp-setup, .lp-setup * { box-sizing:border-box; }
+  .lp-setup > .lp-card { display:grid; gap:10px; padding:0 0 20px; border:0; border-bottom:1px solid var(--lp-border); border-radius:0; background:none; box-shadow:none; }
+  .lp-setup .lp-eyebrow { font-size:11px; font-weight:750; letter-spacing:.06em; color:var(--lp-muted); }
+  .lp-setup .lp-copy { font-size:12px; line-height:1.5; color:var(--lp-muted); margin:0; }
+  .lp-setup .lp-row { flex-wrap:wrap; gap:8px; }
+  .lp-setup :is(.lp-select,.lp-input,.lp-textarea) { width:100%; min-width:0; min-height:42px; font:inherit; color:var(--lp-text); padding:10px; background:var(--lumiverse-fill-subtle,#ffffff08); border:1px solid var(--lp-border); border-radius:10px; }
+  .lp-setup .lp-button { min-height:40px; font-size:12px; color:var(--lp-text); background:var(--lumiverse-fill,#ffffff0c); }
+  .lp-setup-generation { display:grid; gap:10px; min-width:0; }
   .lumiphone-launcher {
     appearance: none; width: 58px; height: 58px; padding: 0; border: 0;
     border-radius: 18px; display: grid; place-items: center; position: relative; cursor: pointer;
@@ -7031,6 +7046,8 @@ class PocketController {
   setupModalBody = null;
   setupModalDismiss = null;
   setupPersonaEditing = false;
+  setupControlCleanups = [];
+  setupAwaitingGreeting = false;
   composerReferencePill = null;
   composerSyncFrame = 0;
   lastComposerReferenceId = "";
@@ -7129,6 +7146,7 @@ class PocketController {
     this.refresh();
   }
   destroy() {
+    this.setupModalDismiss?.();
     this.destroyed = true;
     window.clearTimeout(this.collapseTimer);
     window.clearTimeout(this.alertTimer);
@@ -7196,6 +7214,10 @@ class PocketController {
     this.installInlineArtifactObserver();
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
+      this.setupModalDismiss?.();
+      this.setupAwaitingGreeting = false;
+      this.operations.clear();
+      this.personaPreview = null;
       this.clearActivitySurfaces(true, true);
       this.hideComposerReferencePill();
       this.refresh();
@@ -7214,6 +7236,10 @@ class PocketController {
     };
     window.addEventListener("resize", resize);
     this.cleanups.push(() => window.removeEventListener("resize", resize));
+    const scaleObserver = new MutationObserver(resize);
+    scaleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
+    scaleObserver.observe(document.body, { attributes: true, attributeFilter: ["style", "class"] });
+    this.cleanups.push(() => scaleObserver.disconnect());
     window.visualViewport?.addEventListener("resize", resize);
     this.cleanups.push(() => window.visualViewport?.removeEventListener("resize", resize));
     window.visualViewport?.addEventListener("scroll", resize);
@@ -7343,6 +7369,19 @@ class PocketController {
     const permission = button("Manage access", "lumiphone-device-access");
     permission.addEventListener("click", () => this.requestPermissions());
     actions.append(permission);
+    const restore = button("Show launcher", "lumiphone-device-access");
+    restore.addEventListener("click", async () => {
+      await this.ensureWidget();
+      this.widget?.setVisible(true);
+      if (!this.expanded)
+        this.launcher.hidden = false;
+    });
+    actions.append(restore);
+    if (this.state && !this.state.setup.initialized) {
+      const resume = button("Set up Pocket", "lumiphone-device-access");
+      resume.addEventListener("click", () => this.showFirstChatSetup(true));
+      actions.append(resume);
+    }
     card.appendChild(actions);
     outer.appendChild(card);
     this.drawer.root.appendChild(outer);
@@ -7419,7 +7458,12 @@ class PocketController {
         this.handsetHost.replaceChildren(this.shell);
       this.handsetHost.dataset.fullscreen = "true";
       applyMobilePhoneSurface(mobile, 1);
-      applyVisualViewportSurface(this.handsetHost);
+      applyVisualViewportSurface(this.handsetHost, (pixels) => {
+        if (this.ctx.ui.geometry)
+          return this.ctx.ui.geometry.toLayoutPx(pixels);
+        const scale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--lumiverse-ui-scale"));
+        return pixels / (Number.isFinite(scale) && scale > 0 ? scale : 1);
+      });
       mobile.setVisible(true);
       return true;
     }
@@ -7802,7 +7846,7 @@ class PocketController {
       if (this.setupModalOpen && this.setupModalBody) {
         if (this.state.setup.initialized)
           this.setupModalDismiss?.();
-        else
+        else if (!this.setupPersonaEditing)
           this.renderFirstChatSetupBody();
       }
       this.knownActivities.clear();
@@ -7812,6 +7856,8 @@ class PocketController {
       }
       this.pruneInactiveActivitySurfaces();
       this.mountInlineArtifacts();
+      if (this.setupAwaitingGreeting)
+        this.showFirstChatSetup();
       for (const activity of this.state.activities || [])
         this.queueActivityReceipt(activity);
       this.applyAppearance();
@@ -7821,7 +7867,7 @@ class PocketController {
       this.announceView();
       if (payload.open)
         this.open();
-      if ((payload.reason === "chat_switched" || payload.reason === "pocket_persona" || payload.reason === "setup_world") && !this.state.setup.initialized && !this.state.setup.dismissed && !this.setupModalOpen)
+      if ((payload.reason === "chat_switched" || payload.reason === "pocket_persona" || payload.reason === "setup_world" || payload.reason === "refresh") && !this.state.setup.initialized && !this.state.setup.dismissed && !this.setupModalOpen)
         this.showFirstChatSetup();
       const pending = this.pendingRoute;
       this.pendingRoute = null;
@@ -7992,7 +8038,8 @@ class PocketController {
       if (operation.phase === "complete" || operation.phase === "error")
         window.setTimeout(() => {
           this.operations.delete(operation.requestId);
-          this.updateOperationProgress(null, operation.requestId);
+          if (operation.phase !== "error")
+            this.updateOperationProgress(null, operation.requestId);
           if (this.currentApp === "contacts")
             this.render(false);
           else if (this.currentApp === "settings" && operation.task === "persona-profile")
@@ -8248,6 +8295,12 @@ class PocketController {
     if (label)
       label.textContent = operation.message;
     node.dataset.phase = operation.phase;
+    const action = this.setupModalBody?.querySelector(`[data-operation-action="${CSS.escape(requestId)}"]`);
+    if (action && (operation.phase === "complete" || operation.phase === "error")) {
+      action.disabled = false;
+      action.textContent = operation.phase === "error" ? "Retry enrichment" : "Enrich with LLM";
+      delete action.dataset.operationAction;
+    }
     return true;
   }
   updateSettingsDiagnostics() {
@@ -8553,6 +8606,8 @@ class PocketController {
       firedSynchronously = true;
       this.inlineMountFrame = 0;
       this.mountInlineArtifacts();
+      if (this.setupAwaitingGreeting)
+        this.showFirstChatSetup();
     });
     if (!firedSynchronously)
       this.inlineMountFrame = frame;
@@ -9935,6 +9990,7 @@ ${body}`;
       },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
+      resumeSetup: () => this.showFirstChatSetup(true),
       chooseImage: (target, mode) => {
         this.chooseImage(target, mode);
       },
@@ -9951,18 +10007,28 @@ ${body}`;
       }
     });
   }
-  showFirstChatSetup() {
-    if (this.setupModalOpen || !this.state || this.state.setup.initialized || this.state.setup.dismissed)
+  showFirstChatSetup(manual = false) {
+    if (this.setupModalOpen || !this.state || this.state.setup.initialized || !manual && this.state.setup.dismissed)
       return;
+    const active = this.ctx.getActiveChat();
+    if (active.chatId !== this.state.chatId)
+      return;
+    if (!this.ctx.messages.getLatestMessageId()) {
+      this.setupAwaitingGreeting = true;
+      return;
+    }
+    this.setupAwaitingGreeting = false;
     this.setupModalOpen = true;
     this.setupPersonaEditing = false;
     const modal = this.ctx.ui.showModal({ title: "Set up Pocket", width: 500, maxHeight: 680 });
-    const body = el("div", "lp-settings-section");
+    const body = el("div", "lp-settings-section lp-setup");
     this.setupModalBody = body;
     this.setupModalDismiss = () => modal.dismiss();
     modal.root.appendChild(body);
     this.renderFirstChatSetupBody();
     modal.onDismiss(() => {
+      for (const cleanup of this.setupControlCleanups.splice(0))
+        cleanup();
       this.setupModalOpen = false;
       this.setupPersonaEditing = false;
       this.setupModalBody = null;
@@ -9974,13 +10040,15 @@ ${body}`;
     const state = this.state;
     if (!body || !state)
       return;
+    for (const cleanup of this.setupControlCleanups.splice(0))
+      cleanup();
     body.replaceChildren();
     body.appendChild(el("p", "lp-copy", "Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline."));
     const authorship = el("section", "lp-card lp-settings-section");
     authorship.append(el("div", "lp-eyebrow", "Who writes your character?"));
     const mode = el("select", "lp-select");
     mode.setAttribute("aria-label", "Character authorship");
-    for (const [value, label] of [["roleplay", "Roleplay — I write my side"], ["impersonation", "Impersonation — AI can write my side too"]]) {
+    for (const [value, label] of [["roleplay", "Roleplay · I write my character"], ["impersonation", "Impersonation · AI writes both sides"]]) {
       const option = el("option", "", label);
       option.value = value;
       option.selected = (state.setup.authorship || "roleplay") === value;
@@ -10015,6 +10083,45 @@ ${body}`;
     });
     llmActions.append(test, configureLlm);
     llm.appendChild(llmActions);
+    const sourceControls = el("div", "lp-setup-generation");
+    const source = el("select", "lp-select");
+    source.setAttribute("aria-label", "Pocket generation source");
+    for (const [value, label] of [["roleplay", "Follow roleplay connection"], ["sidecar", "Choose a Pocket connection"]]) {
+      const option = el("option", "", label);
+      option.value = value;
+      option.selected = this.preferences.generationMode === value;
+      source.append(option);
+    }
+    source.addEventListener("change", () => {
+      this.updatePreferences({ ...this.preferences, generationMode: source.value === "sidecar" ? "sidecar" : "roleplay" });
+      this.renderFirstChatSetupBody();
+    });
+    sourceControls.append(source);
+    if (this.preferences.generationMode === "sidecar") {
+      const connectionMount = el("div", "lp-model-combobox");
+      const connectionOptions = (this.generation?.connections || []).map((entry) => ({ value: entry.id, label: entry.name, sublabel: `${entry.provider} · ${entry.model || "Choose model"}` }));
+      const changeConnection = (value) => {
+        this.updatePreferences({ ...this.preferences, sidecarConnectionId: value, sidecarModelOverride: "" });
+        this.renderFirstChatSetupBody();
+      };
+      if (this.ctx.components.mountSelect) {
+        const handle = this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: "Pocket connection", placeholder: "Choose connection", onChange: changeConnection });
+        this.setupControlCleanups.push(() => handle.destroy());
+      } else {
+        const connection = el("select", "lp-select");
+        connection.setAttribute("aria-label", "Pocket connection");
+        connection.append(new Option("Choose connection", ""));
+        for (const entry of connectionOptions)
+          connection.append(new Option(entry.label, entry.value, false, entry.value === this.preferences.sidecarConnectionId));
+        connection.addEventListener("change", () => changeConnection(connection.value));
+        connectionMount.append(connection);
+      }
+      const modelMount = el("div", "lp-model-combobox");
+      const handle = this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: "llm", id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: "Use connection model", onChange: (value) => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) });
+      this.setupControlCleanups.push(() => handle.destroy());
+      sourceControls.append(connectionMount, modelMount);
+    }
+    llm.append(sourceControls);
     const personaReady = Boolean(state.setup.personaConfigured);
     const persona = el("section", "lp-card lp-settings-section");
     persona.append(el("div", "lp-eyebrow", personaReady ? "✓ PERSONA" : "○ PERSONA"), el("strong", "", personaReady ? state.pocketPersona.displayName : this.activePersona?.name || "Choose the phone owner"), el("p", "lp-copy", personaReady ? "This character owns Pocket and is the recipient role for private DMs." : "Choose who Pocket follows as the phone owner."));
@@ -10144,6 +10251,7 @@ ${body}`;
       enrich.disabled = true;
       enrich.textContent = "Enriching…";
       const operationRequestId = this.send("lumiphone:generate_pocket_persona");
+      enrich.dataset.operationAction = operationRequestId;
       const progress = el("div", "lp-operation-progress");
       progress.dataset.operationRequest = operationRequestId;
       progress.dataset.phase = "generating";
@@ -10177,6 +10285,7 @@ ${body}`;
     actions.append(enrich, save);
     body.append(fields, actions);
     if (personaOperation) {
+      enrich.dataset.operationAction = personaOperation.requestId;
       const progress = el("div", "lp-operation-progress");
       progress.dataset.operationRequest = personaOperation.requestId;
       progress.dataset.phase = personaOperation.phase;

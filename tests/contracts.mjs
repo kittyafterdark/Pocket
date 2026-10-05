@@ -1524,6 +1524,7 @@ Object.assign(globalThis, {
   Event: dom.window.Event,
   CustomEvent: dom.window.CustomEvent,
   MutationObserver: dom.window.MutationObserver,
+  CSS: { escape: value => String(value).replace(/[^a-zA-Z0-9_-]/g, character => `\\${character}`) },
   requestAnimationFrame: (callback) => { callback(0); return 1 },
   cancelAnimationFrame: () => {},
 })
@@ -1584,7 +1585,7 @@ const frontendContext = {
       return { root: record.root, onDismiss: () => () => {}, dismiss: () => { record.dismissed = true } }
     },
   },
-  messages: { registerTagInterceptor: (options, handler) => { tagReceivers.set(options.tagName, handler); return () => { if (tagReceivers.get(options.tagName) === handler) tagReceivers.delete(options.tagName) } } },
+  messages: { getLatestMessageId: () => 'host-message-a', registerTagInterceptor: (options, handler) => { tagReceivers.set(options.tagName, handler); return () => { if (tagReceivers.get(options.tagName) === handler) tagReceivers.delete(options.tagName) } } },
   events: { on: () => () => {} },
   permissions: { getGranted: async () => manifest.permissions, request: async () => manifest.permissions },
   getActiveChat: () => ({ chatId: 'chat-a', characterId: 'char-a' }),
@@ -1652,7 +1653,7 @@ assert.ok(drawerRoot.querySelector('[data-section="persona"] .lumiphone-device-r
 assert.ok(drawerRoot.querySelector('[data-section="recent"] .lumiphone-device-preview'), 'recent phones must show their interaction preview')
 assert.equal(drawerRoot.querySelector('.lumiphone-drawer-card'), null, 'switcher must not nest an outer card inside the sidebar')
 assert.equal([...drawerRoot.querySelectorAll('button')].some(node => node.textContent === 'Open selected phone'), false, 'row selection replaces the redundant footer CTA')
-assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-footer button').length, 1, 'Manage access must be the sole persistent footer action')
+assert.ok([...drawerRoot.querySelectorAll('.lumiphone-device-footer button')].some(node => node.textContent === 'Show launcher'), 'hidden launcher must be recoverable from the sidebar')
 
 assert.ok(npcDeviceRow.dataset.pocketDeviceKey, 'device selector rows must expose the logical phone id before opening them')
 assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-row:not(.lumiphone-device-rp) .lumiphone-device-unread').length, 0, 'inspected actor phones must not show unread badges in the picker')
@@ -2340,6 +2341,24 @@ setupAuthorship.value = 'impersonation'
 setupAuthorship.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
 assert.equal(frontendSends.at(-1).type, 'lumiphone:set_authorship')
 assert.equal(frontendSends.at(-1).authorship, 'impersonation')
+const setupRoot = shownModals.at(-1).root
+;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Customize').click()
+const originalEnrich = [...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM')
+originalEnrich.click()
+const enrichRequest = frontendSends.at(-1).requestId
+const profileInput = setupRoot.querySelector('textarea')
+profileInput.value = 'Unsaved profile details'
+backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: enrichRequest, phase: 'thinking', message: 'Thinking…' })
+assert.match(setupRoot.textContent, /Thinking…/)
+backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: enrichRequest, phase: 'error', message: 'Provider unavailable' })
+assert.equal(originalEnrich.disabled, false, 'failed enrichment must immediately unlock retry')
+assert.equal(profileInput.value, 'Unsaved profile details', 'progress updates must preserve unsaved profile fields')
+assert.match(setupRoot.textContent, /Provider unavailable/, 'setup must show the actual enrichment error')
+originalEnrich.click()
+const retryEnrichRequest = frontendSends.at(-1).requestId
+backendReceiver({ type: 'lumiphone:pocket_persona_preview', requestId: retryEnrichRequest, persona: { ...savedDraftState.state.pocketPersona, displayName: 'Enriched owner' } })
+backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: retryEnrichRequest, phase: 'complete', message: 'Phone profile ready' })
+assert.equal([...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM').disabled, false, 'successful enrichment must return its action to idle')
 
 cleanup()
 

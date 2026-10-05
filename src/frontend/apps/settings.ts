@@ -29,6 +29,7 @@ export interface SettingsViewHost {
   requestPermissions(): void
   showError(message: string): void
   rerender(): void
+  resumeSetup?(): void
   chooseImage(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void
   mountModelCombobox(target: HTMLElement, options: { value: string; connection: { kind: 'llm'; id?: string }; disabled?: boolean; onChange(value: string): void }): void
 }
@@ -166,7 +167,7 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   scaleCard.append(
     presets,
     slider('Interface size', settings.uiScale, .7, 1.3, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.uiScale = value }), 'Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.'),
-    slider('Desktop phone size', settings.handsetScale, .8, 1.25, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.handsetScale = value }, { resize: true }), 'Controls only the physical 9:16 handset on desktop.'),
+    slider('Desktop phone size', settings.handsetScale, .8, 1.25, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.handsetScale = value }, { resize: true }), 'Controls only the physical 9:18.4 handset on desktop.'),
   )
   const motion = el('section', 'lp-card lp-settings-section'); motion.append(el('div', 'lp-eyebrow', 'Motion'))
   const animation = el('select', 'lp-select')
@@ -354,7 +355,7 @@ function messages(host: SettingsViewHost): HTMLDivElement {
 }
 
 function generation(host: SettingsViewHost): HTMLDivElement {
-  const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); host.update(next) }
+  let settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); settings = next; host.update(next) }
   const { page, content } = host.page('Pocket Generation', 'Text model source')
   const card = el('section', 'lp-card lp-settings-section')
   const mode = el('select', 'lp-select'); for (const [value, label] of [['roleplay', 'Follow roleplay model'], ['sidecar', 'Pocket sidecar']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.generationMode === value; mode.appendChild(option) }
@@ -371,7 +372,11 @@ function generation(host: SettingsViewHost): HTMLDivElement {
   const test = button('Test Pocket generation', 'lp-button'); test.dataset.pocketGenerationTest = 'true'; test.disabled = !host.capabilities?.generation; test.addEventListener('click', () => host.send('lumiphone:test_generation', { generationMode: mode.value, sidecarConnectionId: connections.value, sidecarModelOverride: settings.sidecarModelOverride }))
   const diagnostic = el('p', 'lp-copy', 'Not tested yet.'); diagnostic.dataset.pocketGenerationDiagnostic = 'true'
   const run = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test'); if (run) diagnostic.textContent = run.status === 'started' ? '● Testing…' : run.status === 'completed' ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || 'Unknown provider error'}`
-  card.append(el('div', 'lp-label', 'Generation mode'), mode, el('div', 'lp-label', 'Connection profile'), connections, el('div', 'lp-label', 'Model override'), modelMount, el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic); content.appendChild(card); return page
+  card.append(el('div', 'lp-label', 'Generation mode'), mode, el('div', 'lp-label', 'Connection profile'), connections, el('div', 'lp-label', 'Model override'), modelMount, el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic)
+  if (!host.state.setup.initialized && host.resumeSetup) {
+    const resume = button('Continue Pocket setup', 'lp-button'); resume.addEventListener('click', host.resumeSetup); card.append(resume)
+  }
+  content.appendChild(card); return page
 }
 
 function camera(host: SettingsViewHost): HTMLDivElement {

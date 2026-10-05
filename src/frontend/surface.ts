@@ -45,20 +45,20 @@ export function applyMobilePhoneSurface(widget: SpindleFloatWidgetHandle, _scale
 }
 
 /** Size the handset to the visual viewport without resizing the fullscreen host while an IME is open. */
-export function applyVisualViewportSurface(host: HTMLElement): SurfaceViewport & { offsetLeft: number; offsetTop: number } {
+export function applyVisualViewportSurface(host: HTMLElement, toLayoutPx: (pixels: number) => number = pixels => pixels): SurfaceViewport & { offsetLeft: number; offsetTop: number } {
   const visual = window.visualViewport
   const width = Math.max(1, Math.round(visual?.width || window.innerWidth))
   const height = Math.max(1, Math.round(visual?.height || window.innerHeight))
   const offsetLeft = Math.round(visual?.offsetLeft || 0)
   const offsetTop = Math.round(visual?.offsetTop || 0)
-  host.style.width = `${width}px`
-  host.style.height = `${height}px`
+  host.style.width = `${toLayoutPx(width)}px`
+  host.style.height = `${toLayoutPx(height)}px`
   host.style.position = 'absolute'
   host.style.left = '0'
   host.style.top = '0'
-  host.style.transform = `translate3d(${offsetLeft}px,${offsetTop}px,0)`
+  host.style.transform = `translate3d(${toLayoutPx(offsetLeft)}px,${toLayoutPx(offsetTop)}px,0)`
   host.style.margin = '0'
-  host.style.setProperty('--lp-visual-height', `${height}px`)
+  host.style.setProperty('--lp-visual-height', `${toLayoutPx(height)}px`)
   return { width, height, offsetLeft, offsetTop }
 }
 
