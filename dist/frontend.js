@@ -1997,6 +1997,38 @@ function trackerDisplayValue(tracker) {
   }
   return `${Number(tracker.value.toFixed(2))}${tracker.unit}`;
 }
+function trackerUpdateDescription(mode) {
+  return {
+    manual: "Only changes when you adjust it by hand.",
+    model: "The story model can update it through Pocket tools or tags when something happens. No elapsed-time drift.",
+    automatic: "Changes at a fixed rate as the selected clock advances. No model judgment is involved.",
+    jev: "Open JEV estimates it from recent story messages; uncertain answers keep the current value."
+  }[mode];
+}
+function trackerGlyph(kind) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 48 48");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add("lp-tracker-glyph");
+  const shapes = {
+    link: ["M19 29l10-10", "M17 25l-3 3a7 7 0 0010 10l6-6a7 7 0 000-10", "M31 23l3-3a7 7 0 00-10-10l-6 6a7 7 0 000 10"],
+    vitals: ["M24 38L9 23C-1 12 14 3 24 15c10-12 25-3 15 8Z", "M9 25h9l4-9 5 15 4-6h8"],
+    counter: ["M10 11h10v10H10Z", "M28 11h10v10H28Z", "M10 29h10v10H10Z", "M28 29h10v10H28Z"],
+    timer: ["M24 8a16 16 0 110 32 16 16 0 010-32Z", "M24 14v10l7 4", "M19 3h10"]
+  }[kind];
+  for (const d of shapes) {
+    const path = document.createElementNS(svg.namespaceURI, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.append(path);
+  }
+  return svg;
+}
 function trackerDisplay(tracker, state) {
   const current = materializeTracker(tracker, state.roleplayNow).tracker;
   const card = el("div", `lp-card lp-tracker-card lp-tracker-${current.presentation}`);
@@ -2004,88 +2036,118 @@ function trackerDisplay(tracker, state) {
   card.dataset.kind = current.kind;
   card.dataset.target = current.target.type;
   const band = current.kind === "state" ? null : trackerBand(current);
+  const percent = trackerPercent(current);
   card.style.setProperty("--tracker-color", band?.color || current.color);
   card.dataset.meaning = band?.meaning || "neutral";
-  card.style.setProperty("--tracker-percent", `${trackerPercent(current)}%`);
+  card.style.setProperty("--tracker-percent", `${percent}%`);
   const heading = el("div", "lp-tracker-heading");
   heading.append(el("span", "lp-eyebrow", current.target.label || current.target.type), el("h3", "lp-title", current.label));
+  const top = el("div", "lp-tracker-top");
+  const mode = el("span", "lp-tracker-update", { manual: "Manual", model: "Story", automatic: "Clock", jev: "Open JEV" }[current.updateMode]);
+  mode.title = trackerUpdateDescription(current.updateMode);
+  top.append(heading, mode);
+  card.append(top);
   const value = el("strong", "lp-tracker-readout", trackerDisplayValue(current));
-  const status = current.clockPaused ? "Paused" : current.pausedReason || (current.kind === "timer" ? current.direction === "down" && current.value <= current.min ? "Finished" : current.updateMode === "automatic" ? current.direction === "down" ? "Counting down" : "Counting up" : "Ready" : band?.label || current.kind);
+  const status = current.clockPaused ? "Paused" : current.pausedReason || (current.kind === "timer" ? current.direction === "down" && current.value <= current.min ? "Finished" : current.updateMode === "automatic" ? current.direction === "down" ? "Counting down" : "Counting up" : "Ready" : band?.label || "");
+  const stage = () => el("span", "lp-tracker-stage", status);
+  const rail = () => {
+    const meter = el("div", "lp-tracker-rail");
+    meter.setAttribute("role", "meter");
+    meter.setAttribute("aria-label", current.label);
+    meter.setAttribute("aria-valuemin", String(current.min));
+    meter.setAttribute("aria-valuemax", String(current.max));
+    meter.setAttribute("aria-valuenow", String(current.value));
+    meter.setAttribute("aria-valuetext", `${trackerDisplayValue(current)}${status ? ` · ${status}` : ""}`);
+    meter.append(el("span", "lp-tracker-rail-fill"));
+    return meter;
+  };
+  const reading = () => {
+    const row = el("div", "lp-tracker-reading");
+    row.append(value);
+    if (status)
+      row.append(stage());
+    return row;
+  };
   if (current.presentation === "relationship") {
     const pair = el("div", "lp-tracker-pair");
     const other = resolvePocketActor(state, current.target.id);
-    for (const subject of [{ name: state.pocketPersona.displayName || "You", avatarUrl: state.pocketPersona.avatarUrl }, { name: other?.name || current.target.label, avatarUrl: other?.avatarUrl }]) {
+    const subjects = [{ name: state.pocketPersona.displayName || "You", avatarUrl: state.pocketPersona.avatarUrl }, { name: other?.name || current.target.label || "Unassigned", avatarUrl: other?.avatarUrl }];
+    subjects.forEach((subject, index) => {
+      if (index)
+        pair.append(trackerGlyph("link"));
+      const person = el("div", "lp-tracker-person");
       const avatar = el("span", "lp-tracker-avatar", subject.name.slice(0, 1).toUpperCase());
       if (subject.avatarUrl) {
         const image = el("img");
         image.src = subject.avatarUrl;
-        image.alt = subject.name;
+        image.alt = "";
         avatar.replaceChildren(image);
       }
-      pair.append(avatar);
-    }
-    card.append(pair, heading, el("div", "lp-tracker-stage", status), value);
+      person.append(avatar, el("span", "lp-tracker-person-name", subject.name));
+      pair.append(person);
+    });
+    card.append(pair, reading(), rail());
   } else if (current.presentation === "vitals") {
-    const gauge = el("div", "lp-vital-gauge");
-    gauge.append(value);
-    card.append(heading, gauge, el("span", "lp-tracker-stage", status));
+    const body = el("div", "lp-vital-body");
+    body.append(trackerGlyph("vitals"), reading());
+    card.append(body, rail());
   } else if (current.presentation === "state" && current.kind === "state") {
-    card.append(heading, value);
-    const path = el("div", "lp-state-path");
+    const path = el("ol", "lp-state-path");
+    path.setAttribute("aria-label", current.label);
     for (const label of current.states) {
-      const tag = el("span", "", label);
-      tag.dataset.active = String(label === current.state);
-      path.append(tag);
+      const step = el("li", "", label);
+      step.dataset.active = String(label === current.state);
+      if (label === current.state)
+        step.setAttribute("aria-current", "step");
+      path.append(step);
     }
     card.append(path);
+    if (current.clockPaused || current.pausedReason)
+      card.append(stage());
   } else if (current.presentation === "segmented") {
-    card.append(heading, value);
-    const segments = el("div", "lp-tracker-segments");
+    card.append(reading());
+    const segments = rail();
+    segments.className = "lp-tracker-segments";
+    segments.replaceChildren();
     for (let index = 0;index < 10; index++) {
       const segment = el("span");
-      segment.dataset.filled = String(trackerPercent(current) >= (index + 1) * 10);
+      segment.dataset.filled = String(percent >= (index + 1) * 10);
       segments.append(segment);
     }
-    card.append(segments, el("span", "lp-tracker-stage", status));
+    card.append(segments);
   } else if (current.presentation === "timer") {
-    card.append(heading);
-    const dial = el("div", "lp-timer-dial");
-    dial.append(value);
-    card.append(dial, el("span", "lp-tracker-stage", status));
+    const body = el("div", "lp-timer-instrument");
+    body.append(trackerGlyph("timer"), reading());
+    card.append(body);
     if (current.updateMode === "automatic")
-      card.append(el("span", "lp-copy", `${Math.abs(current.ratePerHour)}${current.unit} per hour · ${current.clock === "real" ? "real time" : "story time"}`));
+      card.append(el("span", "lp-tracker-clock-note", `${Math.abs(current.ratePerHour)} ${current.unit.trim()} / hour · ${current.clock === "real" ? "Real clock" : "Story clock"}`));
+    if (current.kind === "timer" && current.direction === "down")
+      card.append(rail());
   } else if (current.presentation === "counter") {
     value.textContent = String(Number(current.value.toFixed(2)));
     if (current.unit)
       value.append(el("small", "lp-counter-unit", current.unit));
-    card.append(heading, el("span", "lp-counter-caption", "AVAILABLE"), value);
-    if (current.kind === "counter")
-      card.append(el("span", "lp-copy", `Step size · ${current.step}${current.unit ? ` ${current.unit}` : ""}`));
+    const body = el("div", "lp-counter-instrument");
+    body.append(trackerGlyph("counter"), reading());
+    card.append(body);
   } else {
-    card.append(heading, value);
+    card.append(reading());
     if (current.presentation === "meter") {
-      const rail = el("div", "lp-progress");
-      const fill = el("span");
-      fill.style.setProperty("--progress", `${trackerPercent(current)}%`);
-      fill.style.setProperty("--tracker-color", band?.color || current.color);
-      rail.append(fill);
-      const limits = el("div", "lp-row-between lp-copy");
+      const limits = el("div", "lp-tracker-limits");
       limits.append(el("span", "", `${current.min}${current.unit}`), el("span", "", `${current.max}${current.unit}`));
-      card.append(rail, limits);
+      card.append(rail(), limits);
     }
   }
   const latest = current.history.at(-1);
-  if (latest && current.presentation !== "relationship" && current.presentation !== "compact") {
+  if (latest && current.presentation !== "compact") {
     const delta = typeof latest.next === "number" && typeof latest.previous === "number" ? latest.next - latest.previous : null;
     const source = { jev: "Open JEV", model: "Story", tag: "Story", automatic: "Time", migration: "Imported", user: "You" }[latest.source];
     const change = delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? "+" : ""}${Number(delta.toFixed(2))}${current.unit}`;
-    card.append(el("span", "lp-tracker-last-change", `${change} · ${source}`));
+    const history = el("div", "lp-tracker-last-change", `${change} · ${source}`);
+    if (latest.reason)
+      history.title = latest.reason;
+    card.append(history);
   }
-  const footer = el("div", "lp-tracker-meta");
-  footer.append(el("span", "", current.presentation === "timer" ? `${current.clock === "real" ? "Real" : "Story"} time` : status), el("span", "", current.updateMode === "jev" ? "Open JEV" : current.updateMode === "model" ? "Story updates" : current.updateMode === "automatic" ? "Automatic" : "Manual"));
-  card.append(footer);
-  if (latest && current.presentation === "relationship")
-    card.append(el("p", "lp-copy lp-tracker-change", `${latest.previous} → ${latest.next}${latest.reason ? ` · ${latest.reason}` : ""}`));
   return card;
 }
 function refreshTrackerDisplay(card, tracker, state) {
@@ -2161,7 +2223,10 @@ function trackerEditor(host, current, templateIndex = 9) {
 Wounded
 Recovering`;
   const state = choice("Current state", [], source.kind === "state" ? source.state : "");
-  const mode = choice("Updates", [["manual", "By hand"], ["model", "With the story"], ["automatic", "Over time"], ["jev", "Open JEV"]], source.updateMode);
+  const mode = choice("Updates", [["manual", "By hand"], ["model", "Story events"], ["automatic", "Elapsed time"], ["jev", "Open JEV"]], source.updateMode);
+  const modeHelp = el("p", "lp-copy lp-tracker-mode-help");
+  modeHelp.setAttribute("aria-live", "polite");
+  mode.field.append(modeHelp);
   const jev = sectionBlock("Open JEV", "Estimates this value from recent story messages. Uncertain answers keep the current value.");
   const question = el("textarea", "lp-textarea");
   question.maxLength = 240;
@@ -2323,6 +2388,7 @@ Recovering`;
     autoOption.disabled = kindValue === "state";
     if (kindValue === "state" && mode.control.value === "automatic")
       mode.control.value = "manual";
+    modeHelp.textContent = trackerUpdateDescription(mode.control.value);
     const display = presentation.control.value || source.presentation;
     presentation.control.replaceChildren();
     for (const id of allowed[kindValue]) {
@@ -2448,7 +2514,8 @@ function detail(host, tracker) {
     host.onCleanup(() => window.clearInterval(timer));
   }
   const policy = el("div", "lp-card lp-tracker-policy");
-  policy.append(el("div", "lp-row-between", ""), el("p", "lp-copy", `${tracker.visibleToModel ? "Visible" : "Hidden"} in model context · ${tracker.allowModelWrite ? "Model may write" : "Model read-only"} · ${tracker.updateMode} updates`));
+  policy.append(el("div", "lp-row-between", ""), el("p", "lp-copy", `${tracker.visibleToModel ? "Visible" : "Hidden"} in model context · ${tracker.allowModelWrite ? "Model may write" : "Model read-only"}`));
+  policy.appendChild(el("p", "lp-copy", trackerUpdateDescription(tracker.updateMode)));
   if (tracker.pausedReason)
     policy.appendChild(el("p", "lp-warning", tracker.pausedReason));
   if (tracker.updateMode === "jev") {
@@ -5815,7 +5882,6 @@ var PHONE_STYLES = `
   .lp-event-dot { position:absolute; left:8px; top:15px; width:14px; height:14px; border:3px solid var(--lp-bg); border-radius:50%; background:var(--event-color,var(--lp-accent)); box-shadow:0 0 0 1px var(--lp-border); z-index:2; }
   .lp-event[data-completed="true"] { opacity:.52; }
   .lp-event[data-completed="true"] .lp-title { text-decoration:line-through; }
-  .lp-tracker-value { font-size:24px; font-weight:720; letter-spacing:-.035em; }
   .lp-progress { height:7px; overflow:hidden; border-radius:99px; background:var(--lp-surface-2); }
   .lp-progress span { display:block; height:100%; width:var(--progress,0%); border-radius:inherit; background:var(--tracker-color,var(--lp-accent)); transition:width .5s ease; }
   .lp-rate { color:var(--lp-muted); font-size:8px; }
@@ -5942,14 +6008,8 @@ var PHONE_STYLES = `
   .lp-tracker-filters { display:flex; gap:6px; overflow:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-tracker-card { display:grid; gap:9px; border-left:3px solid color-mix(in srgb,var(--lp-accent) 68%,transparent); }
   .lp-tracker-card[role="button"]:focus-visible { outline:3px solid color-mix(in srgb,var(--lp-accent) 52%,white); outline-offset:2px; }
-  .lp-tracker-relationship { background:linear-gradient(135deg,color-mix(in srgb,#ec7eb5 12%,var(--lp-surface)),var(--lp-surface)); }
-  .lp-tracker-vitals { border-left-color:#ef6b73; }
-  .lp-tracker-counter .lp-tracker-value { padding:5px 9px; border-radius:10px; background:color-mix(in srgb,var(--lp-accent) 16%,transparent); }
-  .lp-tracker-timer { border-left-color:#62b8e8; }
-  .lp-tracker-state { border-left-color:#d59c50; }
   .lp-tracker-compact { padding-block:9px; }
   .lp-progress-segmented { background:repeating-linear-gradient(90deg,var(--lp-surface-2) 0 calc(10% - 2px),transparent calc(10% - 2px) 10%); }
-  .lp-tracker-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--lp-muted); font-size:9px; font-weight:720; text-transform:capitalize; }
   .lp-tracker-policy { display:grid; gap:5px; }
   .lp-warning { margin:0; color:#f3bd65; font-size:10px; line-height:1.4; }
   .lp-tracker-operations { display:grid; gap:9px; }
@@ -6348,44 +6408,54 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-band-editor .lp-input { min-width:0; padding:8px; }
   .lp-band-editor .lp-color-input { width:28px; }
   .lp-tracker-config-fields { display:grid; gap:12px; }
-  .lp-tracker-heading { min-width:0; display:grid; gap:5px; }
-  .lp-tracker-readout { font-size:32px; line-height:1.15; font-variant-numeric:tabular-nums; }
-  .lp-tracker-stage { color:var(--tracker-color); font-size:13px; font-weight:700; }
-  .lp-tracker-pair { display:flex; justify-content:center; gap:12px; }
-  .lp-tracker-avatar { width:46px; height:46px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb,var(--tracker-color) 22%,var(--lp-surface)); font-size:20px; }
+  .lumiphone-shell .lp-tracker-card { display:grid; gap:14px; padding:16px; border:1px solid var(--lp-border); border-radius:16px; background:color-mix(in srgb,var(--lp-text) 3%,var(--lp-surface)); box-shadow:0 3px 12px #00000015; text-align:left; }
+  .lp-tracker-top { display:flex; align-items:start; justify-content:space-between; gap:12px; min-width:0; }
+  .lp-tracker-heading { min-width:0; display:grid; gap:4px; }
+  .lp-tracker-heading .lp-eyebrow { font-size:9px; letter-spacing:.06em; line-height:1.4; }
+  .lp-tracker-heading .lp-title { margin:0; }
+  .lp-tracker-update { flex-shrink:0; color:var(--lp-muted); font-size:9px; line-height:1.4; padding:3px 6px; border:1px solid var(--lp-border); border-radius:6px; }
+  .lp-tracker-reading { min-width:0; display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .lp-tracker-readout { font-size:30px; line-height:1.15; letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
+  .lp-tracker-stage { color:var(--tracker-color); font-size:11px; font-weight:600; }
+  .lp-tracker-glyph { width:40px; height:40px; color:var(--tracker-color); flex-shrink:0; }
+  .lp-tracker-rail { height:6px; border-radius:8px; overflow:hidden; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); }
+  .lp-tracker-rail-fill { display:block; width:var(--tracker-percent); height:100%; border-radius:inherit; background:var(--tracker-color); }
+  .lp-tracker-limits { display:flex; justify-content:space-between; color:var(--lp-muted); font-size:10px; margin-top:-8px; }
+  .lp-tracker-pair { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:12px; padding:3px 0; }
+  .lp-tracker-pair .lp-tracker-glyph { width:24px; height:24px; opacity:.65; }
+  .lp-tracker-person { min-width:0; display:grid; justify-items:center; gap:7px; }
+  .lp-tracker-person-name { max-width:100%; color:var(--lp-muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-tracker-avatar { width:42px; height:42px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); border:1px solid var(--lp-border); font-size:17px; }
   .lp-tracker-avatar img { width:100%; height:100%; object-fit:cover; }
-  .lp-tracker-relationship { text-align:center; }
+  .lp-tracker-relationship .lp-tracker-reading { flex-direction:row-reverse; }
   .lp-tracker-relationship .lp-tracker-readout { font-size:20px; }
-  .lp-vital-gauge { width:120px; height:120px; border-radius:50%; display:grid; place-items:center; justify-self:center; background:radial-gradient(circle,var(--lp-surface) 61%,transparent 63%),conic-gradient(var(--tracker-color) var(--tracker-percent),color-mix(in srgb,var(--tracker-color) 12%,var(--lp-surface)) 0); }
-  .lp-vital-gauge .lp-tracker-readout { font-size:26px; }
-  .lp-tracker-vitals { text-align:center; }
-  .lp-tracker-counter .lp-tracker-readout { font-size:42px; }
-  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:34px; letter-spacing:.035em; }
-  .lp-tracker-timer { text-align:center; border-left-width:1px; background:radial-gradient(ellipse at top,color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)),var(--lp-surface)); }
-  .lp-timer-dial { display:grid; place-items:center; min-height:115px; margin:6px 0; border-block:1px solid color-mix(in srgb,var(--tracker-color) 25%,transparent); }
-  .lp-tracker-counter { grid-template-columns:minmax(0,1fr) auto; align-items:center; border-left-width:1px; }
-  .lp-tracker-counter .lp-tracker-heading { grid-column:1/-1; }
-  .lp-counter-caption { color:var(--lp-muted); font-size:10px; font-weight:800; letter-spacing:.12em; }
-  .lp-tracker-counter .lp-tracker-readout { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:6px; min-width:0; }
-  .lp-counter-unit { color:var(--lp-muted); font-size:12px; font-weight:600; overflow-wrap:anywhere; }
-  .lp-tracker-counter > .lp-copy,.lp-tracker-counter .lp-tracker-meta,.lp-tracker-counter .lp-tracker-last-change { grid-column:1/-1; }
-  .lp-tracker-last-change { color:var(--lp-muted); font-size:11px; }
+  .lp-vital-body,.lp-counter-instrument,.lp-timer-instrument { display:flex; align-items:center; gap:14px; }
+  .lp-vital-body .lp-tracker-reading,.lp-counter-instrument .lp-tracker-reading,.lp-timer-instrument .lp-tracker-reading { flex:1; }
+  .lp-vital-body .lp-tracker-glyph { width:34px; height:34px; }
+  .lp-tracker-counter .lp-tracker-readout { display:flex; gap:7px; align-items:baseline; font-size:38px; }
+  .lp-counter-unit { color:var(--lp-muted); font-size:12px; font-weight:500; letter-spacing:0; overflow-wrap:anywhere; }
+  .lp-counter-instrument .lp-tracker-glyph { opacity:.55; }
+  .lp-tracker-timer .lp-tracker-reading { display:grid; gap:4px; }
+  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:26px; letter-spacing:-.03em; }
+  .lp-tracker-clock-note { color:var(--lp-muted); font-size:10px; }
+  .lp-tracker-last-change { padding-top:9px; border-top:1px solid var(--lp-border); color:var(--lp-muted); font-size:10px; }
   .lp-counter-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .lp-state-choices { display:flex; flex-wrap:wrap; gap:8px; }
   .lp-state-choices .lp-chip[aria-pressed="true"] { opacity:1; background:color-mix(in srgb,var(--lp-accent) 25%,var(--lp-surface)); }
   .lp-tracker-manual { display:grid; }
   .lp-tracker-manual summary { cursor:pointer; color:var(--lp-muted); padding-block:8px; font-size:12px; }
   .lp-tracker-manual .lp-input { margin-bottom:8px; }
-  .lp-state-path { display:flex; flex-wrap:wrap; gap:6px; }
-  .lp-state-path span { border-radius:10px; padding:5px 9px; font-size:10px; background:var(--lp-bg); color:var(--lp-muted); }
-  .lp-state-path span[data-active="true"] { background:var(--tracker-color); color:#101014; font-weight:700; }
-  .lp-tracker-state .lp-tracker-readout { font-size:24px; color:var(--tracker-color); }
-  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,1fr); gap:4px; }
-  .lp-tracker-segments span { height:22px; border-radius:4px; background:color-mix(in srgb,var(--tracker-color) 15%,var(--lp-surface)); }
+  .lp-state-path { margin:0; padding:0; list-style:none; display:grid; }
+  .lp-state-path li { position:relative; min-height:32px; display:flex; align-items:center; gap:10px; color:var(--lp-muted); font-size:11px; }
+  .lp-state-path li::before { content:""; z-index:1; flex-shrink:0; width:8px; height:8px; margin-left:2px; border:1px solid var(--lp-border); border-radius:50%; background:var(--lp-surface); }
+  .lp-state-path li:not(:last-child)::after { content:""; position:absolute; left:6px; top:20px; bottom:-12px; width:1px; background:var(--lp-border); }
+  .lp-state-path li[data-active="true"] { color:var(--lp-text); font-weight:700; }
+  .lp-state-path li[data-active="true"]::before { background:var(--tracker-color); border-color:var(--tracker-color); box-shadow:0 0 0 3px color-mix(in srgb,var(--tracker-color) 12%,transparent); }
+  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,minmax(0,1fr)); gap:4px; }
+  .lp-tracker-segments span { height:11px; border-radius:3px; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); }
   .lp-tracker-segments span[data-filled="true"] { background:var(--tracker-color); }
-  .lumiphone-shell .lp-tracker-compact { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; padding:12px; }
-  .lp-tracker-compact .lp-tracker-readout { font-size:20px; }
-  .lp-tracker-compact .lp-tracker-meta { grid-column:1/-1; }
+  .lumiphone-shell .lp-tracker-compact { gap:8px; padding:12px 14px; }
+  .lp-tracker-compact .lp-tracker-readout { font-size:21px; }
   .lp-tracker-preview { padding:0; background:transparent; border:0; }
   .lp-selected-members { display:flex; gap:6px; flex-wrap:wrap; }
   .lp-selected-members:empty { display:none; }

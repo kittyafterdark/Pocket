@@ -25,10 +25,12 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 
 ## Presentation and correctness
 
+- [ ] Message actions sheet: balanced action list, clearer hierarchy, compact Done control; replace the empty/right-stacked layout.
+
 - [x] Remove stale handset 9:16 descriptions (retain valid image aspect options).
 - [ ] Remove fixed violet material/atmosphere; neutral incoming bubbles, theme accents and semantic colors.
-- [ ] Tracker compositions by type: participants/trajectory, state rail, compact vitals, instrumentation.
-- [ ] Remove duplicate tracker metadata and explain story-triggered versus elapsed-time updates.
+- [x] Tracker compositions by type: participants/trajectory, state rail, compact vitals, instrumentation.
+- [x] Remove duplicate tracker metadata and explain story-triggered versus elapsed-time updates.
 - [ ] Weather, timeline, camera, settings and contacts presentation passes.
 - [ ] Theme previews use real miniature UI; visual preset swatches with SVG wallpapers instead of names.
 - [ ] Associate settings labels; audit custom keyboard Space handling.

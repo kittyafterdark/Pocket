@@ -2,7 +2,7 @@ import type { PhoneState, PhoneTracker, TrackerKind, TrackerPresentation, Tracke
 import { materializeTracker, TRACKER_TEMPLATES, trackerBand, trackerKey } from '../../domain/trackers.js'
 import { button, el } from '../shared.js'
 import { trackerEditor, trackerTemplates } from './tracker-editor.js'
-import { trackerDisplay, refreshTrackerDisplay } from '../components/tracker-display.js'
+import { trackerDisplay, refreshTrackerDisplay, trackerUpdateDescription } from '../components/tracker-display.js'
 import type { PageAction } from '../shared.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
@@ -110,8 +110,9 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
   const policy = el('div', 'lp-card lp-tracker-policy')
   policy.append(
     el('div', 'lp-row-between', ''),
-    el('p', 'lp-copy', `${tracker.visibleToModel ? 'Visible' : 'Hidden'} in model context · ${tracker.allowModelWrite ? 'Model may write' : 'Model read-only'} · ${tracker.updateMode} updates`),
+    el('p', 'lp-copy', `${tracker.visibleToModel ? 'Visible' : 'Hidden'} in model context · ${tracker.allowModelWrite ? 'Model may write' : 'Model read-only'}`),
   )
+  policy.appendChild(el('p', 'lp-copy', trackerUpdateDescription(tracker.updateMode)))
   if (tracker.pausedReason) policy.appendChild(el('p', 'lp-warning', tracker.pausedReason))
   if (tracker.updateMode === 'jev') {
     const evaluate = button(host.pending ? 'Reading the story…' : 'Evaluate with JEV', 'lp-button lp-button-quiet'); evaluate.disabled = host.pending; evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate', { trackerId: tracker.id })); policy.append(evaluate)

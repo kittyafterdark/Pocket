@@ -4,7 +4,7 @@ import { listPocketActors } from '../../domain/actors.js'
 import { button, el } from '../shared.js'
 import { controlRow, disclosure, fieldBlock, sectionBlock } from '../components/ui.js'
 import type { TrackerViewHost } from './trackers.js'
-import { trackerDisplay } from '../components/tracker-display.js'
+import { trackerDisplay, trackerUpdateDescription } from '../components/tracker-display.js'
 
 function choice(label: string, values: Array<[string, string]>, value: string) {
   const control = el('select', 'lp-select')
@@ -53,7 +53,10 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const value = el('input', 'lp-input'); value.type = 'number'; value.step = 'any'; value.value = String(source.value)
   const states = el('textarea', 'lp-textarea'); states.value = source.kind === 'state' ? source.states.join('\n') : 'Stable\nWounded\nRecovering'
   const state = choice('Current state', [], source.kind === 'state' ? source.state : '')
-  const mode = choice('Updates', [['manual', 'By hand'], ['model', 'With the story'], ['automatic', 'Over time'], ['jev', 'Open JEV']], source.updateMode)
+  const mode = choice('Updates', [['manual', 'By hand'], ['model', 'Story events'], ['automatic', 'Elapsed time'], ['jev', 'Open JEV']], source.updateMode)
+  const modeHelp = el('p', 'lp-copy lp-tracker-mode-help')
+  modeHelp.setAttribute('aria-live', 'polite')
+  mode.field.append(modeHelp)
   const jev = sectionBlock('Open JEV', 'Estimates this value from recent story messages. Uncertain answers keep the current value.')
   const question = el('textarea', 'lp-textarea'); question.maxLength = 240; question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`; question.placeholder = 'Ask one specific question about this target.'
   const confidence = el('input', 'lp-input'); confidence.type = 'number'; confidence.min = '0'; confidence.max = '1'; confidence.step = '.05'; confidence.value = String(source.jev?.minConfidence ?? .65)
@@ -129,6 +132,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     if (jevOption.disabled && mode.control.value === 'jev') mode.control.value = 'manual'
     const autoOption = mode.control.querySelector<HTMLOptionElement>('option[value="automatic"]')!; autoOption.disabled = kindValue === 'state'
     if (kindValue === 'state' && mode.control.value === 'automatic') mode.control.value = 'manual'
+    modeHelp.textContent = trackerUpdateDescription(mode.control.value as PhoneTracker['updateMode'])
     const display = presentation.control.value || source.presentation
     presentation.control.replaceChildren()
     for (const id of allowed[kindValue]) { const option = el('option', '', id[0].toUpperCase() + id.slice(1)); option.value = id; presentation.control.append(option) }
