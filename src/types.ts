@@ -952,8 +952,9 @@ export interface SwarmVisualProfile {
   presets: string
   checkpoint: string
   aspect: string
+  loras?: string
   source: 'swarm_studio' | 'manual'
-  fields: Record<'char_base' | 'persona_base' | 'swarm_negative' | 'swarm_preset' | 'swarm_checkpoint' | 'swarm_aspect', {
+  fields: Record<'char_base' | 'persona_base' | 'swarm_negative' | 'swarm_preset' | 'swarm_checkpoint' | 'swarm_aspect' | 'swarm_loras', {
     detected: boolean
     length: number
     preview: string
@@ -986,6 +987,7 @@ export interface GalleryResult {
     width: number | null
     height: number | null
     createdAt: number
+    canDelete?: boolean
   }>
   total: number
 }

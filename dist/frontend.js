@@ -648,6 +648,11 @@ function callSummary(call) {
 }
 
 // src/domain/contacts.ts
+function normalizeAvatarFocus(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const coord = (n) => Number.isFinite(Number(n)) ? Math.min(100, Math.max(0, Number(n))) : 50;
+  return { x: coord(raw.x), y: coord(raw.y) };
+}
 var ACCENTS = ["#8b7dff", "#ef6f9a", "#55bfa3", "#e19a55", "#5e9ee6", "#b779dc", "#df6f64", "#86a94c"];
 function stableContactAccent(seed) {
   let hash = 0;
@@ -1029,6 +1034,7 @@ function showPocketSheet(anchor, title, content) {
     dialog.style.maxHeight = `${Math.max(120, bounds.height - 70)}px`;
   }
   dialog.showModal();
+  return { dismiss };
 }
 function outgoingSurface(accent) {
   const hex = /^#([0-9a-f]{6})$/i.exec(accent)?.[1] || "8b7dff";
@@ -6859,6 +6865,29 @@ function activityReceipt(ctx, activity, openRoute, options = {}) {
   return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: communication, includeReceipt: !communication });
 }
 
+// src/frontend/components/avatar-crop.ts
+function avatarCropRect(width, height, focus) {
+  if (!(width > 0 && height > 0))
+    throw new Error("The photo has no usable dimensions.");
+  const position = normalizeAvatarFocus(focus);
+  const size = Math.min(width, height);
+  return { x: (width - size) * position.x / 100, y: (height - size) * position.y / 100, size };
+}
+async function cropAvatarPhoto(url, focus) {
+  const image = new Image;
+  image.crossOrigin = "anonymous";
+  image.src = url;
+  await image.decode();
+  const crop = avatarCropRect(image.naturalWidth, image.naturalHeight, focus);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = Math.min(512, crop.size);
+  const context = canvas.getContext("2d");
+  if (!context)
+    throw new Error("Avatar framing is unavailable in this browser.");
+  context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
 // src/frontend/components/device-picker.ts
 var GLYPHS = {
   phone: '<rect x="7" y="2" width="10" height="20" rx="3"/><path d="M10 18h4"/>',
@@ -7098,6 +7127,7 @@ class PocketController {
   cameraImageId = "";
   cameraOptions = { purpose: "scene", aspect: "", connectionId: "", model: "" };
   imageConnections = [];
+  pendingAvatarDraft = null;
   cameraFocus = { x: 50, y: 50 };
   cameraNpcDraft = null;
   cameraProgress = "";
@@ -8181,6 +8211,8 @@ class PocketController {
         }, 1400);
         this.galleryActionButtons.delete(payload.requestId);
       }
+      if (payload.action === "delete" && payload.imageId === this.selectedGalleryImageId)
+        this.selectedGalleryImageId = "";
       this.showFeedback(payload.message || "Gallery action complete.");
       return;
     }
@@ -8279,6 +8311,22 @@ class PocketController {
         this.render(false);
       return;
     }
+    if (payload.type === "lumiphone:avatar_uploaded") {
+      const pending = this.pendingAvatarDraft;
+      if (!pending || pending.requestId !== payload.requestId)
+        return;
+      this.pendingAvatarDraft = null;
+      if (pending.draft && pending.draft === this.npcDraft) {
+        pending.draft.avatarUrl = payload.imageUrl;
+        pending.draft.avatarSource = { kind: "asset", assetId: payload.imageId };
+        pending.draft.avatarFocus = { x: 50, y: 50 };
+        if (this.currentApp === "camera" && this.cameraNpcDraft === pending.draft)
+          this.back();
+        else
+          this.render(false);
+      }
+      return;
+    }
     if (payload.type === "lumiphone:camera_done") {
       if (payload.requestId !== this.cameraRequestId)
         return;
@@ -8331,6 +8379,8 @@ class PocketController {
         this.groupSaveRequest = "";
       if (payload.requestId === this.trackerSaveRequest)
         this.trackerSaveRequest = "";
+      if (payload.requestId === this.pendingAvatarDraft?.requestId)
+        this.pendingAvatarDraft = null;
       if (payload.requestId === this.cameraRequestId) {
         this.cameraBusy = false;
         this.cameraReady = false;
@@ -9467,6 +9517,24 @@ ${body}`;
     image.alt = item.filename || "Pocket photo";
     image.style.cssText = "display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808";
     const actions = el("div", "lp-gallery-actions");
+    if (item.canDelete) {
+      const remove = button("Delete photo", "lp-button lp-button-quiet");
+      remove.addEventListener("click", () => {
+        const confirmation = el("div", "lp-camera-sheet-fields");
+        confirmation.append(el("p", "lp-copy", "Permanently delete this Pocket photo from Lumiverse Gallery? Chats, avatars and wallpapers using it may lose their image. This cannot be undone."));
+        const cancel = button("Keep photo", "lp-button");
+        const confirm = button("Permanently delete", "lp-button");
+        const sheet = showPocketSheet(remove, "Delete photo?", confirmation);
+        cancel.addEventListener("click", () => sheet?.dismiss());
+        confirm.addEventListener("click", () => {
+          this.runGalleryAction(confirm, "Deleting…", "lumiphone:gallery_delete", { imageId: item.id, scope: this.galleryScope, confirmed: true });
+          sheet?.dismiss();
+          modal.dismiss();
+        });
+        confirmation.append(cancel, confirm);
+      });
+      actions.append(remove);
+    }
     if (this.pendingWallpaperTarget === "contact-avatar" && this.pendingContactPhotoId) {
       const contactId = this.pendingContactPhotoId;
       const targetContact = this.state?.contacts.find((entry) => entry.id === contactId);
@@ -9598,7 +9666,7 @@ ${body}`;
     const nav = el("header", "lp-nav");
     const back = button("‹ Back", "lp-nav-action");
     back.addEventListener("click", () => this.back());
-    const profileLabel = this.swarmProfile?.available ? "Swarm profile linked" : "Manual profile";
+    const profileLabel = this.swarmProfile?.available ? "Lumiverse + Swarm profile" : "Lumiverse image settings";
     const title = el("div", "lp-nav-title", this.cameraContactId ? "Quick Generate" : "Camera");
     title.appendChild(el("span", "lp-nav-subtitle", subject ? `${subject.name} · Contact photo` : profileLabel));
     const gallery = button("Gallery", "lp-nav-action");
@@ -9665,12 +9733,27 @@ ${body}`;
     const connection = makeChoice("Image connection", [["", "Profile default"], ...this.imageConnections.map((entry) => [entry.id, entry.name])], this.cameraOptions.connectionId, (value) => {
       this.cameraOptions.connectionId = value;
     });
-    const model = el("input", "lp-input");
-    model.placeholder = "Profile checkpoint";
-    model.value = this.cameraOptions.model;
-    model.addEventListener("input", () => {
-      this.cameraOptions.model = model.value;
+    const model = el("div", "lp-model-combobox");
+    const mountModel = () => {
+      modelHandle?.destroy();
+      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: "image", id: this.cameraOptions.connectionId || undefined }, placeholder: "Use native checkpoint", onChange: (value) => {
+        this.cameraOptions.model = value;
+      } });
+    };
+    let modelHandle;
+    mountModel();
+    this.viewCleanups.push(() => modelHandle?.destroy());
+    connection.querySelector("select")?.addEventListener("change", () => {
+      this.cameraOptions.model = "";
+      mountModel();
     });
+    const nativeSettings = button("Lumiverse image settings", "lp-button lp-button-quiet");
+    nativeSettings.addEventListener("click", () => {
+      nativeSettings.closest("dialog")?.close();
+      this.close();
+      this.send("lumiphone:open_native_image_settings", {});
+    });
+    const pipelineCopy = el("p", "lp-copy", "Defaults use Lumiverse presets, workflow and LoRA stack. Choosing a connection or checkpoint uses a direct override for this photo.");
     const shutterRow = el("div", "lp-shutter-row");
     const shutterAction = el("div", "lp-camera-shutter-action");
     const shutter = el("button", "lp-shutter");
@@ -9685,22 +9768,38 @@ ${body}`;
     progress.setAttribute("aria-live", "polite");
     const optionsDrawer = button("Camera options", "lp-camera-options-chip");
     const optionFields = el("div", "lp-camera-sheet-fields");
-    optionFields.append(purpose, aspect, connection, fieldBlock("Checkpoint override", model), optionRow);
+    optionFields.append(pipelineCopy, nativeSettings, purpose, aspect, connection, (() => {
+      const row = el("div", "lp-field");
+      row.append(el("div", "lp-label", "Checkpoint override"), model);
+      return row;
+    })(), optionRow);
     optionsDrawer.addEventListener("click", () => showPocketSheet(optionsDrawer, "Camera options", optionFields));
     footer.append(el("p", "lp-camera-caption", this.cameraContactId ? "PORTRAIT" : "PHOTO"), shutterRow, progress, optionsDrawer);
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button("Use photo", "lp-button lp-camera-accept");
       use.disabled = !subject || this.cameraContactId === "__draft__" && this.npcDraft !== this.cameraNpcDraft;
-      use.addEventListener("click", () => {
-        if (this.cameraContactId === "__draft__") {
-          if (!this.npcDraft || this.npcDraft !== this.cameraNpcDraft)
+      use.addEventListener("click", async () => {
+        const contactId = this.cameraContactId;
+        const draft = this.npcDraft;
+        use.disabled = true;
+        use.textContent = "Framing…";
+        try {
+          const croppedDataUrl = await cropAvatarPhoto(this.cameraPreview, { ...this.cameraFocus });
+          if (!use.isConnected || contactId !== this.cameraContactId || draft !== this.npcDraft)
             return;
-          this.npcDraft.avatarUrl = this.cameraPreview;
-          this.npcDraft.avatarSource = this.cameraImageId ? { kind: "gallery", imageId: this.cameraImageId } : { kind: "url", url: this.cameraPreview };
-          this.npcDraft.avatarFocus = { ...this.cameraFocus };
-          this.back();
-        } else
-          this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId: this.cameraContactId, imageId: this.cameraImageId || undefined, imageUrl: this.cameraPreview, focus: this.cameraFocus });
+          if (this.cameraContactId === "__draft__") {
+            if (!this.npcDraft || this.npcDraft !== this.cameraNpcDraft)
+              return;
+            const uploadId = requestId("avatar");
+            this.pendingAvatarDraft = { requestId: uploadId, draft: this.npcDraft };
+            this.send("lumiphone:upload_avatar", { croppedDataUrl, requestId: uploadId });
+          } else
+            this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId: this.cameraContactId, imageId: this.cameraImageId || undefined, imageUrl: this.cameraPreview, croppedDataUrl, focus: { x: 50, y: 50 } });
+        } catch (error) {
+          use.disabled = false;
+          use.textContent = "Use photo";
+          this.showFeedback(error instanceof Error ? error.message : "Could not frame this photo.");
+        }
       });
       const crop = el("div", "lp-avatar-framing");
       const preview = el("img");

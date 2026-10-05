@@ -40,6 +40,7 @@ import { PocketRouteHistory } from './router.js'
 import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from './activity.js'
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
+import { cropAvatarPhoto } from './components/avatar-crop.js'
 import { renderDevicePicker } from './components/device-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
@@ -189,6 +190,7 @@ class PocketController {
   private cameraImageId = ''
   private cameraOptions = { purpose: 'scene', aspect: '', connectionId: '', model: '' }
   private imageConnections: Array<{ id: string; name: string }> = []
+  private pendingAvatarDraft: { requestId: string; draft: PocketContactDraft | null } | null = null
   private cameraFocus = { x: 50, y: 50 }
   private cameraNpcDraft: PocketContactDraft | null = null
   private cameraProgress = ''
@@ -1181,6 +1183,7 @@ class PocketController {
         window.setTimeout(() => { pending.button.textContent = pending.idle }, 1_400)
         this.galleryActionButtons.delete(payload.requestId)
       }
+      if (payload.action === 'delete' && payload.imageId === this.selectedGalleryImageId) this.selectedGalleryImageId = ''
       this.showFeedback(payload.message || 'Gallery action complete.')
       return
     }
@@ -1259,6 +1262,13 @@ class PocketController {
       if (this.currentApp === 'messages') this.render(false)
       return
     }
+    if (payload.type === 'lumiphone:avatar_uploaded') {
+      const pending = this.pendingAvatarDraft
+      if (!pending || pending.requestId !== payload.requestId) return
+      this.pendingAvatarDraft = null
+      if (pending.draft && pending.draft === this.npcDraft) { pending.draft.avatarUrl = payload.imageUrl; pending.draft.avatarSource = { kind: 'asset', assetId: payload.imageId }; pending.draft.avatarFocus = { x: 50, y: 50 }; if (this.currentApp === 'camera' && this.cameraNpcDraft === pending.draft) this.back(); else this.render(false) }
+      return
+    }
     if (payload.type === 'lumiphone:camera_done') {
       if (payload.requestId !== this.cameraRequestId) return
       this.cameraBusy = false
@@ -1298,6 +1308,7 @@ class PocketController {
       if (payload.requestId === this.collectionRequest) this.collectionRequest = ''
       if (payload.requestId === this.groupSaveRequest) this.groupSaveRequest = ''
       if (payload.requestId === this.trackerSaveRequest) this.trackerSaveRequest = ''
+      if (payload.requestId === this.pendingAvatarDraft?.requestId) this.pendingAvatarDraft = null
       if (payload.requestId === this.cameraRequestId) { this.cameraBusy = false; this.cameraReady = false; this.cameraProgress = payload.error || 'Image generation failed. Try again.' }
       this.messageRequests.delete(payload.requestId)
       const operation = this.operations.get(payload.requestId)
@@ -2327,6 +2338,20 @@ class PocketController {
     image.alt = item.filename || 'Pocket photo'
     image.style.cssText = 'display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808'
     const actions = el('div', 'lp-gallery-actions')
+    if (item.canDelete) {
+      const remove = button('Delete photo', 'lp-button lp-button-quiet')
+      remove.addEventListener('click', () => {
+        const confirmation = el('div', 'lp-camera-sheet-fields')
+        confirmation.append(el('p', 'lp-copy', 'Permanently delete this Pocket photo from Lumiverse Gallery? Chats, avatars and wallpapers using it may lose their image. This cannot be undone.'))
+        const cancel = button('Keep photo', 'lp-button')
+        const confirm = button('Permanently delete', 'lp-button')
+        const sheet = showPocketSheet(remove, 'Delete photo?', confirmation)
+        cancel.addEventListener('click', () => sheet?.dismiss())
+        confirm.addEventListener('click', () => { this.runGalleryAction(confirm, 'Deleting…', 'lumiphone:gallery_delete', { imageId: item.id, scope: this.galleryScope, confirmed: true }); sheet?.dismiss(); modal.dismiss() })
+        confirmation.append(cancel, confirm)
+      })
+      actions.append(remove)
+    }
     if (this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId) {
       const contactId = this.pendingContactPhotoId
       const targetContact = this.state?.contacts.find((entry) => entry.id === contactId)
@@ -2444,7 +2469,7 @@ class PocketController {
     const nav = el('header', 'lp-nav')
     const back = button('‹ Back', 'lp-nav-action')
     back.addEventListener('click', () => this.back())
-    const profileLabel = this.swarmProfile?.available ? 'Swarm profile linked' : 'Manual profile'
+    const profileLabel = this.swarmProfile?.available ? 'Lumiverse + Swarm profile' : 'Lumiverse image settings'
     const title = el('div', 'lp-nav-title', this.cameraContactId ? 'Quick Generate' : 'Camera')
     title.appendChild(el('span', 'lp-nav-subtitle', subject ? `${subject.name} · Contact photo` : profileLabel))
     const gallery = button('Gallery', 'lp-nav-action')
@@ -2496,7 +2521,18 @@ class PocketController {
     const purpose = makeChoice('Subject', this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || 'Contact']] : [['scene', 'Scene · character and persona'], ['character', this.state!.characterName], ['persona', this.state!.pocketPersona.displayName || 'Persona']], this.cameraOptions.purpose, value => { this.cameraOptions.purpose = value })
     const aspect = makeChoice('Framing', [['', 'Profile default'], ['1:1', 'Square · avatar'], ['3:4', 'Portrait'], ['4:3', 'Landscape'], ['9:16', 'Tall'], ['16:9', 'Wide']], this.cameraOptions.aspect, value => { this.cameraOptions.aspect = value })
     const connection = makeChoice('Image connection', [['', 'Profile default'], ...this.imageConnections.map(entry => [entry.id, entry.name] as [string, string])], this.cameraOptions.connectionId, value => { this.cameraOptions.connectionId = value })
-    const model = el('input', 'lp-input'); model.placeholder = 'Profile checkpoint'; model.value = this.cameraOptions.model; model.addEventListener('input', () => { this.cameraOptions.model = model.value })
+    const model = el('div', 'lp-model-combobox')
+    const mountModel = () => {
+      modelHandle?.destroy()
+      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: 'image', id: this.cameraOptions.connectionId || undefined }, placeholder: 'Use native checkpoint', onChange: value => { this.cameraOptions.model = value } })
+    }
+    let modelHandle: ReturnType<typeof this.ctx.components.mountModelCombobox> | undefined
+    mountModel()
+    this.viewCleanups.push(() => modelHandle?.destroy())
+    connection.querySelector('select')?.addEventListener('change', () => { this.cameraOptions.model = ''; mountModel() })
+    const nativeSettings = button('Lumiverse image settings', 'lp-button lp-button-quiet')
+    nativeSettings.addEventListener('click', () => { nativeSettings.closest('dialog')?.close(); this.close(); this.send('lumiphone:open_native_image_settings', {}) })
+    const pipelineCopy = el('p', 'lp-copy', 'Defaults use Lumiverse presets, workflow and LoRA stack. Choosing a connection or checkpoint uses a direct override for this photo.')
     const shutterRow = el('div', 'lp-shutter-row')
     const shutterAction = el('div', 'lp-camera-shutter-action')
     const shutter = el('button', 'lp-shutter')
@@ -2510,20 +2546,27 @@ class PocketController {
     progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite')
     const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
     const optionFields = el('div', 'lp-camera-sheet-fields')
-    optionFields.append(purpose, aspect, connection, fieldBlock('Checkpoint override', model), optionRow)
+    optionFields.append(pipelineCopy, nativeSettings, purpose, aspect, connection, (() => { const row = el('div', 'lp-field'); row.append(el('div', 'lp-label', 'Checkpoint override'), model); return row })(), optionRow)
     optionsDrawer.addEventListener('click', () => showPocketSheet(optionsDrawer, 'Camera options', optionFields))
     footer.append(el('p', 'lp-camera-caption', this.cameraContactId ? 'PORTRAIT' : 'PHOTO'), shutterRow, progress, optionsDrawer)
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
       const use = button('Use photo', 'lp-button lp-camera-accept')
       use.disabled = !subject || (this.cameraContactId === '__draft__' && this.npcDraft !== this.cameraNpcDraft)
-      use.addEventListener('click', () => {
+      use.addEventListener('click', async () => {
+        const contactId = this.cameraContactId
+        const draft = this.npcDraft
+        use.disabled = true
+        use.textContent = 'Framing…'
+        try {
+          const croppedDataUrl = await cropAvatarPhoto(this.cameraPreview, { ...this.cameraFocus })
+          if (!use.isConnected || contactId !== this.cameraContactId || draft !== this.npcDraft) return
         if (this.cameraContactId === '__draft__') {
           if (!this.npcDraft || this.npcDraft !== this.cameraNpcDraft) return
-          this.npcDraft.avatarUrl = this.cameraPreview
-          this.npcDraft.avatarSource = this.cameraImageId ? { kind: 'gallery', imageId: this.cameraImageId } : { kind: 'url', url: this.cameraPreview }
-          this.npcDraft.avatarFocus = { ...this.cameraFocus }
-          this.back()
-        } else this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId: this.cameraContactId, imageId: this.cameraImageId || undefined, imageUrl: this.cameraPreview, focus: this.cameraFocus })
+          const uploadId = requestId('avatar')
+          this.pendingAvatarDraft = { requestId: uploadId, draft: this.npcDraft }
+          this.send('lumiphone:upload_avatar', { croppedDataUrl, requestId: uploadId })
+        } else this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId: this.cameraContactId, imageId: this.cameraImageId || undefined, imageUrl: this.cameraPreview, croppedDataUrl, focus: { x: 50, y: 50 } })
+        } catch (error) { use.disabled = false; use.textContent = 'Use photo'; this.showFeedback(error instanceof Error ? error.message : 'Could not frame this photo.') }
       })
       const crop = el('div', 'lp-avatar-framing')
       const preview = el('img'); preview.src = this.cameraPreview; preview.alt = 'Contact avatar framing'; preview.style.objectPosition = `${this.cameraFocus.x}% ${this.cameraFocus.y}%`

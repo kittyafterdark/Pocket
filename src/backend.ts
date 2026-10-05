@@ -1960,20 +1960,21 @@ async function resolveSwarmProfile(chatId: string, characterId: string, settings
       swarm_preset: { detected: false, length: 0, preview: '' },
       swarm_checkpoint: { detected: false, length: 0, preview: '' },
       swarm_aspect: { detected: false, length: 0, preview: '' },
+      swarm_loras: { detected: false, length: 0, preview: '' },
     },
   }
   if (!settings?.useSwarmProfile) return fallback
   try {
     const marker = '\n__LUMIPHONE_PROFILE_FIELD__\n'
-    const template = ['{{char_base}}', '{{persona_base}}', '{{swarm_negative}}', '{{swarm_preset}}', '{{swarm_checkpoint}}', '{{swarm_aspect}}'].join(marker)
+    const template = ['{{char_base}}', '{{persona_base}}', '{{swarm_negative}}', '{{swarm_preset}}', '{{swarm_checkpoint}}', '{{swarm_aspect}}', '{{swarm_loras}}'].join(marker)
     const result = await spindle.macros.resolve(template, { chatId, characterId, userId, commit: false })
     const fields = result.text.split(marker).map((part) => part.trim().replace(/^\{\{[^}]+\}\}$/, ''))
-    const [characterPositive = '', personaPositive = '', negative = '', presets = '', checkpoint = '', aspect = ''] = fields
-    const macroNames = ['char_base', 'persona_base', 'swarm_negative', 'swarm_preset', 'swarm_checkpoint', 'swarm_aspect'] as const
+    const [characterPositive = '', personaPositive = '', negative = '', presets = '', checkpoint = '', aspect = '', loras = ''] = fields
+    const macroNames = ['char_base', 'persona_base', 'swarm_negative', 'swarm_preset', 'swarm_checkpoint', 'swarm_aspect', 'swarm_loras'] as const
     const diagnostics = Object.fromEntries(macroNames.map((name, index) => [name, {
       detected: Boolean(fields[index]), length: fields[index]?.length || 0, preview: (fields[index] || '').slice(0, 120),
     }])) as SwarmVisualProfile['fields']
-    const available = Boolean(characterPositive || personaPositive || negative || presets || checkpoint || aspect)
+    const available = Boolean(characterPositive || personaPositive || negative || presets || checkpoint || aspect || loras)
     const resolutionWarnings = result.diagnostics.map((entry) => text(entry.message, 240)).filter(Boolean).slice(0, 3)
     if (!available) return resolutionWarnings.length
       ? { ...fallback, status: 'error', error: resolutionWarnings.join(' · '), fields: diagnostics }
@@ -1988,6 +1989,7 @@ async function resolveSwarmProfile(chatId: string, characterId: string, settings
       presets,
       checkpoint: manual.model || checkpoint,
       aspect,
+      loras,
       source: 'swarm_studio',
       fields: diagnostics,
     }
@@ -2009,7 +2011,7 @@ async function listGallery(input: AnyRecord, userId?: string): Promise<GalleryRe
     total: result.total,
     data: result.data.map((item) => ({
       id: item.id, url: item.url, fullUrl: item.url, thumbnailUrl: `${item.url}${String(item.url).includes('?') ? '&' : '?'}size=sm`, filename: item.original_filename, mimeType: item.mime_type,
-      width: item.width, height: item.height, createdAt: item.created_at,
+      width: item.width, height: item.height, createdAt: item.created_at, canDelete: item.owner_extension_identifier === 'lumiphone',
     })),
   }
 }
@@ -2068,7 +2070,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   if (model) generationInput.model = model
   let result: any = null
   try {
-    result = await runImageJob(spindle, generationInput, controller.signal, event => send({ type: 'lumiphone:camera_progress', requestId, ...event }, userId))
+    result = await runImageJob(spindle, generationInput, controller.signal, event => send({ type: 'lumiphone:camera_progress', requestId, ...event }, userId), !text(input.connectionId, 200) && !text(input.model, 500) ? { chatId: context.chatId, requestId, purpose } : undefined)
   } catch (error) {
     if (!job.cancelled) throw error
   } finally {
@@ -5358,6 +5360,20 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:gallery_list':
         send({ type: 'lumiphone:gallery', requestId, scope: payload.scope, ...(await listGallery(payload, userId)) }, userId)
         break
+      case 'lumiphone:open_native_image_settings':
+        await spindle.ui.openDrawerTab('imagegen', { userId })
+        break
+      case 'lumiphone:gallery_delete': {
+        if (!spindle.permissions.has('images')) throw new Error('Enable Images to manage Pocket photos.')
+        if (payload.confirmed !== true) throw new Error('Confirm permanent deletion first.')
+        const imageId = text(payload.imageId, 180)
+        const asset = imageId ? await spindle.images.get(imageId, { specificity: 'full', onlyOwned: true, userId }) : null
+        if (!asset || asset.owner_extension_identifier !== 'lumiphone') throw new Error('Pocket can only delete its own photos. Manage other assets in Lumiverse Gallery.')
+        if (!await spindle.images.delete(imageId, userId)) throw new Error('The image could not be deleted.')
+        send({ type: 'lumiphone:gallery_action_done', requestId, action: 'delete', imageId, message: 'Photo deleted.' }, userId)
+        send({ type: 'lumiphone:gallery', scope: payload.scope, ...(await listGallery(payload, userId)) }, userId)
+        break
+      }
       case 'lumiphone:gallery_add_to_chat': {
         if (!spindle.permissions.has('chat_mutation')) throw new Error('Enable Chat Mutation to add a Gallery image to the roleplay chat.')
         const imageId = text(payload.imageId, 180)
@@ -5415,12 +5431,28 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         send({ type: 'lumiphone:wallpaper_uploaded', requestId, imageId: image.id }, userId)
         break
       }
+      case 'lumiphone:upload_avatar': {
+        if (!spindle.permissions.has('images')) throw new Error('Enable Images to save an avatar.')
+        const dataUrl = text(payload.croppedDataUrl, 4_000_000)
+        if (!/^data:image\/png;base64,[a-z0-9+/=]+$/i.test(dataUrl)) throw new Error('Choose a valid framed avatar.')
+        const image = await spindle.images.uploadFromDataUrl(dataUrl, { originalFilename: 'pocket-avatar.png', owner_character_id: context.characterId === '_none' ? undefined : context.characterId, owner_chat_id: context.chatId === '_lobby' ? undefined : context.chatId, userId })
+        send({ type: 'lumiphone:avatar_uploaded', requestId, imageId: image.id, imageUrl: image.url }, userId)
+        break
+      }
       case 'lumiphone:set_contact_photo': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
           const contact = state.contacts.find((entry) => entry.id === text(payload.contactId, 180))
           if (!contact) throw new Error('That contact no longer exists.')
-          const source = payload.useSource === true ? null : normalizeImageSource(payload.source) || normalizeImageSource(payload.imageId ? { kind: 'gallery', imageId: payload.imageId } : { kind: 'url', url: payload.imageUrl })
+          let framedSource: any = null
+          if (payload.croppedDataUrl) {
+            if (!spindle.permissions.has('images')) throw new Error('Enable Images to save an avatar.')
+            const dataUrl = text(payload.croppedDataUrl, 4_000_000)
+            if (!/^data:image\/png;base64,[a-z0-9+/=]+$/i.test(dataUrl)) throw new Error('Choose a valid framed avatar.')
+            const image = await spindle.images.uploadFromDataUrl(dataUrl, { originalFilename: 'pocket-avatar.png', owner_character_id: context.characterId === '_none' ? undefined : context.characterId, owner_chat_id: context.chatId === '_lobby' ? undefined : context.chatId, userId })
+            framedSource = { kind: 'asset', assetId: image.id }
+          }
+          const source = payload.useSource === true ? null : framedSource || normalizeImageSource(payload.source) || normalizeImageSource(payload.imageId ? { kind: 'gallery', imageId: payload.imageId } : { kind: 'url', url: payload.imageUrl })
           let imageUrl = ''
           if (source) { const image = await resolvePocketImageSource(spindle, source, userId); assertPocketImageResolved(image); imageUrl = image.url }
           else if (payload.useSource !== true) throw new Error('Choose a valid contact image.')

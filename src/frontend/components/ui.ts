@@ -89,7 +89,7 @@ export function disclosure(label: string, ...children: Node[]): HTMLDetailsEleme
 }
 
 /** A surface-local modal sheet. Never attaches persona styling to document.body. */
-export function showPocketSheet(anchor: HTMLElement, title: string, content: HTMLElement): void {
+export function showPocketSheet(anchor: HTMLElement, title: string, content: HTMLElement): { dismiss: () => void } | undefined {
   const parent = anchor.closest('.lumiphone-shell') || anchor.closest('[role="dialog"]') || anchor.parentElement
   if (!parent) return
   const dialog = el('dialog', 'lp-sheet')
@@ -120,6 +120,7 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
     dialog.style.maxHeight = `${Math.max(120, bounds.height - 70)}px`
   }
   dialog.showModal()
+  return { dismiss }
 }
 
 /** Keep the selected hue while bounding outgoing luminance for white text. */

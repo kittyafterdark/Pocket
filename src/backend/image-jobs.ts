@@ -2,6 +2,14 @@ import type { DevicePreferences, SwarmVisualProfile } from '../types.js'
 
 export type ImagePurpose = 'scene' | 'contact' | 'character' | 'persona' | 'draft'
 
+/** Studio publishes exact native directives; preserve paths, order and repeated layers. */
+export function studioLoras(value: string): import('lumiverse-spindle-types').ImageGenLoraEntryDTO[] {
+  return [...value.matchAll(/<lora:([^<>]+):(-?\d+(?:\.\d+)?)>/g)].flatMap(match => {
+    const weight = Number(match[2])
+    return Number.isFinite(weight) ? [{ lora_name: match[1].trim(), weight_model: weight, weight_clip: weight }] : []
+  })
+}
+
 export function aspectDimensions(value: unknown): { width: number; height: number } | null {
   const match = String(value || '').trim().match(/^(\d+(?:\.\d+)?)\s*[:/x×]\s*(\d+(?:\.\d+)?)$/i)
   if (!match) return null
@@ -16,16 +24,37 @@ export function effectiveImageRequest(scene: string, purpose: ImagePurpose, subj
   const parameters: Record<string, unknown> = { ...(dimensions || {}), ...preferences.manualVisualProfile.parameters, ...overrides }
   // An explicit aspect is a user choice and takes precedence over saved dimensions.
   if (aspect && dimensions) Object.assign(parameters, dimensions)
-  if (preferences.manualVisualProfile.loras.length && parameters.loras === undefined) parameters.loras = preferences.manualVisualProfile.loras
+  const layers = [...studioLoras(profile.loras || ''), ...preferences.manualVisualProfile.loras.map(layer => ({ lora_name: layer.name, weight_model: layer.weight, weight_clip: layer.weight }))]
+  if (layers.length && parameters.loras === undefined) parameters.loras = layers
   return { prompt: [profile.presets, ...identity, scene].filter(Boolean).join(', '), negativePrompt: profile.negative, parameters }
 }
 
-export async function runImageJob(api: Pick<import('lumiverse-spindle-types').SpindleAPI, 'imageGen'>, input: any, signal: AbortSignal, progress: (event: { phase: string; message?: string; imageDataUrl?: string; step?: number; totalSteps?: number }) => void): Promise<any> {
+export async function runImageJob(api: Pick<import('lumiverse-spindle-types').SpindleAPI, 'imageGen'>, input: any, signal: AbortSignal, progress: (event: { phase: string; message?: string; imageDataUrl?: string; step?: number; totalSteps?: number }) => void, native?: { chatId: string; requestId: string; purpose: ImagePurpose }): Promise<any> {
+  if (signal.aborted) return null
+  if (native && typeof api.imageGen.generateNative === 'function') {
+    const host = api.imageGen as typeof api.imageGen & { cancelNative?: (jobId: string, userId?: string) => Promise<boolean> }
+    const cancel = () => { void host.cancelNative?.(native.requestId, input.userId).catch(() => {}) }
+    signal.addEventListener('abort', cancel, { once: true })
+    const loras = input.parameters?.loras
+    const parameters = { ...input.parameters }
+    if (Array.isArray(loras)) delete parameters.loras
+    progress({ phase: 'generating', message: 'Developing with Lumiverse image settings…' })
+    try {
+      const result = await host.generateNative({ chat_id: native.chatId, clientJobId: native.requestId, prompt: input.prompt, negativePrompt: input.negativePrompt, promptMode: 'custom', skipParse: true, forceGeneration: true, parameters, extraLoras: Array.isArray(loras) ? loras : [], characterLora: native.purpose === 'scene' || native.purpose === 'character' ? { source: 'chat' } : { source: 'none' }, includeDataUrl: false, userId: input.userId })
+      if (signal.aborted) return null
+      if (!result.generated) throw new Error(result.reason || 'Lumiverse did not generate an image. Check native image settings.')
+      return result
+    } finally { signal.removeEventListener('abort', cancel) }
+  }
   let canStream = false
   try {
     const connections = await api.imageGen.listConnections(input.userId)
     const connection = input.connection_id ? connections.find(item => item.id === input.connection_id) : connections.find(item => item.is_default) || connections[0]
     if (!input.connection_id && connection) input.connection_id = connection.id
+    if (connection?.provider === 'swarmui' && Array.isArray(input.parameters?.loras)) {
+      const layers = input.parameters.loras
+      input.parameters = { ...input.parameters, loras: layers.map((layer: any) => layer.lora_name).join(','), loraweights: layers.map((layer: any) => layer.weight_model).join(','), loratencweights: layers.map((layer: any) => layer.weight_clip ?? layer.weight_model).join(',') }
+    }
     const providers = await api.imageGen.getProviders(input.userId)
     canStream = Boolean(providers.find(item => item.id === connection?.provider)?.capabilities.websocketPreviewStreaming)
   } catch { /* Providers without discovery can still generate. */ }

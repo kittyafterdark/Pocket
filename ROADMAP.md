@@ -18,10 +18,10 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 - [x] Mobile fullscreen: convert visual viewport/keyboard offsets to host layout pixels under UI scale; observe scale changes.
 - [ ] World: rerun seed after setup; weather outlook and timeline review with proposed event updates.
 - [x] Camera: shutter doubles as stop; integrated acceptance.
-- [ ] Camera: native image config controls.
-- [ ] Swarm: carry actual published LoRA contract alongside positives/checkpoint/aspect.
-- [ ] Gallery: deletion with host ownership/scope and confirmation appropriate to destructive operations.
-- [ ] Avatar crop: accepted framing matches preview.
+- [x] Camera: native image pipeline by default, shared checkpoint picker and native settings navigation.
+- [x] Swarm: consume published swarm_loras directives, preserve ordered native layers and direct Swarm strengths.
+- [x] Gallery: delete Pocket-owned images only, with explicit irreversible-delete confirmation.
+- [x] Avatar crop: bake accepted cover framing into a separate square asset; preserve the original photo.
 
 ## Presentation and correctness
 

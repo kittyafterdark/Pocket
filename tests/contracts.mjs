@@ -1501,6 +1501,25 @@ const castBankEntry = storage.get('device/npc-bank.json').entries.find(entry => 
 await frontendHandler({ type: 'lumiphone:npc_bank_edit', requestId: 'cast-bank-edit', chatId: 'chat-a', characterId: 'char-a', bankId: castBankEntry.id, entry: { ...castBankEntry, name: 'Bank only rename' } }, 'user-a')
 assert.notEqual(storage.get('phones/chat-a__char-a.json').contacts.find(contact => contact.source.kind === 'npc' && contact.source.bankId === castBankEntry.id).name, 'Bank only rename', 'bank editing must not edit the local contact')
 
+let nativeRequest
+spindle.imageGen.generateNative = async input => { nativeRequest = input; return { generated: true, imageId: 'native-photo', imageUrl: '/api/v1/images/native-photo' } }
+await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'native-camera', chatId: 'chat-a', characterId: 'char-a', scene: 'A scene', enhance: false }, 'user-a')
+assert.equal(nativeRequest.chat_id, 'chat-a')
+assert.equal(nativeRequest.clientJobId, 'native-camera')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:camera_done' && message.requestId === 'native-camera'))
+delete spindle.imageGen.generateNative
+let deletedAsset
+spindle.images.delete = async (imageId, userId) => { deletedAsset = { imageId, userId }; hostImages.delete(imageId); return true }
+hostImages.set('owned-delete-fixture', { id: 'owned-delete-fixture', owner_extension_identifier: 'lumiphone', url: '/api/v1/images/owned-delete-fixture', mime_type: 'image/png' })
+hostImages.set('foreign-delete-fixture', { id: 'foreign-delete-fixture', owner_extension_identifier: 'other', url: '/api/v1/images/foreign-delete-fixture', mime_type: 'image/png' })
+await frontendHandler({ type: 'lumiphone:gallery_delete', requestId: 'delete-no-confirm', imageId: 'owned-delete-fixture', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.equal(deletedAsset, undefined)
+await frontendHandler({ type: 'lumiphone:gallery_delete', requestId: 'delete-foreign', imageId: 'foreign-delete-fixture', confirmed: true, chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.equal(deletedAsset, undefined)
+await frontendHandler({ type: 'lumiphone:gallery_delete', requestId: 'delete-owned', imageId: 'owned-delete-fixture', confirmed: true, chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.deepEqual(deletedAsset, { imageId: 'owned-delete-fixture', userId: 'user-a' })
+await frontendHandler({ type: 'lumiphone:upload_avatar', requestId: 'upload-framed-avatar', croppedDataUrl: 'data:image/png;base64,aGVsbG8=', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:avatar_uploaded' && message.requestId === 'upload-framed-avatar'))
 let portraitInput
 spindle.imageGen.generate = async input => { portraitInput = input; return { imageId: 'portrait-image', imageUrl: '/api/v1/image-gen/results/portrait-image' } }
 const portraitContact = storage.get('phones/chat-a__char-a.json').contacts[0]
@@ -1547,6 +1566,12 @@ await frontendHandler({ type: 'lumiphone:get_state', requestId: 'future-preferen
 assert.deepEqual(storage.get('device/preferences.json'), { version: 999, handsetScale: 42, futureToken: 'preserve-me' })
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
+dom.window.HTMLImageElement.prototype.decode = async function () {}
+Object.defineProperty(dom.window.HTMLImageElement.prototype, 'naturalWidth', { get: () => 800 })
+Object.defineProperty(dom.window.HTMLImageElement.prototype, 'naturalHeight', { get: () => 1200 })
+dom.window.HTMLCanvasElement.prototype.getContext = () => ({ drawImage: () => {} })
+dom.window.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,aGVsbG8='
+globalThis.Image = dom.window.Image
 Object.assign(globalThis, {
   window: dom.window,
   document: dom.window.document,
@@ -2016,6 +2041,7 @@ assert.ok(![...dockRoot.querySelectorAll('button')].some(node => node.textConten
 backendReceiver({ type: 'lumiphone:camera_done', requestId: portraitRequest.requestId, imageUrl: '/api/v1/images/portrait' })
 assert.ok(dockRoot.querySelector('.lp-shutter-row .lp-camera-accept'), 'acceptance belongs in the camera control strip')
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
+await new Promise(resolve => setTimeout(resolve, 0))
 const photoApply = frontendSends.filter(message => message.type === 'lumiphone:set_contact_photo').at(-1)
 assert.equal(photoApply.contactId, savedDraftId)
 assert.equal(photoApply.imageUrl, '/api/v1/images/portrait')
@@ -2385,11 +2411,15 @@ assert.equal(draftPortraitRequest.purpose, 'draft')
 assert.equal(draftPortraitRequest.contactId, undefined)
 backendReceiver({ type: 'lumiphone:camera_done', requestId: draftPortraitRequest.requestId, imageId: 'draft-photo', imageUrl: '/api/v1/images/draft-photo' })
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const avatarUpload = frontendSends.filter(message => message.type === 'lumiphone:upload_avatar').at(-1)
+assert.ok(avatarUpload.croppedDataUrl.startsWith('data:image/png'))
+backendReceiver({ type: 'lumiphone:avatar_uploaded', requestId: avatarUpload.requestId, imageId: 'framed-draft', imageUrl: '/api/v1/images/framed-draft' })
 assert.ok(dockRoot.querySelector('.lp-draft-portrait'))
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use Portrait Draft').click()
 const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:save_contact').at(-1).contact
-assert.deepEqual(withPhoto.avatarSource, { kind: 'gallery', imageId: 'draft-photo' })
-assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/draft-photo')
+assert.deepEqual(withPhoto.avatarSource, { kind: 'asset', assetId: 'framed-draft' })
+assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/framed-draft')
 
 backendReceiver({ ...savedDraftState, reason: 'chat_switched', state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false, dismissed: false, authorship: 'roleplay' } } })
 const setupAuthorship = shownModals.at(-1).root.querySelector('select[aria-label="Character authorship"]')

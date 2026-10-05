@@ -2775,6 +2775,12 @@ function assertPocketImageResolved(result) {
 }
 
 // src/backend/image-jobs.ts
+function studioLoras(value) {
+  return [...value.matchAll(/<lora:([^<>]+):(-?\d+(?:\.\d+)?)>/g)].flatMap((match) => {
+    const weight = Number(match[2]);
+    return Number.isFinite(weight) ? [{ lora_name: match[1].trim(), weight_model: weight, weight_clip: weight }] : [];
+  });
+}
 function aspectDimensions(value) {
   const match = String(value || "").trim().match(/^(\d+(?:\.\d+)?)\s*[:/x\u00D7]\s*(\d+(?:\.\d+)?)$/i);
   if (!match)
@@ -2790,17 +2796,46 @@ function effectiveImageRequest(scene, purpose, subject, aspect, profile, prefere
   const parameters = { ...dimensions || {}, ...preferences.manualVisualProfile.parameters, ...overrides };
   if (aspect && dimensions)
     Object.assign(parameters, dimensions);
-  if (preferences.manualVisualProfile.loras.length && parameters.loras === undefined)
-    parameters.loras = preferences.manualVisualProfile.loras;
+  const layers = [...studioLoras(profile.loras || ""), ...preferences.manualVisualProfile.loras.map((layer) => ({ lora_name: layer.name, weight_model: layer.weight, weight_clip: layer.weight }))];
+  if (layers.length && parameters.loras === undefined)
+    parameters.loras = layers;
   return { prompt: [profile.presets, ...identity, scene].filter(Boolean).join(", "), negativePrompt: profile.negative, parameters };
 }
-async function runImageJob(api, input, signal, progress) {
+async function runImageJob(api, input, signal, progress, native) {
+  if (signal.aborted)
+    return null;
+  if (native && typeof api.imageGen.generateNative === "function") {
+    const host = api.imageGen;
+    const cancel = () => {
+      host.cancelNative?.(native.requestId, input.userId).catch(() => {});
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    const loras = input.parameters?.loras;
+    const parameters = { ...input.parameters };
+    if (Array.isArray(loras))
+      delete parameters.loras;
+    progress({ phase: "generating", message: "Developing with Lumiverse image settings\u2026" });
+    try {
+      const result = await host.generateNative({ chat_id: native.chatId, clientJobId: native.requestId, prompt: input.prompt, negativePrompt: input.negativePrompt, promptMode: "custom", skipParse: true, forceGeneration: true, parameters, extraLoras: Array.isArray(loras) ? loras : [], characterLora: native.purpose === "scene" || native.purpose === "character" ? { source: "chat" } : { source: "none" }, includeDataUrl: false, userId: input.userId });
+      if (signal.aborted)
+        return null;
+      if (!result.generated)
+        throw new Error(result.reason || "Lumiverse did not generate an image. Check native image settings.");
+      return result;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+    }
+  }
   let canStream = false;
   try {
     const connections = await api.imageGen.listConnections(input.userId);
     const connection = input.connection_id ? connections.find((item) => item.id === input.connection_id) : connections.find((item) => item.is_default) || connections[0];
     if (!input.connection_id && connection)
       input.connection_id = connection.id;
+    if (connection?.provider === "swarmui" && Array.isArray(input.parameters?.loras)) {
+      const layers = input.parameters.loras;
+      input.parameters = { ...input.parameters, loras: layers.map((layer) => layer.lora_name).join(","), loraweights: layers.map((layer) => layer.weight_model).join(","), loratencweights: layers.map((layer) => layer.weight_clip ?? layer.weight_model).join(",") };
+    }
     const providers = await api.imageGen.getProviders(input.userId);
     canStream = Boolean(providers.find((item) => item.id === connection?.provider)?.capabilities.websocketPreviewStreaming);
   } catch {}
@@ -5050,7 +5085,8 @@ async function resolveSwarmProfile(chatId, characterId, settings, userId) {
       swarm_negative: { detected: false, length: 0, preview: "" },
       swarm_preset: { detected: false, length: 0, preview: "" },
       swarm_checkpoint: { detected: false, length: 0, preview: "" },
-      swarm_aspect: { detected: false, length: 0, preview: "" }
+      swarm_aspect: { detected: false, length: 0, preview: "" },
+      swarm_loras: { detected: false, length: 0, preview: "" }
     }
   };
   if (!settings?.useSwarmProfile)
@@ -5059,17 +5095,17 @@ async function resolveSwarmProfile(chatId, characterId, settings, userId) {
     const marker = `
 __LUMIPHONE_PROFILE_FIELD__
 `;
-    const template = ["{{char_base}}", "{{persona_base}}", "{{swarm_negative}}", "{{swarm_preset}}", "{{swarm_checkpoint}}", "{{swarm_aspect}}"].join(marker);
+    const template = ["{{char_base}}", "{{persona_base}}", "{{swarm_negative}}", "{{swarm_preset}}", "{{swarm_checkpoint}}", "{{swarm_aspect}}", "{{swarm_loras}}"].join(marker);
     const result = await spindle.macros.resolve(template, { chatId, characterId, userId, commit: false });
     const fields = result.text.split(marker).map((part) => part.trim().replace(/^\{\{[^}]+\}\}$/, ""));
-    const [characterPositive = "", personaPositive = "", negative = "", presets = "", checkpoint = "", aspect = ""] = fields;
-    const macroNames = ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect"];
+    const [characterPositive = "", personaPositive = "", negative = "", presets = "", checkpoint = "", aspect = "", loras = ""] = fields;
+    const macroNames = ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect", "swarm_loras"];
     const diagnostics = Object.fromEntries(macroNames.map((name, index) => [name, {
       detected: Boolean(fields[index]),
       length: fields[index]?.length || 0,
       preview: (fields[index] || "").slice(0, 120)
     }]));
-    const available = Boolean(characterPositive || personaPositive || negative || presets || checkpoint || aspect);
+    const available = Boolean(characterPositive || personaPositive || negative || presets || checkpoint || aspect || loras);
     const resolutionWarnings = result.diagnostics.map((entry) => text2(entry.message, 240)).filter(Boolean).slice(0, 3);
     if (!available)
       return resolutionWarnings.length ? { ...fallback, status: "error", error: resolutionWarnings.join(" \xB7 "), fields: diagnostics } : { ...fallback, fields: diagnostics };
@@ -5083,6 +5119,7 @@ __LUMIPHONE_PROFILE_FIELD__
       presets,
       checkpoint: manual.model || checkpoint,
       aspect,
+      loras,
       source: "swarm_studio",
       fields: diagnostics
     };
@@ -5114,7 +5151,8 @@ async function listGallery(input, userId) {
       mimeType: item.mime_type,
       width: item.width,
       height: item.height,
-      createdAt: item.created_at
+      createdAt: item.created_at,
+      canDelete: item.owner_extension_identifier === "lumiphone"
     }))
   };
 }
@@ -5182,7 +5220,7 @@ async function cameraGenerate(input, userId) {
     generationInput.model = model;
   let result = null;
   try {
-    result = await runImageJob(spindle, generationInput, controller.signal, (event) => send({ type: "lumiphone:camera_progress", requestId, ...event }, userId));
+    result = await runImageJob(spindle, generationInput, controller.signal, (event) => send({ type: "lumiphone:camera_progress", requestId, ...event }, userId), !text2(input.connectionId, 200) && !text2(input.model, 500) ? { chatId: context.chatId, requestId, purpose } : undefined);
   } catch (error) {
     if (!job.cancelled)
       throw error;
@@ -8745,6 +8783,24 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
       case "lumiphone:gallery_list":
         send({ type: "lumiphone:gallery", requestId, scope: payload.scope, ...await listGallery(payload, userId) }, userId);
         break;
+      case "lumiphone:open_native_image_settings":
+        await spindle.ui.openDrawerTab("imagegen", { userId });
+        break;
+      case "lumiphone:gallery_delete": {
+        if (!spindle.permissions.has("images"))
+          throw new Error("Enable Images to manage Pocket photos.");
+        if (payload.confirmed !== true)
+          throw new Error("Confirm permanent deletion first.");
+        const imageId = text2(payload.imageId, 180);
+        const asset = imageId ? await spindle.images.get(imageId, { specificity: "full", onlyOwned: true, userId }) : null;
+        if (!asset || asset.owner_extension_identifier !== "lumiphone")
+          throw new Error("Pocket can only delete its own photos. Manage other assets in Lumiverse Gallery.");
+        if (!await spindle.images.delete(imageId, userId))
+          throw new Error("The image could not be deleted.");
+        send({ type: "lumiphone:gallery_action_done", requestId, action: "delete", imageId, message: "Photo deleted." }, userId);
+        send({ type: "lumiphone:gallery", scope: payload.scope, ...await listGallery(payload, userId) }, userId);
+        break;
+      }
       case "lumiphone:gallery_add_to_chat": {
         if (!spindle.permissions.has("chat_mutation"))
           throw new Error("Enable Chat Mutation to add a Gallery image to the roleplay chat.");
@@ -8812,13 +8868,33 @@ ${marker}`;
         send({ type: "lumiphone:wallpaper_uploaded", requestId, imageId: image.id }, userId);
         break;
       }
+      case "lumiphone:upload_avatar": {
+        if (!spindle.permissions.has("images"))
+          throw new Error("Enable Images to save an avatar.");
+        const dataUrl = text2(payload.croppedDataUrl, 4000000);
+        if (!/^data:image\/png;base64,[a-z0-9+/=]+$/i.test(dataUrl))
+          throw new Error("Choose a valid framed avatar.");
+        const image = await spindle.images.uploadFromDataUrl(dataUrl, { originalFilename: "pocket-avatar.png", owner_character_id: context.characterId === "_none" ? undefined : context.characterId, owner_chat_id: context.chatId === "_lobby" ? undefined : context.chatId, userId });
+        send({ type: "lumiphone:avatar_uploaded", requestId, imageId: image.id, imageUrl: image.url }, userId);
+        break;
+      }
       case "lumiphone:set_contact_photo": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           const contact = state.contacts.find((entry) => entry.id === text2(payload.contactId, 180));
           if (!contact)
             throw new Error("That contact no longer exists.");
-          const source = payload.useSource === true ? null : normalizeImageSource(payload.source) || normalizeImageSource(payload.imageId ? { kind: "gallery", imageId: payload.imageId } : { kind: "url", url: payload.imageUrl });
+          let framedSource = null;
+          if (payload.croppedDataUrl) {
+            if (!spindle.permissions.has("images"))
+              throw new Error("Enable Images to save an avatar.");
+            const dataUrl = text2(payload.croppedDataUrl, 4000000);
+            if (!/^data:image\/png;base64,[a-z0-9+/=]+$/i.test(dataUrl))
+              throw new Error("Choose a valid framed avatar.");
+            const image = await spindle.images.uploadFromDataUrl(dataUrl, { originalFilename: "pocket-avatar.png", owner_character_id: context.characterId === "_none" ? undefined : context.characterId, owner_chat_id: context.chatId === "_lobby" ? undefined : context.chatId, userId });
+            framedSource = { kind: "asset", assetId: image.id };
+          }
+          const source = payload.useSource === true ? null : framedSource || normalizeImageSource(payload.source) || normalizeImageSource(payload.imageId ? { kind: "gallery", imageId: payload.imageId } : { kind: "url", url: payload.imageUrl });
           let imageUrl = "";
           if (source) {
             const image = await resolvePocketImageSource(spindle, source, userId);
