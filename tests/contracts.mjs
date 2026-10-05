@@ -10,6 +10,12 @@ const controllerSource = await readFile(new URL('src/frontend/controller.ts', ro
 const messagesSource = await readFile(new URL('src/frontend/apps/messages.ts', root), 'utf8')
 const surfaceSource = await readFile(new URL('src/frontend/surface.ts', root), 'utf8')
 const stylesSource = await readFile(new URL('src/styles.ts', root), 'utf8')
+const inlineStyles = await readFile(new URL('src/frontend/components/pocket-inline-redesign.css', root), 'utf8')
+assert.doesNotMatch(inlineStyles, /:root\s*\{|!important/, 'inline styles must keep defaults local and avoid specificity escalation with important')
+for (const selectorLine of inlineStyles.split(/\r?\n/).map(line => line.trim()).filter(line => line.startsWith('.'))) {
+  assert.match(selectorLine, /^\.pocket-inline-frame\[data-pocket-ui="true"\]|^\.pocket-(?:artifact-stack|inline-anchor|receipt-host)/, `inline selector escaped its ownership boundary: ${selectorLine}`)
+}
+
 
 assert.equal(manifest.identifier, 'lumiphone')
 assert.equal(manifest.name, 'Pocket')
@@ -2151,6 +2157,7 @@ assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:n
 const inlineAppearanceState = { ...savedDraftState, state: { ...savedDraftState.state, activities: [inlineMessageActivity, observedInlineActivity, sentInlineActivity, batchInlineActivity] } }
 backendReceiver({ ...inlineAppearanceState, preferences: { ...firstState.preferences, inlineAppearance: 'phone' } })
 assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.appearance, 'phone')
+assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.pocketUi, 'true', 'full phone must declare the Pocket styling boundary')
 assert.equal(batchArtifactHost.querySelector('.pocket-phone-device').dataset.screen, 'group')
 assert.equal(batchArtifactHost.querySelector('.pocket-inline-artifact'), null, 'Full Phone must not wrap the scene-card component')
 assert.equal(batchArtifactHost.querySelectorAll('.pocket-phone-message').length, legacyBatchRows.length, 'group phone shows its complete scrollable conversation')
@@ -2178,6 +2185,8 @@ assert.ok(callUiAnchor.querySelector('.pocket-phone-call-controls svg'))
 assert.match(callUiAnchor.textContent, /Call ended.*Speakerphone.*4:00/)
 backendReceiver({ ...inlineAppearanceState, state: { ...inlineAppearanceState.state, activities: [...inlineAppearanceState.state.activities, callUiActivity] }, preferences: { ...firstState.preferences, inlineAppearance: 'cards' } })
 assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.appearance, 'cards')
+assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.pocketUi, 'true', 'scene cards must declare the Pocket styling boundary')
+assert.equal(batchArtifactHost.querySelector('.lp-message-surface'), null, 'inline bubbles must not carry shared handset surface hooks')
 assert.equal(batchArtifactHost.querySelector('.pocket-mock-composer'), null)
 
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }

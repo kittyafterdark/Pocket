@@ -102,7 +102,7 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
   if (!presentation || !['received', 'observed', 'sent', 'batch'].includes(presentation.kind)) return null
   const type = presentation.call ? 'call' : presentation.kind === 'batch' ? 'group' : presentation.kind === 'sent' ? 'chat' : 'lock'
   const phone = node('div', 'pocket-inline-frame pocket-phone-device')
-  phone.dataset.appearance = 'phone'; phone.dataset.screen = type
+  phone.dataset.pocketUi = 'true'; phone.dataset.appearance = 'phone'; phone.dataset.screen = type
   phone.style.setProperty('--pocket-inline-accent', options.accent || '#8b7dff')
   if (options.textColor) phone.style.setProperty('--pocket-inline-text', options.textColor)
   if (options.surfaceColor) phone.style.setProperty('--pocket-inline-surface', options.surfaceColor)
@@ -148,7 +148,7 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
 
     const controls = node('div', 'pocket-phone-call-controls')
     const control = (name: PocketIconName, label: string, danger = false) => {
-      const item = node('span', `pocket-phone-call-control${danger ? ' is-danger' : ''}`)
+      const item = node('span', `pocket-phone-call-control${danger ? ' pocket-phone-call-danger' : ''}`)
       const glyph = node('span', 'pocket-phone-call-control-icon'); glyph.append(name === 'phone' ? callSymbol() : icon(name))
       item.append(glyph, node('span', 'pocket-phone-control-caption', label)); return item
     }

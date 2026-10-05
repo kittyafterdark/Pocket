@@ -19,7 +19,7 @@ export interface ActivityRenderOptions {
 
 function frameArtifact(artifact: HTMLElement, activity: PocketActivity, options: ActivityRenderOptions): HTMLElement {
   const frame = document.createElement('div'); frame.className = 'pocket-inline-frame'
-  frame.dataset.appearance = options.appearance || 'cards'; frame.dataset.kind = activity.presentation?.kind || activity.kind
+  frame.dataset.pocketUi = 'true'; frame.dataset.appearance = options.appearance || 'cards'; frame.dataset.kind = activity.presentation?.kind || activity.kind
   if (options.accent) frame.style.setProperty('--pocket-inline-accent', options.accent)
   if (options.background) frame.style.setProperty('--pocket-inline-bg', options.background)
   if (options.backgroundSize) frame.style.backgroundSize = options.backgroundSize
@@ -136,7 +136,7 @@ function buildBatchArtifact(
     sender.textContent = item.senderName
 
     const bubble = document.createElement('span')
-    bubble.className = 'pocket-inline-transcript-bubble lp-message-surface'
+    bubble.className = 'pocket-inline-transcript-bubble'
     bubble.textContent = item.text
 
     content.append(sender, bubble)
@@ -194,7 +194,7 @@ function buildMessageArtifact(
     header.append(messageChrome('sent'), recipient)
 
     const bubble = document.createElement('span')
-    bubble.className = 'pocket-inline-chat-bubble lp-message-surface'
+    bubble.className = 'pocket-inline-chat-bubble'
     bubble.append(copy)
 
     primary.append(header, bubble)
@@ -227,7 +227,7 @@ function buildActivityStack(
   options: ActivityRenderOptions = {},
 ): HTMLSpanElement {
   const stack = document.createElement('span')
-  stack.className = 'pocket-artifact-stack'
+  stack.className = 'pocket-artifact-stack'; stack.dataset.pocketUi = 'true'
 
   if (options.includeArtifact !== false) {
     const artifact = options.appearance === 'phone' ? buildPhoneScreen(activity, openRoute, options) : buildBatchArtifact(activity, openRoute, options) || buildMessageArtifact(activity, openRoute, options)
@@ -287,6 +287,7 @@ export function renderActivityHost(
   openRoute: (route: PocketRoute) => void,
   options: ActivityRenderOptions = {},
 ): Element {
+  host.setAttribute('data-pocket-host', 'true')
   host.replaceChildren(buildActivityStack(activity, openRoute, options))
   return host
 }
