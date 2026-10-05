@@ -2,6 +2,30 @@ import { describe, expect, test } from 'bun:test'
 import { runPocketGeneration } from '../src/backend/generation.js'
 import { defaultPreferences } from '../src/domain/preferences.js'
 import { applyVisualViewportSurface } from '../src/frontend/surface.js'
+import { ReplyJobs } from '../src/backend/reply-jobs.js'
+
+test('reply cancellation reaches nested jobs, isolates other conversations, and rejects late results', async () => {
+  const jobs = new ReplyJobs()
+  let finish!: () => void
+  let ready!: () => void
+  const started = new Promise<void>(resolve => { ready = resolve })
+  const late = jobs.run('chat-a/conversation-a', signal => jobs.run('chat-a/conversation-a', async child => {
+    ready()
+    await new Promise<void>(resolve => { finish = resolve })
+    child.throwIfAborted()
+    return 'must not commit'
+  }, signal))
+  await started
+  const other = jobs.run('chat-b/conversation-a', async signal => {
+    jobs.cancel('chat-a/conversation-a')
+    expect(signal.aborted).toBe(false)
+    return 'unaffected'
+  })
+  finish()
+  await expect(late).rejects.toHaveProperty('name', 'AbortError')
+  expect(await other).toBe('unaffected')
+  expect(await jobs.run('chat-a/conversation-a', async signal => signal.aborted)).toBe(false)
+})
 
 describe('generation lifecycle', () => {
   test('reports thinking and writing without exposing tokens; uses the current sidecar model', async () => {

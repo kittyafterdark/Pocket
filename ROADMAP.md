@@ -10,13 +10,15 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 - [x] Setup controls/hierarchy first pass: theme-aware sections, short authorship labels, native select/model controls, resume action.
 - [x] Enrichment: thinking/writing/completion/error feedback; unlock retry without losing edits.
 - [ ] Generation: test uses current connection/model selection; investigate first-call failure.
-- [ ] Messages: cancellable generation with stop control; manual presence assignment.
+- [x] Messages: cancellable generation with stop control.
+- [x] Messages: quick manual Here/Away presence assignment.
 - [ ] Profiles: reusable Pocket Persona and character phone profiles.
 - [ ] Sidebar: restore hidden launcher; bounded Recent, search, single-pass interaction index.
 - [x] Sidebar: explicit Show launcher recovery action.
 - [x] Mobile fullscreen: convert visual viewport/keyboard offsets to host layout pixels under UI scale; observe scale changes.
 - [ ] World: rerun seed after setup; weather outlook and timeline review with proposed event updates.
-- [ ] Camera: shutter doubles as stop; integrated acceptance; native image config controls.
+- [x] Camera: shutter doubles as stop; integrated acceptance.
+- [ ] Camera: native image config controls.
 - [ ] Swarm: carry actual published LoRA contract alongside positives/checkpoint/aspect.
 - [ ] Gallery: deletion with host ownership/scope and confirmation appropriate to destructive operations.
 - [ ] Avatar crop: accepted framing matches preview.

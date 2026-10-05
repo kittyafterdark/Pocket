@@ -69,6 +69,7 @@ export async function runPocketGeneration(
   host.send({ type: 'lumiphone:generation_status', run }, userId)
   const started = Date.now()
   try {
+    if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const request = { ...input } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
     if (preferences.generationMode === 'sidecar') {
       request.connection_id = info.effective.id
@@ -89,6 +90,7 @@ export async function runPocketGeneration(
       }
       if (!result) throw new Error('The provider stream ended without a completed response. Retry enrichment.')
     } else result = await host.spindle.generate.quiet(request)
+    if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const completed: PocketGenerationRun = { ...run, status: 'completed', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }
     await writeRun(host, completed, userId)
     host.send({ type: 'lumiphone:generation_status', run: completed }, userId)

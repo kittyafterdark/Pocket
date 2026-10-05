@@ -1933,6 +1933,11 @@ class PocketController {
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       send: (type, payload) => { this.send(type, payload) },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
+      cancelReply: conversationId => {
+        this.send('lumiphone:cancel_message_generation', { conversationId })
+        for (const [requestId, request] of this.messageRequests) if (request.conversationId === conversationId) this.messageRequests.delete(requestId)
+        this.render()
+      },
       selectGroupSpeaker: (conversationId, speakerContactId) => {
         if (speakerContactId === 'auto') this.groupSpeakerSelections.delete(conversationId)
         else this.groupSpeakerSelections.set(conversationId, speakerContactId)
@@ -2493,21 +2498,14 @@ class PocketController {
     const connection = makeChoice('Image connection', [['', 'Profile default'], ...this.imageConnections.map(entry => [entry.id, entry.name] as [string, string])], this.cameraOptions.connectionId, value => { this.cameraOptions.connectionId = value })
     const model = el('input', 'lp-input'); model.placeholder = 'Profile checkpoint'; model.value = this.cameraOptions.model; model.addEventListener('input', () => { this.cameraOptions.model = model.value })
     const shutterRow = el('div', 'lp-shutter-row')
-    const cancel = button(this.cameraBusy ? 'Cancel' : '', 'lp-button')
-    cancel.style.visibility = this.cameraBusy ? 'visible' : 'hidden'
-    cancel.addEventListener('click', () => {
-      this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
-      this.cameraBusy = false
-      this.cameraProgress = 'Cancelled'
-      this.render()
-    })
+    const shutterAction = el('div', 'lp-camera-shutter-action')
     const shutter = el('button', 'lp-shutter')
     shutter.type = 'submit'
-    shutter.disabled = this.cameraBusy || !this.caps?.imageGen || Boolean(this.cameraContactId && !subject)
+    shutter.disabled = !this.cameraBusy && (!this.caps?.imageGen || Boolean(this.cameraContactId && !subject))
     shutter.dataset.busy = String(this.cameraBusy)
     const album = button('Gallery', 'lp-nav-action')
     album.addEventListener('click', () => this.openApp('gallery'))
-    shutterRow.append(cancel, shutter, album)
+    shutterRow.append(shutterAction, shutter, album)
     const progress = el('div', 'lp-camera-progress', this.cameraProgress || (!this.caps?.imageGen ? 'Grant Image Generation permission in Settings' : ''))
     progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite')
     const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
@@ -2516,7 +2514,7 @@ class PocketController {
     optionsDrawer.addEventListener('click', () => showPocketSheet(optionsDrawer, 'Camera options', optionFields))
     footer.append(el('p', 'lp-camera-caption', this.cameraContactId ? 'PORTRAIT' : 'PHOTO'), shutterRow, progress, optionsDrawer)
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
-      const use = button('Use photo', 'lp-button')
+      const use = button('Use photo', 'lp-button lp-camera-accept')
       use.disabled = !subject || (this.cameraContactId === '__draft__' && this.npcDraft !== this.cameraNpcDraft)
       use.addEventListener('click', () => {
         if (this.cameraContactId === '__draft__') {
@@ -2538,14 +2536,23 @@ class PocketController {
       const frame = button('Avatar framing', 'lp-camera-options-chip')
       const frameFields = el('div', 'lp-camera-sheet-fields'); frameFields.append(crop, framing)
       frame.addEventListener('click', () => showPocketSheet(frame, 'Avatar framing', frameFields))
-      footer.append(frame, use)
+      footer.append(frame)
+      shutterAction.appendChild(use)
     }
     controls.append(mode, viewfinder, footer)
-    shutter.setAttribute('aria-label', 'Take photo')
+    shutter.setAttribute('aria-label', this.cameraBusy ? 'Stop generating photo' : 'Take photo')
     controls.addEventListener('submit', (event) => {
       event.preventDefault()
       const scene = inputValue(prompt)
-      if (this.cameraBusy) return
+      if (this.cameraBusy) {
+        this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
+        this.cameraRequestId = ''
+        this.cameraBusy = false
+        this.cameraReady = false
+        this.cameraProgress = 'Cancelled'
+        this.render()
+        return
+      }
       if (!scene) { prompt.focus(); return }
       this.cameraRequestId = requestId('camera')
       this.cameraBusy = true

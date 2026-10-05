@@ -565,6 +565,7 @@ export const PHONE_STYLES = `
   .lp-channel-diagnostic > span { display:block; margin-top:4px; overflow-wrap:anywhere; text-align:center; }
   .lp-code-block { max-height:220px; margin:8px 0 0; padding:10px; overflow:auto; border-radius:10px; background:rgba(0,0,0,.22); color:var(--lp-text); font:var(--pocket-font-xs)/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; text-align:left; }
   .lp-manual-reply { color:var(--lp-muted); background:transparent; }
+  .lp-reply-stop { color:var(--lp-danger,#e85c69); background:color-mix(in srgb,var(--lp-danger,#e85c69) 12%,var(--lp-surface)); }
   .lp-bubble-action { appearance:none; margin:5px 0 0 7px; padding:0; border:0; background:transparent; color:inherit; opacity:.58; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; }
   .lp-bubble-action:hover { opacity:1; text-decoration:underline; }
   .lp-scene-note { margin:0; padding:7px 9px; border-radius:9px; background:color-mix(in srgb,var(--lp-accent) 10%,transparent); color:var(--lp-muted); font-size:var(--pocket-font-sm); }
@@ -983,6 +984,9 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-npc-camera .lp-shutter { background:#17171c; }
   .lp-npc-camera .lp-shutter::after { background:#fff; }
   .lp-npc-camera .lp-shutter:focus-visible { outline:3px solid var(--lp-accent); outline-offset:5px; }
+  .lp-npc-camera .lp-shutter[data-busy="true"]::after { width:65%; height:65%; margin:17.5%; border-radius:6px; background:var(--lp-danger,#e85c69); animation:none; }
+  .lp-camera-shutter-action { justify-self:start; }
+  .lp-camera-accept { min-height:36px; font-size:12px; padding:8px 10px; border-radius:12px; }
   .lp-wallpaper-library { display:grid; gap:14px; }
   .lp-wallpaper-presets-button { grid-column:1/-1; }
   .lp-wallpaper-library-preview { min-height:190px; border-radius:18px; background-size:cover; background-position:center; display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:24px 16px 16px; color:#fff; box-shadow:inset 0 0 0 1px #ffffff18; }

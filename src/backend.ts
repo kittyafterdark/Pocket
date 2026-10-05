@@ -48,6 +48,7 @@ import { conversationDeviceActorIds, conversationUnreadForDevice, messageDirecti
 import { ambientEligibleContacts, contactCooldownReady, shouldTakeAmbientOpportunity } from './domain/messaging.js'
 import { actorPhoneMemoryContext, groupActorPhoneMemoryContext, normalizeActorMemories, removeActorMemoryByMessageId, upsertActorMemory } from './domain/actor-memory.js'
 import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/scheduler.js'
+import { ReplyJobs } from './backend/reply-jobs.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
@@ -79,6 +80,8 @@ const stateLocks = new Map<string, Promise<unknown>>()
 const jevFlights = new Set<string>()
 interface CameraJob { controller: AbortController; cancelled: boolean; chatId: string; characterId: string; userId?: string }
 const cameraJobs = new Map<string, CameraJob>()
+const replyJobs = new ReplyJobs()
+const replyJobScope = (chatId: string, characterId: string, conversationId: string, userId?: string) => JSON.stringify([userId || '', chatId, characterId, conversationId])
 const notificationThrottle = new Map<string, number>()
 const ambientFlights = new Set<string>()
 const replyDecisionFlights = new Set<string>()
@@ -3075,6 +3078,15 @@ ${recentNarrative}`,
 }
 
 async function generateMessage(input: AnyRecord, userId?: string): Promise<void> {
+  const context = await resolveContext(input, userId)
+  try {
+    await replyJobs.run(replyJobScope(context.chatId, context.characterId, text(input.conversationId, 180), userId), signal => generateMessageJob({ ...input, signal }, userId), input.signal instanceof AbortSignal ? input.signal : undefined)
+  } finally {
+    send({ type: 'lumiphone:message_progress', requestId: input.requestId, chatId: context.chatId, characterId: context.characterId, conversationId: input.conversationId, phase: 'done' }, userId)
+  }
+}
+
+async function generateMessageJob(input: AnyRecord & { signal: AbortSignal }, userId?: string): Promise<void> {
   if (!spindle.permissions.has('generation')) throw new Error('Enable the Generation permission to create an in-phone reply.')
   const context = await resolveContext(input, userId)
   const requestId = text(input.requestId, 180) || id('reply')
@@ -3218,7 +3230,9 @@ Use arriving while traveling toward the physical scene, local only when the mess
           },
         ]
 
+    input.signal?.throwIfAborted()
     const generationRequest: AnyRecord = {
+      signal: input.signal,
       type: 'quiet',
       messages: generationMessages,
       parameters: { temperature: 0.85, max_tokens: 720 },
@@ -3234,6 +3248,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
       generationRequest,
       userId,
     )
+    input.signal?.throwIfAborted()
     let generated: AnyRecord = {}
     try { generated = parseGeneratedObject(response.content) }
     catch { generated = { message: response.content, after: { state: 'remote' } } }
@@ -3341,6 +3356,11 @@ function groupRevealDelayMs(preferences: DevicePreferences, body: string, positi
 }
 
 async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<void> {
+  const context = await resolveContext(input, userId)
+  await replyJobs.run(replyJobScope(context.chatId, context.characterId, text(input.conversationId, 180), userId), signal => generateGroupBatchJob({ ...input, signal }, userId), input.signal instanceof AbortSignal ? input.signal : undefined)
+}
+
+async function generateGroupBatchJob(input: AnyRecord & { signal: AbortSignal }, userId?: string): Promise<void> {
   if (!spindle.permissions.has('generation')) throw new Error('Enable the Generation permission to create a group reply.')
   const context = await resolveContext(input, userId)
   const requestId = text(input.requestId, 180) || id('group_reply')
@@ -3404,7 +3424,9 @@ async function generateGroupBatch(input: AnyRecord, userId?: string): Promise<vo
       `fragmentation=${contact.messagingStyle.fragmentation}/100`,
       `identity=${pocketContactPhoneBrief(contact, profile).replace(/\n/g, ' · ').slice(0, 900)}`,
     ].join(' | ')).join('\n').slice(0, 5_000)
+    input.signal?.throwIfAborted()
     const parsed = await runStructuredGeneration('group-reply', requestId, {
+      signal: input.signal,
       type: 'quiet',
       messages: [
         { role: 'system', content: `Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text","suggestion":null}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble.
@@ -3414,6 +3436,7 @@ No narration, markdown, delay values, or hidden reasoning.` },
       ],
       parameters: { temperature: .82, max_tokens: 1_150 }, userId,
     }, userId)
+    input.signal?.throwIfAborted()
     const generatedRows = (Array.isArray(parsed.messages) ? parsed.messages : []).slice(0, 4).flatMap((row) => {
       if (!isRecord(row)) return []
       const speakerId = text(row.speakerId, 180)
@@ -3426,6 +3449,7 @@ No narration, markdown, delay values, or hidden reasoning.` },
     const batch = await withStateLock(stateKey(context.chatId, context.characterId), async () => {
       const latest = await loadState(context.chatId, context.characterId, userId)
       const latestConversation = latest.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
+      input.signal?.throwIfAborted()
       if (!latestConversation) return null
       if (sourceBurstId && latestConversation.outgoingBurst?.id !== sourceBurstId) return null
       const currentActorIds = new Set(conversationActorIds(latestConversation))
@@ -3446,14 +3470,18 @@ No narration, markdown, delay values, or hidden reasoning.` },
     })
     if (!batch || !batch.messages.length) return
     for (let position = 0; position < batch.messages.length; position += 1) {
+      input.signal.throwIfAborted()
       const slot = batch.messages[position]
       const speaker = eligible.find((entry) => entry.actorId === slot.speakerId)
       if (!speaker) continue
       send({ type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId, conversationId, actorId: speaker.actorId, contactId: speaker.contact?.id, speakerContactId: speaker.actorId, phase: 'pending' }, userId)
       const delay = groupRevealDelayMs(preferences, slot.text, position, slot.id)
       if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay))
+      input.signal?.throwIfAborted()
       const delivered = await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+        input.signal?.throwIfAborted()
         const latest = await loadState(context.chatId, context.characterId, userId)
+        input.signal.throwIfAborted()
         const latestBatch = latest.groupBatches.find((entry) => entry.id === batch.id)
         const latestSlot = latestBatch?.messages.find((entry) => entry.id === slot.id)
         const latestConversation = latest.conversations.find((entry) => entry.id === conversationId && entry.kind === 'group')
@@ -3521,8 +3549,9 @@ No narration, markdown, delay values, or hidden reasoning.` },
       const state = await loadState(context.chatId, context.characterId, userId)
       const batch = [...state.groupBatches].reverse().find((entry) => entry.requestId === requestId && (entry.status === 'queued' || entry.status === 'delivering'))
       if (batch) {
-        batch.status = 'failed'; batch.error = message; batch.updatedAt = nowIso()
-        await saveState(state, userId); await sendState(state, userId, 'group_batch_failed')
+        batch.status = input.signal.aborted ? 'cancelled' : 'failed'; batch.error = input.signal.aborted ? undefined : message; batch.updatedAt = nowIso()
+        if (input.signal.aborted) for (const slot of batch.messages) if (slot.state === 'queued') slot.state = 'cancelled'
+        await saveState(state, userId); await sendState(state, userId, input.signal.aborted ? 'group_batch_cancelled' : 'group_batch_failed')
       }
     })
     throw error
@@ -3780,6 +3809,14 @@ async function scheduleReplyBurst(chatId: string, characterId: string, conversat
 }
 
 async function maybeReplyAfterSend(chatId: string, characterId: string, conversationId: string, userId?: string, expectedBurstId = ''): Promise<void> {
+  try {
+    await replyJobs.run(replyJobScope(chatId, characterId, conversationId, userId), signal => maybeReplyAfterSendJob(chatId, characterId, conversationId, userId, expectedBurstId, signal))
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'AbortError')) throw error
+  }
+}
+
+async function maybeReplyAfterSendJob(chatId: string, characterId: string, conversationId: string, userId: string | undefined, expectedBurstId: string, signal: AbortSignal): Promise<void> {
   const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`
   if (replyDecisionFlights.has(flightKey)) return
   replyDecisionFlights.add(flightKey)
@@ -3806,7 +3843,7 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
       // The batch owns its own per-conversation flight. Release the reply-decision
       // guard before reveal delays so a new user burst can cancel and supersede it.
       replyDecisionFlights.delete(flightKey)
-      await generateGroupBatch({ requestId: id('group_auto'), chatId, characterId, conversationId, sourceBurstId: burst.id, autonomous: true }, userId)
+      await generateGroupBatch({ requestId: id('group_auto'), chatId, characterId, conversationId, sourceBurstId: burst.id, autonomous: true, signal }, userId)
       return
     }
     const actor = resolvePocketActor(state, conversationActorIds(conversation)[0])
@@ -3827,6 +3864,7 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
     const rawDecision = deterministicLocal ? { action: 'handoff', reason: contact.presence.inScene ? conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene' : conversation.availability.state === 'local' ? conversation.availability.reason : 'continued_in_person' } : !contact.messagingPolicy.remoteEligible && conversation.availability.state !== 'arriving'
       ? { action: 'pause', reason: 'away' }
       : await runStructuredGeneration('reply-decision', requestId, {
+        signal,
         type: 'quiet',
         messages: [
           { role: 'system', content: 'Classify the next channel state of this fictional direct-message thread. The physical-scene facts are authoritative. Return strict JSON only: {"action":"reply"}, {"action":"none"}, {"action":"pause","reason":"ended|busy|away|sleeping|unknown"}, {"action":"arrival_handoff","reason":"arriving"}, or {"action":"handoff","reason":"arrived|took_action|continued_in_person"}. reply means the latest Persona text genuinely warrants a remote answer. none means the remote channel remains valid but no reply is warranted and the narrative does not need to move toward an arrival. arrival_handoff means the off-scene actor has begun traveling toward the Persona/current scene AND the remote exchange has naturally reached an endpoint; use it to return narrative control to the main RP without claiming the actor has arrived. Prefer arrival_handoff over filler acknowledgements such as “okay”, “I know”, “coming”, or another repeated ETA when travel has already begun and no substantive remote answer is needed. handoff is only for interaction that has already become physical/local. Never use none when the actor is physically in the active scene. No prose or custom UI copy.' },
@@ -3834,9 +3872,11 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
         ],
         parameters: { temperature: 0.1, max_tokens: 100 }, userId,
       }, userId)
+    signal.throwIfAborted()
     const rawAction = rawDecision.action === 'reply' || rawDecision.reply === true ? 'reply' : rawDecision.action === 'pause' ? 'pause' : rawDecision.action === 'arrival_handoff' ? 'arrival_handoff' : rawDecision.action === 'handoff' ? 'handoff' : 'none'
     const outcome = await withStateLock(stateKey(chatId, characterId), async (): Promise<{ action: ReturnType<typeof normalizeReplyDecision>['normalizedAction']; relayId?: string } | null> => {
       const latestState = await loadState(chatId, characterId, userId)
+      signal.throwIfAborted()
       const latestConversation = latestState.conversations.find((entry) => entry.id === conversationId)
       if (!latestConversation?.outgoingBurst || (expectedBurstId && latestConversation.outgoingBurst.id !== expectedBurstId)) return null
       const latestActor = resolvePocketActor(latestState, actor.actorId)
@@ -3883,7 +3923,7 @@ async function maybeReplyAfterSend(chatId: string, characterId: string, conversa
       return
     }
     if (outcome?.action !== 'reply') return
-    await generateMessage({ requestId: id('auto_reply'), chatId, characterId, conversationId, speakerActorId: actor.actorId, autonomous: true, instruction: 'Reply naturally only because the latest user text warrants a response.' }, userId)
+    await generateMessage({ requestId: id('auto_reply'), chatId, characterId, conversationId, speakerActorId: actor.actorId, autonomous: true, signal, instruction: 'Reply naturally only because the latest user text warrants a response.' }, userId)
   } catch (error) {
     spindle.log.warn(`Pocket reply decision skipped: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
@@ -4683,6 +4723,23 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         })
         break
       }
+      case 'lumiphone:set_presence': {
+        if (typeof payload.inScene !== 'boolean') throw new Error('Choose Here or Away for this contact.')
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const contact = state.contacts.find(entry => entry.id === text(payload.contactId, 180))
+          if (!contact) throw new Error('That contact is no longer available.')
+          contact.presence.inScene = payload.inScene as boolean
+          if (contact.presence.inScene) contact.presence.lastSceneAt = nowIso()
+          else contact.sceneNote = ''
+          contact.updatedAt = nowIso()
+          if (state.sceneSnapshot) state.sceneSnapshot.stale = true
+          reconcileContactAvailability(state, contact)
+          await saveState(state, userId)
+          await sendState(state, userId, 'presence')
+        })
+        break
+      }
       case 'lumiphone:save_contact': {
         spindle.log.info(`Pocket contact save invoked: request=${requestId} chat=${context.chatId}`)
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
@@ -5134,6 +5191,25 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         if (!bool(payload.held)) void scheduleReplyBurst(context.chatId, context.characterId, text(payload.conversationId, 180), userId)
         break
       }
+      case 'lumiphone:cancel_message_generation': {
+        const conversationId = text(payload.conversationId, 180)
+        replyJobs.cancel(replyJobScope(context.chatId, context.characterId, conversationId, userId))
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          const conversation = state.conversations.find(entry => entry.id === conversationId)
+          if (conversation?.outgoingBurst) {
+            conversation.outgoingBurst.open = false
+            conversation.outgoingBurst.finalized = true
+          }
+          for (const batch of state.groupBatches.filter(entry => entry.conversationId === conversationId && (entry.status === 'queued' || entry.status === 'delivering'))) {
+            batch.status = 'cancelled'
+            for (const slot of batch.messages) if (slot.state === 'queued') slot.state = 'cancelled'
+          }
+          await saveState(state, userId)
+          await sendState(state, userId, 'message_generation_cancelled')
+        })
+        break
+      }
       case 'lumiphone:generate_message':
         {
         let groupAuto = false
@@ -5528,6 +5604,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof Error && error.name === 'AbortError') return
     spindle.log.error(`Pocket request failed: ${message}`)
     send({ type: 'lumiphone:error', requestId, error: message }, userId)
   }

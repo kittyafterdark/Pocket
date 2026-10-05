@@ -404,6 +404,17 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
       el('p', 'lp-copy', `${contact.contextPolicy.pinned ? 'Pinned to model context' : 'Included only while in scene'}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ''}`),
       el('p', 'lp-copy', `${contact.generationPolicy.relevant ? 'Generation-relevant' : 'Excluded from Pocket generation'} · ${contact.messagingPolicy.remoteEligible ? 'Remote-message eligible' : 'No remote messages'}${contact.messagingPolicy.allowAmbientInScene ? ' · ambient override while here' : ''}`),
     )
+    const presenceControls = el('div', 'lp-row')
+    presenceControls.setAttribute('role', 'group')
+    presenceControls.setAttribute('aria-label', 'Current scene presence')
+    for (const [label, inScene] of [['Here', true], ['Away', false]] as const) {
+      const choice = button(label, 'lp-button lp-button-quiet')
+      choice.setAttribute('aria-pressed', String(contact.presence.inScene === inScene))
+      choice.disabled = contact.presence.inScene === inScene
+      choice.addEventListener('click', () => host.send('lumiphone:set_presence', { contactId: contact.id, inScene }))
+      presenceControls.appendChild(choice)
+    }
+    presence.append(presenceControls, el('p', 'lp-copy', 'Correct their location now. Later story updates can change it.'))
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
     content.prepend(hero); content.append(presence)

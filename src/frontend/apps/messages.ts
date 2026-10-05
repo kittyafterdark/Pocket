@@ -34,6 +34,7 @@ export interface MessagesViewHost {
   openDirect(contactId: string): void
   send(type: string, payload?: Record<string, unknown>): void
   generateReply(conversationId: string, speakerContactId?: string): void
+  cancelReply(conversationId: string): void
   selectGroupSpeaker(conversationId: string, speakerContactId: string): void
   composerState(conversationId: string, held: boolean): void
   messageAnyway(conversationId: string): void
@@ -610,7 +611,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   }
 
   const compose = el('form', 'lp-compose')
-  const sparkle = scenePresent || conversation.pause
+  const sparkle = replyBusy ? button('■', 'lp-button lp-button-icon lp-reply-stop') : scenePresent || conversation.pause
     ? button('⋯', 'lp-button lp-button-icon lp-manual-reply')
     : host.iconButton('sparkle', 'Generate one contact reply')
   const selectedGroupSpeaker = conversation.kind === 'group' && memberActorIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : 'auto'
@@ -618,7 +619,11 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const generationLabel = conversation.kind === 'group' ? selectedGroupActor ? `Generate one reply from ${selectedGroupActor.name}` : 'Generate the next natural group burst' : 'Generate one contact reply'
   sparkle.setAttribute('aria-label', scenePresent ? 'Manually generate a reply while contact is here' : conversation.pause ? 'Manually generate a reply in paused conversation' : generationLabel)
   sparkle.title = scenePresent ? 'Manual reply — this contact is currently with you' : conversation.pause ? 'Manual reply — conversation is paused' : generationLabel
-  sparkle.disabled = !host.generationAvailable || replyBusy
+  if (replyBusy) {
+    sparkle.setAttribute('aria-label', 'Stop generating reply')
+    sparkle.title = 'Stop generating reply'
+  }
+  sparkle.disabled = !host.generationAvailable && !replyBusy
   const speakerMenu = el('details', 'lp-speaker-menu')
   if (conversation.kind === 'group') {
     const summary = el('summary', '', selectedGroupActor ? `Next reply: ${selectedGroupActor.name} ×` : `${memberActorIds.length} participants · Auto speaker`)
@@ -636,7 +641,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
     speakerMenu.append(summary, sheet)
   } else speakerMenu.hidden = true
-  sparkle.addEventListener('click', () => host.generateReply(conversation.id, conversation.kind === 'group' ? selectedGroupSpeaker : counterpartIds[0]))
+  sparkle.addEventListener('click', () => replyBusy ? host.cancelReply(conversation.id) : host.generateReply(conversation.id, conversation.kind === 'group' ? selectedGroupSpeaker : counterpartIds[0]))
   const textarea = el('textarea', 'lp-textarea'); textarea.rows = 1; textarea.placeholder = 'Message…'; textarea.value = host.draft
   textarea.dataset.pocketComposer = conversation.id
   const resizeComposer = () => {

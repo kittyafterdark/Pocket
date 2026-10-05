@@ -354,6 +354,40 @@ assert.equal(autoConversation.messages.length, beforeManualFlush + 2)
 assert.equal(autoConversation.messages.at(-1).text, 'Manual flush reply.')
 assert.equal(autoConversation.outgoingBurst.finalized, true)
 
+// A slow provider may ignore AbortSignal. Its late text must still never commit.
+const beforeCancelledReply = storage.get('phones/chat-a__char-a.json').conversations.find(entry => entry.id === firstConversationId).messages.length
+let releaseCancelledReply
+let markReplyStarted
+let markReplyAborted
+const replyStarted = new Promise(resolve => { markReplyStarted = resolve })
+const replyAborted = new Promise(resolve => { markReplyAborted = resolve })
+spindle.generate.quiet = async request => {
+  if (!request.signal) return { content: 'Unrelated continuity request.' }
+  request.signal.addEventListener('abort', markReplyAborted, { once: true })
+  markReplyStarted()
+  await new Promise(resolve => { releaseCancelledReply = resolve })
+  return { content: 'This cancelled reply must never appear.' }
+}
+const slowReply = frontendHandler({ type: 'lumiphone:generate_message', requestId: 'slow-cancel-test', chatId: 'chat-a', characterId: 'char-a', conversationId: firstConversationId }, 'user-a')
+await replyStarted
+const stopReply = frontendHandler({ type: 'lumiphone:cancel_message_generation', requestId: 'cancel-slow-test', chatId: 'chat-a', characterId: 'char-a', conversationId: firstConversationId }, 'user-a')
+await replyAborted
+releaseCancelledReply()
+await Promise.all([slowReply, stopReply])
+assert.equal(storage.get('phones/chat-a__char-a.json').conversations.find(entry => entry.id === firstConversationId).messages.length, beforeCancelledReply, 'cancelled generation must not append a late reply')
+assert.equal(frontendMessages.some(entry => entry.type === 'lumiphone:error' && entry.requestId === 'slow-cancel-test'), false, 'intentional cancellation must not surface as a provider error')
+
+const presenceContactId = autoConversation.participantContactIds[0]
+await frontendHandler({ type: 'lumiphone:set_presence', requestId: 'presence-here', chatId: 'chat-a', characterId: 'char-a', contactId: presenceContactId, inScene: true }, 'user-a')
+let presenceState = storage.get('phones/chat-a__char-a.json')
+assert.equal(presenceState.contacts.find(entry => entry.id === presenceContactId).presence.inScene, true)
+assert.equal(presenceState.conversations.find(entry => entry.id === firstConversationId).availability.state, 'local')
+await frontendHandler({ type: 'lumiphone:set_presence', requestId: 'presence-away', chatId: 'chat-a', characterId: 'char-a', contactId: presenceContactId, inScene: false }, 'user-a')
+presenceState = storage.get('phones/chat-a__char-a.json')
+assert.equal(presenceState.contacts.find(entry => entry.id === presenceContactId).presence.inScene, false)
+assert.equal(presenceState.conversations.find(entry => entry.id === firstConversationId).availability.state, 'remote', 'marking a contact away must reopen their remote channel')
+assert.equal(presenceState.conversations.find(entry => entry.id === firstConversationId).messages.length, beforeCancelledReply, 'presence correction must not fabricate messages')
+
 spindle.generate.quiet = async () => ({ content: '{"action":"pause","reason":"busy"}' })
 const beforePauseDecision = autoConversation.messages.length
 await frontendHandler({ type: 'lumiphone:action', requestId: 'auto-pause-send', chatId: 'chat-a', characterId: 'char-a', action: 'message', payload: { conversationId: firstConversationId, text: 'See you when you get here', sender: 'persona' } }, 'user-a')
@@ -1676,6 +1710,15 @@ assert.ok(personaDeviceRow)
 personaDeviceRow.click()
 assert.equal(identityShell.dataset.pocketDeviceKey, personaDeviceKey, 'returning to the Persona phone must restore its logical device key')
 assert.equal(identityShell.style.getPropertyValue('--lp-accent'), '#ff00aa')
+backendReceiver({ type: 'lumiphone:conversation_opened', conversationId: 'picker-latest' })
+backendReceiver({ type: 'lumiphone:message_progress', requestId: 'ui-slow-reply', chatId: 'chat-a', characterId: 'char-a', conversationId: 'picker-latest', phase: 'pending' })
+const stopReplyButton = dockRoot.querySelector('[aria-label="Stop generating reply"]')
+assert.ok(stopReplyButton && !stopReplyButton.disabled, 'busy composer must offer an enabled stop button')
+stopReplyButton.click()
+assert.ok(frontendSends.some(entry => entry.type === 'lumiphone:cancel_message_generation' && entry.conversationId === 'picker-latest'), 'stop button must cancel the current conversation')
+assert.equal(dockRoot.querySelector('[aria-label="Stop generating reply"]'), null, 'stop must clear the local busy state')
+backendReceiver({ type: 'lumiphone:message_progress', requestId: 'ui-slow-reply', chatId: 'chat-a', characterId: 'char-a', conversationId: 'picker-latest', phase: 'done' })
+dockRoot.querySelector('[aria-label="Home or dismiss phone"]').click()
 const dismissPhone = dockRoot.querySelector('.lumiphone-dismiss')
 dismissPhone.click()
 assert.equal(dockDestroyCount, 1, 'closing Pocket must destroy the dock handle')
@@ -1958,11 +2001,20 @@ contactNameDraft.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 assert.ok(dockRoot.querySelector('.lp-photo-viewfinder'))
 assert.match(dockRoot.querySelector('textarea').value, /Portrait of Draft Two/)
 dockRoot.querySelector('form.lp-camera-body').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+const cancelledPortrait = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
+const photoStop = dockRoot.querySelector('[aria-label="Stop generating photo"]')
+assert.ok(photoStop && !photoStop.disabled, 'busy shutter must remain actionable as stop')
+photoStop.click()
+assert.equal(frontendSends.filter(message => message.type === 'lumiphone:camera_cancel').at(-1).requestId, cancelledPortrait.requestId)
+backendReceiver({ type: 'lumiphone:camera_progress', requestId: cancelledPortrait.requestId, phase: 'preview', imageDataUrl: 'ignored-late-preview' })
+assert.ok(dockRoot.querySelector('[aria-label="Take photo"]'), 'late cancelled progress must not restart the camera')
+dockRoot.querySelector('form.lp-camera-body').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
 const portraitRequest = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
 assert.equal(portraitRequest.contactId, savedDraftId)
 backendReceiver({ type: 'lumiphone:camera_progress', requestId: portraitRequest.requestId, imageDataUrl: 'data:image/png;base64,preview', phase: 'preview' })
 assert.ok(![...dockRoot.querySelectorAll('button')].some(node => node.textContent === 'Use photo'), 'partial previews cannot be applied')
 backendReceiver({ type: 'lumiphone:camera_done', requestId: portraitRequest.requestId, imageUrl: '/api/v1/images/portrait' })
+assert.ok(dockRoot.querySelector('.lp-shutter-row .lp-camera-accept'), 'acceptance belongs in the camera control strip')
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
 const photoApply = frontendSends.filter(message => message.type === 'lumiphone:set_contact_photo').at(-1)
 assert.equal(photoApply.contactId, savedDraftId)

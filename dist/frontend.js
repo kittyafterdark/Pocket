@@ -3141,13 +3141,17 @@ function renderMessagesView(host) {
     return page;
   }
   const compose = el("form", "lp-compose");
-  const sparkle = scenePresent || conversation.pause ? button("⋯", "lp-button lp-button-icon lp-manual-reply") : host.iconButton("sparkle", "Generate one contact reply");
+  const sparkle = replyBusy ? button("■", "lp-button lp-button-icon lp-reply-stop") : scenePresent || conversation.pause ? button("⋯", "lp-button lp-button-icon lp-manual-reply") : host.iconButton("sparkle", "Generate one contact reply");
   const selectedGroupSpeaker = conversation.kind === "group" && memberActorIds.includes(host.selectedGroupSpeakerId) ? host.selectedGroupSpeakerId : "auto";
   const selectedGroupActor = selectedGroupSpeaker === "auto" ? null : resolvePocketActor(host.state, selectedGroupSpeaker);
   const generationLabel = conversation.kind === "group" ? selectedGroupActor ? `Generate one reply from ${selectedGroupActor.name}` : "Generate the next natural group burst" : "Generate one contact reply";
   sparkle.setAttribute("aria-label", scenePresent ? "Manually generate a reply while contact is here" : conversation.pause ? "Manually generate a reply in paused conversation" : generationLabel);
   sparkle.title = scenePresent ? "Manual reply — this contact is currently with you" : conversation.pause ? "Manual reply — conversation is paused" : generationLabel;
-  sparkle.disabled = !host.generationAvailable || replyBusy;
+  if (replyBusy) {
+    sparkle.setAttribute("aria-label", "Stop generating reply");
+    sparkle.title = "Stop generating reply";
+  }
+  sparkle.disabled = !host.generationAvailable && !replyBusy;
   const speakerMenu = el("details", "lp-speaker-menu");
   if (conversation.kind === "group") {
     const summary = el("summary", "", selectedGroupActor ? `Next reply: ${selectedGroupActor.name} ×` : `${memberActorIds.length} participants · Auto speaker`);
@@ -3173,7 +3177,7 @@ function renderMessagesView(host) {
     speakerMenu.append(summary, sheet);
   } else
     speakerMenu.hidden = true;
-  sparkle.addEventListener("click", () => host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : counterpartIds[0]));
+  sparkle.addEventListener("click", () => replyBusy ? host.cancelReply(conversation.id) : host.generateReply(conversation.id, conversation.kind === "group" ? selectedGroupSpeaker : counterpartIds[0]));
   const textarea = el("textarea", "lp-textarea");
   textarea.rows = 1;
   textarea.placeholder = "Message…";
@@ -3873,6 +3877,17 @@ function renderContactsView(host) {
     hero.append(el("span", "lp-eyebrow", `${source} · ${contact.relationship === "close" ? "Close connection" : "Background actor"}`));
     const presence = el("div", "lp-card");
     presence.append(el("div", "lp-title", contact.presence.inScene ? "Here now" : "Not in current scene"), el("p", "lp-copy", `${contact.contextPolicy.pinned ? "Pinned to model context" : "Included only while in scene"}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ""}`), el("p", "lp-copy", `${contact.generationPolicy.relevant ? "Generation-relevant" : "Excluded from Pocket generation"} · ${contact.messagingPolicy.remoteEligible ? "Remote-message eligible" : "No remote messages"}${contact.messagingPolicy.allowAmbientInScene ? " · ambient override while here" : ""}`));
+    const presenceControls = el("div", "lp-row");
+    presenceControls.setAttribute("role", "group");
+    presenceControls.setAttribute("aria-label", "Current scene presence");
+    for (const [label, inScene] of [["Here", true], ["Away", false]]) {
+      const choice = button(label, "lp-button lp-button-quiet");
+      choice.setAttribute("aria-pressed", String(contact.presence.inScene === inScene));
+      choice.disabled = contact.presence.inScene === inScene;
+      choice.addEventListener("click", () => host.send("lumiphone:set_presence", { contactId: contact.id, inScene }));
+      presenceControls.appendChild(choice);
+    }
+    presence.append(presenceControls, el("p", "lp-copy", "Correct their location now. Later story updates can change it."));
     const message = button("Message");
     message.addEventListener("click", () => host.openDirect(contact.id));
     content.prepend(hero);
@@ -5994,6 +6009,7 @@ var PHONE_STYLES = `
   .lp-channel-diagnostic > span { display:block; margin-top:4px; overflow-wrap:anywhere; text-align:center; }
   .lp-code-block { max-height:220px; margin:8px 0 0; padding:10px; overflow:auto; border-radius:10px; background:rgba(0,0,0,.22); color:var(--lp-text); font:var(--pocket-font-xs)/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; text-align:left; }
   .lp-manual-reply { color:var(--lp-muted); background:transparent; }
+  .lp-reply-stop { color:var(--lp-danger,#e85c69); background:color-mix(in srgb,var(--lp-danger,#e85c69) 12%,var(--lp-surface)); }
   .lp-bubble-action { appearance:none; margin:5px 0 0 7px; padding:0; border:0; background:transparent; color:inherit; opacity:.58; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; }
   .lp-bubble-action:hover { opacity:1; text-decoration:underline; }
   .lp-scene-note { margin:0; padding:7px 9px; border-radius:9px; background:color-mix(in srgb,var(--lp-accent) 10%,transparent); color:var(--lp-muted); font-size:var(--pocket-font-sm); }
@@ -6412,6 +6428,9 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-npc-camera .lp-shutter { background:#17171c; }
   .lp-npc-camera .lp-shutter::after { background:#fff; }
   .lp-npc-camera .lp-shutter:focus-visible { outline:3px solid var(--lp-accent); outline-offset:5px; }
+  .lp-npc-camera .lp-shutter[data-busy="true"]::after { width:65%; height:65%; margin:17.5%; border-radius:6px; background:var(--lp-danger,#e85c69); animation:none; }
+  .lp-camera-shutter-action { justify-self:start; }
+  .lp-camera-accept { min-height:36px; font-size:12px; padding:8px 10px; border-radius:12px; }
   .lp-wallpaper-library { display:grid; gap:14px; }
   .lp-wallpaper-presets-button { grid-column:1/-1; }
   .lp-wallpaper-library-preview { min-height:190px; border-radius:18px; background-size:cover; background-position:center; display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:24px 16px 16px; color:#fff; box-shadow:inset 0 0 0 1px #ffffff18; }
@@ -8924,6 +8943,13 @@ class PocketController {
         this.send(type, payload);
       },
       generateReply: (conversationId, speakerContactId) => this.generateReply(conversationId, speakerContactId),
+      cancelReply: (conversationId) => {
+        this.send("lumiphone:cancel_message_generation", { conversationId });
+        for (const [requestId, request] of this.messageRequests)
+          if (request.conversationId === conversationId)
+            this.messageRequests.delete(requestId);
+        this.render();
+      },
       selectGroupSpeaker: (conversationId, speakerContactId) => {
         if (speakerContactId === "auto")
           this.groupSpeakerSelections.delete(conversationId);
@@ -9576,21 +9602,14 @@ ${body}`;
       this.cameraOptions.model = model.value;
     });
     const shutterRow = el("div", "lp-shutter-row");
-    const cancel = button(this.cameraBusy ? "Cancel" : "", "lp-button");
-    cancel.style.visibility = this.cameraBusy ? "visible" : "hidden";
-    cancel.addEventListener("click", () => {
-      this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
-      this.cameraBusy = false;
-      this.cameraProgress = "Cancelled";
-      this.render();
-    });
+    const shutterAction = el("div", "lp-camera-shutter-action");
     const shutter = el("button", "lp-shutter");
     shutter.type = "submit";
-    shutter.disabled = this.cameraBusy || !this.caps?.imageGen || Boolean(this.cameraContactId && !subject);
+    shutter.disabled = !this.cameraBusy && (!this.caps?.imageGen || Boolean(this.cameraContactId && !subject));
     shutter.dataset.busy = String(this.cameraBusy);
     const album = button("Gallery", "lp-nav-action");
     album.addEventListener("click", () => this.openApp("gallery"));
-    shutterRow.append(cancel, shutter, album);
+    shutterRow.append(shutterAction, shutter, album);
     const progress = el("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
     progress.setAttribute("role", "status");
     progress.setAttribute("aria-live", "polite");
@@ -9600,7 +9619,7 @@ ${body}`;
     optionsDrawer.addEventListener("click", () => showPocketSheet(optionsDrawer, "Camera options", optionFields));
     footer.append(el("p", "lp-camera-caption", this.cameraContactId ? "PORTRAIT" : "PHOTO"), shutterRow, progress, optionsDrawer);
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
-      const use = button("Use photo", "lp-button");
+      const use = button("Use photo", "lp-button lp-camera-accept");
       use.disabled = !subject || this.cameraContactId === "__draft__" && this.npcDraft !== this.cameraNpcDraft;
       use.addEventListener("click", () => {
         if (this.cameraContactId === "__draft__") {
@@ -9636,15 +9655,23 @@ ${body}`;
       const frameFields = el("div", "lp-camera-sheet-fields");
       frameFields.append(crop, framing);
       frame.addEventListener("click", () => showPocketSheet(frame, "Avatar framing", frameFields));
-      footer.append(frame, use);
+      footer.append(frame);
+      shutterAction.appendChild(use);
     }
     controls.append(mode, viewfinder, footer);
-    shutter.setAttribute("aria-label", "Take photo");
+    shutter.setAttribute("aria-label", this.cameraBusy ? "Stop generating photo" : "Take photo");
     controls.addEventListener("submit", (event) => {
       event.preventDefault();
       const scene = inputValue(prompt);
-      if (this.cameraBusy)
+      if (this.cameraBusy) {
+        this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
+        this.cameraRequestId = "";
+        this.cameraBusy = false;
+        this.cameraReady = false;
+        this.cameraProgress = "Cancelled";
+        this.render();
         return;
+      }
       if (!scene) {
         prompt.focus();
         return;
