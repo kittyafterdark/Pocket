@@ -239,13 +239,13 @@
 .pocket-inline-transcript {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .pocket-inline-transcript-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
-  gap: 9px;
+  gap: 10px;
   align-items: start;
 }
 
@@ -260,18 +260,19 @@
 }
 
 .pocket-inline-transcript-sender {
-  color: #aaa4b3;
+  color: #938d9b;
   font-size: 10px;
   font-weight: 700;
+  letter-spacing: .01em;
 }
 
 .pocket-inline-transcript-bubble {
   align-self: flex-start;
-  max-width: 92%;
-  padding: 8px 11px;
+  max-width: 90%;
+  padding: 9px 12px;
   color: #f0edf5;
   font-size: 12px;
-  line-height: 1.38;
+  line-height: 1.42;
   background: linear-gradient(145deg, #2c2933, #27242d);
   border-radius: 5px 13px 13px 13px;
 }
@@ -527,9 +528,9 @@
   display: grid;
   grid-template-columns: 36px minmax(0,1fr) 36px;
   align-items: center;
-  flex: 0 0 78px;
+  flex: 0 0 72px;
   width: 100%;
-  padding: 8px 12px 10px;
+  padding: 7px 12px 9px;
   color: inherit;
   text-align: center;
   font: inherit;
@@ -596,17 +597,34 @@
   min-height: 0;
   overflow: auto;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 12px 18px;
-  scrollbar-color: rgba(255,255,255,.18) transparent;
+  gap: 12px;
+  padding: 16px 13px 20px;
+  scrollbar-color: rgba(255,255,255,.12) transparent;
   scrollbar-width: thin;
+}
+
+.pocket-phone-thread::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pocket-phone-thread::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.12);
+  border-radius: 999px;
+}
+
+.pocket-phone-thread::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .pocket-phone-message {
   display: flex;
   align-items: flex-end;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
+}
+
+.pocket-phone-message[data-continuation="false"] {
+  margin-top: 4px;
 }
 
 .pocket-phone-message[data-direction="sent"] {
@@ -619,25 +637,26 @@
 
 .pocket-phone-message-content {
   display: flex;
-  max-width: 79%;
+  max-width: 76%;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .pocket-phone-sender {
-  margin-left: 3px;
-  color: #948e9c;
+  margin-left: 4px;
+  color: #878190;
   font-size: 9px;
   font-weight: 680;
+  letter-spacing: .01em;
 }
 
 .pocket-phone-bubble {
   display: block;
-  padding: 9px 11px;
+  padding: 10px 12px;
   color: #f3eff7;
   font-size: 12px;
-  line-height: 1.36;
+  line-height: 1.42;
   background: linear-gradient(145deg, #2b2731, #232029);
   border: 1px solid rgba(255,255,255,.045);
   border-radius: 6px 15px 15px 15px;
