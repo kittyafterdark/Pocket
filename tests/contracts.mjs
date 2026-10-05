@@ -1507,6 +1507,17 @@ await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'native-ca
 assert.equal(nativeRequest.chat_id, 'chat-a')
 assert.equal(nativeRequest.clientJobId, 'native-camera')
 assert.ok(frontendMessages.some(message => message.type === 'lumiphone:camera_done' && message.requestId === 'native-camera'))
+const beforeCameraDefaults = structuredClone(storage.get('device/preferences.json'))
+await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: { ...beforeCameraDefaults, manualVisualProfile: { ...beforeCameraDefaults.manualVisualProfile, connectionId: 'saved-image-connection', model: 'saved-checkpoint' } } }, 'user-a')
+let savedDefaultsRequest
+spindle.imageGen.generate = async input => { savedDefaultsRequest = input; return { imageId: 'saved-default-photo', imageUrl: '/api/v1/images/saved-default-photo' } }
+nativeRequest = undefined
+await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'saved-camera-defaults', chatId: 'chat-a', characterId: 'char-a', scene: 'A scene', enhance: false }, 'user-a')
+assert.equal(nativeRequest, undefined, 'saved camera overrides must select direct generation')
+assert.equal(savedDefaultsRequest.connection_id, 'saved-image-connection')
+assert.equal(savedDefaultsRequest.model, 'saved-checkpoint')
+await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: beforeCameraDefaults }, 'user-a')
+spindle.imageGen.generate = originalImageGenerate
 delete spindle.imageGen.generateNative
 let deletedAsset
 spindle.images.delete = async (imageId, userId) => { deletedAsset = { imageId, userId }; hostImages.delete(imageId); return true }

@@ -5220,7 +5220,7 @@ async function cameraGenerate(input, userId) {
     generationInput.model = model;
   let result = null;
   try {
-    result = await runImageJob(spindle, generationInput, controller.signal, (event) => send({ type: "lumiphone:camera_progress", requestId, ...event }, userId), !text2(input.connectionId, 200) && !text2(input.model, 500) ? { chatId: context.chatId, requestId, purpose } : undefined);
+    result = await runImageJob(spindle, generationInput, controller.signal, (event) => send({ type: "lumiphone:camera_progress", requestId, ...event }, userId), !connectionId && !text2(input.model, 500) && !manual.model ? { chatId: context.chatId, requestId, purpose } : undefined);
   } catch (error) {
     if (!job.cancelled)
       throw error;

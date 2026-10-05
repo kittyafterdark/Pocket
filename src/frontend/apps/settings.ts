@@ -16,6 +16,7 @@ export interface SettingsViewHost {
   section: string
   activePersona: ActivePersona
   capabilities: PhoneCapabilities | null
+  imageConnections?: Array<{ id: string; name: string }>
   swarmProfile: SwarmVisualProfile | null
   generation: PocketGenerationInfo | null
   resolvedWallpapers: PocketResolvedWallpapers
@@ -31,7 +32,7 @@ export interface SettingsViewHost {
   rerender(): void
   resumeSetup?(): void
   chooseImage(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void
-  mountModelCombobox(target: HTMLElement, options: { value: string; connection: { kind: 'llm'; id?: string }; disabled?: boolean; onChange(value: string): void }): void
+  mountModelCombobox(target: HTMLElement, options: { value: string; connection: { kind: 'llm' | 'image'; id?: string }; disabled?: boolean; onChange(value: string): void }): () => void
 }
 
 function clone(value: DevicePreferences): DevicePreferences { return structuredClone(value) }
@@ -380,26 +381,46 @@ function generation(host: SettingsViewHost): HTMLDivElement {
 }
 
 function camera(host: SettingsViewHost): HTMLDivElement {
-  const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void, persist = true) => { const next = clone(settings); mutate(next); host.update(next, { persist }) }
+  let settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void, persist = true) => { const next = clone(settings); mutate(next); settings = next; host.update(next, { persist }) }
   const { page, content } = host.page('Camera & Swarm Studio', 'Visual profile')
   const swarm = el('section', 'lp-card lp-settings-section'); swarm.append(el('div', 'lp-eyebrow', 'Swarm Studio'), toggle('Sync active profile', settings.useSwarmProfile, (value) => {
-    const next = clone(settings); next.useSwarmProfile = value; host.update(next, { persist: false }); host.send('lumiphone:save_preferences', { preferences: next })
+    const next = clone(settings); next.useSwarmProfile = value; settings = next; host.update(next, { persist: false }); host.send('lumiphone:save_preferences', { preferences: next })
   }))
   const status = el('p', 'lp-copy', host.swarmProfile?.status === 'connected' ? `Connected · ${host.swarmProfile.checkpoint || 'profile macros resolved'}` : host.swarmProfile?.status === 'error' ? `Error · ${host.swarmProfile.error}` : host.swarmProfile?.status === 'disabled' ? 'Swarm profile sync is disabled.' : 'Swarm Studio macros were not detected for this character/persona.'); status.dataset.pocketSwarmStatus = 'true'; status.dataset.status = host.swarmProfile?.status || 'not-detected'
   const refresh = button('Refresh profile', 'lp-button'); refresh.addEventListener('click', () => host.send('lumiphone:get_swarm_profile'))
   const diagnostics = el('details', 'lp-swarm-diagnostics'); diagnostics.appendChild(el('summary', '', 'Macro diagnostics'))
-  for (const name of ['char_base', 'persona_base', 'swarm_negative', 'swarm_preset', 'swarm_checkpoint', 'swarm_aspect'] as const) { const field = host.swarmProfile?.fields?.[name]; const row = el('div', 'lp-generation-run', `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : 'empty'}`); row.dataset.pocketSwarmMacro = name; diagnostics.appendChild(row) }
+  for (const name of ['char_base', 'persona_base', 'swarm_negative', 'swarm_preset', 'swarm_checkpoint', 'swarm_aspect', 'swarm_loras'] as const) { const field = host.swarmProfile?.fields?.[name]; const row = el('div', 'lp-generation-run', `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : 'empty'}`); row.dataset.pocketSwarmMacro = name; diagnostics.appendChild(row) }
   swarm.append(status, refresh, diagnostics)
-  const manual = el('section', 'lp-card lp-settings-section'); manual.append(el('div', 'lp-eyebrow', 'Primitive / manual mode'))
+  const defaults = el('section', 'lp-card lp-settings-section')
+  defaults.append(el('div', 'lp-eyebrow', 'Camera defaults'), el('p', 'lp-copy', 'Leave connection and checkpoint blank to use Lumiverse’s native presets, workflow and LoRA stack. Saved overrides apply to every Pocket photo unless changed in Camera.'))
+  const native = button('Lumiverse image settings', 'lp-button lp-button-quiet')
+  native.addEventListener('click', () => host.send('lumiphone:open_native_image_settings'))
+  defaults.append(native, toggle('Enhance photo description', settings.sceneEnhancer, value => commit(next => { next.sceneEnhancer = value })))
+  const manual = el('section', 'lp-card lp-settings-section'); manual.append(el('div', 'lp-eyebrow', 'Prompt & provider overrides'))
   const positive = el('textarea', 'lp-textarea'); positive.placeholder = 'Positive / character style'; positive.value = settings.manualVisualProfile.positive
   const negative = el('textarea', 'lp-textarea'); negative.placeholder = 'Negative prompt'; negative.value = settings.manualVisualProfile.negative
-  const model = el('input', 'lp-input'); model.placeholder = 'Checkpoint override'; model.value = settings.manualVisualProfile.model
-  const connection = el('input', 'lp-input'); connection.placeholder = 'Image connection ID'; connection.value = settings.manualVisualProfile.connectionId
+  let modelValue = settings.manualVisualProfile.model
+  const model = el('div', 'lp-model-combobox')
+  const connection = el('select', 'lp-select'); connection.dataset.pocketImageConnection = 'true'
+  connection.append(new Option('Follow Lumiverse', ''))
+  for (const entry of host.imageConnections || []) connection.append(new Option(entry.name, entry.id))
+  if (settings.manualVisualProfile.connectionId && !(host.imageConnections || []).some(entry => entry.id === settings.manualVisualProfile.connectionId)) connection.append(new Option('Saved connection', settings.manualVisualProfile.connectionId))
+  connection.value = settings.manualVisualProfile.connectionId
+  const modelField = el('div', 'lp-field'); modelField.append(el('div', 'lp-label', 'Checkpoint override'), model)
+  let stopModel: (() => void) | undefined
+  const mountModel = () => { stopModel?.(); stopModel = host.mountModelCombobox(model, { value: modelValue, connection: { kind: 'image', id: connection.value || undefined }, onChange: value => { modelValue = value; commit(next => { next.manualVisualProfile.model = value }, false) } }) }
+  mountModel()
+  connection.addEventListener('change', () => { modelValue = ''; commit(next => { next.manualVisualProfile.connectionId = connection.value; next.manualVisualProfile.model = '' }, false); mountModel() })
+  const follow = button('Follow Lumiverse defaults', 'lp-button lp-button-quiet')
+  follow.addEventListener('click', () => { connection.value = ''; modelValue = ''; commit(next => { next.manualVisualProfile.connectionId = ''; next.manualVisualProfile.model = '' }); mountModel() })
+  const saveDefaults = button('Save camera defaults', 'lp-button')
+  saveDefaults.addEventListener('click', () => commit(next => { next.manualVisualProfile.connectionId = connection.value; next.manualVisualProfile.model = modelValue.trim() }))
+  defaults.append(fieldBlock('Image connection', connection), modelField, saveDefaults, follow)
   const loras = el('textarea', 'lp-textarea'); loras.placeholder = 'LoRA stack: name | weight'; loras.value = settings.manualVisualProfile.loras.map((item) => `${item.name} | ${item.weight}`).join('\n')
   const parameters = el('textarea', 'lp-textarea lp-code-input'); parameters.placeholder = 'Provider parameters JSON'; parameters.value = Object.keys(settings.manualVisualProfile.parameters).length ? JSON.stringify(settings.manualVisualProfile.parameters, null, 2) : ''
-  for (const control of [positive, negative, model, connection, loras, parameters]) control.addEventListener('input', () => commit((next) => { next.manualVisualProfile.positive = positive.value; next.manualVisualProfile.negative = negative.value; next.manualVisualProfile.model = model.value; next.manualVisualProfile.connectionId = connection.value }, false))
-  const apply = button('Apply manual profile', 'lp-button'); apply.addEventListener('click', () => { let parsed: Record<string, unknown> = {}; try { parsed = parameters.value.trim() ? JSON.parse(parameters.value) : {} } catch { host.showError('Provider parameters must be valid JSON.'); return }; commit((next) => { next.manualVisualProfile.positive = positive.value.trim(); next.manualVisualProfile.negative = negative.value.trim(); next.manualVisualProfile.model = model.value.trim(); next.manualVisualProfile.connectionId = connection.value.trim(); next.manualVisualProfile.loras = loras.value.split('\n').flatMap((line) => { const [name, raw] = line.split('|').map((part) => part.trim()); if (!name) return []; const weight = Number(raw); return [{ name, weight: Number.isFinite(weight) ? weight : 1 }] }); next.manualVisualProfile.parameters = parsed }) })
-  manual.append(positive, negative, model, connection, loras, parameters, apply); content.append(swarm, disclosure('Advanced manual overrides', manual)); return page
+  for (const control of [positive, negative, loras, parameters]) control.addEventListener('input', () => commit((next) => { next.manualVisualProfile.positive = positive.value; next.manualVisualProfile.negative = negative.value; next.manualVisualProfile.model = modelValue; next.manualVisualProfile.connectionId = connection.value }, false))
+  const apply = button('Apply manual profile', 'lp-button'); apply.addEventListener('click', () => { let parsed: Record<string, unknown> = {}; try { parsed = parameters.value.trim() ? JSON.parse(parameters.value) : {} } catch { host.showError('Provider parameters must be valid JSON.'); return }; commit((next) => { next.manualVisualProfile.positive = positive.value.trim(); next.manualVisualProfile.negative = negative.value.trim(); next.manualVisualProfile.model = modelValue.trim(); next.manualVisualProfile.connectionId = connection.value.trim(); next.manualVisualProfile.loras = loras.value.split('\n').flatMap((line) => { const [name, raw] = line.split('|').map((part) => part.trim()); if (!name) return []; const weight = Number(raw); return [{ name, weight: Number.isFinite(weight) ? weight : 1 }] }); next.manualVisualProfile.parameters = parsed }) })
+  manual.append(positive, negative, loras, parameters, apply); content.append(defaults, swarm, disclosure('Advanced manual overrides', manual)); return page
 }
 
 function jevSettings(host: SettingsViewHost): HTMLDivElement {

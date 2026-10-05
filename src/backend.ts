@@ -2070,7 +2070,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   if (model) generationInput.model = model
   let result: any = null
   try {
-    result = await runImageJob(spindle, generationInput, controller.signal, event => send({ type: 'lumiphone:camera_progress', requestId, ...event }, userId), !text(input.connectionId, 200) && !text(input.model, 500) ? { chatId: context.chatId, requestId, purpose } : undefined)
+    result = await runImageJob(spindle, generationInput, controller.signal, event => send({ type: 'lumiphone:camera_progress', requestId, ...event }, userId), !connectionId && !text(input.model, 500) && !manual.model ? { chatId: context.chatId, requestId, purpose } : undefined)
   } catch (error) {
     if (!job.cancelled) throw error
   } finally {

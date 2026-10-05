@@ -1282,6 +1282,8 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:image_options') {
       this.imageConnections = payload.connections || []
+      const imageSelect = this.screen.querySelector<HTMLSelectElement>('[data-pocket-image-connection]')
+      if (imageSelect) { const selected = imageSelect.value; imageSelect.replaceChildren(new Option('Follow Lumiverse', ''), ...this.imageConnections.map(entry => new Option(entry.name, entry.id))); if (selected && !this.imageConnections.some(entry => entry.id === selected)) imageSelect.append(new Option('Saved connection', selected)); imageSelect.value = selected }
       if (this.currentApp === 'camera') this.render(false)
       return
     }
@@ -1625,6 +1627,7 @@ class PocketController {
     } else if (route.app === 'settings') {
       this.selectedSettingsSection = route.section || ''
       this.settingsDraft ||= structuredClone(this.preferences)
+      if (this.selectedSettingsSection === 'camera') this.send('lumiphone:image_options', {})
       this.send('lumiphone:mark_read', { app: 'settings' })
     } else if (route.app !== 'home') {
       this.send('lumiphone:mark_read', { app: route.app })
@@ -2524,14 +2527,14 @@ class PocketController {
     const model = el('div', 'lp-model-combobox')
     const mountModel = () => {
       modelHandle?.destroy()
-      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: 'image', id: this.cameraOptions.connectionId || undefined }, placeholder: 'Use native checkpoint', onChange: value => { this.cameraOptions.model = value } })
+      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: 'image', id: this.cameraOptions.connectionId || this.preferences.manualVisualProfile.connectionId || undefined }, placeholder: 'Use native checkpoint', onChange: value => { this.cameraOptions.model = value } })
     }
     let modelHandle: ReturnType<typeof this.ctx.components.mountModelCombobox> | undefined
     this.viewCleanups.push(() => modelHandle?.destroy())
     connection.querySelector('select')?.addEventListener('change', () => { this.cameraOptions.model = ''; mountModel() })
     const nativeSettings = button('Lumiverse image settings', 'lp-button lp-button-quiet')
     nativeSettings.addEventListener('click', () => { nativeSettings.closest('dialog')?.close(); this.close(); this.send('lumiphone:open_native_image_settings', {}) })
-    const pipelineCopy = el('p', 'lp-copy', 'Defaults use Lumiverse presets, workflow and LoRA stack. Choosing a connection or checkpoint uses a direct override for this photo.')
+    const pipelineCopy = el('p', 'lp-copy', 'Without saved or per-photo overrides, use Lumiverse presets, workflow and LoRA stack. Connection/checkpoint overrides use direct generation. Set saved defaults in Pocket Settings.')
     const shutterRow = el('div', 'lp-shutter-row')
     const shutterAction = el('div', 'lp-camera-shutter-action')
     const shutter = el('button', 'lp-shutter')
@@ -2899,6 +2902,7 @@ class PocketController {
       section: this.selectedSettingsSection,
       activePersona: this.activePersona,
       capabilities: this.caps,
+      imageConnections: this.imageConnections,
       swarmProfile: this.swarmProfile,
       generation: this.generation,
       resolvedWallpapers: this.resolvedWallpapers,
@@ -2908,14 +2912,20 @@ class PocketController {
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       update: (preferences, options) => this.updatePreferences(preferences, options),
       navigate: (section) => this.openPocket({ app: 'settings', section }),
-      send: (type, payload) => this.send(type, payload),
+      send: (type, payload) => { if (type === 'lumiphone:open_native_image_settings') this.close(); return this.send(type, payload) },
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
       resumeSetup: () => this.showFirstChatSetup(true),
       chooseImage: (target, mode) => { void this.chooseImage(target, mode) },
       mountModelCombobox: (target, options) => {
-        const handle = this.ctx.components.mountModelCombobox(target, {
+        let stopped = false
+        let handle: ReturnType<typeof this.ctx.components.mountModelCombobox> | undefined
+        const stop = () => { stopped = true; handle?.destroy(); handle = undefined }
+        this.viewCleanups.push(stop)
+        queueMicrotask(() => {
+          if (stopped || !target.isConnected) return
+          handle = this.ctx.components.mountModelCombobox(target, {
           value: options.value,
           connection: options.connection,
           appearance: 'standard',
@@ -2923,7 +2933,8 @@ class PocketController {
           disabled: options.disabled,
           onChange: options.onChange,
         })
-        this.viewCleanups.push(() => handle.destroy())
+        })
+        return stop
       },
     })
   }

@@ -8,7 +8,7 @@
     "build:backend": "bun build src/backend.ts --target=bun --format=esm --outfile=dist/backend.js",
     "build:frontend": "bun build src/frontend.ts --target=browser --format=esm --outfile=dist/frontend.js",
     "typecheck": "bunx tsc --noEmit",
-    "verify": "bun run typecheck && bun run build && bun test tests/domain.test.ts tests/generation-lifecycle.test.ts tests/tracker-display.test.ts tests/image-jobs.test.ts && node tests/contracts.mjs",
+    "verify": "bun run typecheck && bun run build && bun test tests/domain.test.ts tests/generation-lifecycle.test.ts tests/tracker-display.test.ts tests/image-jobs.test.ts tests/settings-camera.test.ts && node tests/contracts.mjs",
     "test:real-host-relay": "node scripts/check-real-host-relay.mjs",
     "mount:local": "node scripts/mount-local.mjs --enable"
   },

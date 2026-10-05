@@ -1747,10 +1747,11 @@ function generation(host) {
   return page;
 }
 function camera(host) {
-  const settings = host.draft;
+  let settings = host.draft;
   const commit = (mutate, persist = true) => {
     const next = clone(settings);
     mutate(next);
+    settings = next;
     host.update(next, { persist });
   };
   const { page, content } = host.page("Camera & Swarm Studio", "Visual profile");
@@ -1758,6 +1759,7 @@ function camera(host) {
   swarm.append(el("div", "lp-eyebrow", "Swarm Studio"), toggle("Sync active profile", settings.useSwarmProfile, (value) => {
     const next = clone(settings);
     next.useSwarmProfile = value;
+    settings = next;
     host.update(next, { persist: false });
     host.send("lumiphone:save_preferences", { preferences: next });
   }));
@@ -1768,27 +1770,75 @@ function camera(host) {
   refresh.addEventListener("click", () => host.send("lumiphone:get_swarm_profile"));
   const diagnostics = el("details", "lp-swarm-diagnostics");
   diagnostics.appendChild(el("summary", "", "Macro diagnostics"));
-  for (const name of ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect"]) {
+  for (const name of ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect", "swarm_loras"]) {
     const field = host.swarmProfile?.fields?.[name];
     const row = el("div", "lp-generation-run", `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`);
     row.dataset.pocketSwarmMacro = name;
     diagnostics.appendChild(row);
   }
   swarm.append(status, refresh, diagnostics);
+  const defaults = el("section", "lp-card lp-settings-section");
+  defaults.append(el("div", "lp-eyebrow", "Camera defaults"), el("p", "lp-copy", "Leave connection and checkpoint blank to use Lumiverse’s native presets, workflow and LoRA stack. Saved overrides apply to every Pocket photo unless changed in Camera."));
+  const native = button("Lumiverse image settings", "lp-button lp-button-quiet");
+  native.addEventListener("click", () => host.send("lumiphone:open_native_image_settings"));
+  defaults.append(native, toggle("Enhance photo description", settings.sceneEnhancer, (value) => commit((next) => {
+    next.sceneEnhancer = value;
+  })));
   const manual = el("section", "lp-card lp-settings-section");
-  manual.append(el("div", "lp-eyebrow", "Primitive / manual mode"));
+  manual.append(el("div", "lp-eyebrow", "Prompt & provider overrides"));
   const positive = el("textarea", "lp-textarea");
   positive.placeholder = "Positive / character style";
   positive.value = settings.manualVisualProfile.positive;
   const negative = el("textarea", "lp-textarea");
   negative.placeholder = "Negative prompt";
   negative.value = settings.manualVisualProfile.negative;
-  const model = el("input", "lp-input");
-  model.placeholder = "Checkpoint override";
-  model.value = settings.manualVisualProfile.model;
-  const connection = el("input", "lp-input");
-  connection.placeholder = "Image connection ID";
+  let modelValue = settings.manualVisualProfile.model;
+  const model = el("div", "lp-model-combobox");
+  const connection = el("select", "lp-select");
+  connection.dataset.pocketImageConnection = "true";
+  connection.append(new Option("Follow Lumiverse", ""));
+  for (const entry of host.imageConnections || [])
+    connection.append(new Option(entry.name, entry.id));
+  if (settings.manualVisualProfile.connectionId && !(host.imageConnections || []).some((entry) => entry.id === settings.manualVisualProfile.connectionId))
+    connection.append(new Option("Saved connection", settings.manualVisualProfile.connectionId));
   connection.value = settings.manualVisualProfile.connectionId;
+  const modelField = el("div", "lp-field");
+  modelField.append(el("div", "lp-label", "Checkpoint override"), model);
+  let stopModel;
+  const mountModel = () => {
+    stopModel?.();
+    stopModel = host.mountModelCombobox(model, { value: modelValue, connection: { kind: "image", id: connection.value || undefined }, onChange: (value) => {
+      modelValue = value;
+      commit((next) => {
+        next.manualVisualProfile.model = value;
+      }, false);
+    } });
+  };
+  mountModel();
+  connection.addEventListener("change", () => {
+    modelValue = "";
+    commit((next) => {
+      next.manualVisualProfile.connectionId = connection.value;
+      next.manualVisualProfile.model = "";
+    }, false);
+    mountModel();
+  });
+  const follow = button("Follow Lumiverse defaults", "lp-button lp-button-quiet");
+  follow.addEventListener("click", () => {
+    connection.value = "";
+    modelValue = "";
+    commit((next) => {
+      next.manualVisualProfile.connectionId = "";
+      next.manualVisualProfile.model = "";
+    });
+    mountModel();
+  });
+  const saveDefaults = button("Save camera defaults", "lp-button");
+  saveDefaults.addEventListener("click", () => commit((next) => {
+    next.manualVisualProfile.connectionId = connection.value;
+    next.manualVisualProfile.model = modelValue.trim();
+  }));
+  defaults.append(fieldBlock("Image connection", connection), modelField, saveDefaults, follow);
   const loras = el("textarea", "lp-textarea");
   loras.placeholder = "LoRA stack: name | weight";
   loras.value = settings.manualVisualProfile.loras.map((item) => `${item.name} | ${item.weight}`).join(`
@@ -1796,11 +1846,11 @@ function camera(host) {
   const parameters = el("textarea", "lp-textarea lp-code-input");
   parameters.placeholder = "Provider parameters JSON";
   parameters.value = Object.keys(settings.manualVisualProfile.parameters).length ? JSON.stringify(settings.manualVisualProfile.parameters, null, 2) : "";
-  for (const control of [positive, negative, model, connection, loras, parameters])
+  for (const control of [positive, negative, loras, parameters])
     control.addEventListener("input", () => commit((next) => {
       next.manualVisualProfile.positive = positive.value;
       next.manualVisualProfile.negative = negative.value;
-      next.manualVisualProfile.model = model.value;
+      next.manualVisualProfile.model = modelValue;
       next.manualVisualProfile.connectionId = connection.value;
     }, false));
   const apply = button("Apply manual profile", "lp-button");
@@ -1815,7 +1865,7 @@ function camera(host) {
     commit((next) => {
       next.manualVisualProfile.positive = positive.value.trim();
       next.manualVisualProfile.negative = negative.value.trim();
-      next.manualVisualProfile.model = model.value.trim();
+      next.manualVisualProfile.model = modelValue.trim();
       next.manualVisualProfile.connectionId = connection.value.trim();
       next.manualVisualProfile.loras = loras.value.split(`
 `).flatMap((line) => {
@@ -1828,8 +1878,8 @@ function camera(host) {
       next.manualVisualProfile.parameters = parsed;
     });
   });
-  manual.append(positive, negative, model, connection, loras, parameters, apply);
-  content.append(swarm, disclosure("Advanced manual overrides", manual));
+  manual.append(positive, negative, loras, parameters, apply);
+  content.append(defaults, swarm, disclosure("Advanced manual overrides", manual));
   return page;
 }
 function jevSettings(host) {
@@ -8343,6 +8393,14 @@ class PocketController {
     }
     if (payload.type === "lumiphone:image_options") {
       this.imageConnections = payload.connections || [];
+      const imageSelect = this.screen.querySelector("[data-pocket-image-connection]");
+      if (imageSelect) {
+        const selected = imageSelect.value;
+        imageSelect.replaceChildren(new Option("Follow Lumiverse", ""), ...this.imageConnections.map((entry) => new Option(entry.name, entry.id)));
+        if (selected && !this.imageConnections.some((entry) => entry.id === selected))
+          imageSelect.append(new Option("Saved connection", selected));
+        imageSelect.value = selected;
+      }
       if (this.currentApp === "camera")
         this.render(false);
       return;
@@ -8723,6 +8781,8 @@ class PocketController {
     } else if (route.app === "settings") {
       this.selectedSettingsSection = route.section || "";
       this.settingsDraft ||= structuredClone(this.preferences);
+      if (this.selectedSettingsSection === "camera")
+        this.send("lumiphone:image_options", {});
       this.send("lumiphone:mark_read", { app: "settings" });
     } else if (route.app !== "home") {
       this.send("lumiphone:mark_read", { app: route.app });
@@ -9736,7 +9796,7 @@ ${body}`;
     const model = el("div", "lp-model-combobox");
     const mountModel = () => {
       modelHandle?.destroy();
-      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: "image", id: this.cameraOptions.connectionId || undefined }, placeholder: "Use native checkpoint", onChange: (value) => {
+      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: "image", id: this.cameraOptions.connectionId || this.preferences.manualVisualProfile.connectionId || undefined }, placeholder: "Use native checkpoint", onChange: (value) => {
         this.cameraOptions.model = value;
       } });
     };
@@ -9752,7 +9812,7 @@ ${body}`;
       this.close();
       this.send("lumiphone:open_native_image_settings", {});
     });
-    const pipelineCopy = el("p", "lp-copy", "Defaults use Lumiverse presets, workflow and LoRA stack. Choosing a connection or checkpoint uses a direct override for this photo.");
+    const pipelineCopy = el("p", "lp-copy", "Without saved or per-photo overrides, use Lumiverse presets, workflow and LoRA stack. Connection/checkpoint overrides use direct generation. Set saved defaults in Pocket Settings.");
     const shutterRow = el("div", "lp-shutter-row");
     const shutterAction = el("div", "lp-camera-shutter-action");
     const shutter = el("button", "lp-shutter");
@@ -10173,6 +10233,7 @@ ${body}`;
       section: this.selectedSettingsSection,
       activePersona: this.activePersona,
       capabilities: this.caps,
+      imageConnections: this.imageConnections,
       swarmProfile: this.swarmProfile,
       generation: this.generation,
       resolvedWallpapers: this.resolvedWallpapers,
@@ -10182,7 +10243,11 @@ ${body}`;
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       update: (preferences, options) => this.updatePreferences(preferences, options),
       navigate: (section) => this.openPocket({ app: "settings", section }),
-      send: (type, payload) => this.send(type, payload),
+      send: (type, payload) => {
+        if (type === "lumiphone:open_native_image_settings")
+          this.close();
+        return this.send(type, payload);
+      },
       requestPermissions: () => {
         this.requestPermissions();
       },
@@ -10193,15 +10258,27 @@ ${body}`;
         this.chooseImage(target, mode);
       },
       mountModelCombobox: (target, options) => {
-        const handle = this.ctx.components.mountModelCombobox(target, {
-          value: options.value,
-          connection: options.connection,
-          appearance: "standard",
-          placeholder: "Use connection model",
-          disabled: options.disabled,
-          onChange: options.onChange
+        let stopped = false;
+        let handle;
+        const stop = () => {
+          stopped = true;
+          handle?.destroy();
+          handle = undefined;
+        };
+        this.viewCleanups.push(stop);
+        queueMicrotask(() => {
+          if (stopped || !target.isConnected)
+            return;
+          handle = this.ctx.components.mountModelCombobox(target, {
+            value: options.value,
+            connection: options.connection,
+            appearance: "standard",
+            placeholder: "Use connection model",
+            disabled: options.disabled,
+            onChange: options.onChange
+          });
         });
-        this.viewCleanups.push(() => handle.destroy());
+        return stop;
       }
     });
   }
