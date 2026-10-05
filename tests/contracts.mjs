@@ -1566,6 +1566,8 @@ await frontendHandler({ type: 'lumiphone:get_state', requestId: 'future-preferen
 assert.deepEqual(storage.get('device/preferences.json'), { version: 999, handsetScale: 42, futureToken: 'preserve-me' })
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
+dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')) }
 dom.window.HTMLImageElement.prototype.decode = async function () {}
 Object.defineProperty(dom.window.HTMLImageElement.prototype, 'naturalWidth', { get: () => 800 })
 Object.defineProperty(dom.window.HTMLImageElement.prototype, 'naturalHeight', { get: () => 1200 })
@@ -1626,7 +1628,7 @@ let dockRequestCount = 0
 let dockDestroyCount = 0
 const injected = []
 const frontendContext = {
-  components: { mountModelCombobox: () => ({ getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} }) },
+  components: { mountModelCombobox: (target, options) => { if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
   dom: {
     addStyle: () => () => {},
     findMessageElement: (messageId) => messageId === 'host-message-a' ? messageBubble : null,
@@ -2024,6 +2026,9 @@ contactNameDraft.value = 'Draft Two edited'
 contactNameDraft.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Quick Generate').click()
 assert.ok(dockRoot.querySelector('.lp-photo-viewfinder'))
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Camera options').click()
+assert.ok(dockRoot.querySelector('[data-image-picker-mounted="true"]'))
+;[...dockRoot.querySelectorAll('dialog button')].find(node => node.textContent === 'Done').click()
 assert.match(dockRoot.querySelector('textarea').value, /Portrait of Draft Two/)
 dockRoot.querySelector('form.lp-camera-body').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
 const cancelledPortrait = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
