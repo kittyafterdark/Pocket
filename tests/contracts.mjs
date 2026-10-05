@@ -2,6 +2,18 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { JSDOM } from 'jsdom'
 
+// Inspect open Pocket roots explicitly; normal document queries must not see their UI.
+function inlineAll(host, selector) {
+  const result = [...host.querySelectorAll(selector)]
+  for (const island of host.querySelectorAll('pocket-inline-ui')) {
+    assert.ok(island.shadowRoot, 'Pocket must keep its isolated root open for inspection')
+    result.push(...island.shadowRoot.querySelectorAll(selector))
+  }
+  return result
+}
+function inlineOne(host, selector) { return inlineAll(host, selector)[0] || null }
+function inlineText(host) { return inlineAll(host, '.pocket-artifact-stack').map(node => node.textContent).join(' ') }
+
 const root = new URL('../', import.meta.url)
 const manifest = JSON.parse(await readFile(new URL('spindle.json', root), 'utf8'))
 const backendSource = await readFile(new URL('src/backend.ts', root), 'utf8') + await readFile(new URL('src/backend/image-jobs.ts', root), 'utf8')
@@ -2060,24 +2072,30 @@ streamingArtifactHost.className = 'pocket-inline-anchor'
 streamingArtifactHost.dataset.pocketInlineAnchor = streamingInlineActivity.id
 messageBubble.prepend(streamingArtifactHost)
 await new Promise((resolve) => setTimeout(resolve, 24))
-assert.equal(streamingArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'streamed durable anchor must render from provisional activity metadata before any committed state arrives')
-assert.match(streamingArtifactHost.textContent || '', /Rendered before the generation ends\./)
+assert.equal(inlineAll(streamingArtifactHost, '.pocket-inline-artifact[data-kind="received"]').length, 1, 'streamed durable anchor must render from provisional activity metadata before any committed state arrives')
+assert.equal(streamingArtifactHost.querySelector('.pocket-inline-artifact'), null, 'phone/card internals must be unreachable by host theme selectors')
+assert.equal(streamingArtifactHost.querySelectorAll('pocket-inline-ui').length, 1, 'each mounted inline activity must have exactly one isolation host')
+const streamingShadow = streamingArtifactHost.querySelector('pocket-inline-ui').shadowRoot
+assert.ok(streamingShadow.querySelector('style')?.textContent.includes('.pocket-phone-thread'), 'mock/older browser path must install styles inside the shadow root')
+assert.equal(streamingArtifactHost.querySelector('style'), null, 'isolated stylesheet fallback must never leak back into the host document')
+
+assert.match(inlineText(streamingArtifactHost) || '', /Rendered before the generation ends\./)
 backendReceiver({ type: 'lumiphone:candidate_activity_discard', activityIds: [streamingInlineActivity.id], origin: { chatId: 'chat-a', hostMessageId: 'host-message-a', swipeId: 0 } })
 assert.equal(streamingArtifactHost.childElementCount, 0, 'discarded provisional activity must evaporate its optimistic inline preview')
 assert.equal(streamingArtifactHost.hidden, true, 'discarded optimistic preview anchor must be hidden')
 
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
-assert.equal(messageBubble.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'fallback communication uses the same notification renderer')
-assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 0, 'communication fallback must not add a competing provenance card')
+assert.equal(inlineAll(messageBubble, '.pocket-inline-artifact[data-kind="received"]').length, 1, 'fallback communication uses the same notification renderer')
+assert.equal(inlineAll(messageBubble, '[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 0, 'communication fallback must not add a competing provenance card')
 const exactArtifactHost = document.createElement('div')
 exactArtifactHost.className = 'pocket-inline-anchor'
 exactArtifactHost.dataset.pocketInlineAnchor = 'inline-message-activity'
 messageBubble.prepend(exactArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
-assert.equal(exactArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="received"]').length, 1, 'persisted exact-position anchor must render the diegetic Pocket artifact')
-assert.match(exactArtifactHost.textContent || '', /Messages.*Devon.*He is awake and on his way\./s)
-assert.equal(exactArtifactHost.querySelectorAll('.pocket-receipt').length, 0, 'inline story artifact must not carry the diagnostic receipt underneath it')
-assert.equal(messageBubble.querySelectorAll('[data-pocket-activity-id="inline-message-activity"]').length, 1, 'inline placement must replace the fallback receipt rather than duplicate it')
+assert.equal(inlineAll(exactArtifactHost, '.pocket-inline-artifact[data-kind="received"]').length, 1, 'persisted exact-position anchor must render the diegetic Pocket artifact')
+assert.match(inlineText(exactArtifactHost) || '', /Messages.*Devon.*He is awake and on his way\./s)
+assert.equal(inlineAll(exactArtifactHost, '.pocket-receipt').length, 0, 'inline story artifact must not carry the diagnostic receipt underneath it')
+assert.equal(inlineAll(messageBubble, '[data-pocket-activity-id="inline-message-activity"]').length, 1, 'inline placement must replace the fallback receipt rather than duplicate it')
 const observedInlineActivity = {
   ...inlineMessageActivity,
   id: 'observed-inline-activity',
@@ -2089,9 +2107,9 @@ observedArtifactHost.className = 'pocket-inline-anchor'
 observedArtifactHost.dataset.pocketInlineAnchor = observedInlineActivity.id
 messageBubble.prepend(observedArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: observedInlineActivity })
-assert.equal(observedArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="observed"]').length, 1, 'observed communication must render as a phone notification glimpse')
-assert.match(observedArtifactHost.textContent || '', /Shoto Todoroki's phone.*Messages.*Izuku Midoriya.*budget review/s)
-assert.doesNotMatch(observedArtifactHost.textContent || '', /observed phone|glimpse|Izuku Midoriya\s*→\s*Shoto Todoroki/i, 'diegetic observed UI must not expose debug/event-card language')
+assert.equal(inlineAll(observedArtifactHost, '.pocket-inline-artifact[data-kind="observed"]').length, 1, 'observed communication must render as a phone notification glimpse')
+assert.match(inlineText(observedArtifactHost) || '', /Shoto Todoroki's phone.*Messages.*Izuku Midoriya.*budget review/s)
+assert.doesNotMatch(inlineText(observedArtifactHost) || '', /observed phone|glimpse|Izuku Midoriya\s*→\s*Shoto Todoroki/i, 'diegetic observed UI must not expose debug/event-card language')
 
 const externalUiState = structuredClone(savedDraftState)
 externalUiState.state.discoveredActors.push(...structuredClone(deviceState.discoveredActors).map(actor => ({ ...actor, chatId: 'chat-a' })))
@@ -2100,7 +2118,7 @@ backendReceiver(externalUiState)
 const externalUiActivity = { ...structuredClone(deviceState.activities.find(entry => entry.route.conversationId === externalDm.id)), id: 'cross-phone-ui', scope: { chatId: 'chat-a', characterId: 'char-a' }, source: { messageId: 'host-message-a' } }
 const externalAnchor = document.createElement('div'); externalAnchor.className = 'pocket-inline-anchor'; externalAnchor.dataset.pocketInlineAnchor = externalUiActivity.id; messageBubble.prepend(externalAnchor)
 backendReceiver({ type: 'lumiphone:activity', activity: externalUiActivity })
-const externalButton = externalAnchor.querySelector('button.pocket-inline-artifact')
+const externalButton = inlineOne(externalAnchor, 'button.pocket-inline-artifact')
 assert.ok(externalButton, 'observed artifact is keyboard accessible')
 externalButton.click()
 assert.equal(frontendSends.filter(entry => entry.type === 'lumiphone:view_state').at(-1).deviceOwnerActorId, tylerActor.id)
@@ -2120,9 +2138,9 @@ sentArtifactHost.className = 'pocket-inline-anchor'
 sentArtifactHost.dataset.pocketInlineAnchor = sentInlineActivity.id
 messageBubble.prepend(sentArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: sentInlineActivity })
-assert.equal(sentArtifactHost.querySelectorAll('.pocket-inline-artifact[data-kind="sent"] .pocket-inline-chat-bubble').length, 1, 'sent inline communication must use the chat-bubble primitive')
-assert.match(sentArtifactHost.textContent || '', /Messages.*sent.*To Shoto Todoroki.*Bring some food when you come over\./s)
-assert.doesNotMatch(sentArtifactHost.textContent || '', /Pocket chat|Kai\s*→\s*Shoto Todoroki/i, 'sent diegetic UI must avoid middleware-style sender arrows')
+assert.equal(inlineAll(sentArtifactHost, '.pocket-inline-artifact[data-kind="sent"] .pocket-inline-chat-bubble').length, 1, 'sent inline communication must use the chat-bubble primitive')
+assert.match(inlineText(sentArtifactHost) || '', /Messages.*sent.*To Shoto Todoroki.*Bring some food when you come over\./s)
+assert.doesNotMatch(inlineText(sentArtifactHost) || '', /Pocket chat|Kai\s*→\s*Shoto Todoroki/i, 'sent diegetic UI must avoid middleware-style sender arrows')
 const batchInlineActivity = {
   ...inlineMessageActivity,
   id: 'batch-inline-activity',
@@ -2142,60 +2160,60 @@ batchArtifactHost.className = 'pocket-inline-anchor'
 batchArtifactHost.dataset.pocketInlineAnchor = batchInlineActivity.id
 messageBubble.prepend(batchArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: batchInlineActivity })
-assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-chat-transcript').length, 1, 'group message_batch must render as one coherent mini chat transcript')
-assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row').length, legacyBatchRows.length, 'bounded seven-person GC riot should surface every authored bubble inline')
-assert.match(batchArtifactHost.textContent || '', /Class 3-A.*Mina Ashido.*YOU COUNTED THE SECONDS.*Denki Kaminari.*BROOOOOOOOO/s)
-assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:not([hidden])').length, 3)
-const expandBatch = batchArtifactHost.querySelector('button.pocket-inline-transcript-more')
+assert.equal(inlineAll(batchArtifactHost, '.pocket-inline-chat-transcript').length, 1, 'group message_batch must render as one coherent mini chat transcript')
+assert.equal(inlineAll(batchArtifactHost, '.pocket-inline-transcript-row').length, legacyBatchRows.length, 'bounded seven-person GC riot should surface every authored bubble inline')
+assert.match(inlineText(batchArtifactHost) || '', /Class 3-A.*Mina Ashido.*YOU COUNTED THE SECONDS.*Denki Kaminari.*BROOOOOOOOO/s)
+assert.equal(inlineAll(batchArtifactHost, '.pocket-inline-transcript-row:not([hidden])').length, 3)
+const expandBatch = inlineOne(batchArtifactHost, 'button.pocket-inline-transcript-more')
 const sendsBeforeExpand = frontendSends.length
 expandBatch.click()
-assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:not([hidden])').length, legacyBatchRows.length)
+assert.equal(inlineAll(batchArtifactHost, '.pocket-inline-transcript-row:not([hidden])').length, legacyBatchRows.length)
 assert.equal(expandBatch.getAttribute('aria-expanded'), 'true')
 assert.equal(frontendSends.length, sendsBeforeExpand, 'inline expansion must not navigate or send a message')
 expandBatch.click()
-assert.equal(batchArtifactHost.querySelectorAll('.pocket-inline-transcript-row:not([hidden])').length, 3)
+assert.equal(inlineAll(batchArtifactHost, '.pocket-inline-transcript-row:not([hidden])').length, 3)
 const inlineAppearanceState = { ...savedDraftState, state: { ...savedDraftState.state, activities: [inlineMessageActivity, observedInlineActivity, sentInlineActivity, batchInlineActivity] } }
 backendReceiver({ ...inlineAppearanceState, preferences: { ...firstState.preferences, inlineAppearance: 'phone' } })
-assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.appearance, 'phone')
-assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.pocketUi, 'true', 'full phone must declare the Pocket styling boundary')
-assert.equal(batchArtifactHost.querySelector('.pocket-phone-device').dataset.screen, 'group')
-assert.equal(batchArtifactHost.querySelector('.pocket-inline-artifact'), null, 'Full Phone must not wrap the scene-card component')
-assert.equal(batchArtifactHost.querySelectorAll('.pocket-phone-message').length, legacyBatchRows.length, 'group phone shows its complete scrollable conversation')
-assert.match(batchArtifactHost.querySelector('.pocket-phone-conversation-title').textContent, /Class 3-A/)
-assert.ok(batchArtifactHost.querySelector('.pocket-mock-composer'))
-assert.ok(batchArtifactHost.querySelector('.pocket-phone-status .pocket-phone-indicators svg'), 'phone chrome must use real SVG indicators rather than text glyphs')
-assert.ok(batchArtifactHost.querySelector('.pocket-phone-app-header svg'), 'open chat header must use SVG controls')
-assert.equal(batchArtifactHost.querySelector('input,textarea'), null, 'mock composer must not pretend to send messages')
-assert.equal(exactArtifactHost.querySelector('.pocket-phone-device').dataset.screen, 'lock')
-assert.equal(observedArtifactHost.querySelector('.pocket-phone-device').dataset.screen, 'lock')
-assert.match(observedArtifactHost.querySelector('.pocket-phone-lock-label').textContent, /Shoto Todoroki's phone/)
-assert.doesNotMatch(observedArtifactHost.textContent, /\bLocked\b/, 'lock state must be communicated by composition, not a giant debug-style Locked label')
-assert.ok(observedArtifactHost.querySelector('.pocket-phone-notification-app svg'), 'lock notification must use an SVG app icon')
-assert.equal(sentArtifactHost.querySelector('.pocket-phone-device').dataset.screen, 'chat')
-assert.equal(sentArtifactHost.querySelector('.pocket-phone-notification'), null)
-assert.equal(sentArtifactHost.querySelector('.pocket-phone-bubble').textContent, 'Bring some food when you come over.')
-assert.ok(sentArtifactHost.querySelector('.pocket-phone-composer-send svg'), 'mock composer should render a proper SVG send affordance')
+assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.appearance, 'phone')
+assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.pocketUi, 'true', 'full phone must declare the Pocket styling boundary')
+assert.equal(inlineOne(batchArtifactHost, '.pocket-phone-device').dataset.screen, 'group')
+assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-artifact'), null, 'Full Phone must not wrap the scene-card component')
+assert.equal(inlineAll(batchArtifactHost, '.pocket-phone-message').length, legacyBatchRows.length, 'group phone shows its complete scrollable conversation')
+assert.match(inlineOne(batchArtifactHost, '.pocket-phone-conversation-title').textContent, /Class 3-A/)
+assert.ok(inlineOne(batchArtifactHost, '.pocket-mock-composer'))
+assert.ok(inlineOne(batchArtifactHost, '.pocket-phone-status .pocket-phone-indicators svg'), 'phone chrome must use real SVG indicators rather than text glyphs')
+assert.ok(inlineOne(batchArtifactHost, '.pocket-phone-app-header svg'), 'open chat header must use SVG controls')
+assert.equal(inlineOne(batchArtifactHost, 'input,textarea'), null, 'mock composer must not pretend to send messages')
+assert.equal(inlineOne(exactArtifactHost, '.pocket-phone-device').dataset.screen, 'lock')
+assert.equal(inlineOne(observedArtifactHost, '.pocket-phone-device').dataset.screen, 'lock')
+assert.match(inlineOne(observedArtifactHost, '.pocket-phone-lock-label').textContent, /Shoto Todoroki's phone/)
+assert.doesNotMatch(inlineText(observedArtifactHost), /\bLocked\b/, 'lock state must be communicated by composition, not a giant debug-style Locked label')
+assert.ok(inlineOne(observedArtifactHost, '.pocket-phone-notification-app svg'), 'lock notification must use an SVG app icon')
+assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-device').dataset.screen, 'chat')
+assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-notification'), null)
+assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-bubble').textContent, 'Bring some food when you come over.')
+assert.ok(inlineOne(sentArtifactHost, '.pocket-phone-composer-send svg'), 'mock composer should render a proper SVG send affordance')
 const callUiActivity = { ...inlineMessageActivity, id: 'call-ui', kind: 'call', presentation: { kind: 'received', senderName: 'Alice', recipientNames: ['Kai'], call: { callId: 'call-ui-id', status: 'ended', speakerphone: true, durationSeconds: 240 } } }
 const callUiAnchor = document.createElement('div'); callUiAnchor.dataset.pocketInlineAnchor = callUiActivity.id; messageBubble.prepend(callUiAnchor)
 backendReceiver({ type: 'lumiphone:activity', activity: callUiActivity })
-assert.ok(callUiAnchor.querySelector('.pocket-phone-call[data-call-status="ended"]'))
-assert.equal(callUiAnchor.querySelector('.pocket-inline-artifact'), null, 'call must be a dedicated screen, not a message panel')
-assert.equal(callUiAnchor.querySelector('.pocket-mock-composer'), null)
-assert.ok(callUiAnchor.querySelector('.pocket-phone-call-controls svg'))
-assert.match(callUiAnchor.textContent, /Call ended.*Speakerphone.*4:00/)
+assert.ok(inlineOne(callUiAnchor, '.pocket-phone-call[data-call-status="ended"]'))
+assert.equal(inlineOne(callUiAnchor, '.pocket-inline-artifact'), null, 'call must be a dedicated screen, not a message panel')
+assert.equal(inlineOne(callUiAnchor, '.pocket-mock-composer'), null)
+assert.ok(inlineOne(callUiAnchor, '.pocket-phone-call-controls svg'))
+assert.match(inlineText(callUiAnchor), /Call ended.*Speakerphone.*4:00/)
 backendReceiver({ ...inlineAppearanceState, state: { ...inlineAppearanceState.state, activities: [...inlineAppearanceState.state.activities, callUiActivity] }, preferences: { ...firstState.preferences, inlineAppearance: 'cards' } })
-assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.appearance, 'cards')
-assert.equal(batchArtifactHost.querySelector('.pocket-inline-frame').dataset.pocketUi, 'true', 'scene cards must declare the Pocket styling boundary')
-assert.equal(batchArtifactHost.querySelector('.lp-message-surface'), null, 'inline bubbles must not carry shared handset surface hooks')
-assert.equal(batchArtifactHost.querySelector('.pocket-mock-composer'), null)
+assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.appearance, 'cards')
+assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.pocketUi, 'true', 'scene cards must declare the Pocket styling boundary')
+assert.equal(inlineOne(batchArtifactHost, '.lp-message-surface'), null, 'inline bubbles must not carry shared handset surface hooks')
+assert.equal(inlineOne(batchArtifactHost, '.pocket-mock-composer'), null)
 
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })
 backendReceiver({ type: 'lumiphone:activity', activity })
-const acceptedActivityHosts = messageBubble.querySelectorAll(`[data-pocket-activity-id="${activity.id}"]`)
+const acceptedActivityHosts = inlineAll(messageBubble, `[data-pocket-activity-id="${activity.id}"]`)
 assert.equal(acceptedActivityHosts.length, 1, 'accepted activity receipt was not deduplicated')
-assert.equal(acceptedActivityHosts[0].querySelectorAll('.pocket-receipt').length, 1, 'accepted activity host must contain exactly one provenance receipt')
-acceptedActivityHosts[0].querySelector('.pocket-receipt').click()
+assert.equal(inlineAll(acceptedActivityHosts[0], '.pocket-receipt').length, 1, 'accepted activity host must contain exactly one provenance receipt')
+inlineOne(acceptedActivityHosts[0], '.pocket-receipt').click()
 assert.match(dockRoot.textContent, /Notes|Edit Note/, 'activity route did not open Pocket safely')
 backendReceiver({ ...firstState, reason: 'host_swipe', state: { ...structuredClone(firstState.state), activities: [] } })
 assert.equal(acceptedActivityHosts[0].isConnected, false, 'swipe projection must remove stale injected provenance surfaces from the previous candidate')

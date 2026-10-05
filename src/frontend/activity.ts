@@ -2,6 +2,7 @@ import type { PocketActivity, PocketRoute } from '../types.js'
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { callSummary } from '../domain/phone-events.js'
 import { buildPhoneScreen, callSymbol } from './phone-screen.js'
+import { isolatedActivity } from './components/activity-shadow.js'
 
 export interface ActivityRenderOptions {
   includeReceipt?: boolean
@@ -288,7 +289,7 @@ export function renderActivityHost(
   options: ActivityRenderOptions = {},
 ): Element {
   host.setAttribute('data-pocket-host', 'true')
-  host.replaceChildren(buildActivityStack(activity, openRoute, options))
+  host.replaceChildren(isolatedActivity(buildActivityStack(activity, openRoute, options)))
   return host
 }
 
