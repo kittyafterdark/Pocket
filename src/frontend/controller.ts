@@ -40,6 +40,7 @@ import { PocketRouteHistory } from './router.js'
 import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from './activity.js'
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
+import { renderDevicePicker } from './components/device-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
 import type {
@@ -467,34 +468,15 @@ class PocketController {
     const logo = el('div', 'lumiphone-drawer-icon')
     logo.innerHTML = PHONE_ICON
     const title = el('h2', 'lumiphone-drawer-title', 'Pocket devices')
-    const copy = el('p', 'lumiphone-drawer-copy', 'Choose whose Pocket you are inspecting. This changes only the phone viewport; the roleplay Persona stays the same.')
+    const copy = el('p', 'lumiphone-drawer-copy', 'Your phone keeps its unread alerts. Explore other phones or jump to their last interaction; your roleplay Persona stays the same.')
     card.append(logo, title, copy)
 
     if (this.state) {
       const personaId = pocketPersonaActorId(this.state)
-      const ids = [personaId]
-      for (const conversation of this.state.conversations) {
-        for (const actorId of conversationDeviceActorIds(this.state, conversation)) if (!ids.includes(actorId)) ids.push(actorId)
-      }
       const selected = this.currentDeviceOwnerActorId() || personaId
-      const list = el('div', 'lumiphone-device-list')
-      for (const actorId of ids) {
-        const actor = resolvePocketActor(this.state, actorId)
-        if (!actor) continue
-        const row = button('', 'lumiphone-device-row')
-        row.dataset.selected = String(actorId === selected)
-        row.dataset.pocketDeviceOwner = actorId
-        row.dataset.pocketDeviceKey = pocketDeviceKey(this.state.chatId, this.state.characterId, actorId)
-        const identity = el('span', 'lumiphone-device-identity')
-        identity.append(el('strong', '', actor.name), el('span', '', actorId === personaId ? 'Roleplay Persona' : actor.role || 'Pocket actor'))
-        const meta = el('span', 'lumiphone-device-meta')
-        if (actorId === personaId) meta.appendChild(el('span', 'lumiphone-device-rp', 'RP'))
-        const messageUnread = this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state!, conversation, actorId), 0)
-        const notificationUnread = this.state.notifications.filter((entry) => !entry.read && !entry.dismissedAt && notificationBelongsToDevice(this.state!, actorId, entry.deviceOwnerActorId)).length
-        const unread = Math.max(messageUnread, notificationUnread)
-        if (unread) meta.appendChild(el('span', 'lumiphone-device-unread', unread > 99 ? '99+' : String(unread)))
-        row.append(identity, meta)
-        row.addEventListener('click', () => {
+      const list = renderDevicePicker(this.state, selected,
+        actorId => pocketDeviceKey(this.state!.chatId, this.state!.characterId, actorId),
+        (actorId, route) => {
           if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
           this.cameraRequestId = ''; this.cameraBusy = false; this.cameraReady = false; this.cameraPreview = ''; this.cameraContactId = ''; this.cameraNpcDraft = null
           this.deviceOwnerActorId = actorId
@@ -508,9 +490,8 @@ class PocketController {
           this.announceView()
           if (this.widget) this.open()
           else this.mountPhoneInDrawer()
+          if (route) this.openPocket(route)
         })
-        list.appendChild(row)
-      }
       card.appendChild(list)
     } else {
       card.appendChild(el('p', 'lumiphone-drawer-copy', 'Pocket is still loading this chat.'))

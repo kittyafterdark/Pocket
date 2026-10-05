@@ -26,6 +26,23 @@ export function conversationVisibleOnDevice(state: PhoneState, conversation: Poc
   return conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state))
 }
 
+/** Latest committed communication visible on this phone, independent of unread state. */
+export function latestDeviceInteraction(state: PhoneState, owner: string): { conversation: PocketConversation; message: PhoneMessage } | null {
+  let latest: { conversation: PocketConversation; message: PhoneMessage } | null = null
+  let latestTime = -Infinity
+  for (const conversation of state.conversations) {
+    if (!conversationVisibleOnDevice(state, conversation, owner)) continue
+    for (const message of conversation.messages) {
+      if (message.candidateCommitState === 'provisional' || (message.sender === 'system' && !message.call)) continue
+      const time = Date.parse(message.createdAt)
+      // Undated entries retain storage order, but never displace a dated interaction.
+      const rank = Number.isFinite(time) ? time : -Infinity
+      if (!latest || rank >= latestTime) { latest = { conversation, message }; latestTime = rank }
+    }
+  }
+  return latest
+}
+
 /** Choose an actual participating phone, preferring the observed recipient. */
 export function activityDeviceOwner(state: PhoneState, activity: PocketActivity, currentOwner: string): string | null {
   if (activity.scope.chatId !== state.chatId || activity.scope.characterId !== state.characterId) return null

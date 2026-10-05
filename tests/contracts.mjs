@@ -1589,6 +1589,13 @@ assert.equal(dockRequestCount, 1)
 // Persona appearance is legal only on the Persona-owned phone; inspecting an NPC
 // must fall back to device-wide styling without changing the mounted surface id.
 const identityUiState = structuredClone(firstState)
+const pickerAlice = identityUiState.state.contacts.find(contact => contact.name === 'Alice')
+identityUiState.state.conversations.push({
+  id: 'picker-latest', kind: 'direct', title: 'Alice', includesPocketPersona: true, availability: { state: 'remote' },
+  participantActorIds: [pickerAlice.id], participantContactIds: [pickerAlice.id], unread: 1,
+  createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  messages: [{ id: 'picker-message', sender: 'contact', senderActorId: pickerAlice.id, senderName: 'Alice', senderAccent: '#8b7dff', text: 'Latest picker interaction', createdAt: '2026-01-01T00:00:00Z', read: false, status: 'delivered' }],
+})
 identityUiState.preferences = structuredClone(firstState.preferences)
 identityUiState.preferences.colors.accent = '#224466'
 identityUiState.preferences.customCss = '.lp-title { letter-spacing: 7px; } /* device-css-marker */'
@@ -1624,7 +1631,12 @@ assert.doesNotMatch(identityStyle.textContent, /@scope \(\.lumiphone-shell\)/, '
 const npcDeviceRow = [...drawerRoot.querySelectorAll('.lumiphone-device-row')].find((node) => node.textContent.includes('Alice') && !node.textContent.includes('Roleplay Persona'))
 assert.ok(npcDeviceRow, 'device selector must expose a non-Persona phone for isolation QA')
 assert.ok(npcDeviceRow.dataset.pocketDeviceKey, 'device selector rows must expose the logical phone id before opening them')
-npcDeviceRow.click()
+assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-item:not(:has(.lumiphone-device-rp)) .lumiphone-device-unread').length, 0, 'inspected actor phones must not show unread badges in the picker')
+const npcLatestJump = npcDeviceRow.parentElement.querySelector('.lumiphone-device-jump')
+assert.ok(npcLatestJump, 'actor phone with history must offer a latest-interaction jump')
+npcLatestJump.click()
+assert.ok(dockRoot.querySelector('[data-message-id="picker-message"][data-selected="true"]'), 'jump must render and highlight the exact latest message')
+assert.ok(frontendSends.some(payload => payload.type === 'lumiphone:mark_read' && payload.deviceOwnerActorId === npcDeviceRow.dataset.pocketDeviceOwner && payload.conversationId), 'jump must route into a conversation on the chosen device')
 assert.equal(identityShell.dataset.pocketSurface, personaSurfaceId, 'inspecting another logical phone must not replace the mounted surface identity')
 assert.notEqual(identityShell.dataset.pocketDeviceKey, personaDeviceKey, 'logical device key must change with the inspected phone owner')
 assert.equal(identityShell.dataset.pocketDeviceRole, 'actor')

@@ -134,7 +134,7 @@ describe('portable casts and image purposes', () => {
 import { parseGeneratedObject, parseWithTruncationRetry } from '../src/backend/structured.js'
 import { assemblePocketContext, buildRoleplayContext } from '../src/backend/roleplay-context.js'
 import { sanitizeNarrativeContent } from '../src/backend/narrative-content.js'
-import { activityDeviceOwner, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../src/domain/device.js'
+import { activityDeviceOwner, conversationUnreadForDevice, conversationVisibleOnDevice, latestDeviceInteraction, messageDirection } from '../src/domain/device.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayIdFromMessages } from '../src/backend/continuity.js'
 import { createPocketReference, serializePocketReference } from '../src/backend/references.js'
 import { resolvePocketImageSource } from '../src/backend/image-sources.js'
@@ -1033,4 +1033,20 @@ describe('Pocket device projections', () => {
     expect(normalized.contacts).toHaveLength(0)
     expect(normalized.conversations).toHaveLength(0)
   })
+})
+
+
+test('device latest interaction ignores other phones, provisional writes and system notices', () => {
+  const message = (id: string, createdAt: string, extra = {}) => ({ id, createdAt, sender: 'contact', text: id, ...extra })
+  const state = { pocketPersonaActorId: 'persona', conversations: [
+    { id: 'old', participantActorIds: ['alice'], messages: [message('old', '2026-01-01')] },
+    { id: 'new', participantActorIds: ['alice'], messages: [message('new', '2026-02-01'), message('notice', '2026-03-01', { sender: 'system' }), message('draft', '2026-04-01', { candidateCommitState: 'provisional' })] },
+    { id: 'other', participantActorIds: ['bob'], messages: [message('other', '2026-05-01')] },
+    { id: 'undated', participantActorIds: ['alice'], messages: [message('undated', '')] },
+  ] } as unknown as PhoneState
+  expect(latestDeviceInteraction(state, 'alice')?.message.id).toBe('new')
+  expect(latestDeviceInteraction(state, 'bob')?.conversation.id).toBe('other')
+  expect(latestDeviceInteraction(state, 'missing')).toBeNull()
+  state.conversations[1].messages.push(message('call', '2026-06-01', { sender: 'system', call: { status: 'ended' } }) as any)
+  expect(latestDeviceInteraction(state, 'alice')?.message.id).toBe('call')
 })
