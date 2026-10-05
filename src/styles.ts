@@ -50,9 +50,10 @@ export const PHONE_STYLES = `
   .lumiphone-shell[data-theme="rose"] { --lp-bg:#1b1018; --lp-surface:rgba(53,27,43,.9); --lp-surface-2:rgba(94,43,69,.75); --lp-text:#fff4fa; --lp-muted:#ceaebb; --lp-border:rgba(255,209,229,.13); --lp-shadow:rgba(38,7,24,.5); }
   .lumiphone-shell[data-theme="forest"] { --lp-bg:#0d1713; --lp-surface:rgba(23,48,38,.9); --lp-surface-2:rgba(38,77,59,.76); --lp-text:#effcf5; --lp-muted:#9ebcad; --lp-border:rgba(204,255,224,.12); --lp-shadow:rgba(3,26,16,.54); }
   .lumiphone-statusbar {
-    height: 34px; padding: 5px 16px 0; display: grid; grid-template-columns: 24px minmax(28px,1fr) auto minmax(60px,1fr); align-items: start;
+    height: 34px; padding: 5px 16px 0; display: grid; grid-template-columns: minmax(0,1fr) 92px minmax(0,1fr); align-items: start;
     position: relative; z-index: 20; font-size: 10px; font-weight: 760; letter-spacing: .01em; user-select: none;
   }
+  .lumiphone-status-leading { min-width:0; display:flex; align-items:flex-start; gap:4px; }
   .lumiphone-dismiss { appearance:none; width:22px; height:22px; padding:4px; border:0; border-radius:50%; display:grid; place-items:center; background:color-mix(in srgb,var(--lp-surface) 72%,transparent); color:var(--lp-text); cursor:pointer; }
   .lumiphone-dismiss svg { width:14px; height:14px; }
   .lumiphone-time { padding-top: 3px; }

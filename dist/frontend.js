@@ -5280,10 +5280,10 @@ var POCKET_DESIGN_SYSTEM = `
   .lumiphone-shell :is(button,input,textarea,select,summary) { font-family:inherit; }
   .lumiphone-shell :is(button,input,textarea,select,summary):focus-visible,
   .lp-sheet :is(button,input,textarea,select):focus-visible { outline:2px solid var(--lp-accent,#a99bff); outline-offset:3px; }
-  .lumiphone-shell .lp-nav { grid-template-columns:minmax(44px,max-content) minmax(0,1fr) minmax(44px,max-content); min-height:64px; gap:8px; padding:4px 12px; }
+  .lumiphone-shell .lp-nav { grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr); min-height:64px; gap:8px; padding:4px 12px; }
   .lumiphone-shell .lp-nav-title { white-space:normal; overflow-wrap:anywhere; font-size:15px; line-height:1.2; text-wrap:balance; }
   .lumiphone-shell .lp-nav-subtitle { font-size:10px; line-height:1.35; margin-top:4px; }
-  .lumiphone-shell .lp-nav-action { min-height:var(--lp-touch); font-size:12px; }
+  .lumiphone-shell .lp-nav-action { min-width:0; min-height:var(--lp-touch); font-size:12px; overflow-wrap:anywhere; }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }
@@ -5473,9 +5473,10 @@ var PHONE_STYLES = `
   .lumiphone-shell[data-theme="rose"] { --lp-bg:#1b1018; --lp-surface:rgba(53,27,43,.9); --lp-surface-2:rgba(94,43,69,.75); --lp-text:#fff4fa; --lp-muted:#ceaebb; --lp-border:rgba(255,209,229,.13); --lp-shadow:rgba(38,7,24,.5); }
   .lumiphone-shell[data-theme="forest"] { --lp-bg:#0d1713; --lp-surface:rgba(23,48,38,.9); --lp-surface-2:rgba(38,77,59,.76); --lp-text:#effcf5; --lp-muted:#9ebcad; --lp-border:rgba(204,255,224,.12); --lp-shadow:rgba(3,26,16,.54); }
   .lumiphone-statusbar {
-    height: 34px; padding: 5px 16px 0; display: grid; grid-template-columns: 24px minmax(28px,1fr) auto minmax(60px,1fr); align-items: start;
+    height: 34px; padding: 5px 16px 0; display: grid; grid-template-columns: minmax(0,1fr) 92px minmax(0,1fr); align-items: start;
     position: relative; z-index: 20; font-size: 10px; font-weight: 760; letter-spacing: .01em; user-select: none;
   }
+  .lumiphone-status-leading { min-width:0; display:flex; align-items:flex-start; gap:4px; }
   .lumiphone-dismiss { appearance:none; width:22px; height:22px; padding:4px; border:0; border-radius:50%; display:grid; place-items:center; background:color-mix(in srgb,var(--lp-surface) 72%,transparent); color:var(--lp-text); cursor:pointer; }
   .lumiphone-dismiss svg { width:14px; height:14px; }
   .lumiphone-time { padding-top: 3px; }
@@ -7075,7 +7076,9 @@ class PocketController {
     for (let i = 0;i < 4; i += 1)
       bars.appendChild(el("i"));
     signals.append(bars, el("span", "", "5G"), el("span", "lumiphone-battery"));
-    status.append(dismiss, this.clock, island, signals);
+    const statusLeading = el("div", "lumiphone-status-leading");
+    statusLeading.append(dismiss, this.clock);
+    status.append(statusLeading, island, signals);
     this.screen = el("main", "lumiphone-screen");
     this.alert = el("div", "lp-alert");
     this.alert.hidden = true;

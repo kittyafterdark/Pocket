@@ -17,10 +17,10 @@ export const POCKET_DESIGN_SYSTEM = `
   .lumiphone-shell :is(button,input,textarea,select,summary) { font-family:inherit; }
   .lumiphone-shell :is(button,input,textarea,select,summary):focus-visible,
   .lp-sheet :is(button,input,textarea,select):focus-visible { outline:2px solid var(--lp-accent,#a99bff); outline-offset:3px; }
-  .lumiphone-shell .lp-nav { grid-template-columns:minmax(44px,max-content) minmax(0,1fr) minmax(44px,max-content); min-height:64px; gap:8px; padding:4px 12px; }
+  .lumiphone-shell .lp-nav { grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr); min-height:64px; gap:8px; padding:4px 12px; }
   .lumiphone-shell .lp-nav-title { white-space:normal; overflow-wrap:anywhere; font-size:15px; line-height:1.2; text-wrap:balance; }
   .lumiphone-shell .lp-nav-subtitle { font-size:10px; line-height:1.35; margin-top:4px; }
-  .lumiphone-shell .lp-nav-action { min-height:var(--lp-touch); font-size:12px; }
+  .lumiphone-shell .lp-nav-action { min-width:0; min-height:var(--lp-touch); font-size:12px; overflow-wrap:anywhere; }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }

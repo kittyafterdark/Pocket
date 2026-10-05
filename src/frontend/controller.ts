@@ -269,7 +269,9 @@ class PocketController {
     const bars = el('span', 'lumiphone-signal-bars')
     for (let i = 0; i < 4; i += 1) bars.appendChild(el('i'))
     signals.append(bars, el('span', '', '5G'), el('span', 'lumiphone-battery'))
-    status.append(dismiss, this.clock, island, signals)
+    const statusLeading = el('div', 'lumiphone-status-leading')
+    statusLeading.append(dismiss, this.clock)
+    status.append(statusLeading, island, signals)
     this.screen = el('main', 'lumiphone-screen')
     this.alert = el('div', 'lp-alert')
     this.alert.hidden = true
