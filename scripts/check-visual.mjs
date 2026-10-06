@@ -15,7 +15,7 @@ try { playwright = require(require.resolve('playwright', { paths })) }
 catch { throw new Error('Set POCKET_PLAYWRIGHT_ROOT to an existing Playwright installation (for example Lumiverse scripts/e2e-diagnostics).') }
 const update = process.argv.includes('--update')
 const add = process.argv.includes('--add')
-const updateCase = process.argv.find(argument => argument.startsWith('--update-case='))?.split('=')[1]
+const updateCases = process.argv.filter(argument => argument.startsWith('--update-case=')).map(argument => argument.split('=')[1])
 const output = join(root, 'tmp/visual')
 const baseline = join(root, 'tests/visual/baselines')
 await mkdir(output, { recursive: true })
@@ -30,9 +30,11 @@ const connectors = spawnSync('bun', ['scripts/preview-connectors.ts', join(fixtu
 if (connectors.status !== 0) throw connectors.error || new Error(connectors.stderr + connectors.stdout)
 const clocks = spawnSync('bun', ['scripts/preview-activity-clock.ts', join(fixtures, 'phone-clock-states.html')], { cwd: root, encoding: 'utf8' })
 if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.stdout)
+const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
+if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 19, 'A visual fixture failed to export; do not compare stale captures.')
-if (updateCase) assert.ok(files.includes(updateCase + '.html'), 'Unknown baseline case')
+assert.equal(files.length, 21, 'A visual fixture failed to export; do not compare stale captures.')
+for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
   if (!files.includes(name)) { response.writeHead(404).end(); return }
@@ -55,9 +57,10 @@ try {
     for (const file of files) {
       await page.goto(`http://127.0.0.1:${server.address().port}/${file}`)
       await page.evaluate(() => document.fonts.ready)
+      if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
       const name = file.replace('.html', `-${width}.png`)
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide' })
-      if (update || file === updateCase + '.html') await writeFile(join(baseline, name), actual)
+      if (update || updateCases.includes(file.replace('.html', ''))) await writeFile(join(baseline, name), actual)
       else {
         const expected = await readFile(join(baseline, name)).catch(error => {
           if (add && error.code === 'ENOENT') return null

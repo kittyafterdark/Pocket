@@ -2457,6 +2457,7 @@ assert.ok(1.05 / (.05 + linear.reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0)) >=
 dockRoot.querySelector('.lumiphone-homebar button').click()
 ;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Weather').click()
 assert.equal(dockRoot.querySelectorAll('.lp-content input').length, 0, 'Weather opens in viewer mode')
+await exportVisual('weather-app', dockRoot)
 ;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'Edit').click()
 assert.ok(dockRoot.querySelectorAll('.lp-content input').length >= 5, 'Weather edit retains all fields')
 assert.ok(dockRoot.querySelector('.lumiphone-app-view[data-pocket-app="weather"]'), 'Weather edit must remain inside the scrollable app-view container')

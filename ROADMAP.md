@@ -38,14 +38,14 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 
 ## Protection and maintenance (after visible UI settles)
 
-- [x] Controlled visual regression matrix: 38 mobile/desktop baselines for home/settings/chat/camera/sidebar/trackers/cards/full phone/connectors and clock precision.
+- [x] Controlled visual regression matrix: 42 mobile/desktop baselines for home/settings/chat/camera/sidebar/tracker widgets/weather/cards/full phone/connectors and clock precision.
 - [ ] Expand controlled coverage for handset-scale extremes and especially long notifications.
 - [x] Hostile global-theme fixture verifies Shadow DOM isolation and visual stability.
 - [x] Separate inline styling from handset/app styling; activity ShadowRoots only receive inline styles.
 - [ ] Further shared-token/reset cleanup after the remaining design work.
 - [x] Initial controller/backend extraction: app reviews and progress controls.
 - [ ] Continue gradual orchestration extraction with unchanged behavior and regression coverage.
-- [ ] Tracker visual pass: user is preparing designs; leave tracker files untouched until handoff.
+- [x] Supplied tracker and weather widget passes integrated; compact handset layouts, condition artwork and forecast capsules.
 - [x] Live desktop/mobile connector and clock fallback checks: completed by the user on main Lumi.
 - [ ] Catch LumiTest up after main Lumi evaluation.
 

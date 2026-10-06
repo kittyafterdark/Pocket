@@ -36,7 +36,7 @@ import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
 import type { IdentityProfile } from '../domain/identity-profiles.js'
 import { identityProfileControls, refreshIdentityProfileControls } from './components/identity-profiles.js'
-import { weatherGlyph, weatherOutlook } from './components/weather-outlook.js'
+import { weatherConditionKind, weatherGlyph, weatherOutlook } from './components/weather-outlook.js'
 import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
@@ -2750,13 +2750,13 @@ class PocketController {
       }
     } })
     const hero = el('div', 'lp-weather-hero')
-    const top = el('div')
+    const top = el('div', 'lp-weather-hero-top')
     top.append(el('div', 'lp-weather-condition', weather.condition), el('div', 'lp-copy', weather.location))
     const temp = el('div', 'lp-weather-temp', `${weather.temperature}°${weather.unit}`)
-    const bottom = el('div', 'lp-row-between')
-    bottom.append(el('span', 'lp-weather-range', `H:${weather.high}°  L:${weather.low}°`), el('span', 'lp-weather-range', weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ''))
+    const bottom = el('div', 'lp-weather-hero-bottom')
+    bottom.append(el('span', 'lp-weather-stat', `↑ ${weather.high}°`), el('span', 'lp-weather-stat', `↓ ${weather.low}°`), el('span', 'lp-weather-updated', weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ''))
     hero.append(top, weatherGlyph(weather.condition), temp, bottom)
-    hero.dataset.condition = /rain|storm/i.test(weather.condition) ? 'rain' : /cloud|fog/i.test(weather.condition) ? 'cloud' : 'clear'
+    hero.dataset.condition = weatherConditionKind(weather.condition)
     const fields = el('div', 'lp-fields')
     const location = this.field('Location', weather.location)
     const condition = this.field('Condition', weather.condition)

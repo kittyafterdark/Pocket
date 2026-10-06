@@ -45,3 +45,13 @@ test('update help distinguishes story judgment from elapsed clock drift', () => 
   expect(trackerUpdateDescription('model')).toContain('tools or tags')
   expect(trackerUpdateDescription('automatic')).toContain('No model judgment')
 })
+
+test('ammo strip reflects empty and partially loaded counts', () => {
+  const previous = globalThis.document; const dom = new JSDOM(); globalThis.document = dom.window.document
+  try {
+    for (const count of [0, 1, 3, 12]) {
+      const card = trackerDisplay({ ...trackerSamples[3], value: count }, trackerSampleState)
+      expect(card.querySelectorAll('.lp-ammo-visual span[data-loaded="true"]').length).toBe(Math.min(8, count))
+    }
+  } finally { dom.window.close(); globalThis.document = previous }
+})

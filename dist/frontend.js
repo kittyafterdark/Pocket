@@ -2133,6 +2133,34 @@ function trackerUpdateDescription(mode) {
     jev: "Open JEV estimates it from recent story messages; uncertain answers keep the current value."
   }[mode];
 }
+function trackerFlavor(tracker) {
+  const identity = `${tracker.key} ${tracker.label} ${tracker.unit}`.toLowerCase();
+  if (tracker.presentation === "relationship")
+    return "relationship";
+  if (tracker.presentation === "vitals" || /\b(health|hp|vital|injur|condition)\b/.test(identity))
+    return "health";
+  if (tracker.presentation === "timer" || tracker.kind === "timer")
+    return "timer";
+  if (tracker.presentation === "state" || tracker.kind === "state")
+    return "state";
+  if (tracker.presentation === "segmented" || /\b(energy|stamina|charge|mana|focus)\b/.test(identity))
+    return "energy";
+  if (/\b(ammo|rounds?|bullets?|shells?|magazine)\b/.test(identity))
+    return "ammo";
+  if (/\b(hunger|hungry|appetite|satiety|fullness|food)\b/.test(identity))
+    return "hunger";
+  if (/\b(tension|stress|danger|alert|suspense|threat)\b/.test(identity))
+    return "tension";
+  if (/\b(credits?|cash|money|coins?|funds?|balance)\b/.test(identity))
+    return "credits";
+  if (tracker.target.type === "custom")
+    return "custom";
+  if (tracker.presentation === "compact")
+    return "compact";
+  if (tracker.kind === "counter")
+    return "counter";
+  return "meter";
+}
 function trackerGlyph(kind) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 48 48");
@@ -2143,7 +2171,13 @@ function trackerGlyph(kind) {
     link: ["M19 29l10-10", "M17 25l-3 3a7 7 0 0010 10l6-6a7 7 0 000-10", "M31 23l3-3a7 7 0 00-10-10l-6 6a7 7 0 000 10"],
     vitals: ["M24 38L9 23C-1 12 14 3 24 15c10-12 25-3 15 8Z", "M9 25h9l4-9 5 15 4-6h8"],
     counter: ["M10 11h10v10H10Z", "M28 11h10v10H28Z", "M10 29h10v10H10Z", "M28 29h10v10H28Z"],
-    timer: ["M24 8a16 16 0 110 32 16 16 0 010-32Z", "M24 14v10l7 4", "M19 3h10"]
+    timer: ["M24 8a16 16 0 110 32 16 16 0 010-32Z", "M24 14v10l7 4", "M19 3h10"],
+    meal: ["M9 24a15 15 0 0030 0H9Z", "M14 17h20", "M18 10v7M24 8v9M30 11v6"],
+    wave: ["M6 26h6l4-10 6 20 7-27 6 17h7"],
+    bolt: ["M28 5L12 27h12l-4 16 16-23H24l4-15Z"],
+    wallet: ["M8 14h31v25H8Z", "M8 19h31", "M31 27h8", "M15 9h17"],
+    spark: ["M24 7v8M24 33v8M7 24h8M33 24h8", "M13 13l6 6M29 29l6 6M35 13l-6 6M19 29l-6 6"],
+    ammo: ["M17 6h14v8l-2 4v19a5 5 0 01-10 0V18l-2-4V6Z", "M17 14h14"]
   }[kind];
   for (const d of shapes) {
     const path = document.createElementNS(svg.namespaceURI, "path");
@@ -2157,12 +2191,33 @@ function trackerGlyph(kind) {
   }
   return svg;
 }
+function makeBars(className, count, filled = count) {
+  const visual = el("div", className);
+  visual.setAttribute("aria-hidden", "true");
+  for (let index = 0;index < count; index++) {
+    const bar = el("span");
+    bar.dataset.filled = String(index < filled);
+    visual.append(bar);
+  }
+  return visual;
+}
+function makeRing(percent, glyph, className = "") {
+  const ring = el("div", `lp-tracker-ring ${className}`.trim());
+  ring.setAttribute("aria-hidden", "true");
+  ring.style.setProperty("--ring-percent", `${percent * 3.6}deg`);
+  ring.append(el("span", "lp-tracker-ring-core"));
+  ring.querySelector(".lp-tracker-ring-core").append(glyph);
+  return ring;
+}
 function trackerDisplay(tracker, state) {
   const current = materializeTracker(tracker, state.roleplayNow).tracker;
+  const flavor = trackerFlavor(current);
   const card = el("div", `lp-card lp-tracker-card lp-tracker-${current.presentation}`);
   card.dataset.trackerId = current.id;
   card.dataset.kind = current.kind;
   card.dataset.target = current.target.type;
+  card.dataset.presentation = current.presentation;
+  card.dataset.flavor = flavor;
   const band = current.kind === "state" ? null : trackerBand(current);
   const percent = trackerPercent(current);
   card.style.setProperty("--tracker-color", band?.color || current.color);
@@ -2197,6 +2252,7 @@ function trackerDisplay(tracker, state) {
     return row;
   };
   if (current.presentation === "relationship") {
+    const shell = el("div", "lp-bond-widget");
     const pair = el("div", "lp-tracker-pair");
     const other = resolvePocketActor(state, current.target.id);
     const subjects = [{ name: state.pocketPersona.displayName || "You", avatarUrl: state.pocketPersona.avatarUrl }, { name: other?.name || current.target.label || "Unassigned", avatarUrl: other?.avatarUrl }];
@@ -2214,12 +2270,19 @@ function trackerDisplay(tracker, state) {
       person.append(avatar, el("span", "lp-tracker-person-name", subject.name));
       pair.append(person);
     });
-    card.append(pair, reading(), rail());
+    const bondScore = el("div", "lp-bond-score");
+    bondScore.append(reading(), rail());
+    shell.append(pair, bondScore);
+    card.append(shell);
   } else if (current.presentation === "vitals") {
     const body = el("div", "lp-vital-body");
-    body.append(trackerGlyph("vitals"), reading());
-    card.append(body, rail());
+    body.append(makeRing(percent, trackerGlyph("vitals"), "lp-health-ring"), reading());
+    card.append(body, makeBars("lp-vital-pulse", 11, Math.max(1, Math.round(percent / 10))));
+    card.append(rail());
   } else if (current.presentation === "state" && current.kind === "state") {
+    const currentState = el("div", "lp-state-current");
+    currentState.append(el("span", "lp-state-current-dot"), el("strong", "", current.state));
+    card.append(currentState);
     const path = el("ol", "lp-state-path");
     path.setAttribute("aria-label", current.label);
     for (const label of current.states) {
@@ -2233,7 +2296,9 @@ function trackerDisplay(tracker, state) {
     if (current.clockPaused || current.pausedReason)
       card.append(stage());
   } else if (current.presentation === "segmented") {
-    card.append(reading());
+    const body = el("div", "lp-energy-body");
+    body.append(makeRing(percent, trackerGlyph("bolt"), "lp-energy-ring"), reading());
+    card.append(body);
     const segments = rail();
     segments.className = "lp-tracker-segments";
     segments.replaceChildren();
@@ -2245,7 +2310,9 @@ function trackerDisplay(tracker, state) {
     card.append(segments);
   } else if (current.presentation === "timer") {
     const body = el("div", "lp-timer-instrument");
-    body.append(trackerGlyph("timer"), reading());
+    const island = el("div", "lp-timer-island");
+    island.append(trackerGlyph("timer"), reading());
+    body.append(island);
     card.append(body);
     if (current.updateMode === "automatic")
       card.append(el("span", "lp-tracker-clock-note", `${Math.abs(current.ratePerHour)} ${current.unit.trim()} / hour · ${current.clock === "real" ? "Real clock" : "Story clock"}`));
@@ -2256,15 +2323,42 @@ function trackerDisplay(tracker, state) {
     if (current.unit)
       value.append(el("small", "lp-counter-unit", current.unit));
     const body = el("div", "lp-counter-instrument");
-    body.append(trackerGlyph("counter"), reading());
+    if (flavor === "ammo") {
+      const ammo = el("div", "lp-ammo-visual");
+      ammo.setAttribute("aria-hidden", "true");
+      ammo.append(trackerGlyph("ammo"));
+      const slots = Math.min(8, Math.max(0, Math.round(current.value)));
+      for (let index = 0;index < 8; index++) {
+        const round = el("span");
+        round.dataset.loaded = String(index < slots);
+        ammo.append(round);
+      }
+      body.append(ammo, reading());
+    } else {
+      body.append(trackerGlyph(flavor === "credits" ? "wallet" : "counter"), reading());
+    }
     card.append(body);
-  } else {
-    card.append(reading());
-    if (current.presentation === "meter") {
+  } else if (current.presentation === "meter") {
+    if (flavor === "hunger") {
+      const body = el("div", "lp-hunger-body");
+      body.append(makeRing(percent, trackerGlyph("meal"), "lp-hunger-ring"), reading());
+      card.append(body, rail());
+    } else if (flavor === "tension") {
+      const body = el("div", "lp-tension-body");
+      body.append(reading(), trackerGlyph("wave"));
+      card.append(body, makeBars("lp-tension-wave", 14, Math.max(1, Math.round(percent / 100 * 14))), rail());
+    } else {
+      const body = el("div", "lp-meter-body");
+      const badge = el("span", "lp-meter-badge");
+      badge.append(trackerGlyph(flavor === "custom" ? "spark" : "counter"));
+      body.append(badge, reading());
+      card.append(body, rail());
       const limits = el("div", "lp-tracker-limits");
       limits.append(el("span", "", `${current.min}${current.unit}`), el("span", "", `${current.max}${current.unit}`));
-      card.append(rail(), limits);
+      card.append(limits);
     }
+  } else {
+    card.append(reading());
   }
   const latest = current.history.at(-1);
   if (latest && current.presentation !== "compact") {
@@ -2283,6 +2377,7 @@ function refreshTrackerDisplay(card, tracker, state) {
   card.replaceChildren(...fresh.childNodes);
   card.style.cssText = fresh.style.cssText;
   card.dataset.meaning = fresh.dataset.meaning;
+  card.dataset.flavor = fresh.dataset.flavor;
 }
 
 // src/frontend/apps/tracker-editor.ts
@@ -4246,36 +4341,80 @@ function usableWeatherOutlook(weather, now, offset = 0) {
 }
 
 // src/frontend/components/weather-outlook.ts
+function weatherConditionKind(condition) {
+  if (/storm|thunder|lightning/i.test(condition))
+    return "storm";
+  if (/snow|sleet|blizzard|flurr/i.test(condition))
+    return "snow";
+  if (/rain|shower|drizzle/i.test(condition))
+    return "rain";
+  if (/fog|mist|haze|smoke/i.test(condition))
+    return "fog";
+  if (/wind|breez|gust/i.test(condition))
+    return "wind";
+  if (/partly|mostly\s+sunny|sun.*cloud|cloud.*sun/i.test(condition))
+    return "partly";
+  if (/cloud|overcast/i.test(condition))
+    return "cloud";
+  return "clear";
+}
+function glyphMarkup(kind) {
+  if (kind === "storm")
+    return '<path class="lp-weather-soft" d="M14 35c-4.8 0-8.6-3.5-8.6-8 0-4.1 3.3-7.5 7.5-7.9C14.5 12.8 20 8 26.8 8c7.5 0 13.7 5.7 14.5 13 5.8.5 10.3 5.2 10.3 10.9 0 6.1-5 11.1-11.1 11.1H14Z"/><path d="M14 35c-4.8 0-8.6-3.5-8.6-8 0-4.1 3.3-7.5 7.5-7.9C14.5 12.8 20 8 26.8 8c7.5 0 13.7 5.7 14.5 13 5.8.5 10.3 5.2 10.3 10.9 0 6.1-5 11.1-11.1 11.1H14Z"/><path class="lp-weather-bolt" d="m30 39-7 12h7l-3 8 13-16h-8l3-4Z"/><path d="M13 49l-2 6m31-6-2 6"/>';
+  if (kind === "snow")
+    return '<path class="lp-weather-soft" d="M15 34c-4.8 0-8.7-3.5-8.7-8 0-4.2 3.3-7.6 7.6-8C15.4 11.9 21 7.4 27.6 7.4c7.3 0 13.3 5.4 14.3 12.4 5.3.8 9.4 5.2 9.4 10.6 0 5.9-4.8 10.7-10.7 10.7H15Z"/><path d="M15 34c-4.8 0-8.7-3.5-8.7-8 0-4.2 3.3-7.6 7.6-8C15.4 11.9 21 7.4 27.6 7.4c7.3 0 13.3 5.4 14.3 12.4 5.3.8 9.4 5.2 9.4 10.6 0 5.9-4.8 10.7-10.7 10.7H15Z"/><path d="M18 47v10m-4-8 8 6m0-6-8 6m24-8v10m-4-8 8 6m0-6-8 6"/>';
+  if (kind === "rain")
+    return '<path class="lp-weather-soft" d="M14 36c-4.8 0-8.6-3.5-8.6-8 0-4.2 3.3-7.6 7.6-8C14.5 13.7 20 9 26.8 9c7.5 0 13.7 5.7 14.5 13 5.8.5 10.3 5.2 10.3 10.9 0 6.1-5 11.1-11.1 11.1H14Z"/><path d="M14 36c-4.8 0-8.6-3.5-8.6-8 0-4.2 3.3-7.6 7.6-8C14.5 13.7 20 9 26.8 9c7.5 0 13.7 5.7 14.5 13 5.8.5 10.3 5.2 10.3 10.9 0 6.1-5 11.1-11.1 11.1H14Z"/><path d="m15 49-2 7m14-7-2 7m15-7-2 7"/>';
+  if (kind === "fog")
+    return '<path class="lp-weather-soft" d="M16 31c-4.4 0-8-3.2-8-7.3 0-3.8 3-6.9 7-7.3C16.4 10.9 21.3 7 27.2 7c6.8 0 12.5 5 13.5 11.6 5 .7 8.8 4.8 8.8 9.9 0 .9-.1 1.7-.3 2.5H16Z"/><path d="M16 31c-4.4 0-8-3.2-8-7.3 0-3.8 3-6.9 7-7.3C16.4 10.9 21.3 7 27.2 7c6.8 0 12.5 5 13.5 11.6 5 .7 8.8 4.8 8.8 9.9 0 .9-.1 1.7-.3 2.5H16ZM10 39h42M15 47h34M21 55h24"/>';
+  if (kind === "wind")
+    return '<path class="lp-weather-soft" d="M13 17h25c5.4 0 8.6-7.1 4.3-10.5"/><path d="M8 18h30c5.4 0 8.6-7.1 4.3-10.5M5 30h42c6.5 0 9.8 8.3 4.5 12.3M11 42h25c4.8 0 7.4 6 3.6 9"/>';
+  if (kind === "partly")
+    return '<circle class="lp-weather-soft" cx="23" cy="21" r="12"/><circle cx="23" cy="21" r="9"/><path d="M23 5v4m0 24v4M7 21h4m24 0h4M12 10l3 3m16 16 3 3M12 32l3-3M31 13l3-3"/><path class="lp-weather-cloud-fill" d="M25 47c-4.7 0-8.5-3.4-8.5-7.7 0-4 3.1-7.3 7.3-7.7 1.5-5.7 6.5-9.9 12.6-9.9 6.8 0 12.4 5 13.2 11.4 5 .5 8.9 4.6 8.9 9.5 0 5.3-4.4 9.7-9.7 9.7H25Z"/><path d="M25 47c-4.7 0-8.5-3.4-8.5-7.7 0-4 3.1-7.3 7.3-7.7 1.5-5.7 6.5-9.9 12.6-9.9 6.8 0 12.4 5 13.2 11.4 5 .5 8.9 4.6 8.9 9.5 0 5.3-4.4 9.7-9.7 9.7H25Z"/>';
+  if (kind === "cloud")
+    return '<path class="lp-weather-soft" d="M14 39c-5.1 0-9.2-3.7-9.2-8.4 0-4.3 3.4-7.8 7.9-8.3C14.3 15.8 20.1 11 27.1 11c7.8 0 14.2 5.8 15.1 13.2 6 .6 10.7 5.4 10.7 11.3 0 6.3-5.2 11.5-11.5 11.5H14Z"/><path d="M14 39c-5.1 0-9.2-3.7-9.2-8.4 0-4.3 3.4-7.8 7.9-8.3C14.3 15.8 20.1 11 27.1 11c7.8 0 14.2 5.8 15.1 13.2 6 .6 10.7 5.4 10.7 11.3 0 6.3-5.2 11.5-11.5 11.5H14Z"/>';
+  return '<circle class="lp-weather-soft" cx="32" cy="32" r="14"/><circle cx="32" cy="32" r="11"/><path d="M32 5v8m0 38v8M5 32h8m38 0h8M13 13l6 6m26 26 6 6M13 51l6-6m26-26 6-6"/>';
+}
 function weatherGlyph(condition) {
+  const kind = weatherConditionKind(condition);
   const node = el("span", "lp-weather-glyph");
+  node.dataset.weatherKind = kind;
   node.setAttribute("aria-hidden", "true");
-  const paths = /snow|sleet/i.test(condition) ? '<path d="M12 3v18M4 7l16 10M4 17 20 7M9 5l3 3 3-3M9 19l3-3 3 3"/>' : /rain|storm|shower/i.test(condition) ? '<path d="M6 15a4 4 0 1 1 1-8 5 5 0 0 1 10 1 3.5 3.5 0 0 1 0 7H6ZM8 18l-1 3m6-3-1 3m6-3-1 3"/>' : /cloud|overcast|fog/i.test(condition) ? '<path d="M6 18a4 4 0 1 1 1-8 5 5 0 0 1 10 1 3.5 3.5 0 0 1 0 7H6Z"/>' : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>';
-  node.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+  node.innerHTML = `<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${glyphMarkup(kind)}</svg>`;
   return node;
 }
 function weatherOutlook(weather, now, offset = 0) {
   const panel = el("section", "lp-weather-week");
   panel.setAttribute("aria-label", "Seven-day story forecast");
+  const head = el("header", "lp-weather-week-head");
+  const heading = el("div", "lp-weather-week-heading");
+  heading.append(el("span", "lp-eyebrow", "Story forecast"), el("h3", "lp-title", "The week ahead"));
+  head.append(heading, el("span", "lp-weather-week-badge", `7 days · °${weather.unit}`));
+  panel.append(head);
   const outlook = usableWeatherOutlook(weather, now, offset);
-  panel.append(el("h3", "lp-title", "The week ahead · °" + weather.unit), el("p", "lp-copy", "A fictional outlook for planning scenes. Today’s established weather stays unchanged."));
   if (!outlook) {
-    panel.append(el("p", "lp-weather-empty", weather.outlook ? "The story date, location or unit changed. Refresh the outlook for this scene." : "Build a seven-day outlook from this scene’s weather."));
+    const empty = el("div", "lp-weather-empty");
+    empty.append(weatherGlyph(weather.condition), el("span", "", weather.outlook ? "The story date, location or unit changed. Refresh the outlook for this scene." : "Build a seven-day outlook from this scene’s weather."));
+    panel.append(empty);
     return panel;
   }
   const min = Math.min(...outlook.days.map((day) => day.low)), max = Math.max(...outlook.days.map((day) => day.high)), span = Math.max(1, max - min);
   for (const [i, day] of outlook.days.entries()) {
     const row = el("div", "lp-weather-day");
+    row.dataset.condition = weatherConditionKind(day.condition);
+    if (i === 0)
+      row.dataset.today = "true";
     const date = new Date(day.date + "T12:00:00Z");
-    row.append(el("strong", "", i === 0 ? "Today" : date.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" })), weatherGlyph(day.condition));
+    const dayName = el("strong", "lp-weather-day-name", i === 0 ? "Today" : date.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" }));
     const body = el("div", "lp-weather-day-copy");
-    body.append(el("span", "", day.condition), el("small", "lp-copy", day.details));
-    row.append(body);
+    body.append(el("strong", "lp-weather-day-condition", day.condition), el("small", "lp-copy", day.details));
     const range = el("div", "lp-weather-day-range"), rail = el("span", "lp-weather-range-rail"), fill = el("span");
+    range.setAttribute("aria-label", `Low ${day.low} degrees, high ${day.high} degrees`);
     fill.style.left = `${(day.low - min) / span * 100}%`;
     fill.style.width = `${Math.max(3, (day.high - day.low) / span * 100)}%`;
     rail.append(fill);
-    range.append(el("span", "", `${day.low}°`), rail, el("strong", "", `${day.high}°`));
-    row.append(range);
+    range.append(el("span", "lp-weather-low", `${day.low}°`), rail, el("strong", "lp-weather-high", `${day.high}°`));
+    row.append(dayName, weatherGlyph(day.condition), body, range);
     panel.append(row);
   }
   return panel;
@@ -9333,13 +9472,13 @@ ${body}`;
       }
     } });
     const hero = el("div", "lp-weather-hero");
-    const top = el("div");
+    const top = el("div", "lp-weather-hero-top");
     top.append(el("div", "lp-weather-condition", weather.condition), el("div", "lp-copy", weather.location));
     const temp = el("div", "lp-weather-temp", `${weather.temperature}°${weather.unit}`);
-    const bottom = el("div", "lp-row-between");
-    bottom.append(el("span", "lp-weather-range", `H:${weather.high}°  L:${weather.low}°`), el("span", "lp-weather-range", weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ""));
+    const bottom = el("div", "lp-weather-hero-bottom");
+    bottom.append(el("span", "lp-weather-stat", `↑ ${weather.high}°`), el("span", "lp-weather-stat", `↓ ${weather.low}°`), el("span", "lp-weather-updated", weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ""));
     hero.append(top, weatherGlyph(weather.condition), temp, bottom);
-    hero.dataset.condition = /rain|storm/i.test(weather.condition) ? "rain" : /cloud|fog/i.test(weather.condition) ? "cloud" : "clear";
+    hero.dataset.condition = weatherConditionKind(weather.condition);
     const fields = el("div", "lp-fields");
     const location = this.field("Location", weather.location);
     const condition = this.field("Condition", weather.condition);
@@ -11143,59 +11282,145 @@ ${INLINE_FINISH_STYLES}
   .lp-band-editor .lp-input { min-width:0; padding:8px; }
   .lp-band-editor .lp-color-input { width:28px; }
   .lp-tracker-config-fields { display:grid; gap:12px; }
-  .lumiphone-shell .lp-tracker-card { display:grid; gap:14px; padding:16px; border:1px solid var(--lp-border); border-radius:16px; background:color-mix(in srgb,var(--lp-text) 3%,var(--lp-surface)); box-shadow:0 3px 12px #00000015; text-align:left; }
+  .lumiphone-shell .lp-tracker-card {
+    position:relative; isolation:isolate; overflow:hidden; display:grid; gap:11px; padding:14px 15px 13px;
+    min-width:0; border:1px solid color-mix(in srgb,var(--lp-text) 8%,var(--lp-border)); border-radius:26px;
+    background:
+      linear-gradient(180deg,color-mix(in srgb,var(--lp-text) 3.2%,transparent),transparent 30%),
+      color-mix(in srgb,var(--tracker-color) 3.5%,var(--lp-surface));
+    box-shadow:inset 0 1px #ffffff0d,0 8px 24px #0000001f; text-align:left;
+  }
+  .lumiphone-shell .lp-tracker-card::before { content:""; position:absolute; inset:0 0 auto; height:38%; pointer-events:none; background:linear-gradient(180deg,#ffffff07,transparent); opacity:.65; }
+  .lp-tracker-card > * { position:relative; z-index:1; }
   .lp-tracker-top { display:flex; align-items:start; justify-content:space-between; gap:12px; min-width:0; }
-  .lp-tracker-heading { min-width:0; display:grid; gap:4px; }
-  .lp-tracker-heading .lp-eyebrow { font-size:9px; letter-spacing:.06em; line-height:1.4; }
-  .lp-tracker-heading .lp-title { margin:0; }
-  .lp-tracker-update { flex-shrink:0; color:var(--lp-muted); font-size:9px; line-height:1.4; padding:3px 6px; border:1px solid var(--lp-border); border-radius:6px; }
-  .lp-tracker-reading { min-width:0; display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; }
-  .lp-tracker-readout { font-size:30px; line-height:1.15; letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
-  .lp-tracker-stage { color:var(--tracker-color); font-size:11px; font-weight:600; }
-  .lp-tracker-glyph { width:40px; height:40px; color:var(--tracker-color); flex-shrink:0; }
-  .lp-tracker-rail { height:6px; border-radius:8px; overflow:hidden; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); }
-  .lp-tracker-rail-fill { display:block; width:var(--tracker-percent); height:100%; border-radius:inherit; background:var(--tracker-color); }
-  .lp-tracker-limits { display:flex; justify-content:space-between; color:var(--lp-muted); font-size:10px; margin-top:-8px; }
-  .lp-tracker-pair { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:12px; padding:3px 0; }
-  .lp-tracker-pair .lp-tracker-glyph { width:24px; height:24px; opacity:.65; }
-  .lp-tracker-person { min-width:0; display:grid; justify-items:center; gap:7px; }
-  .lp-tracker-person-name { max-width:100%; color:var(--lp-muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lp-tracker-avatar { width:42px; height:42px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); border:1px solid var(--lp-border); font-size:17px; }
+  .lp-tracker-heading { min-width:0; display:grid; gap:2px; }
+  .lp-tracker-heading .lp-eyebrow { color:var(--lp-muted); font-size:7.5px; font-weight:760; letter-spacing:.08em; line-height:1.45; text-transform:uppercase; }
+  .lp-tracker-heading .lp-title { margin:0; color:var(--lp-text); font-size:13px; line-height:1.25; letter-spacing:-.015em; overflow-wrap:anywhere; }
+  .lp-tracker-update { flex-shrink:0; color:color-mix(in srgb,var(--lp-muted) 88%,var(--tracker-color)); font-size:7.5px; font-weight:650; line-height:1.25; padding:4px 7px; border:1px solid color-mix(in srgb,var(--lp-text) 8%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
+  .lp-tracker-reading { min-width:0; display:flex; justify-content:space-between; align-items:end; gap:10px; flex-wrap:wrap; }
+  .lp-tracker-readout { min-width:0; color:var(--lp-text); font-size:31px; font-weight:780; line-height:.98; letter-spacing:-.055em; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .lp-tracker-stage { color:var(--tracker-color); font-size:8.5px; font-weight:720; line-height:1.25; text-align:right; }
+  .lp-tracker-glyph { width:26px; height:26px; color:var(--tracker-color); flex-shrink:0; }
+  .lp-tracker-rail { position:relative; height:6px; border-radius:999px; overflow:hidden; background:color-mix(in srgb,var(--lp-text) 7%,transparent); }
+  .lp-tracker-rail-fill { display:block; width:var(--tracker-percent); min-width:2px; height:100%; border-radius:inherit; background:var(--tracker-color); box-shadow:0 0 13px color-mix(in srgb,var(--tracker-color) 22%,transparent); }
+  .lp-tracker-limits { display:flex; justify-content:space-between; color:var(--lp-muted); font-size:7.5px; margin-top:-6px; opacity:.72; }
+
+  /* Rings are semantic Health/Fitness-style progress displays, not card decoration. */
+  .lp-tracker-ring { --ring-size:66px; width:var(--ring-size); height:var(--ring-size); flex:0 0 var(--ring-size); display:grid; place-items:center; border-radius:50%; background:conic-gradient(var(--tracker-color) 0 var(--ring-percent),color-mix(in srgb,var(--lp-text) 8%,transparent) var(--ring-percent) 360deg); box-shadow:0 0 0 1px color-mix(in srgb,var(--lp-text) 5%,transparent); }
+  .lp-tracker-ring-core { width:calc(var(--ring-size) - 12px); height:calc(var(--ring-size) - 12px); display:grid; place-items:center; border-radius:50%; background:color-mix(in srgb,var(--lp-surface) 94%,#000); box-shadow:inset 0 1px #ffffff0a; }
+  .lp-tracker-ring .lp-tracker-glyph { width:24px; height:24px; }
+
+  /* Relationship = a soft social widget, not a telemetry panel. */
+  .lp-bond-widget { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(100px,.85fr); align-items:center; gap:12px; padding:10px 11px; border-radius:20px; background:linear-gradient(135deg,color-mix(in srgb,var(--tracker-color) 12%,transparent),color-mix(in srgb,var(--lp-text) 3%,transparent)); border:1px solid color-mix(in srgb,var(--tracker-color) 14%,var(--lp-border)); }
+  .lp-tracker-pair { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr); align-items:center; gap:2px; }
+  .lp-tracker-pair .lp-tracker-glyph { width:18px; height:18px; justify-self:center; opacity:.8; }
+  .lp-tracker-person { min-width:0; display:grid; justify-items:center; gap:5px; }
+  .lp-tracker-person-name { max-width:100%; color:var(--lp-muted); font-size:8px; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-tracker-avatar { width:42px; height:42px; display:grid; place-items:center; overflow:hidden; border-radius:15px; background:color-mix(in srgb,var(--tracker-color) 13%,color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface))); border:1px solid color-mix(in srgb,var(--tracker-color) 20%,var(--lp-border)); box-shadow:inset 0 1px #ffffff0c; font-size:15px; font-weight:760; }
   .lp-tracker-avatar img { width:100%; height:100%; object-fit:cover; }
-  .lp-tracker-relationship .lp-tracker-reading { flex-direction:row-reverse; }
-  .lp-tracker-relationship .lp-tracker-readout { font-size:20px; }
-  .lp-vital-body,.lp-counter-instrument,.lp-timer-instrument { display:flex; align-items:center; gap:14px; }
-  .lp-vital-body .lp-tracker-reading,.lp-counter-instrument .lp-tracker-reading,.lp-timer-instrument .lp-tracker-reading { flex:1; }
-  .lp-vital-body .lp-tracker-glyph { width:34px; height:34px; }
-  .lp-tracker-counter .lp-tracker-readout { display:flex; gap:7px; align-items:baseline; font-size:38px; }
-  .lp-counter-unit { color:var(--lp-muted); font-size:12px; font-weight:500; letter-spacing:0; overflow-wrap:anywhere; }
-  .lp-counter-instrument .lp-tracker-glyph { opacity:.55; }
-  .lp-tracker-timer .lp-tracker-reading { display:grid; gap:4px; }
-  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:26px; letter-spacing:-.03em; }
-  .lp-tracker-clock-note { color:var(--lp-muted); font-size:10px; }
-  .lp-tracker-last-change { padding-top:9px; border-top:1px solid var(--lp-border); color:var(--lp-muted); font-size:10px; }
+  .lp-bond-score { display:grid; gap:8px; min-width:0; }
+  .lp-bond-score .lp-tracker-reading { display:grid; gap:3px; justify-items:start; }
+  .lp-bond-score .lp-tracker-readout { font-size:25px; }
+  .lp-bond-score .lp-tracker-stage { text-align:left; }
+
+  /* Vitals = Apple Health-ish ring + tiny pulse history. */
+  .lp-vital-body,.lp-energy-body,.lp-hunger-body { display:flex; align-items:center; gap:14px; min-width:0; }
+  .lp-vital-body .lp-tracker-reading,.lp-energy-body .lp-tracker-reading,.lp-hunger-body .lp-tracker-reading { flex:1; display:grid; gap:4px; justify-items:start; }
+  .lp-health-ring { --ring-size:68px; }
+  .lp-vital-pulse { height:22px; display:grid; grid-template-columns:repeat(11,minmax(0,1fr)); gap:3px; align-items:center; padding:0 2px; }
+  .lp-vital-pulse span { height:5px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); transition:height .16s ease,background .16s ease; }
+  .lp-vital-pulse span:nth-child(2n) { height:9px; }
+  .lp-vital-pulse span:nth-child(4n) { height:16px; }
+  .lp-vital-pulse span:nth-child(7n) { height:20px; }
+  .lp-vital-pulse span[data-filled="true"] { background:var(--tracker-color); box-shadow:0 0 8px color-mix(in srgb,var(--tracker-color) 16%,transparent); }
+
+  /* Hunger = nutrition widget: a warmer semantic ring and quieter status. */
+  .lp-hunger-ring { --ring-size:64px; }
+  .lp-tracker-card[data-flavor="hunger"] { background:linear-gradient(135deg,color-mix(in srgb,var(--tracker-color) 8%,var(--lp-surface)),var(--lp-surface) 58%); }
+  .lp-tracker-card[data-flavor="hunger"] .lp-tracker-ring-core { background:color-mix(in srgb,var(--tracker-color) 5%,var(--lp-surface)); }
+
+  /* Scene tension = live-activity waveform that gets denser as the scene heats up. */
+  .lp-tension-body { display:flex; align-items:end; justify-content:space-between; gap:12px; }
+  .lp-tension-body .lp-tracker-reading { flex:1; }
+  .lp-tension-body > .lp-tracker-glyph { width:25px; height:25px; opacity:.9; }
+  .lp-tension-wave { height:28px; display:grid; grid-template-columns:repeat(14,minmax(0,1fr)); gap:3px; align-items:center; padding:4px 7px; border-radius:14px; background:color-mix(in srgb,var(--lp-text) 3.5%,transparent); }
+  .lp-tension-wave span { justify-self:stretch; height:5px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); }
+  .lp-tension-wave span:nth-child(3n+1) { height:11px; }
+  .lp-tension-wave span:nth-child(4n+2) { height:19px; }
+  .lp-tension-wave span:nth-child(7n) { height:25px; }
+  .lp-tension-wave span[data-filled="true"] { background:var(--tracker-color); box-shadow:0 0 7px color-mix(in srgb,var(--tracker-color) 15%,transparent); }
+
+  /* Energy = Activity-style ring + segmented charge strip. */
+  .lp-energy-ring { --ring-size:61px; }
+  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,minmax(0,1fr)); gap:4px; align-items:center; height:18px; }
+  .lp-tracker-segments span { height:8px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); }
+  .lp-tracker-segments span[data-filled="true"] { height:12px; background:var(--tracker-color); box-shadow:0 0 9px color-mix(in srgb,var(--tracker-color) 15%,transparent); }
+
+  /* Counter = compact island. Ammo gets a magazine strip rather than the generic grid icon. */
+  .lp-counter-instrument { display:flex; align-items:center; gap:13px; min-width:0; }
+  .lp-counter-instrument > .lp-tracker-glyph { width:29px; height:29px; padding:8px; box-sizing:content-box; border-radius:14px; background:color-mix(in srgb,var(--tracker-color) 10%,transparent); }
+  .lp-counter-instrument .lp-tracker-reading { flex:1; }
+  .lp-tracker-counter .lp-tracker-readout { display:flex; gap:7px; align-items:baseline; font-size:37px; }
+  .lp-counter-unit { max-width:110px; color:var(--lp-muted); font-size:10px; font-weight:560; letter-spacing:0; line-height:1.2; overflow-wrap:anywhere; }
+  .lp-ammo-visual { flex:0 0 auto; display:grid; grid-template-columns:15px repeat(4,8px); gap:4px 5px; align-items:center; padding:9px 10px; border-radius:17px; background:color-mix(in srgb,var(--tracker-color) 8%,transparent); border:1px solid color-mix(in srgb,var(--tracker-color) 12%,var(--lp-border)); }
+  .lp-ammo-visual .lp-tracker-glyph { grid-row:1 / span 2; width:15px; height:28px; opacity:.86; }
+  .lp-ammo-visual span { width:8px; height:18px; border-radius:5px 5px 3px 3px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); box-shadow:inset 0 -4px color-mix(in srgb,var(--lp-text) 4%,transparent); }
+  .lp-ammo-visual span[data-loaded="true"] { background:linear-gradient(180deg,color-mix(in srgb,var(--tracker-color) 72%,white),var(--tracker-color)); box-shadow:0 0 8px color-mix(in srgb,var(--tracker-color) 15%,transparent); }
+
+  /* Timer = the actual Dynamic-Island-inspired case. */
+  .lp-timer-instrument { min-width:0; }
+  .lp-timer-island { display:flex; align-items:center; gap:11px; min-width:0; padding:10px 13px; border-radius:999px; background:color-mix(in srgb,#000 72%,var(--lp-surface)); border:1px solid color-mix(in srgb,var(--lp-text) 8%,transparent); box-shadow:inset 0 1px #ffffff0d; }
+  .lp-timer-island > .lp-tracker-glyph { width:25px; height:25px; }
+  .lp-timer-island .lp-tracker-reading { flex:1; display:flex; align-items:center; flex-wrap:nowrap; }
+  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:23px; font-weight:720; letter-spacing:-.045em; }
+  .lp-tracker-clock-note { width:max-content; max-width:100%; color:var(--lp-muted); font-size:7.5px; line-height:1.35; padding:4px 7px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); overflow-wrap:anywhere; }
+
+  /* State trackers = current-state chip plus selectable-looking timeline, but remain non-interactive. */
+  .lp-state-current { display:flex; align-items:center; gap:8px; min-width:0; padding:9px 11px; border-radius:16px; background:color-mix(in srgb,var(--tracker-color) 9%,transparent); border:1px solid color-mix(in srgb,var(--tracker-color) 12%,var(--lp-border)); }
+  .lp-state-current-dot { width:8px; height:8px; border-radius:50%; background:var(--tracker-color); box-shadow:0 0 0 4px color-mix(in srgb,var(--tracker-color) 11%,transparent); }
+  .lp-state-current strong { min-width:0; font-size:15px; line-height:1.2; overflow-wrap:anywhere; }
+  .lp-state-path { margin:0; padding:0; list-style:none; display:flex; gap:5px; overflow-x:auto; scrollbar-width:none; }
+  .lp-state-path::-webkit-scrollbar { display:none; }
+  .lp-state-path li { flex:0 0 auto; max-width:105px; padding:6px 9px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); color:var(--lp-muted); font-size:7.5px; font-weight:650; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-state-path li[data-active="true"] { color:color-mix(in srgb,var(--tracker-color) 78%,white); background:color-mix(in srgb,var(--tracker-color) 14%,transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tracker-color) 20%,transparent); }
+
+  /* Generic/custom meters still look intentional and survive arbitrary labels/units. */
+  .lp-meter-body { display:flex; align-items:center; gap:11px; min-width:0; }
+  .lp-meter-body .lp-tracker-reading { flex:1; }
+  .lp-meter-badge { width:36px; height:36px; flex:0 0 36px; display:grid; place-items:center; border-radius:13px; background:color-mix(in srgb,var(--tracker-color) 9%,transparent); border:1px solid color-mix(in srgb,var(--tracker-color) 12%,var(--lp-border)); }
+  .lp-meter-badge .lp-tracker-glyph { width:20px; height:20px; }
+  .lp-tracker-meter .lp-tracker-readout { font-size:30px; }
+  .lp-tracker-card[data-flavor="custom"] { background:linear-gradient(145deg,color-mix(in srgb,var(--tracker-color) 5%,var(--lp-surface)),var(--lp-surface) 56%); }
+  .lp-tracker-card[data-flavor="custom"] .lp-meter-badge { border-radius:11px 15px 11px 15px; }
+
+  .lp-tracker-last-change { justify-self:start; max-width:100%; padding:4px 7px; border:0; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); color:var(--lp-muted); font-size:7.5px; line-height:1.3; overflow-wrap:anywhere; }
   .lp-counter-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .lp-state-choices { display:flex; flex-wrap:wrap; gap:8px; }
   .lp-state-choices .lp-chip[aria-pressed="true"] { opacity:1; background:color-mix(in srgb,var(--lp-accent) 25%,var(--lp-surface)); }
   .lp-tracker-manual { display:grid; }
   .lp-tracker-manual summary { cursor:pointer; color:var(--lp-muted); padding-block:8px; font-size:12px; }
   .lp-tracker-manual .lp-input { margin-bottom:8px; }
-  .lp-state-path { margin:0; padding:0; list-style:none; display:grid; }
-  .lp-state-path li { position:relative; min-height:32px; display:flex; align-items:center; gap:10px; color:var(--lp-muted); font-size:11px; }
-  .lp-state-path li::before { content:""; z-index:1; flex-shrink:0; width:8px; height:8px; margin-left:2px; border:1px solid var(--lp-border); border-radius:50%; background:var(--lp-surface); }
-  .lp-state-path li:not(:last-child)::after { content:""; position:absolute; left:6px; top:20px; bottom:-12px; width:1px; background:var(--lp-border); }
-  .lp-state-path li[data-active="true"] { color:var(--lp-text); font-weight:700; }
-  .lp-state-path li[data-active="true"]::before { background:var(--tracker-color); border-color:var(--tracker-color); box-shadow:0 0 0 3px color-mix(in srgb,var(--tracker-color) 12%,transparent); }
-  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,minmax(0,1fr)); gap:4px; }
-  .lp-tracker-segments span { height:11px; border-radius:3px; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); }
-  .lp-tracker-segments span[data-filled="true"] { background:var(--tracker-color); }
-  .lumiphone-shell .lp-tracker-compact { gap:8px; padding:12px 14px; }
-  .lp-tracker-compact .lp-tracker-readout { font-size:21px; }
+
+  .lumiphone-shell .lp-tracker-compact { min-height:72px; gap:7px; padding:12px 14px; border-radius:22px; }
+  .lp-tracker-compact .lp-tracker-top { align-items:center; }
+  .lp-tracker-compact .lp-tracker-reading { align-items:center; }
+  .lp-tracker-compact .lp-tracker-readout { font-size:22px; }
   .lp-tracker-preview { padding:0; background:transparent; border:0; }
   .lp-selected-members { display:flex; gap:6px; flex-wrap:wrap; }
   .lp-selected-members:empty { display:none; }
   .lp-band-meaning { grid-column:1/-1; }
-  .lp-tracker-card[data-meaning="bad"] { border-color:color-mix(in srgb,var(--tracker-color) 65%,var(--lp-border)); }
+  .lp-tracker-card[data-meaning="bad"] { border-color:color-mix(in srgb,var(--tracker-color) 18%,var(--lp-border)); }
+
+  .lumiphone-shell:has(.lumiphone-app-view[data-pocket-app="trackers"], .lumiphone-app-view[data-pocket-app="weather"]) .lumiphone-screen { width:100%; min-width:0; }
+  .lumiphone-shell .lumiphone-app-view[data-pocket-app="trackers"], #tracker-sampler { container-type:inline-size; width:100%; }
+  @container (max-width:390px) {
+    .lumiphone-shell .lp-tracker-card { padding:13px 14px 12px; border-radius:24px; }
+    .lp-bond-widget { grid-template-columns:1fr; }
+    .lp-bond-score { grid-template-columns:minmax(0,1fr) minmax(88px,.8fr); align-items:end; }
+    .lp-bond-score .lp-tracker-rail { align-self:center; }
+    .lp-tracker-ring { --ring-size:60px; }
+    .lp-tracker-readout { font-size:29px; }
+  }
   .lp-contact-group .lp-actions,.lp-bank-profile .lp-actions { display:flex; gap:8px; flex-wrap:wrap; }
   .lp-contact-group .lp-button,.lp-bank-profile .lp-button { flex:1 1 auto; }
   .lumiphone-shell .lp-npc-camera { height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); background:#08080a; }
@@ -11247,19 +11472,80 @@ ${INLINE_FINISH_STYLES}
   .lp-camera-review-actions .lp-camera-options-chip { margin:0; }
   .lumiphone-shell .lp-camera-review-actions .lp-camera-accept { grid-column:1/-1; width:100%; min-height:42px; border-radius:10px; background:var(--lp-accent); color:var(--lp-on-accent,#fff); }
   .lp-camera[data-capture-state="review"] .lp-npc-viewfinder::before { display:none; }
-  .lumiphone-shell .lp-weather-hero { position:relative; min-height:240px; border:1px solid var(--lp-border); background:var(--lp-surface); color:var(--lp-text); box-shadow:0 8px 24px #0002; border-radius:18px; overflow:hidden; }
-  .lp-weather-hero > .lp-weather-glyph { position:absolute; right:26px; top:64px; width:100px; height:100px; color:var(--lp-accent); opacity:.8; }
-  .lp-weather-glyph { display:inline-flex; width:26px; height:26px; color:var(--lp-accent); }
-  .lp-weather-glyph svg { width:100%; height:100%; }
-  .lp-weather-note { font-size:13px; line-height:1.6; color:var(--lp-muted); }
-  .lp-weather-week { padding:16px; background:var(--lp-surface); border:1px solid var(--lp-border); border-radius:14px; }
-  .lp-weather-empty { padding:20px 0 4px; color:var(--lp-muted); font-size:12px; }
-  .lp-weather-day { display:grid; grid-template-columns:40px 26px minmax(0,1fr); align-items:center; gap:10px; padding:12px 0; border-top:1px solid var(--lp-border); font-size:12px; }
-  .lp-weather-day-copy { display:grid; gap:4px; min-width:0; }
-  .lp-weather-day-copy small { font-size:10px; line-height:1.5; }
-  .lp-weather-day-range { grid-column:2/-1; display:grid; grid-template-columns:32px 1fr 32px; align-items:center; gap:8px; }
-  .lp-weather-range-rail { position:relative; height:4px; border-radius:3px; background:var(--lp-border); overflow:hidden; }
-  .lp-weather-range-rail > span { position:absolute; height:100%; border-radius:3px; background:var(--lp-accent); }
+  .lumiphone-shell .lumiphone-app-view[data-pocket-app="weather"], #weather-preview { container-type:inline-size; width:100%; }
+  /* Weather = a compact iOS-style live widget: semantic color, strong current conditions, and capsule forecast rows. */
+  .lumiphone-shell .lp-weather-hero {
+    --weather-a:#1788ed; --weather-b:#42b9f5; --weather-c:#2367ca;
+    position:relative; isolation:isolate; overflow:hidden; display:grid;
+    grid-template-columns:minmax(0,1fr) 112px; grid-template-areas:"top glyph" "temp glyph" "bottom bottom";
+    gap:10px 14px; min-height:224px; padding:20px; border:1px solid #ffffff26; border-radius:30px;
+    color:#fff; background:linear-gradient(145deg,var(--weather-a),var(--weather-b) 58%,var(--weather-c));
+    box-shadow:inset 0 1px #ffffff2b,0 14px 34px #00000030;
+  }
+  .lumiphone-shell .lp-weather-hero[data-condition="partly"] { --weather-a:#247ed8; --weather-b:#67b8e9; --weather-c:#3f6b9a; }
+  .lumiphone-shell .lp-weather-hero[data-condition="cloud"] { --weather-a:#4c5968; --weather-b:#758391; --weather-c:#39424d; }
+  .lumiphone-shell .lp-weather-hero[data-condition="rain"] { --weather-a:#254967; --weather-b:#47738e; --weather-c:#20364d; }
+  .lumiphone-shell .lp-weather-hero[data-condition="storm"] { --weather-a:#302e50; --weather-b:#4f5270; --weather-c:#22243d; }
+  .lumiphone-shell .lp-weather-hero[data-condition="snow"] { --weather-a:#5689ad; --weather-b:#9abdd2; --weather-c:#486b87; }
+  .lumiphone-shell .lp-weather-hero[data-condition="fog"] { --weather-a:#59636c; --weather-b:#889198; --weather-c:#495159; }
+  .lumiphone-shell .lp-weather-hero[data-condition="wind"] { --weather-a:#267386; --weather-b:#54a6aa; --weather-c:#285d6b; }
+  .lp-weather-hero-top { grid-area:top; align-self:start; min-width:0; display:grid; gap:3px; }
+  .lp-weather-hero-top .lp-copy { color:#ffffffb5; font-size:10px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-condition { color:#fff; font-size:14px; font-weight:760; line-height:1.2; letter-spacing:-.015em; }
+  .lp-weather-temp { grid-area:temp; align-self:center; color:#fff; font-size:66px; line-height:.88; font-weight:660; letter-spacing:-.065em; font-variant-numeric:tabular-nums; text-shadow:0 3px 20px #0002; }
+  .lp-weather-hero > .lp-weather-glyph { grid-area:glyph; align-self:center; justify-self:end; width:108px; height:108px; color:#fff; filter:drop-shadow(0 9px 16px #0003); }
+  .lp-weather-glyph { display:inline-flex; width:26px; height:26px; flex:none; color:var(--lp-accent); }
+  .lp-weather-glyph svg { width:100%; height:100%; overflow:visible; }
+  .lp-weather-glyph .lp-weather-soft { fill:currentColor; stroke:none; opacity:.18; }
+  .lp-weather-glyph .lp-weather-cloud-fill { fill:currentColor; stroke:none; opacity:.82; }
+  .lp-weather-glyph .lp-weather-bolt { fill:currentColor; stroke:currentColor; }
+  .lp-weather-hero-bottom { grid-area:bottom; display:flex; align-items:center; gap:7px; min-width:0; padding-top:3px; }
+  .lp-weather-stat,.lp-weather-updated { min-width:0; padding:6px 9px; border-radius:999px; background:#ffffff16; border:1px solid #ffffff19; color:#ffffffe0; font-size:8.5px; font-weight:650; line-height:1.2; backdrop-filter:blur(8px); }
+  .lp-weather-updated { margin-left:auto; color:#ffffffa8; font-weight:560; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-note { margin:0; padding:13px 15px; border:1px solid color-mix(in srgb,var(--lp-text) 7%,var(--lp-border)); border-radius:18px; background:color-mix(in srgb,var(--lp-text) 3.5%,var(--lp-surface)); box-shadow:inset 0 1px #ffffff08; color:var(--lp-muted); font-size:11.5px; line-height:1.6; }
+
+  .lp-weather-week { display:grid; gap:8px; padding:12px; border:1px solid color-mix(in srgb,var(--lp-text) 8%,var(--lp-border)); border-radius:28px; background:color-mix(in srgb,var(--lp-text) 2.8%,var(--lp-surface)); box-shadow:inset 0 1px #ffffff08,0 8px 22px #00000018; }
+  .lp-weather-week-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 5px 8px; }
+  .lp-weather-week-heading { min-width:0; display:grid; gap:2px; }
+  .lp-weather-week-heading .lp-eyebrow { color:var(--lp-muted); font-size:7.5px; font-weight:760; text-transform:uppercase; letter-spacing:.08em; }
+  .lp-weather-week-heading .lp-title { margin:0; color:var(--lp-text); font-size:14px; line-height:1.2; letter-spacing:-.02em; }
+  .lp-weather-week-badge { flex:none; padding:5px 8px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 5%,transparent); color:var(--lp-muted); font-size:7.5px; font-weight:650; }
+  .lp-weather-empty { min-height:86px; display:flex; align-items:center; gap:12px; padding:14px; border-radius:20px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); color:var(--lp-muted); font-size:10.5px; line-height:1.5; }
+  .lp-weather-empty .lp-weather-glyph { width:34px; height:34px; color:var(--lp-accent); }
+
+  .lp-weather-day {
+    --weather-day-accent:#64b9ff;
+    display:grid; grid-template-columns:42px 28px minmax(0,1fr); align-items:center; gap:5px 9px;
+    min-width:0; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lp-text) 6%,transparent); border-radius:20px;
+    background:color-mix(in srgb,var(--lp-text) 3.5%,transparent); font-size:10px;
+  }
+  .lp-weather-day[data-today="true"] { background:color-mix(in srgb,var(--weather-day-accent) 9%,color-mix(in srgb,var(--lp-text) 3.5%,transparent)); border-color:color-mix(in srgb,var(--weather-day-accent) 13%,var(--lp-border)); }
+  .lp-weather-day[data-condition="clear"] { --weather-day-accent:#f3b833; }
+  .lp-weather-day[data-condition="partly"] { --weather-day-accent:#e7b747; }
+  .lp-weather-day[data-condition="cloud"] { --weather-day-accent:#9aa5b2; }
+  .lp-weather-day[data-condition="rain"] { --weather-day-accent:#58a9df; }
+  .lp-weather-day[data-condition="storm"] { --weather-day-accent:#9b8ae0; }
+  .lp-weather-day[data-condition="snow"] { --weather-day-accent:#b9d9ed; }
+  .lp-weather-day[data-condition="fog"] { --weather-day-accent:#a4adb4; }
+  .lp-weather-day[data-condition="wind"] { --weather-day-accent:#67c6c6; }
+  .lp-weather-day-name { color:var(--lp-text); font-size:10px; font-weight:720; }
+  .lp-weather-day > .lp-weather-glyph { width:24px; height:24px; color:var(--weather-day-accent); }
+  .lp-weather-day-copy { min-width:0; display:grid; gap:2px; }
+  .lp-weather-day-condition { min-width:0; color:var(--lp-text); font-size:10px; font-weight:660; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-day-copy small { min-width:0; color:var(--lp-muted); font-size:8px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-day-range { grid-column:1/-1; display:grid; grid-template-columns:30px minmax(0,1fr) 30px; align-items:center; gap:8px; padding-top:2px; }
+  .lp-weather-low,.lp-weather-high { font-size:8px; font-variant-numeric:tabular-nums; }
+  .lp-weather-low { color:var(--lp-muted); }
+  .lp-weather-high { color:var(--lp-text); text-align:right; }
+  .lp-weather-range-rail { position:relative; height:5px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 7%,transparent); overflow:hidden; }
+  .lp-weather-range-rail > span { position:absolute; height:100%; border-radius:999px; background:var(--weather-day-accent); box-shadow:0 0 8px color-mix(in srgb,var(--weather-day-accent) 18%,transparent); }
+  @container (max-width:360px) {
+    .lumiphone-shell .lp-weather-hero { grid-template-columns:minmax(0,1fr) 90px; min-height:210px; padding:17px; border-radius:26px; }
+    .lp-weather-temp { font-size:58px; }
+    .lp-weather-hero > .lp-weather-glyph { width:86px; height:86px; }
+    .lp-weather-updated { flex:1 1 100%; margin-left:0; }
+    .lp-weather-hero-bottom { flex-wrap:wrap; }
+  }
   .lp-app-review { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .lp-app-review .lp-operation-progress { flex-basis:100%; padding:10px 0; color:var(--lp-muted); font-size:12px; }
   .lp-app-review .lp-operation-progress[data-phase="error"] { color:var(--lp-destructive); }

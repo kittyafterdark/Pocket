@@ -930,59 +930,145 @@ ${INLINE_FINISH_STYLES}
   .lp-band-editor .lp-input { min-width:0; padding:8px; }
   .lp-band-editor .lp-color-input { width:28px; }
   .lp-tracker-config-fields { display:grid; gap:12px; }
-  .lumiphone-shell .lp-tracker-card { display:grid; gap:14px; padding:16px; border:1px solid var(--lp-border); border-radius:16px; background:color-mix(in srgb,var(--lp-text) 3%,var(--lp-surface)); box-shadow:0 3px 12px #00000015; text-align:left; }
+  .lumiphone-shell .lp-tracker-card {
+    position:relative; isolation:isolate; overflow:hidden; display:grid; gap:11px; padding:14px 15px 13px;
+    min-width:0; border:1px solid color-mix(in srgb,var(--lp-text) 8%,var(--lp-border)); border-radius:26px;
+    background:
+      linear-gradient(180deg,color-mix(in srgb,var(--lp-text) 3.2%,transparent),transparent 30%),
+      color-mix(in srgb,var(--tracker-color) 3.5%,var(--lp-surface));
+    box-shadow:inset 0 1px #ffffff0d,0 8px 24px #0000001f; text-align:left;
+  }
+  .lumiphone-shell .lp-tracker-card::before { content:""; position:absolute; inset:0 0 auto; height:38%; pointer-events:none; background:linear-gradient(180deg,#ffffff07,transparent); opacity:.65; }
+  .lp-tracker-card > * { position:relative; z-index:1; }
   .lp-tracker-top { display:flex; align-items:start; justify-content:space-between; gap:12px; min-width:0; }
-  .lp-tracker-heading { min-width:0; display:grid; gap:4px; }
-  .lp-tracker-heading .lp-eyebrow { font-size:9px; letter-spacing:.06em; line-height:1.4; }
-  .lp-tracker-heading .lp-title { margin:0; }
-  .lp-tracker-update { flex-shrink:0; color:var(--lp-muted); font-size:9px; line-height:1.4; padding:3px 6px; border:1px solid var(--lp-border); border-radius:6px; }
-  .lp-tracker-reading { min-width:0; display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; }
-  .lp-tracker-readout { font-size:30px; line-height:1.15; letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
-  .lp-tracker-stage { color:var(--tracker-color); font-size:11px; font-weight:600; }
-  .lp-tracker-glyph { width:40px; height:40px; color:var(--tracker-color); flex-shrink:0; }
-  .lp-tracker-rail { height:6px; border-radius:8px; overflow:hidden; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); }
-  .lp-tracker-rail-fill { display:block; width:var(--tracker-percent); height:100%; border-radius:inherit; background:var(--tracker-color); }
-  .lp-tracker-limits { display:flex; justify-content:space-between; color:var(--lp-muted); font-size:10px; margin-top:-8px; }
-  .lp-tracker-pair { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:12px; padding:3px 0; }
-  .lp-tracker-pair .lp-tracker-glyph { width:24px; height:24px; opacity:.65; }
-  .lp-tracker-person { min-width:0; display:grid; justify-items:center; gap:7px; }
-  .lp-tracker-person-name { max-width:100%; color:var(--lp-muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lp-tracker-avatar { width:42px; height:42px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); border:1px solid var(--lp-border); font-size:17px; }
+  .lp-tracker-heading { min-width:0; display:grid; gap:2px; }
+  .lp-tracker-heading .lp-eyebrow { color:var(--lp-muted); font-size:7.5px; font-weight:760; letter-spacing:.08em; line-height:1.45; text-transform:uppercase; }
+  .lp-tracker-heading .lp-title { margin:0; color:var(--lp-text); font-size:13px; line-height:1.25; letter-spacing:-.015em; overflow-wrap:anywhere; }
+  .lp-tracker-update { flex-shrink:0; color:color-mix(in srgb,var(--lp-muted) 88%,var(--tracker-color)); font-size:7.5px; font-weight:650; line-height:1.25; padding:4px 7px; border:1px solid color-mix(in srgb,var(--lp-text) 8%,var(--lp-border)); border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
+  .lp-tracker-reading { min-width:0; display:flex; justify-content:space-between; align-items:end; gap:10px; flex-wrap:wrap; }
+  .lp-tracker-readout { min-width:0; color:var(--lp-text); font-size:31px; font-weight:780; line-height:.98; letter-spacing:-.055em; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .lp-tracker-stage { color:var(--tracker-color); font-size:8.5px; font-weight:720; line-height:1.25; text-align:right; }
+  .lp-tracker-glyph { width:26px; height:26px; color:var(--tracker-color); flex-shrink:0; }
+  .lp-tracker-rail { position:relative; height:6px; border-radius:999px; overflow:hidden; background:color-mix(in srgb,var(--lp-text) 7%,transparent); }
+  .lp-tracker-rail-fill { display:block; width:var(--tracker-percent); min-width:2px; height:100%; border-radius:inherit; background:var(--tracker-color); box-shadow:0 0 13px color-mix(in srgb,var(--tracker-color) 22%,transparent); }
+  .lp-tracker-limits { display:flex; justify-content:space-between; color:var(--lp-muted); font-size:7.5px; margin-top:-6px; opacity:.72; }
+
+  /* Rings are semantic Health/Fitness-style progress displays, not card decoration. */
+  .lp-tracker-ring { --ring-size:66px; width:var(--ring-size); height:var(--ring-size); flex:0 0 var(--ring-size); display:grid; place-items:center; border-radius:50%; background:conic-gradient(var(--tracker-color) 0 var(--ring-percent),color-mix(in srgb,var(--lp-text) 8%,transparent) var(--ring-percent) 360deg); box-shadow:0 0 0 1px color-mix(in srgb,var(--lp-text) 5%,transparent); }
+  .lp-tracker-ring-core { width:calc(var(--ring-size) - 12px); height:calc(var(--ring-size) - 12px); display:grid; place-items:center; border-radius:50%; background:color-mix(in srgb,var(--lp-surface) 94%,#000); box-shadow:inset 0 1px #ffffff0a; }
+  .lp-tracker-ring .lp-tracker-glyph { width:24px; height:24px; }
+
+  /* Relationship = a soft social widget, not a telemetry panel. */
+  .lp-bond-widget { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(100px,.85fr); align-items:center; gap:12px; padding:10px 11px; border-radius:20px; background:linear-gradient(135deg,color-mix(in srgb,var(--tracker-color) 12%,transparent),color-mix(in srgb,var(--lp-text) 3%,transparent)); border:1px solid color-mix(in srgb,var(--tracker-color) 14%,var(--lp-border)); }
+  .lp-tracker-pair { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr); align-items:center; gap:2px; }
+  .lp-tracker-pair .lp-tracker-glyph { width:18px; height:18px; justify-self:center; opacity:.8; }
+  .lp-tracker-person { min-width:0; display:grid; justify-items:center; gap:5px; }
+  .lp-tracker-person-name { max-width:100%; color:var(--lp-muted); font-size:8px; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-tracker-avatar { width:42px; height:42px; display:grid; place-items:center; overflow:hidden; border-radius:15px; background:color-mix(in srgb,var(--tracker-color) 13%,color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface))); border:1px solid color-mix(in srgb,var(--tracker-color) 20%,var(--lp-border)); box-shadow:inset 0 1px #ffffff0c; font-size:15px; font-weight:760; }
   .lp-tracker-avatar img { width:100%; height:100%; object-fit:cover; }
-  .lp-tracker-relationship .lp-tracker-reading { flex-direction:row-reverse; }
-  .lp-tracker-relationship .lp-tracker-readout { font-size:20px; }
-  .lp-vital-body,.lp-counter-instrument,.lp-timer-instrument { display:flex; align-items:center; gap:14px; }
-  .lp-vital-body .lp-tracker-reading,.lp-counter-instrument .lp-tracker-reading,.lp-timer-instrument .lp-tracker-reading { flex:1; }
-  .lp-vital-body .lp-tracker-glyph { width:34px; height:34px; }
-  .lp-tracker-counter .lp-tracker-readout { display:flex; gap:7px; align-items:baseline; font-size:38px; }
-  .lp-counter-unit { color:var(--lp-muted); font-size:12px; font-weight:500; letter-spacing:0; overflow-wrap:anywhere; }
-  .lp-counter-instrument .lp-tracker-glyph { opacity:.55; }
-  .lp-tracker-timer .lp-tracker-reading { display:grid; gap:4px; }
-  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,monospace; font-size:26px; letter-spacing:-.03em; }
-  .lp-tracker-clock-note { color:var(--lp-muted); font-size:10px; }
-  .lp-tracker-last-change { padding-top:9px; border-top:1px solid var(--lp-border); color:var(--lp-muted); font-size:10px; }
+  .lp-bond-score { display:grid; gap:8px; min-width:0; }
+  .lp-bond-score .lp-tracker-reading { display:grid; gap:3px; justify-items:start; }
+  .lp-bond-score .lp-tracker-readout { font-size:25px; }
+  .lp-bond-score .lp-tracker-stage { text-align:left; }
+
+  /* Vitals = Apple Health-ish ring + tiny pulse history. */
+  .lp-vital-body,.lp-energy-body,.lp-hunger-body { display:flex; align-items:center; gap:14px; min-width:0; }
+  .lp-vital-body .lp-tracker-reading,.lp-energy-body .lp-tracker-reading,.lp-hunger-body .lp-tracker-reading { flex:1; display:grid; gap:4px; justify-items:start; }
+  .lp-health-ring { --ring-size:68px; }
+  .lp-vital-pulse { height:22px; display:grid; grid-template-columns:repeat(11,minmax(0,1fr)); gap:3px; align-items:center; padding:0 2px; }
+  .lp-vital-pulse span { height:5px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); transition:height .16s ease,background .16s ease; }
+  .lp-vital-pulse span:nth-child(2n) { height:9px; }
+  .lp-vital-pulse span:nth-child(4n) { height:16px; }
+  .lp-vital-pulse span:nth-child(7n) { height:20px; }
+  .lp-vital-pulse span[data-filled="true"] { background:var(--tracker-color); box-shadow:0 0 8px color-mix(in srgb,var(--tracker-color) 16%,transparent); }
+
+  /* Hunger = nutrition widget: a warmer semantic ring and quieter status. */
+  .lp-hunger-ring { --ring-size:64px; }
+  .lp-tracker-card[data-flavor="hunger"] { background:linear-gradient(135deg,color-mix(in srgb,var(--tracker-color) 8%,var(--lp-surface)),var(--lp-surface) 58%); }
+  .lp-tracker-card[data-flavor="hunger"] .lp-tracker-ring-core { background:color-mix(in srgb,var(--tracker-color) 5%,var(--lp-surface)); }
+
+  /* Scene tension = live-activity waveform that gets denser as the scene heats up. */
+  .lp-tension-body { display:flex; align-items:end; justify-content:space-between; gap:12px; }
+  .lp-tension-body .lp-tracker-reading { flex:1; }
+  .lp-tension-body > .lp-tracker-glyph { width:25px; height:25px; opacity:.9; }
+  .lp-tension-wave { height:28px; display:grid; grid-template-columns:repeat(14,minmax(0,1fr)); gap:3px; align-items:center; padding:4px 7px; border-radius:14px; background:color-mix(in srgb,var(--lp-text) 3.5%,transparent); }
+  .lp-tension-wave span { justify-self:stretch; height:5px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); }
+  .lp-tension-wave span:nth-child(3n+1) { height:11px; }
+  .lp-tension-wave span:nth-child(4n+2) { height:19px; }
+  .lp-tension-wave span:nth-child(7n) { height:25px; }
+  .lp-tension-wave span[data-filled="true"] { background:var(--tracker-color); box-shadow:0 0 7px color-mix(in srgb,var(--tracker-color) 15%,transparent); }
+
+  /* Energy = Activity-style ring + segmented charge strip. */
+  .lp-energy-ring { --ring-size:61px; }
+  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,minmax(0,1fr)); gap:4px; align-items:center; height:18px; }
+  .lp-tracker-segments span { height:8px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); }
+  .lp-tracker-segments span[data-filled="true"] { height:12px; background:var(--tracker-color); box-shadow:0 0 9px color-mix(in srgb,var(--tracker-color) 15%,transparent); }
+
+  /* Counter = compact island. Ammo gets a magazine strip rather than the generic grid icon. */
+  .lp-counter-instrument { display:flex; align-items:center; gap:13px; min-width:0; }
+  .lp-counter-instrument > .lp-tracker-glyph { width:29px; height:29px; padding:8px; box-sizing:content-box; border-radius:14px; background:color-mix(in srgb,var(--tracker-color) 10%,transparent); }
+  .lp-counter-instrument .lp-tracker-reading { flex:1; }
+  .lp-tracker-counter .lp-tracker-readout { display:flex; gap:7px; align-items:baseline; font-size:37px; }
+  .lp-counter-unit { max-width:110px; color:var(--lp-muted); font-size:10px; font-weight:560; letter-spacing:0; line-height:1.2; overflow-wrap:anywhere; }
+  .lp-ammo-visual { flex:0 0 auto; display:grid; grid-template-columns:15px repeat(4,8px); gap:4px 5px; align-items:center; padding:9px 10px; border-radius:17px; background:color-mix(in srgb,var(--tracker-color) 8%,transparent); border:1px solid color-mix(in srgb,var(--tracker-color) 12%,var(--lp-border)); }
+  .lp-ammo-visual .lp-tracker-glyph { grid-row:1 / span 2; width:15px; height:28px; opacity:.86; }
+  .lp-ammo-visual span { width:8px; height:18px; border-radius:5px 5px 3px 3px; background:color-mix(in srgb,var(--lp-text) 8%,transparent); box-shadow:inset 0 -4px color-mix(in srgb,var(--lp-text) 4%,transparent); }
+  .lp-ammo-visual span[data-loaded="true"] { background:linear-gradient(180deg,color-mix(in srgb,var(--tracker-color) 72%,white),var(--tracker-color)); box-shadow:0 0 8px color-mix(in srgb,var(--tracker-color) 15%,transparent); }
+
+  /* Timer = the actual Dynamic-Island-inspired case. */
+  .lp-timer-instrument { min-width:0; }
+  .lp-timer-island { display:flex; align-items:center; gap:11px; min-width:0; padding:10px 13px; border-radius:999px; background:color-mix(in srgb,#000 72%,var(--lp-surface)); border:1px solid color-mix(in srgb,var(--lp-text) 8%,transparent); box-shadow:inset 0 1px #ffffff0d; }
+  .lp-timer-island > .lp-tracker-glyph { width:25px; height:25px; }
+  .lp-timer-island .lp-tracker-reading { flex:1; display:flex; align-items:center; flex-wrap:nowrap; }
+  .lp-tracker-timer .lp-tracker-readout { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:23px; font-weight:720; letter-spacing:-.045em; }
+  .lp-tracker-clock-note { width:max-content; max-width:100%; color:var(--lp-muted); font-size:7.5px; line-height:1.35; padding:4px 7px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); overflow-wrap:anywhere; }
+
+  /* State trackers = current-state chip plus selectable-looking timeline, but remain non-interactive. */
+  .lp-state-current { display:flex; align-items:center; gap:8px; min-width:0; padding:9px 11px; border-radius:16px; background:color-mix(in srgb,var(--tracker-color) 9%,transparent); border:1px solid color-mix(in srgb,var(--tracker-color) 12%,var(--lp-border)); }
+  .lp-state-current-dot { width:8px; height:8px; border-radius:50%; background:var(--tracker-color); box-shadow:0 0 0 4px color-mix(in srgb,var(--tracker-color) 11%,transparent); }
+  .lp-state-current strong { min-width:0; font-size:15px; line-height:1.2; overflow-wrap:anywhere; }
+  .lp-state-path { margin:0; padding:0; list-style:none; display:flex; gap:5px; overflow-x:auto; scrollbar-width:none; }
+  .lp-state-path::-webkit-scrollbar { display:none; }
+  .lp-state-path li { flex:0 0 auto; max-width:105px; padding:6px 9px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); color:var(--lp-muted); font-size:7.5px; font-weight:650; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-state-path li[data-active="true"] { color:color-mix(in srgb,var(--tracker-color) 78%,white); background:color-mix(in srgb,var(--tracker-color) 14%,transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tracker-color) 20%,transparent); }
+
+  /* Generic/custom meters still look intentional and survive arbitrary labels/units. */
+  .lp-meter-body { display:flex; align-items:center; gap:11px; min-width:0; }
+  .lp-meter-body .lp-tracker-reading { flex:1; }
+  .lp-meter-badge { width:36px; height:36px; flex:0 0 36px; display:grid; place-items:center; border-radius:13px; background:color-mix(in srgb,var(--tracker-color) 9%,transparent); border:1px solid color-mix(in srgb,var(--tracker-color) 12%,var(--lp-border)); }
+  .lp-meter-badge .lp-tracker-glyph { width:20px; height:20px; }
+  .lp-tracker-meter .lp-tracker-readout { font-size:30px; }
+  .lp-tracker-card[data-flavor="custom"] { background:linear-gradient(145deg,color-mix(in srgb,var(--tracker-color) 5%,var(--lp-surface)),var(--lp-surface) 56%); }
+  .lp-tracker-card[data-flavor="custom"] .lp-meter-badge { border-radius:11px 15px 11px 15px; }
+
+  .lp-tracker-last-change { justify-self:start; max-width:100%; padding:4px 7px; border:0; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); color:var(--lp-muted); font-size:7.5px; line-height:1.3; overflow-wrap:anywhere; }
   .lp-counter-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .lp-state-choices { display:flex; flex-wrap:wrap; gap:8px; }
   .lp-state-choices .lp-chip[aria-pressed="true"] { opacity:1; background:color-mix(in srgb,var(--lp-accent) 25%,var(--lp-surface)); }
   .lp-tracker-manual { display:grid; }
   .lp-tracker-manual summary { cursor:pointer; color:var(--lp-muted); padding-block:8px; font-size:12px; }
   .lp-tracker-manual .lp-input { margin-bottom:8px; }
-  .lp-state-path { margin:0; padding:0; list-style:none; display:grid; }
-  .lp-state-path li { position:relative; min-height:32px; display:flex; align-items:center; gap:10px; color:var(--lp-muted); font-size:11px; }
-  .lp-state-path li::before { content:""; z-index:1; flex-shrink:0; width:8px; height:8px; margin-left:2px; border:1px solid var(--lp-border); border-radius:50%; background:var(--lp-surface); }
-  .lp-state-path li:not(:last-child)::after { content:""; position:absolute; left:6px; top:20px; bottom:-12px; width:1px; background:var(--lp-border); }
-  .lp-state-path li[data-active="true"] { color:var(--lp-text); font-weight:700; }
-  .lp-state-path li[data-active="true"]::before { background:var(--tracker-color); border-color:var(--tracker-color); box-shadow:0 0 0 3px color-mix(in srgb,var(--tracker-color) 12%,transparent); }
-  .lp-tracker-segments { display:grid; grid-template-columns:repeat(10,minmax(0,1fr)); gap:4px; }
-  .lp-tracker-segments span { height:11px; border-radius:3px; background:color-mix(in srgb,var(--lp-text) 8%,var(--lp-surface)); }
-  .lp-tracker-segments span[data-filled="true"] { background:var(--tracker-color); }
-  .lumiphone-shell .lp-tracker-compact { gap:8px; padding:12px 14px; }
-  .lp-tracker-compact .lp-tracker-readout { font-size:21px; }
+
+  .lumiphone-shell .lp-tracker-compact { min-height:72px; gap:7px; padding:12px 14px; border-radius:22px; }
+  .lp-tracker-compact .lp-tracker-top { align-items:center; }
+  .lp-tracker-compact .lp-tracker-reading { align-items:center; }
+  .lp-tracker-compact .lp-tracker-readout { font-size:22px; }
   .lp-tracker-preview { padding:0; background:transparent; border:0; }
   .lp-selected-members { display:flex; gap:6px; flex-wrap:wrap; }
   .lp-selected-members:empty { display:none; }
   .lp-band-meaning { grid-column:1/-1; }
-  .lp-tracker-card[data-meaning="bad"] { border-color:color-mix(in srgb,var(--tracker-color) 65%,var(--lp-border)); }
+  .lp-tracker-card[data-meaning="bad"] { border-color:color-mix(in srgb,var(--tracker-color) 18%,var(--lp-border)); }
+
+  .lumiphone-shell:has(.lumiphone-app-view[data-pocket-app="trackers"], .lumiphone-app-view[data-pocket-app="weather"]) .lumiphone-screen { width:100%; min-width:0; }
+  .lumiphone-shell .lumiphone-app-view[data-pocket-app="trackers"], #tracker-sampler { container-type:inline-size; width:100%; }
+  @container (max-width:390px) {
+    .lumiphone-shell .lp-tracker-card { padding:13px 14px 12px; border-radius:24px; }
+    .lp-bond-widget { grid-template-columns:1fr; }
+    .lp-bond-score { grid-template-columns:minmax(0,1fr) minmax(88px,.8fr); align-items:end; }
+    .lp-bond-score .lp-tracker-rail { align-self:center; }
+    .lp-tracker-ring { --ring-size:60px; }
+    .lp-tracker-readout { font-size:29px; }
+  }
   .lp-contact-group .lp-actions,.lp-bank-profile .lp-actions { display:flex; gap:8px; flex-wrap:wrap; }
   .lp-contact-group .lp-button,.lp-bank-profile .lp-button { flex:1 1 auto; }
   .lumiphone-shell .lp-npc-camera { height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); background:#08080a; }
@@ -1034,19 +1120,80 @@ ${INLINE_FINISH_STYLES}
   .lp-camera-review-actions .lp-camera-options-chip { margin:0; }
   .lumiphone-shell .lp-camera-review-actions .lp-camera-accept { grid-column:1/-1; width:100%; min-height:42px; border-radius:10px; background:var(--lp-accent); color:var(--lp-on-accent,#fff); }
   .lp-camera[data-capture-state="review"] .lp-npc-viewfinder::before { display:none; }
-  .lumiphone-shell .lp-weather-hero { position:relative; min-height:240px; border:1px solid var(--lp-border); background:var(--lp-surface); color:var(--lp-text); box-shadow:0 8px 24px #0002; border-radius:18px; overflow:hidden; }
-  .lp-weather-hero > .lp-weather-glyph { position:absolute; right:26px; top:64px; width:100px; height:100px; color:var(--lp-accent); opacity:.8; }
-  .lp-weather-glyph { display:inline-flex; width:26px; height:26px; color:var(--lp-accent); }
-  .lp-weather-glyph svg { width:100%; height:100%; }
-  .lp-weather-note { font-size:13px; line-height:1.6; color:var(--lp-muted); }
-  .lp-weather-week { padding:16px; background:var(--lp-surface); border:1px solid var(--lp-border); border-radius:14px; }
-  .lp-weather-empty { padding:20px 0 4px; color:var(--lp-muted); font-size:12px; }
-  .lp-weather-day { display:grid; grid-template-columns:40px 26px minmax(0,1fr); align-items:center; gap:10px; padding:12px 0; border-top:1px solid var(--lp-border); font-size:12px; }
-  .lp-weather-day-copy { display:grid; gap:4px; min-width:0; }
-  .lp-weather-day-copy small { font-size:10px; line-height:1.5; }
-  .lp-weather-day-range { grid-column:2/-1; display:grid; grid-template-columns:32px 1fr 32px; align-items:center; gap:8px; }
-  .lp-weather-range-rail { position:relative; height:4px; border-radius:3px; background:var(--lp-border); overflow:hidden; }
-  .lp-weather-range-rail > span { position:absolute; height:100%; border-radius:3px; background:var(--lp-accent); }
+  .lumiphone-shell .lumiphone-app-view[data-pocket-app="weather"], #weather-preview { container-type:inline-size; width:100%; }
+  /* Weather = a compact iOS-style live widget: semantic color, strong current conditions, and capsule forecast rows. */
+  .lumiphone-shell .lp-weather-hero {
+    --weather-a:#1788ed; --weather-b:#42b9f5; --weather-c:#2367ca;
+    position:relative; isolation:isolate; overflow:hidden; display:grid;
+    grid-template-columns:minmax(0,1fr) 112px; grid-template-areas:"top glyph" "temp glyph" "bottom bottom";
+    gap:10px 14px; min-height:224px; padding:20px; border:1px solid #ffffff26; border-radius:30px;
+    color:#fff; background:linear-gradient(145deg,var(--weather-a),var(--weather-b) 58%,var(--weather-c));
+    box-shadow:inset 0 1px #ffffff2b,0 14px 34px #00000030;
+  }
+  .lumiphone-shell .lp-weather-hero[data-condition="partly"] { --weather-a:#247ed8; --weather-b:#67b8e9; --weather-c:#3f6b9a; }
+  .lumiphone-shell .lp-weather-hero[data-condition="cloud"] { --weather-a:#4c5968; --weather-b:#758391; --weather-c:#39424d; }
+  .lumiphone-shell .lp-weather-hero[data-condition="rain"] { --weather-a:#254967; --weather-b:#47738e; --weather-c:#20364d; }
+  .lumiphone-shell .lp-weather-hero[data-condition="storm"] { --weather-a:#302e50; --weather-b:#4f5270; --weather-c:#22243d; }
+  .lumiphone-shell .lp-weather-hero[data-condition="snow"] { --weather-a:#5689ad; --weather-b:#9abdd2; --weather-c:#486b87; }
+  .lumiphone-shell .lp-weather-hero[data-condition="fog"] { --weather-a:#59636c; --weather-b:#889198; --weather-c:#495159; }
+  .lumiphone-shell .lp-weather-hero[data-condition="wind"] { --weather-a:#267386; --weather-b:#54a6aa; --weather-c:#285d6b; }
+  .lp-weather-hero-top { grid-area:top; align-self:start; min-width:0; display:grid; gap:3px; }
+  .lp-weather-hero-top .lp-copy { color:#ffffffb5; font-size:10px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-condition { color:#fff; font-size:14px; font-weight:760; line-height:1.2; letter-spacing:-.015em; }
+  .lp-weather-temp { grid-area:temp; align-self:center; color:#fff; font-size:66px; line-height:.88; font-weight:660; letter-spacing:-.065em; font-variant-numeric:tabular-nums; text-shadow:0 3px 20px #0002; }
+  .lp-weather-hero > .lp-weather-glyph { grid-area:glyph; align-self:center; justify-self:end; width:108px; height:108px; color:#fff; filter:drop-shadow(0 9px 16px #0003); }
+  .lp-weather-glyph { display:inline-flex; width:26px; height:26px; flex:none; color:var(--lp-accent); }
+  .lp-weather-glyph svg { width:100%; height:100%; overflow:visible; }
+  .lp-weather-glyph .lp-weather-soft { fill:currentColor; stroke:none; opacity:.18; }
+  .lp-weather-glyph .lp-weather-cloud-fill { fill:currentColor; stroke:none; opacity:.82; }
+  .lp-weather-glyph .lp-weather-bolt { fill:currentColor; stroke:currentColor; }
+  .lp-weather-hero-bottom { grid-area:bottom; display:flex; align-items:center; gap:7px; min-width:0; padding-top:3px; }
+  .lp-weather-stat,.lp-weather-updated { min-width:0; padding:6px 9px; border-radius:999px; background:#ffffff16; border:1px solid #ffffff19; color:#ffffffe0; font-size:8.5px; font-weight:650; line-height:1.2; backdrop-filter:blur(8px); }
+  .lp-weather-updated { margin-left:auto; color:#ffffffa8; font-weight:560; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-note { margin:0; padding:13px 15px; border:1px solid color-mix(in srgb,var(--lp-text) 7%,var(--lp-border)); border-radius:18px; background:color-mix(in srgb,var(--lp-text) 3.5%,var(--lp-surface)); box-shadow:inset 0 1px #ffffff08; color:var(--lp-muted); font-size:11.5px; line-height:1.6; }
+
+  .lp-weather-week { display:grid; gap:8px; padding:12px; border:1px solid color-mix(in srgb,var(--lp-text) 8%,var(--lp-border)); border-radius:28px; background:color-mix(in srgb,var(--lp-text) 2.8%,var(--lp-surface)); box-shadow:inset 0 1px #ffffff08,0 8px 22px #00000018; }
+  .lp-weather-week-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 5px 8px; }
+  .lp-weather-week-heading { min-width:0; display:grid; gap:2px; }
+  .lp-weather-week-heading .lp-eyebrow { color:var(--lp-muted); font-size:7.5px; font-weight:760; text-transform:uppercase; letter-spacing:.08em; }
+  .lp-weather-week-heading .lp-title { margin:0; color:var(--lp-text); font-size:14px; line-height:1.2; letter-spacing:-.02em; }
+  .lp-weather-week-badge { flex:none; padding:5px 8px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 5%,transparent); color:var(--lp-muted); font-size:7.5px; font-weight:650; }
+  .lp-weather-empty { min-height:86px; display:flex; align-items:center; gap:12px; padding:14px; border-radius:20px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); color:var(--lp-muted); font-size:10.5px; line-height:1.5; }
+  .lp-weather-empty .lp-weather-glyph { width:34px; height:34px; color:var(--lp-accent); }
+
+  .lp-weather-day {
+    --weather-day-accent:#64b9ff;
+    display:grid; grid-template-columns:42px 28px minmax(0,1fr); align-items:center; gap:5px 9px;
+    min-width:0; padding:10px 11px; border:1px solid color-mix(in srgb,var(--lp-text) 6%,transparent); border-radius:20px;
+    background:color-mix(in srgb,var(--lp-text) 3.5%,transparent); font-size:10px;
+  }
+  .lp-weather-day[data-today="true"] { background:color-mix(in srgb,var(--weather-day-accent) 9%,color-mix(in srgb,var(--lp-text) 3.5%,transparent)); border-color:color-mix(in srgb,var(--weather-day-accent) 13%,var(--lp-border)); }
+  .lp-weather-day[data-condition="clear"] { --weather-day-accent:#f3b833; }
+  .lp-weather-day[data-condition="partly"] { --weather-day-accent:#e7b747; }
+  .lp-weather-day[data-condition="cloud"] { --weather-day-accent:#9aa5b2; }
+  .lp-weather-day[data-condition="rain"] { --weather-day-accent:#58a9df; }
+  .lp-weather-day[data-condition="storm"] { --weather-day-accent:#9b8ae0; }
+  .lp-weather-day[data-condition="snow"] { --weather-day-accent:#b9d9ed; }
+  .lp-weather-day[data-condition="fog"] { --weather-day-accent:#a4adb4; }
+  .lp-weather-day[data-condition="wind"] { --weather-day-accent:#67c6c6; }
+  .lp-weather-day-name { color:var(--lp-text); font-size:10px; font-weight:720; }
+  .lp-weather-day > .lp-weather-glyph { width:24px; height:24px; color:var(--weather-day-accent); }
+  .lp-weather-day-copy { min-width:0; display:grid; gap:2px; }
+  .lp-weather-day-condition { min-width:0; color:var(--lp-text); font-size:10px; font-weight:660; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-day-copy small { min-width:0; color:var(--lp-muted); font-size:8px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-weather-day-range { grid-column:1/-1; display:grid; grid-template-columns:30px minmax(0,1fr) 30px; align-items:center; gap:8px; padding-top:2px; }
+  .lp-weather-low,.lp-weather-high { font-size:8px; font-variant-numeric:tabular-nums; }
+  .lp-weather-low { color:var(--lp-muted); }
+  .lp-weather-high { color:var(--lp-text); text-align:right; }
+  .lp-weather-range-rail { position:relative; height:5px; border-radius:999px; background:color-mix(in srgb,var(--lp-text) 7%,transparent); overflow:hidden; }
+  .lp-weather-range-rail > span { position:absolute; height:100%; border-radius:999px; background:var(--weather-day-accent); box-shadow:0 0 8px color-mix(in srgb,var(--weather-day-accent) 18%,transparent); }
+  @container (max-width:360px) {
+    .lumiphone-shell .lp-weather-hero { grid-template-columns:minmax(0,1fr) 90px; min-height:210px; padding:17px; border-radius:26px; }
+    .lp-weather-temp { font-size:58px; }
+    .lp-weather-hero > .lp-weather-glyph { width:86px; height:86px; }
+    .lp-weather-updated { flex:1 1 100%; margin-left:0; }
+    .lp-weather-hero-bottom { flex-wrap:wrap; }
+  }
   .lp-app-review { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .lp-app-review .lp-operation-progress { flex-basis:100%; padding:10px 0; color:var(--lp-muted); font-size:12px; }
   .lp-app-review .lp-operation-progress[data-phase="error"] { color:var(--lp-destructive); }
