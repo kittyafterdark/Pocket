@@ -3545,6 +3545,10 @@ function renderContactGroups(host) {
     portable.addEventListener("click", () => host.selectGroup("", "bank"));
     content.append(portable);
   }
+  const casts = bank ? sectionBlock("Portable casts", "Groups you can bring into another chat.", "lp-bank-casts") : null;
+  const profiles = bank ? sectionBlock("Individual NPCs", "Saved identities, ready to reuse.", "lp-bank-individuals") : null;
+  if (casts)
+    content.append(casts.section);
   for (const group of groups) {
     const people = group.memberIds.map((id) => members(host, bank).find((entry) => entry.id === id)).filter((entry) => Boolean(entry));
     const { section, body } = sectionBlock(group.name, `${people.length} members${bank ? " · portable cast" : ""}`, "lp-card lp-contact-group");
@@ -3575,11 +3579,15 @@ function renderContactGroups(host) {
     remove.addEventListener("click", () => host.saveCollection(bank ? "lumiphone:npc_cast_delete" : "lumiphone:contact_group_delete", { groupId: group.id }));
     actions.append(remove);
     body.append(actions);
-    content.append(section);
+    (casts?.body || content).append(section);
     cards.push({ node: section, terms: `${group.name} ${people.map((entry) => entry.name).join(" ")}`.toLowerCase() });
   }
   if (!groups.length)
-    content.append(el("p", "lp-copy", bank ? "Save a cast to reuse the same NPCs in other chats." : "Organize a cast, family, team, or faction here."));
+    (casts?.body || content).append(el("p", "lp-copy", bank ? "Save a cast to reuse the same NPCs in other chats." : "Organize a cast, family, team, or faction here."));
+  if (profiles)
+    content.append(profiles.section);
+  if (bank && !host.npcBank.length)
+    profiles.body.append(el("p", "lp-copy", "Save an NPC contact to reuse their profile in other chats."));
   if (bank)
     for (const entry of host.npcBank) {
       const row = el("div", "lp-card lp-bank-profile");
@@ -3593,12 +3601,16 @@ function renderContactGroups(host) {
       add.addEventListener("click", () => linked ? host.select(linked.id, "detail") : host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
       actions.append(add);
       row.append(actions);
-      content.append(row);
+      profiles.body.append(row);
       cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.tags.join(" ")}`.toLowerCase() });
     }
   search.addEventListener("input", () => {
+    const query = search.value.trim().toLowerCase();
     for (const card of cards)
-      card.node.hidden = !card.terms.includes(search.value.trim().toLowerCase());
+      card.node.hidden = !card.terms.includes(query);
+    for (const group of [casts, profiles])
+      if (group)
+        group.section.hidden = Boolean(query && !cards.some((card) => group.body.contains(card.node) && !card.node.hidden));
   });
   return page;
 }
@@ -4132,6 +4144,24 @@ function renderContactsView(host) {
   const groups = button("Groups", "lp-chip");
   groups.addEventListener("click", () => host.selectGroup("", "groups"));
   const bank = button("NPC Bank", "lp-chip");
+  bank.title = "Reusable NPC profiles and casts across chats";
+  bank.setAttribute("aria-description", bank.title);
+  const bankIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  bankIcon.setAttribute("viewBox", "0 0 24 24");
+  bankIcon.setAttribute("width", "12");
+  bankIcon.setAttribute("height", "12");
+  bankIcon.setAttribute("aria-hidden", "true");
+  bankIcon.setAttribute("focusable", "false");
+  bankIcon.style.verticalAlign = "middle";
+  bankIcon.style.marginRight = "5px";
+  const bankPath = document.createElementNS(bankIcon.namespaceURI, "path");
+  bankPath.setAttribute("d", "M4 8h16v12H4zM3 4h18v4H3zM9 12h6");
+  bankPath.setAttribute("fill", "none");
+  bankPath.setAttribute("stroke", "currentColor");
+  bankPath.setAttribute("stroke-width", "1.5");
+  bankPath.setAttribute("stroke-linejoin", "round");
+  bankIcon.append(bankPath);
+  bank.prepend(bankIcon);
   bank.addEventListener("click", () => host.selectGroup("", "bank"));
   filters.append(groups, bank);
   const sync = button("Sync current scene", "lp-button lp-button-quiet");

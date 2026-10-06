@@ -1,22 +1,22 @@
-# Pocket evaluation backlog — 2026-10-05
+# Pocket evaluation backlog — 2026-10-06
 
 Main Lumi is the evaluation environment. Update LumiTest after this pass, not during it.
 Preserve messaging/candidate commit behavior; changes below are targeted fixes and presentation work.
 
 ## Functional fixes
 
-- [ ] Setup: wait for greeting selection, close/reset on chat changes, allow resume after configuring generation.
-- [ ] Setup: clear hierarchy, unclipped authorship choices, native connection/model controls.
+- [x] Setup: in-phone Run setup / Skip invitation avoids the greeting race; chat lifecycle and resume controls.
+- [x] Setup: clear hierarchy, unclipped authorship choices, native connection/model controls.
 - [x] Setup controls/hierarchy first pass: theme-aware sections, short authorship labels, native select/model controls, resume action.
 - [x] Enrichment: thinking/writing/completion/error feedback; unlock retry without losing edits.
-- [ ] Generation: test uses current connection/model selection; investigate first-call failure.
+- [x] Generation: current connection/model selection verified by the user across two providers and four models on main Lumi.
 - [x] Messages: cancellable generation with stop control.
 - [x] Messages: quick manual Here/Away presence assignment.
-- [ ] Profiles: reusable Pocket Persona and character phone profiles.
-- [ ] Sidebar: restore hidden launcher; bounded Recent, search, single-pass interaction index.
+- [x] Profiles: reusable Pocket Persona and character phone profiles.
+- [x] Sidebar: restore hidden launcher; six-device Recent limit, search, single-pass interaction index.
 - [x] Sidebar: explicit Show launcher recovery action.
 - [x] Mobile fullscreen: convert visual viewport/keyboard offsets to host layout pixels under UI scale; observe scale changes.
-- [ ] World: rerun seed after setup; weather outlook and timeline review with proposed event updates.
+- [x] World: setup reseed control, weekly weather outlook and timeline review with proposed event updates.
 - [x] Camera: shutter doubles as stop; integrated acceptance.
 - [x] Camera: native image pipeline by default, shared checkpoint picker and native settings navigation.
 - [x] Swarm: consume published swarm_loras directives, preserve ordered native layers and direct Swarm strengths.
@@ -25,22 +25,29 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 
 ## Presentation and correctness
 
-- [ ] Message actions sheet: balanced action list, clearer hierarchy, compact Done control; replace the empty/right-stacked layout.
+- [x] Message actions sheet: compact action list replaces the empty/right-stacked layout.
 
 - [x] Remove stale handset 9:16 descriptions (retain valid image aspect options).
 - [ ] Remove fixed violet material/atmosphere; neutral incoming bubbles, theme accents and semantic colors.
 - [x] Tracker compositions by type: participants/trajectory, state rail, compact vitals, instrumentation.
 - [x] Remove duplicate tracker metadata and explain story-triggered versus elapsed-time updates.
-- [ ] Weather, timeline, camera, settings and contacts presentation passes.
-- [ ] Theme previews use real miniature UI; visual preset swatches with SVG wallpapers instead of names.
+- [x] Weather, timeline, camera and Settings first presentation passes.
+- [x] Contacts: subtle NPC Bank archive hint; separate portable casts and individual profiles.
+- [x] Theme previews use miniature chat UI; visual preset swatches with SVG wallpapers instead of names.
 - [ ] Associate settings labels; audit custom keyboard Space handling.
 
 ## Protection and maintenance (after visible UI settles)
 
-- [ ] Controlled visual regression matrix: home/scales/settings/dense chat/long lock/call/cards/full phone/sidebar/trackers/mobile.
-- [ ] Hostile global-theme fixture verifies Shadow DOM isolation and visual stability.
-- [ ] Split reset/tokens/handset/inline styles; only inline styles enter activity ShadowRoots.
-- [ ] Incremental controller/backend extraction with unchanged behavior and regression coverage.
+- [x] Controlled visual regression matrix: 38 mobile/desktop baselines for home/settings/chat/camera/sidebar/trackers/cards/full phone/connectors and clock precision.
+- [ ] Expand controlled coverage for handset-scale extremes and especially long notifications.
+- [x] Hostile global-theme fixture verifies Shadow DOM isolation and visual stability.
+- [x] Separate inline styling from handset/app styling; activity ShadowRoots only receive inline styles.
+- [ ] Further shared-token/reset cleanup after the remaining design work.
+- [x] Initial controller/backend extraction: app reviews and progress controls.
+- [ ] Continue gradual orchestration extraction with unchanged behavior and regression coverage.
+- [ ] Tracker visual pass: user is preparing designs; leave tracker files untouched until handoff.
+- [x] Live desktop/mobile connector and clock fallback checks: completed by the user on main Lumi.
+- [ ] Catch LumiTest up after main Lumi evaluation.
 
 Verification claims must distinguish unit/contracts, controlled browser fixtures, real provider calls,
 and live main Lumi checks. Do not use personal chat data as test fixtures or modify it for convenience.

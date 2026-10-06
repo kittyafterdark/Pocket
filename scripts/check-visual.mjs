@@ -31,7 +31,7 @@ if (connectors.status !== 0) throw connectors.error || new Error(connectors.stde
 const clocks = spawnSync('bun', ['scripts/preview-activity-clock.ts', join(fixtures, 'phone-clock-states.html')], { cwd: root, encoding: 'utf8' })
 if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 17, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 19, 'A visual fixture failed to export; do not compare stale captures.')
 if (updateCase) assert.ok(files.includes(updateCase + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
