@@ -2126,7 +2126,7 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
   try {
     if (input.signal instanceof AbortSignal)
       input.signal.throwIfAborted();
-    const request = { ...input };
+    const request = { ...input, reasoning: input.reasoning ?? { source: "off" } };
     if (preferences.generationMode === "sidecar") {
       request.connection_id = info.effective.id;
       if (preferences.sidecarModelOverride)
@@ -2134,23 +2134,43 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
     }
     let result;
     const profileTask = ["persona-profile", "npc-contact", "profile-refresh", "scene-sync"].includes(task);
-    if (profileTask && typeof host.spindle.generate.quietStream === "function") {
-      let phase = "";
-      for await (const chunk of host.spindle.generate.quietStream(request)) {
-        if (input.signal instanceof AbortSignal)
-          input.signal.throwIfAborted();
-        const next = chunk.type === "reasoning" ? "thinking" : chunk.type === "token" ? "writing" : "";
-        if (next && next !== phase) {
-          phase = next;
-          host.send({ type: "lumiphone:operation_progress", task, requestId, phase: next, message: next === "thinking" ? "Thinking\u2026" : "Writing profile\u2026" }, userId);
+    const generate = async () => {
+      if (input.signal instanceof AbortSignal)
+        input.signal.throwIfAborted();
+      result = undefined;
+      if (profileTask && typeof host.spindle.generate.quietStream === "function") {
+        let phase = "";
+        for await (const chunk of host.spindle.generate.quietStream(request)) {
+          if (input.signal instanceof AbortSignal)
+            input.signal.throwIfAborted();
+          const next = chunk.type === "reasoning" ? "thinking" : chunk.type === "token" ? "writing" : "";
+          if (next && next !== phase) {
+            phase = next;
+            host.send({ type: "lumiphone:operation_progress", task, requestId, phase: next, message: next === "thinking" ? "Thinking\u2026" : "Writing profile\u2026" }, userId);
+          }
+          if (chunk.type === "done")
+            result = chunk;
         }
-        if (chunk.type === "done")
-          result = chunk;
+        if (!result)
+          throw new Error("The provider stream ended without a completed response. Retry enrichment.");
+      } else
+        result = await host.spindle.generate.quiet(request);
+    };
+    await generate();
+    if (input.signal instanceof AbortSignal)
+      input.signal.throwIfAborted();
+    const empty = () => typeof result?.content !== "string" || !result.content.trim();
+    if (empty() && result?.finish_reason === "length") {
+      const limit = Number(request.parameters?.max_tokens) || 0;
+      const expanded = Math.min(16384, Math.max(8192, limit * 2));
+      if (expanded > limit) {
+        host.send({ type: "lumiphone:operation_progress", task, requestId, phase: "thinking", message: "The model reached its output limit before answering. Retrying once with more room\u2026" }, userId);
+        request.parameters = { ...request.parameters || {}, max_tokens: expanded };
+        await generate();
       }
-      if (!result)
-        throw new Error("The provider stream ended without a completed response. Retry enrichment.");
-    } else
-      result = await host.spindle.generate.quiet(request);
+    }
+    if (empty())
+      throw new Error(result?.finish_reason === "length" ? "The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model." : "The model returned no answer text. Check the provider or try another model.");
     if (input.signal instanceof AbortSignal)
       input.signal.throwIfAborted();
     const completed = { ...run, status: "completed", completedAt: new Date().toISOString(), latencyMs: Date.now() - started };

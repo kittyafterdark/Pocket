@@ -107,3 +107,39 @@ test('arrival idle resets on activity, rejects stale asynchronous handoffs and i
   expect(events).toContain('other')
   expect(events).not.toContain('cancelled')
 })
+
+
+function generationFixture(responses: Array<Record<string, unknown>>) {
+  let preferences = { ...defaultPreferences(), generationMode: 'sidecar' as const, sidecarConnectionId: 'sidecar', sidecarModelOverride: 'selected-model' }
+  const requests: any[] = [], events: any[] = []
+  const host = {
+    loadPreferences: async () => structuredClone(preferences), savePreferences: async (next: any) => (preferences = next), send: (event: any) => events.push(event),
+    spindle: { permissions: { has: () => true }, connections: { list: async () => [{ id: 'sidecar', model: 'profile-model' }] }, generate: {
+      quiet: async (request: any) => { requests.push(structuredClone(request)); return responses[Math.min(requests.length - 1, responses.length - 1)] },
+    } },
+  }
+  return { host, requests, events }
+}
+
+test('reasoning-budget exhaustion retries once on the selected connection without exposing reasoning', async () => {
+  const f = generationFixture([{ content: '', finish_reason: 'length', reasoning: 'private thought' }, { content: '{"events":[]}', finish_reason: 'stop' }])
+  const result = await runPocketGeneration(f.host, 'timeline-review', 'budget', { parameters: { max_tokens: 1100 } })
+  expect(result.content).toBe('{"events":[]}')
+  expect(f.requests.length).toBe(2)
+  expect(f.requests[0].reasoning).toEqual({ source: 'off' })
+  expect(f.requests[1].parameters.max_tokens).toBe(8192)
+  expect(f.requests[1].parameters.model).toBe('selected-model')
+  expect(f.requests[1].connection_id).toBe('sidecar')
+  expect(JSON.stringify(f.events)).not.toContain('private thought')
+  expect(f.events.at(-1).run.status).toBe('completed')
+})
+
+test('empty provider output is a failed run and does not retry unless output was exhausted', async () => {
+  for (const reason of ['stop', 'length']) {
+    const f = generationFixture([{ content: '', finish_reason: reason }])
+    await expect(runPocketGeneration(f.host, 'reply', 'empty-' + reason, { parameters: { max_tokens: 720 }, reasoning: { source: 'custom', effort: 'low' } })).rejects.toThrow(reason === 'length' ? 'output limit' : 'no answer text')
+    expect(f.requests.length).toBe(reason === 'length' ? 2 : 1)
+    expect(f.requests[0].reasoning).toEqual({ source: 'custom', effort: 'low' })
+    expect(f.events.at(-1).run.status).toBe('failed')
+  }
+})

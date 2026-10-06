@@ -70,27 +70,46 @@ export async function runPocketGeneration(
   const started = Date.now()
   try {
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
-    const request = { ...input } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
+    const request = { ...input, reasoning: input.reasoning ?? { source: 'off' } } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
     if (preferences.generationMode === 'sidecar') {
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
     }
     let result: any
     const profileTask = ['persona-profile', 'npc-contact', 'profile-refresh', 'scene-sync'].includes(task)
-    if (profileTask && typeof host.spindle.generate.quietStream === 'function') {
-      let phase = ''
-      for await (const chunk of host.spindle.generate.quietStream(request)) {
-        if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
-        const next = chunk.type === 'reasoning' ? 'thinking' : chunk.type === 'token' ? 'writing' : ''
-        if (next && next !== phase) {
-          phase = next
-          // Report activity, never private reasoning content.
-          host.send({ type: 'lumiphone:operation_progress', task, requestId, phase: next, message: next === 'thinking' ? 'Thinking…' : 'Writing profile…' }, userId)
+    const generate = async () => {
+      if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
+      result = undefined
+      if (profileTask && typeof host.spindle.generate.quietStream === 'function') {
+        let phase = ''
+        for await (const chunk of host.spindle.generate.quietStream(request)) {
+          if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
+          const next = chunk.type === 'reasoning' ? 'thinking' : chunk.type === 'token' ? 'writing' : ''
+          if (next && next !== phase) {
+            phase = next
+            // Report activity, never private reasoning content.
+            host.send({ type: 'lumiphone:operation_progress', task, requestId, phase: next, message: next === 'thinking' ? 'Thinking…' : 'Writing profile…' }, userId)
+          }
+          if (chunk.type === 'done') result = chunk
         }
-        if (chunk.type === 'done') result = chunk
+        if (!result) throw new Error('The provider stream ended without a completed response. Retry enrichment.')
+      } else result = await host.spindle.generate.quiet(request)
+    }
+    await generate()
+    if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
+    const empty = () => typeof result?.content !== 'string' || !result.content.trim()
+    if (empty() && result?.finish_reason === 'length') {
+      const limit = Number(request.parameters?.max_tokens) || 0
+      const expanded = Math.min(16384, Math.max(8192, limit * 2))
+      if (expanded > limit) {
+        host.send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'thinking', message: 'The model reached its output limit before answering. Retrying once with more room…' }, userId)
+        request.parameters = { ...(request.parameters || {}), max_tokens: expanded }
+        await generate()
       }
-      if (!result) throw new Error('The provider stream ended without a completed response. Retry enrichment.')
-    } else result = await host.spindle.generate.quiet(request)
+    }
+    if (empty()) throw new Error(result?.finish_reason === 'length'
+      ? 'The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model.'
+      : 'The model returned no answer text. Check the provider or try another model.')
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const completed: PocketGenerationRun = { ...run, status: 'completed', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }
     await writeRun(host, completed, userId)
