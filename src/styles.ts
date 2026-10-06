@@ -120,6 +120,9 @@ export const PHONE_STYLES = `
   .lumiphone-homebar button::after { content:""; position:absolute; left:8px; right:8px; top:7px; height:4px; border-radius:99px; background:var(--lp-text); opacity:.88; }
 
   .lp-home { min-height:100%; padding: 14px 16px 18px; background-image:var(--lp-wallpaper); background-size:var(--lp-home-wallpaper-size,cover); background-position:var(--lp-home-wallpaper-position,center); background-repeat:no-repeat; color:#fff; display:flex; flex-direction:column; }
+  .lumiphone-shell .lp-home-setup { display:grid; gap:10px; padding:14px; margin-bottom:16px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-surface); box-shadow:0 4px 14px #0002; color:var(--lp-text); }
+  .lumiphone-shell .lp-home-setup p { margin:0; font-size:12px; line-height:1.5; color:var(--lp-muted); }
+  .lp-setup .lp-enrichment-stop { border-color:var(--lumiverse-danger,#c65c65); color:var(--lumiverse-danger,#c65c65); }
   .lp-home-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:10px 3px 20px; text-shadow:0 2px 12px rgba(0,0,0,.35); }
   .lp-home-date { font-size:11px; font-weight:650; opacity:.82; }
   .lp-home-clock { margin-top:1px; font-size:34px; line-height:1; font-weight:310; letter-spacing:-.045em; }

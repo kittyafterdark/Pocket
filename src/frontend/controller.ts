@@ -229,7 +229,7 @@ class PocketController {
   private setupModalDismiss: (() => void) | null = null
   private setupPersonaEditing = false
   private setupControlCleanups: Cleanup[] = []
-  private setupAwaitingGreeting = false
+  private settledOperationRequests = new Set<string>()
   private composerReferencePill: HTMLDivElement | null = null
   private composerSyncFrame = 0
   private lastComposerReferenceId = ''
@@ -386,7 +386,7 @@ class PocketController {
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
       this.setupModalDismiss?.()
-      this.setupAwaitingGreeting = false
+      this.settledOperationRequests.clear()
       this.operations.clear()
       this.personaPreview = null
       this.clearActivitySurfaces(true, true)
@@ -981,7 +981,6 @@ class PocketController {
       }
       this.pruneInactiveActivitySurfaces()
       this.mountInlineArtifacts()
-      if (this.setupAwaitingGreeting) this.showFirstChatSetup()
       for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
       this.applyAppearance()
       this.syncComposerReferencePill()
@@ -989,12 +988,6 @@ class PocketController {
       this.renderDrawerLanding()
       this.announceView()
       if (payload.open) this.open()
-      if (
-        (payload.reason === 'chat_switched' || payload.reason === 'pocket_persona' || payload.reason === 'setup_world' || payload.reason === 'refresh')
-        && !this.state.setup.initialized
-        && !this.state.setup.dismissed
-        && !this.setupModalOpen
-      ) this.showFirstChatSetup()
       const pending = this.pendingRoute
       this.pendingRoute = null
       if (pending) this.openPocket(pending)
@@ -1110,6 +1103,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:pocket_persona_preview' && payload.persona) {
+      if (this.settledOperationRequests.has(payload.requestId)) return
       this.personaPreview = payload.persona as ChatPocketPersona
       if (this.setupModalOpen && this.setupPersonaEditing) this.renderFirstChatPersonaEditor()
       else if (this.currentApp === 'settings') this.render(false)
@@ -1128,23 +1122,7 @@ class PocketController {
         task: payload.task, requestId: payload.requestId, phase: payload.phase,
         message: payload.message || 'Working…',
       }
-      this.operations.set(operation.requestId, operation)
-      const progressUpdated = this.updateOperationProgress(operation)
-      if (this.currentApp === 'contacts' && !progressUpdated) this.render(false)
-      if (operation.phase === 'complete' || operation.phase === 'error') window.setTimeout(() => {
-        this.operations.delete(operation.requestId)
-        if (operation.phase !== 'error') this.updateOperationProgress(null, operation.requestId)
-
-        // Contacts generation/profile buttons derive their idle state from
-        // this.operations, so redraw after cleanup. Setup World is safe to redraw
-        // unless the inline Persona editor is currently preserving unsaved fields.
-        if (this.currentApp === 'contacts') this.render(false)
-        else if (this.currentApp === 'settings' && operation.task === 'persona-profile') this.render(false)
-
-        if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing) {
-          this.renderFirstChatSetupBody()
-        }
-      }, operation.phase === 'error' ? 1_800 : 700)
+      this.recordOperationProgress(operation)
       return
     }
     if (payload.type === 'lumiphone:capabilities') {
@@ -1314,7 +1292,7 @@ class PocketController {
       if (payload.requestId === this.cameraRequestId) { this.cameraBusy = false; this.cameraReady = false; this.cameraProgress = payload.error || 'Image generation failed. Try again.' }
       this.messageRequests.delete(payload.requestId)
       const operation = this.operations.get(payload.requestId)
-      if (operation) this.operations.set(payload.requestId, { ...operation, phase: 'error', message: payload.error || 'Operation failed' })
+      if (operation) this.recordOperationProgress({ ...operation, phase: 'error', message: payload.error || 'Operation failed' })
       const galleryAction = this.galleryActionButtons.get(payload.requestId)
       if (galleryAction) { galleryAction.button.disabled = false; galleryAction.button.textContent = galleryAction.idle; this.galleryActionButtons.delete(payload.requestId) }
       this.showError(payload.error || 'Pocket could not complete that action.')
@@ -1341,6 +1319,25 @@ class PocketController {
     this.notificationIsland.setAttribute('aria-label', notificationUnread ? `Open Notification Center, ${notificationUnread} unread` : 'Open Notification Center')
   }
 
+  private recordOperationProgress(operation: PocketOperationProgress): void {
+    if (this.settledOperationRequests.has(operation.requestId)) return
+    const terminal = operation.phase === 'complete' || operation.phase === 'error'
+    if (terminal) {
+      this.settledOperationRequests.add(operation.requestId)
+      if (this.settledOperationRequests.size > 100) this.settledOperationRequests.delete(this.settledOperationRequests.values().next().value!)
+    }
+    this.operations.set(operation.requestId, operation)
+    const updated = this.updateOperationProgress(operation)
+    if (this.currentApp === 'contacts' && !updated) this.render(false)
+    if (terminal) window.setTimeout(() => {
+      if (this.operations.get(operation.requestId) !== operation) return
+      this.operations.delete(operation.requestId)
+      if (operation.phase !== 'error') this.updateOperationProgress(null, operation.requestId)
+      if (this.currentApp === 'contacts' || (this.currentApp === 'settings' && operation.task === 'persona-profile')) this.render(false)
+      if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing) this.renderFirstChatSetupBody()
+    }, operation.phase === 'error' ? 1_800 : 700)
+  }
+
   private updateOperationProgress(operation: PocketOperationProgress | null, requestId = operation?.requestId || ''): boolean {
     if (!requestId) return false
     const selector = `[data-operation-request="${CSS.escape(requestId)}"]`
@@ -1355,6 +1352,7 @@ class PocketController {
       action.disabled = false
       action.textContent = operation.phase === 'error' ? 'Retry enrichment' : 'Enrich with LLM'
       delete action.dataset.operationAction
+      this.setupModalBody?.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove()
     }
     return true
   }
@@ -1653,7 +1651,6 @@ class PocketController {
       firedSynchronously = true
       this.inlineMountFrame = 0
       this.mountInlineArtifacts()
-      if (this.setupAwaitingGreeting) this.showFirstChatSetup()
     })
     // Browser RAF is asynchronous, but test hosts/polyfills may invoke the
     // callback synchronously. Do not overwrite the callback's reset with the
@@ -1896,7 +1893,19 @@ class PocketController {
     }
     const dock = el('div', 'lp-home-dock')
     for (const meta of APP_META.filter((entry) => entry.dock)) dock.appendChild(this.appIcon(meta))
-    home.append(head, grid)
+    home.append(head)
+    if (!state.setup.initialized && !state.setup.dismissed && owner === pocketPersonaActorId(state)) {
+      const prompt = el('section', 'lp-home-setup')
+      prompt.setAttribute('aria-label', 'Set up Pocket')
+      prompt.append(el('strong', '', 'Make this phone yours'), el('p', '', 'Ready when you are. Connect a model and choose how Pocket joins your story.'))
+      const actions = el('div', 'lp-row')
+      const run = button('Run setup', 'lp-button')
+      run.addEventListener('click', () => this.showFirstChatSetup(true))
+      const skip = button('Skip', 'lp-button lp-button-quiet')
+      skip.addEventListener('click', () => { this.send('lumiphone:dismiss_setup'); prompt.remove() })
+      actions.append(run, skip); prompt.append(actions); home.append(prompt)
+    }
+    home.append(grid)
     if (activity.childElementCount) home.appendChild(activity)
     home.appendChild(dock)
     return home
@@ -2951,11 +2960,9 @@ class PocketController {
 
   private showFirstChatSetup(manual = false): void {
     if (this.setupModalOpen || !this.state || this.state.setup.initialized || (!manual && this.state.setup.dismissed)) return
-    // An empty host chat may still be choosing its greeting. Never cover that choice.
+    // Setup is opened only by an explicit user action, never by greeting arrival.
     const active = this.ctx.getActiveChat()
     if (active.chatId !== this.state.chatId) return
-    if (!this.ctx.messages.getLatestMessageId()) { this.setupAwaitingGreeting = true; return }
-    this.setupAwaitingGreeting = false
     this.setupModalOpen = true
     this.setupPersonaEditing = false
     const modal = this.ctx.ui.showModal({ title: 'Set up Pocket', width: 620, maxHeight: 760 })
@@ -3066,7 +3073,7 @@ class PocketController {
         this.renderFirstChatSetupBody()
       }
       if (this.ctx.components.mountSelect) {
-        afterAttachment(connectionMount, () => this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', onChange: changeConnection }))
+        afterAttachment(connectionMount, () => this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', portal: false, onChange: changeConnection }))
       } else {
         const connection = el('select', 'lp-select'); connection.setAttribute('aria-label', 'Pocket connection')
         connection.append(new Option('Choose connection', ''))
@@ -3246,13 +3253,24 @@ class PocketController {
 
     const actions = el('div', 'lp-row')
     const personaOperation = [...this.operations.values()].find((entry) => entry.task === 'persona-profile' && entry.phase !== 'complete' && entry.phase !== 'error')
+    const stopButton = (requestId: string) => {
+      const stop = button('Stop enrichment', 'lp-button lp-enrichment-stop')
+      stop.dataset.operationStop = requestId
+      stop.addEventListener('click', () => {
+        this.send('lumiphone:cancel_persona_generation', { operationRequestId: requestId })
+        this.recordOperationProgress({ task: 'persona-profile', requestId, phase: 'error', message: 'Enrichment stopped. You can retry whenever you’re ready.' })
+      })
+      return stop
+    }
     const enrich = button(personaOperation ? 'Enriching…' : 'Enrich with LLM', 'lp-button lp-button-quiet')
     enrich.disabled = !this.caps?.generation || Boolean(personaOperation)
     enrich.addEventListener('click', () => {
       enrich.disabled = true
       enrich.textContent = 'Enriching…'
       const operationRequestId = this.send('lumiphone:generate_pocket_persona')
+      this.operations.set(operationRequestId, { task: 'persona-profile', requestId: operationRequestId, phase: 'generating', message: 'Enriching phone profile…' })
       enrich.dataset.operationAction = operationRequestId
+      actions.append(stopButton(operationRequestId))
       const progress = el('div', 'lp-operation-progress')
       progress.dataset.operationRequest = operationRequestId
       progress.dataset.phase = 'generating'
@@ -3288,6 +3306,7 @@ class PocketController {
     body.append(fields, actions)
     if (personaOperation) {
       enrich.dataset.operationAction = personaOperation.requestId
+      actions.append(stopButton(personaOperation.requestId))
       const progress = el('div', 'lp-operation-progress')
       progress.dataset.operationRequest = personaOperation.requestId
       progress.dataset.phase = personaOperation.phase

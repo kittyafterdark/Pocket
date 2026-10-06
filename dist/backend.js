@@ -2136,6 +2136,8 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
     if (profileTask && typeof host.spindle.generate.quietStream === "function") {
       let phase = "";
       for await (const chunk of host.spindle.generate.quietStream(request)) {
+        if (input.signal instanceof AbortSignal)
+          input.signal.throwIfAborted();
         const next = chunk.type === "reasoning" ? "thinking" : chunk.type === "token" ? "writing" : "";
         if (next && next !== phase) {
           phase = next;
@@ -3042,6 +3044,7 @@ var MAX_ACTIVITIES = 120;
 var stateLocks = new Map;
 var jevFlights = new Set;
 var cameraJobs = new Map;
+var personaJobs = new Map;
 var replyJobs = new ReplyJobs;
 var replyJobScope = (chatId, characterId, conversationId, userId) => JSON.stringify([userId || "", chatId, characterId, conversationId]);
 var notificationThrottle = new Map;
@@ -8475,14 +8478,27 @@ async function handleFrontend(payload, userId) {
         });
         break;
       }
+      case "lumiphone:cancel_persona_generation": {
+        const operationRequestId = text2(payload.operationRequestId, 180);
+        const job = personaJobs.get(operationRequestId);
+        if (job && job.chatId === context.chatId && job.characterId === context.characterId && job.userId === userId) {
+          job.cancelled = true;
+          job.controller.abort();
+          send({ type: "lumiphone:operation_progress", task: "persona-profile", requestId: operationRequestId, phase: "error", message: "Enrichment stopped." }, userId);
+        }
+        break;
+      }
       case "lumiphone:generate_pocket_persona": {
         if (!spindle.permissions.has("generation"))
           throw new Error("Enable Generation to describe the Pocket Persona from roleplay.");
+        const job = { controller: new AbortController, cancelled: false, chatId: context.chatId, characterId: context.characterId, userId };
+        personaJobs.set(requestId, job);
         send({ type: "lumiphone:operation_progress", task: "persona-profile", requestId, phase: "generating", message: "Enriching phone profile\u2026" }, userId);
         try {
           const state = await loadState(context.chatId, context.characterId, userId);
           const messages = spindle.permissions.has("chat_mutation") ? await spindle.chat.getMessages(context.chatId) : [];
           const response = await runStructuredGeneration("persona-profile", requestId || id("persona"), {
+            signal: job.controller.signal,
             type: "quiet",
             messages: [
               { role: "system", content: 'Create a compact PHONE-SPECIFIC Pocket Persona profile for text-message generation. Describe only the user/persona, never the primary host-RP character. Return strict JSON only: {"displayName":"","pronouns":"","role":"","identityBrief":"","phoneProfile":{"personality":"","appearance":"","textingStyle":""}}. personality: stable temperament/social traits that affect conversation, max 420 chars. appearance: only 1-3 recognizable physical/style details useful for occasional texting references, max 240 chars; no body dossier. textingStyle: casing, punctuation, slang/register, dialect or AAVE only when actually established, emoji vs kaomoji habits, message length/fragmentation, abbreviations, and other stable texting quirks, max 420 chars. identityBrief: a compact fallback identity/role summary, max 300 chars. Infer only from supplied evidence; do not stereotype from demographics and leave unsupported quirks blank. No markdown.' },
@@ -8498,12 +8514,18 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
             parameters: { temperature: 0.2, max_tokens: 360 },
             userId
           }, userId);
+          job.controller.signal.throwIfAborted();
           const preview = normalizePocketPersona({ ...state.pocketPersona, ...response, source: "generated", linkedPersonaId: "", updatedAt: nowIso() }, state.pocketPersona);
           send({ type: "lumiphone:pocket_persona_preview", requestId, persona: preview }, userId);
           send({ type: "lumiphone:operation_progress", task: "persona-profile", requestId, phase: "complete", message: "Phone profile ready" }, userId);
         } catch (error) {
-          send({ type: "lumiphone:operation_progress", task: "persona-profile", requestId, phase: "error", message: error instanceof Error ? error.message : "Persona enrichment failed" }, userId);
-          throw error;
+          if (!job.cancelled) {
+            send({ type: "lumiphone:operation_progress", task: "persona-profile", requestId, phase: "error", message: error instanceof Error ? error.message : "Persona enrichment failed" }, userId);
+            throw error;
+          }
+        } finally {
+          if (personaJobs.get(requestId) === job)
+            personaJobs.delete(requestId);
         }
         break;
       }

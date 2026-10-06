@@ -80,6 +80,7 @@ export async function runPocketGeneration(
     if (profileTask && typeof host.spindle.generate.quietStream === 'function') {
       let phase = ''
       for await (const chunk of host.spindle.generate.quietStream(request)) {
+        if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
         const next = chunk.type === 'reasoning' ? 'thinking' : chunk.type === 'token' ? 'writing' : ''
         if (next && next !== phase) {
           phase = next

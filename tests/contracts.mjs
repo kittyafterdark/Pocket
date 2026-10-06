@@ -2468,6 +2468,12 @@ const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:sa
 assert.deepEqual(withPhoto.avatarSource, { kind: 'asset', assetId: 'framed-draft' })
 assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/framed-draft')
 
+frontendContext.components.mountSelect = (target, options) => {
+  assert.equal(target.isConnected, true)
+  assert.equal(options.portal, false, 'setup connection list stays inside the modal stacking context')
+  target.dataset.selectMounted = 'true'
+  return { getValue: () => options.value, update: () => {}, destroy: () => {} }
+}
 const beforeGreetingSetupCount = shownModals.length
 const originalLatestMessageId = frontendContext.messages.getLatestMessageId
 frontendContext.messages.getLatestMessageId = () => null
@@ -2475,7 +2481,16 @@ backendReceiver({ ...savedDraftState, reason: 'chat_switched', state: { ...saved
 assert.equal(shownModals.length, beforeGreetingSetupCount, 'setup must not cover an empty chat still choosing its greeting')
 frontendContext.messages.getLatestMessageId = originalLatestMessageId
 backendReceiver({ ...savedDraftState, reason: 'chat_switched', state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false, dismissed: false, authorship: 'roleplay' } } })
-assert.equal(shownModals.length, beforeGreetingSetupCount + 1, 'setup opens once the greeting exists')
+assert.equal(shownModals.length, beforeGreetingSetupCount, 'greeting arrival must never automatically open setup')
+dockRoot.querySelector('[aria-label="Home or dismiss phone"]').click()
+const setupPrompt = dockRoot.querySelector('.lp-home-setup')
+assert.ok(setupPrompt, 'unconfigured phones offer setup inside the phone')
+;[...setupPrompt.querySelectorAll('button')].find(node => node.textContent === 'Skip').click()
+assert.equal(frontendSends.at(-1).type, 'lumiphone:dismiss_setup')
+assert.equal(shownModals.length, beforeGreetingSetupCount, 'Skip must not open a modal')
+backendReceiver({ ...savedDraftState, reason: 'refresh', state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false, dismissed: false, authorship: 'roleplay' } } })
+;[...dockRoot.querySelectorAll('.lp-home-setup button')].find(node => node.textContent === 'Run setup').click()
+assert.equal(shownModals.length, beforeGreetingSetupCount + 1, 'only Run setup opens the modal')
 document.body.append(shownModals.at(-1).root)
 const setupAuthorship = shownModals.at(-1).root.querySelector('input[type="radio"][value="roleplay"]')
 assert.ok(setupAuthorship, 'authorship choice must appear in first-run setup')
@@ -2492,6 +2507,7 @@ const setupSource = setupRoot.querySelector('[aria-label="Pocket generation sour
 setupSource.value = 'sidecar'; setupSource.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
 await new Promise(resolve => setTimeout(resolve, 0))
 assert.equal(setupRoot.querySelector('.lp-setup-generation [data-model-picker-mounted]').dataset.modelPickerMounted, 'true', 'setup mounts the native picker after joining its modal')
+assert.ok(setupRoot.querySelector('[data-select-mounted]'))
 const exportSetupPreview = async (filename) => {
   if (!process.env.POCKET_SETUP_PREVIEW) return
   const preview = setupRoot.cloneNode(true)
@@ -2519,12 +2535,49 @@ backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile',
 assert.equal(originalEnrich.disabled, false, 'failed enrichment must immediately unlock retry')
 assert.equal(profileInput.value, 'Unsaved profile details', 'progress updates must preserve unsaved profile fields')
 assert.match(setupRoot.textContent, /Provider unavailable/, 'setup must show the actual enrichment error')
+backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: enrichRequest, phase: 'thinking', message: 'Late thinking…' })
+assert.equal(originalEnrich.disabled, false, 'late progress cannot revive a failed request')
 originalEnrich.click()
 const retryEnrichRequest = frontendSends.at(-1).requestId
 backendReceiver({ type: 'lumiphone:pocket_persona_preview', requestId: retryEnrichRequest, persona: { ...savedDraftState.state.pocketPersona, displayName: 'Enriched owner' } })
 backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: retryEnrichRequest, phase: 'complete', message: 'Phone profile ready' })
 assert.equal([...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM').disabled, false, 'successful enrichment must return its action to idle')
+;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM').click()
+const stoppedRequest = frontendSends.at(-1).requestId
+;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Stop enrichment').click()
+assert.equal(frontendSends.at(-1).type, 'lumiphone:cancel_persona_generation')
+assert.equal(frontendSends.at(-1).operationRequestId, stoppedRequest)
+assert.equal(setupRoot.querySelector('[data-operation-stop]'), null, 'Stop immediately removes the active cancellation control')
+backendReceiver({ type: 'lumiphone:pocket_persona_preview', requestId: stoppedRequest, persona: { ...savedDraftState.state.pocketPersona, displayName: 'Cancelled result' } })
+assert.doesNotMatch(setupRoot.textContent, /Cancelled result/)
+;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Retry enrichment').click()
+const abandonedRequest = frontendSends.at(-1).requestId
+;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === '← Back to setup').click()
+backendReceiver({ type: 'lumiphone:error', requestId: abandonedRequest, error: 'Failed while away' })
+backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: abandonedRequest, phase: 'writing', message: 'Late writing…' })
+;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Customize').click()
+assert.equal([...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM').disabled, false, 'errors while away release enrichment on reentry')
 
+// A slow provider may finish after cancellation; its result must never become a preview.
+const priorQuiet = spindle.generate.quiet
+let releasePersona, startPersona
+const personaStarted = new Promise(resolve => { startPersona = resolve })
+let personaSignal
+spindle.generate.quiet = async request => {
+  personaSignal = request.signal; startPersona()
+  await new Promise(resolve => { releasePersona = resolve })
+  return { content: '{"displayName":"Late cancelled profile"}', finish_reason: 'stop' }
+}
+try {
+  const pendingPersona = frontendHandler({ type: 'lumiphone:generate_pocket_persona', requestId: 'cancel-profile-test', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+  await personaStarted
+  await frontendHandler({ type: 'lumiphone:cancel_persona_generation', requestId: 'wrong-owner', operationRequestId: 'cancel-profile-test', chatId: 'chat-a', characterId: 'char-a' }, 'user-b')
+  assert.equal(personaSignal.aborted, false, 'another user cannot stop this enrichment')
+  await frontendHandler({ type: 'lumiphone:cancel_persona_generation', requestId: 'stop-profile', operationRequestId: 'cancel-profile-test', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+  assert.equal(personaSignal.aborted, true, 'Stop reaches the provider request')
+  releasePersona(); await pendingPersona
+  assert.equal(frontendMessages.some(event => event.type === 'lumiphone:pocket_persona_preview' && event.requestId === 'cancel-profile-test'), false, 'cancelled provider results must be discarded')
+} finally { spindle.generate.quiet = priorQuiet }
 cleanup()
 
 console.log('Pocket contracts passed.')
