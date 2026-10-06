@@ -57,6 +57,8 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const modeHelp = el('p', 'lp-copy lp-tracker-mode-help')
   modeHelp.setAttribute('aria-live', 'polite')
   mode.field.append(modeHelp)
+  const modelPrompt = el('textarea', 'lp-textarea'); modelPrompt.maxLength = 2000; modelPrompt.value = source.modelPrompt || ''; modelPrompt.placeholder = 'Increase by 1 when a clue is discovered. Reset when the mystery is solved.'
+  const promptField = fieldBlock('Tool-calling prompt', modelPrompt, 'Tell the model when and how to update this tracker. Leave blank to use the default story rules.')
   const jev = sectionBlock('Open JEV', 'Estimates this value from recent story messages. Uncertain answers keep the current value.')
   const question = el('textarea', 'lp-textarea'); question.maxLength = 240; question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`; question.placeholder = 'Ask one specific question about this target.'
   const confidence = el('input', 'lp-input'); confidence.type = 'number'; confidence.min = '0'; confidence.max = '1'; confidence.step = '.05'; confidence.value = String(source.jev?.minConfidence ?? .65)
@@ -68,7 +70,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const valueField = fieldBlock('Starting value', value)
   const stateFields = el('div', 'lp-tracker-config-fields'); stateFields.append(fieldBlock('Allowed states', states, 'One state per line.'), state.field)
   const basic = sectionBlock('The essentials')
-  basic.body.append(fieldBlock('Name', name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, visibleField)
+  basic.body.append(fieldBlock('Name', name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, promptField, visibleField)
   const clock = choice('Clock', [['roleplay', 'Story time'], ['real', 'Real time']], source.clock)
   const rate = el('input', 'lp-input'); rate.type = 'number'; rate.step = 'any'; rate.value = String(source.ratePerHour)
   const direction = choice('Direction', [['down', 'Count down'], ['up', 'Count up']], source.kind === 'timer' ? source.direction : 'down')
@@ -116,6 +118,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
       state: state.control.value, initialState: current?.kind === 'state' ? current.initialState : state.control.value,
       states: [...new Set(states.value.split('\n').map(entry => entry.trim()).filter(Boolean))],
       step: Number(step.value), direction: direction.control.value, color: color.value,
+      modelPrompt: modelPrompt.value.trim(),
       updateMode: mode.control.value, allowModelWrite: mode.control.value === 'model', visibleToModel: visible.checked, clock: clock.control.value,
       jev: { question: question.value.trim(), minConfidence: Number(confidence.value), levels: levels.value.split('\n').filter(line => line.trim()).map(line => { const delimiter = line.indexOf('|'); return { value: delimiter < 0 ? NaN : Number(line.slice(0, delimiter).trim()), label: delimiter < 0 ? '' : line.slice(delimiter + 1).trim() } }) },
       ratePerHour: kindValue === 'timer' ? Math.abs(Number(rate.value)) * (direction.control.value === 'down' ? -1 : 1) : Number(rate.value),
@@ -124,6 +127,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   }
   const refreshFields = () => {
     const kindValue = kind.control.value as TrackerKind
+    promptField.hidden = mode.control.value !== 'model'
     customField.hidden = targets[Number(belongs.control.value)].type !== 'custom'
     valueField.hidden = kindValue === 'state'; stateFields.hidden = kindValue !== 'state'; range.hidden = kindValue === 'state'; bands.section.hidden = kindValue === 'state'; stepField.hidden = kindValue !== 'counter'
     automatic.section.hidden = mode.control.value !== 'automatic'; direction.field.hidden = kindValue !== 'timer'

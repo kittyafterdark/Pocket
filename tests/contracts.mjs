@@ -899,6 +899,13 @@ assert.equal(JSON.parse(allowedTrackerTool).ok, true)
 const writableTracker = storage.get('phones/chat-a__char-a.json').trackers.find((tracker) => tracker.id === 'writable-tracker')
 assert.equal(writableTracker.value, 5)
 assert.equal(writableTracker.history.at(-1).source, 'model')
+await frontendHandler({ type: 'lumiphone:action', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { command: 'configure', trackerId: 'writable-tracker', modelPrompt: 'Subtract one when a supply is used.' } }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === 'writable-tracker').modelPrompt, 'Subtract one when a supply is used.', 'Tracker configuration persists its prompt')
+const guidanceIntercept = await interceptorHandler([{ role: 'user', content: 'Continue.' }], { chatId: 'chat-a', characterId: 'char-a', userId: 'user-a' })
+const guidanceText = guidanceIntercept.messages.map(message => message.content).join('\n')
+assert.match(guidanceText, /Subtract one when a supply is used./, 'Shared generation context includes custom tracker guidance')
+assert.match(guidanceText, /<lumi-phone>/, 'The same context retains normal tag fallback instructions')
+
 const templateConfig = {
   command: 'create', key: 'health', label: 'Health', kind: 'meter', presentation: 'vitals',
   value: 100, initialValue: 100, min: 0, max: 100, ratePerHour: 0, updateMode: 'manual', allowModelWrite: false,
@@ -1388,7 +1395,7 @@ reconciliationBefore.roleplayClockSource = 'narrative'
 reconciliationBefore.roleplayClockPrecision = 'approximate'
 reconciliationBefore.roleplayClockLabel = 'stale evening'
 reconciliationBefore.trackers.push({
-  id: 'reconcile-tracker', key: 'scene_tension', label: 'Scene Tension', kind: 'meter',
+  id: 'reconcile-tracker', key: 'scene_tension', label: 'Scene Tension', kind: 'meter', modelPrompt: 'Increase only when the scene becomes tense.',
   value: 10, initialValue: 10, min: 0, max: 100, updateMode: 'model', allowModelWrite: true, visibleToModel: true,
 })
 storage.set(reconciliationStatePath, reconciliationBefore)
@@ -1405,6 +1412,7 @@ spindle.generate.quiet = async (request) => {
   assert.match(systemPrompt, /RP WORLD STATE delta/)
   assert.match(userPrompt, /CURRENT POCKET STATE — ADVISORY/)
   assert.match(userPrompt, /RECENT NARRATIVE — AUTHORITATIVE/)
+  assert.match(userPrompt, /Increase only when the scene becomes tense./, 'Reconciliation receives saved tracker update guidance')
   assert.doesNotMatch(userPrompt, /Do not leak this tool thought/)
   return { content: JSON.stringify({
     world: {
@@ -2181,17 +2189,22 @@ trackerUpdateMode.value = 'automatic'; trackerUpdateMode.dispatchEvent(new dom.w
 assert.match(dockRoot.querySelector('.lp-tracker-mode-help').textContent, /No model judgment/)
 trackerUpdateMode.value = 'model'; trackerUpdateMode.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
 assert.match(dockRoot.querySelector('.lp-tracker-mode-help').textContent, /tools or tags/)
+const trackerPrompt = dockRoot.querySelector('textarea[placeholder="Increase by 1 when a clue is discovered. Reset when the mystery is solved."]')
+assert.equal(trackerPrompt.closest('.lp-field').hidden, false)
+trackerPrompt.value = 'Add one for each clue found.'; trackerPrompt.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 trackerUpdateMode.value = 'manual'; trackerUpdateMode.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
 const trackerName = [...dockRoot.querySelectorAll('label')].find(node => node.textContent === 'Name').querySelector('input')
 trackerName.value = 'Pocket progress'
 trackerName.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 backendReceiver(savedDraftState)
 assert.equal([...dockRoot.querySelectorAll('label')].find(node => node.textContent === 'Name').querySelector('input').value, 'Pocket progress', 'tracker drafts survive backend rerenders')
+assert.equal(dockRoot.querySelector('textarea[placeholder="Increase by 1 when a clue is discovered. Reset when the mystery is solved."]').value, 'Add one for each clue found.', 'Prompt draft survives backend rerenders')
 const saveTracker = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Save')
 assert.equal(saveTracker.disabled, false, 'Tracker Save must be enabled by the page action contract')
 const trackerActionsBefore = frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length
 saveTracker.click()
 assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'tracker').length, trackerActionsBefore + 1, 'Tracker Save must dispatch its action')
+assert.equal(frontendSends.at(-1).payload.modelPrompt, 'Add one for each clue found.', 'Tracker save carries its custom prompt')
 // Controlled tracker fixtures exercise the same controller and pending pipeline.
 const trackerUiState = structuredClone(savedDraftState)
 const trackerBase = { ...trackerUiState.state.trackers[0], updateMode: 'manual', ratePerHour: 0, history: [] }

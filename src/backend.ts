@@ -2966,6 +2966,7 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
       .map((tracker) => ({
         key: tracker.key,
         label: tracker.label,
+        updateGuidance: tracker.modelPrompt || undefined,
         kind: tracker.kind,
         value: tracker.kind === 'state' ? tracker.state : tracker.value,
         min: tracker.kind === 'state' ? undefined : tracker.min,

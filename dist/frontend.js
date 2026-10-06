@@ -150,6 +150,7 @@ function normalizeTracker(value, context = {}) {
     updateMode,
     clock,
     allowModelWrite: legacy || updateMode === "jev" ? false : value.allowModelWrite === true,
+    modelPrompt: clean(value.modelPrompt, 2000),
     jev: normalizeJevConfig(value.jev),
     jevResult: normalizeJevResult(value.jevResult),
     presentation,
@@ -2450,6 +2451,11 @@ Recovering`;
   const modeHelp = el("p", "lp-copy lp-tracker-mode-help");
   modeHelp.setAttribute("aria-live", "polite");
   mode.field.append(modeHelp);
+  const modelPrompt = el("textarea", "lp-textarea");
+  modelPrompt.maxLength = 2000;
+  modelPrompt.value = source.modelPrompt || "";
+  modelPrompt.placeholder = "Increase by 1 when a clue is discovered. Reset when the mystery is solved.";
+  const promptField = fieldBlock("Tool-calling prompt", modelPrompt, "Tell the model when and how to update this tracker. Leave blank to use the default story rules.");
   const jev = sectionBlock("Open JEV", "Estimates this value from recent story messages. Uncertain answers keep the current value.");
   const question = el("textarea", "lp-textarea");
   question.maxLength = 240;
@@ -2474,7 +2480,7 @@ Recovering`;
   const stateFields = el("div", "lp-tracker-config-fields");
   stateFields.append(fieldBlock("Allowed states", states, "One state per line."), state.field);
   const basic = sectionBlock("The essentials");
-  basic.body.append(fieldBlock("Name", name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, visibleField);
+  basic.body.append(fieldBlock("Name", name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, promptField, visibleField);
   const clock = choice("Clock", [["roleplay", "Story time"], ["real", "Real time"]], source.clock);
   const rate = el("input", "lp-input");
   rate.type = "number";
@@ -2578,6 +2584,7 @@ Recovering`;
       step: Number(step.value),
       direction: direction.control.value,
       color: color.value,
+      modelPrompt: modelPrompt.value.trim(),
       updateMode: mode.control.value,
       allowModelWrite: mode.control.value === "model",
       visibleToModel: visible.checked,
@@ -2593,6 +2600,7 @@ Recovering`;
   };
   const refreshFields = () => {
     const kindValue = kind.control.value;
+    promptField.hidden = mode.control.value !== "model";
     customField.hidden = targets[Number(belongs.control.value)].type !== "custom";
     valueField.hidden = kindValue === "state";
     stateFields.hidden = kindValue !== "state";
@@ -11464,7 +11472,7 @@ ${INLINE_FINISH_STYLES}
   .lumiphone-shell .lp-camera-floating-brief { backdrop-filter:none; background:#1c1b20; border-radius:12px; box-shadow:0 6px 18px #0004; }
   .lumiphone-shell .lp-camera-floating-brief[hidden] { display:none; }
   .lumiphone-shell .lp-camera-floating-brief .lp-textarea { min-height:56px; }
-  .lp-camera-album { width:42px; height:42px; padding:0; overflow:hidden; border:1px solid #ffffff25; border-radius:9px; justify-self:start; }
+  .lp-camera-album { display:grid; place-items:center; width:42px; height:42px; padding:0; overflow:hidden; border:1px solid #ffffff25; border-radius:9px; justify-self:start; }
   .lp-camera-album img { width:100%; height:100%; object-fit:cover; }
   .lp-camera-album svg { width:24px; height:24px; }
   .lp-camera-shutter-action { justify-self:end; color:#fff9; font-size:10px; }

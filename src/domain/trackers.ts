@@ -142,6 +142,7 @@ export function normalizeTracker(value: unknown, context: NormalizeTrackerContex
     id: clean(value.id, 120) || trackerId(), key: trackerKey(value.key || label), label, kind,
     value: numeric, initialValue, min, max, unit: clean(value.unit, 40), color, target,
     updateMode, clock, allowModelWrite: legacy || updateMode === 'jev' ? false : value.allowModelWrite === true,
+    modelPrompt: clean(value.modelPrompt, 2000),
     jev: normalizeJevConfig(value.jev), jevResult: normalizeJevResult(value.jevResult),
     presentation, bands: normalizeBands(value.bands, min, max, color), history: normalizeHistory(value.history),
     ratePerHour, lastUpdated: iso(value.lastUpdated, now),

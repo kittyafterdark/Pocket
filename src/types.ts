@@ -780,6 +780,7 @@ interface TrackerBase {
   jevResult?: TrackerJevResult
   clock: TrackerClock
   allowModelWrite: boolean
+  modelPrompt?: string
   presentation: TrackerPresentation
   bands: TrackerBand[]
   history: TrackerHistoryEntry[]

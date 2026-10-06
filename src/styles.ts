@@ -1112,7 +1112,7 @@ ${INLINE_FINISH_STYLES}
   .lumiphone-shell .lp-camera-floating-brief { backdrop-filter:none; background:#1c1b20; border-radius:12px; box-shadow:0 6px 18px #0004; }
   .lumiphone-shell .lp-camera-floating-brief[hidden] { display:none; }
   .lumiphone-shell .lp-camera-floating-brief .lp-textarea { min-height:56px; }
-  .lp-camera-album { width:42px; height:42px; padding:0; overflow:hidden; border:1px solid #ffffff25; border-radius:9px; justify-self:start; }
+  .lp-camera-album { display:grid; place-items:center; width:42px; height:42px; padding:0; overflow:hidden; border:1px solid #ffffff25; border-radius:9px; justify-self:start; }
   .lp-camera-album img { width:100%; height:100%; object-fit:cover; }
   .lp-camera-album svg { width:24px; height:24px; }
   .lp-camera-shutter-action { justify-self:end; color:#fff9; font-size:10px; }

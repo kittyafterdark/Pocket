@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
+import { normalizeTracker } from '../src/domain/trackers.js'
+import { projectPhoneContext } from '../src/domain/projection.js'
 import { trackerDisplay, refreshTrackerDisplay, trackerUpdateDescription } from '../src/frontend/components/tracker-display.js'
 import { trackerSamples, trackerSampleState } from './fixtures/tracker-samples.js'
 
@@ -54,4 +56,16 @@ test('ammo strip reflects empty and partially loaded counts', () => {
       expect(card.querySelectorAll('.lp-ammo-visual span[data-loaded="true"]').length).toBe(Math.min(8, count))
     }
   } finally { dom.window.close(); globalThis.document = previous }
+})
+
+
+test('tracker tool guidance survives normalization and only reaches writable model context', () => {
+  const tracker = normalizeTracker({ ...trackerSamples[0], updateMode: 'model', allowModelWrite: true, modelPrompt: '  Add one per clue.  ' })!
+  expect(tracker.modelPrompt).toBe('Add one per clue.')
+  expect(normalizeTracker({ ...tracker, modelPrompt: 'x'.repeat(2100) })!.modelPrompt?.length).toBe(2000)
+  expect(normalizeTracker({ ...tracker, modelPrompt: undefined })!.modelPrompt).toBe('')
+  const context = (entry: typeof tracker) => projectPhoneContext({ ...trackerSampleState, events: [], notes: [], weather: { location: '', condition: '', temperature: 0, unit: 'C', high: 0, low: 0, details: '', updatedAt: '' }, trackers: [entry] })
+  expect(context(tracker)).toContain('Add one per clue.')
+  expect(context({ ...tracker, allowModelWrite: false })).not.toContain('Add one per clue.')
+  expect(context({ ...tracker, visibleToModel: false })).not.toContain('Add one per clue.')
 })

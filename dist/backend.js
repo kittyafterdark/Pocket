@@ -159,6 +159,7 @@ function normalizeTracker(value, context = {}) {
     updateMode,
     clock,
     allowModelWrite: legacy || updateMode === "jev" ? false : value.allowModelWrite === true,
+    modelPrompt: clean(value.modelPrompt, 2000),
     jev: normalizeJevConfig(value.jev),
     jevResult: normalizeJevResult(value.jevResult),
     presentation,
@@ -739,7 +740,7 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
     const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
     const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
     const band = tracker.kind === "state" ? "" : trackerBand(tracker)?.label || "";
-    return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}`;
+    return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}${tracker.updateMode === "model" && tracker.allowModelWrite && tracker.modelPrompt ? ` \xB7 Update guidance: ${JSON.stringify(tracker.modelPrompt.slice(0, 2000))}` : ""}`;
   });
   const upcoming = state.events.filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
   return serializeWithinBudget({
@@ -6219,6 +6220,7 @@ async function refreshNarrativeSeed(chatId, characterId, userId, options = {}) {
     const modelWritableTrackers = state.trackers.filter((tracker) => tracker.allowModelWrite && tracker.updateMode === "model").slice(0, 12).map((tracker) => ({
       key: tracker.key,
       label: tracker.label,
+      updateGuidance: tracker.modelPrompt || undefined,
       kind: tracker.kind,
       value: tracker.kind === "state" ? tracker.state : tracker.value,
       min: tracker.kind === "state" ? undefined : tracker.min,
