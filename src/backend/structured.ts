@@ -73,10 +73,11 @@ export function looksTruncated(content: unknown): boolean {
 export async function parseWithTruncationRetry(
   content: unknown,
   retry: () => Promise<unknown>,
+  automaticRetry = true,
 ): Promise<JsonObject> {
   try { return parseGeneratedObject(content) }
   catch (error) {
-    if (!looksTruncated(content)) throw error
+    if (!automaticRetry || !looksTruncated(content)) throw error
     return parseGeneratedObject(await retry())
   }
 }

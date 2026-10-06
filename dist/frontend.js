@@ -444,6 +444,7 @@ function defaultPreferences() {
     sceneEnhancer: true,
     jev: normalizeJevSettings(null),
     generationMode: "roleplay",
+    automaticGenerationRetry: true,
     sidecarConnectionId: "",
     sidecarModelOverride: "",
     autoReplyAfterSend: false,
@@ -558,6 +559,7 @@ function normalizePreferences(value) {
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
+    automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
@@ -1805,6 +1807,9 @@ function generation(host) {
   test.dataset.pocketGenerationTest = "true";
   test.disabled = !host.capabilities?.generation;
   test.addEventListener("click", () => host.send("lumiphone:test_generation", { generationMode: mode.value, sidecarConnectionId: connections.value, sidecarModelOverride: settings.sidecarModelOverride }));
+  card.append(toggle("Automatic retry", settings.automaticGenerationRetry, (value) => commit((next) => {
+    next.automaticGenerationRetry = value;
+  }), "Retry once when output is cut short. Turn off to retry manually."));
   const diagnostic = el("p", "lp-copy", "Not tested yet.");
   diagnostic.dataset.pocketGenerationDiagnostic = "true";
   const run = [...host.generation?.history || []].reverse().find((entry) => entry.task === "connection-test");

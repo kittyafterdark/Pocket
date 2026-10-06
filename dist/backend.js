@@ -526,6 +526,7 @@ function defaultPreferences() {
     sceneEnhancer: true,
     jev: normalizeJevSettings(null),
     generationMode: "roleplay",
+    automaticGenerationRetry: true,
     sidecarConnectionId: "",
     sidecarModelOverride: "",
     autoReplyAfterSend: false,
@@ -640,6 +641,7 @@ function normalizePreferences(value) {
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
+    automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
@@ -2160,7 +2162,7 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
     if (input.signal instanceof AbortSignal)
       input.signal.throwIfAborted();
     const empty = () => typeof result?.content !== "string" || !result.content.trim();
-    if (empty() && result?.finish_reason === "length") {
+    if (preferences.automaticGenerationRetry && empty() && result?.finish_reason === "length") {
       const limit = Number(request.parameters?.max_tokens) || 0;
       const expanded = Math.min(16384, Math.max(8192, limit * 2));
       if (expanded > limit) {
@@ -2170,7 +2172,7 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
       }
     }
     if (empty())
-      throw new Error(result?.finish_reason === "length" ? "The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model." : "The model returned no answer text. Check the provider or try another model.");
+      throw new Error(result?.finish_reason === "length" ? preferences.automaticGenerationRetry ? "The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model." : "The model reached its output limit before answering. Automatic retry is off; retry manually." : "The model returned no answer text. Check the provider or try another model.");
     if (input.signal instanceof AbortSignal)
       input.signal.throwIfAborted();
     const completed = { ...run, status: "completed", completedAt: new Date().toISOString(), latencyMs: Date.now() - started };
@@ -2269,11 +2271,11 @@ function looksTruncated(content) {
   }
   return quoted || braces > 0;
 }
-async function parseWithTruncationRetry(content, retry) {
+async function parseWithTruncationRetry(content, retry, automaticRetry = true) {
   try {
     return parseGeneratedObject(content);
   } catch (error) {
-    if (!looksTruncated(content))
+    if (!automaticRetry || !looksTruncated(content))
       throw error;
     return parseGeneratedObject(await retry());
   }
@@ -4832,6 +4834,7 @@ async function loadPromptDebug(requestId, userId) {
 async function runStructuredGeneration(task, requestId, request, userId) {
   await savePromptDebug(task, requestId, request, userId);
   const first = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId);
+  const preferences = await loadPreferences(userId);
   return parseWithTruncationRetry(first.content, async () => {
     const parameters = isRecord2(request.parameters) ? request.parameters : {};
     const maxTokens = Math.min(1600, Math.max(80, Math.round(numberValue(parameters.max_tokens, 400) * 1.6)));
@@ -4840,7 +4843,7 @@ async function runStructuredGeneration(task, requestId, request, userId) {
       parameters: { ...parameters, max_tokens: maxTokens }
     }, userId);
     return retry.content;
-  });
+  }, preferences.automaticGenerationRetry);
 }
 function upsertContact(state, contact, preserveCustomization = true) {
   const sourceKey = contactSourceKey(contact.source);

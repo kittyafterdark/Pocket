@@ -61,3 +61,21 @@ test('device switcher caps recent phones, searches overflow and keeps latest-int
     expect(picker.querySelectorAll('.lumiphone-device-row:not([hidden])').length).toBe(13)
   } finally { globalThis.document = previous; dom.window.close() }
 })
+
+
+test('generation retry toggle saves manual mode and renders it again', () => {
+  const previous = globalThis.document, dom = new JSDOM()
+  try {
+    globalThis.document = dom.window.document
+    let draft = defaultPreferences()
+    const render = () => {
+      const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
+      return renderSettingsView({ draft, section: 'generation', state: { setup: { initialized: true } }, page: () => ({ page, content }), update: (next: typeof draft) => { draft = next }, mountModelCombobox: () => () => {}, capabilities: {}, generation: null } as any)
+    }
+    const button = render().querySelector<HTMLButtonElement>('button[aria-label="Automatic retry"]')!
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    button.click()
+    expect(draft.automaticGenerationRetry).toBe(false)
+    expect(render().querySelector('button[aria-label="Automatic retry"]')?.getAttribute('aria-pressed')).toBe('false')
+  } finally { globalThis.document = previous; dom.window.close() }
+})

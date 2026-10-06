@@ -227,6 +227,7 @@ export interface DevicePreferences {
   sceneEnhancer: boolean
   jev?: PocketJevSettings
   generationMode: PocketGenerationMode
+  automaticGenerationRetry: boolean
   sidecarConnectionId: string
   sidecarModelOverride: string
   autoReplyAfterSend: boolean

@@ -1525,6 +1525,7 @@ async function runStructuredGeneration(
 ): Promise<AnyRecord> {
   await savePromptDebug(task, requestId, request, userId)
   const first: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId)
+  const preferences = await loadPreferences(userId)
   return parseWithTruncationRetry(first.content, async () => {
     const parameters = isRecord(request.parameters) ? request.parameters : {}
     const maxTokens = Math.min(1_600, Math.max(80, Math.round(numberValue(parameters.max_tokens, 400) * 1.6)))
@@ -1533,7 +1534,7 @@ async function runStructuredGeneration(
       parameters: { ...parameters, max_tokens: maxTokens },
     }, userId)
     return retry.content
-  })
+  }, preferences.automaticGenerationRetry)
 }
 
 function upsertContact(state: PhoneState, contact: PocketContact, preserveCustomization = true): PocketContact {

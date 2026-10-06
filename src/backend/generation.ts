@@ -98,7 +98,7 @@ export async function runPocketGeneration(
     await generate()
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const empty = () => typeof result?.content !== 'string' || !result.content.trim()
-    if (empty() && result?.finish_reason === 'length') {
+    if (preferences.automaticGenerationRetry && empty() && result?.finish_reason === 'length') {
       const limit = Number(request.parameters?.max_tokens) || 0
       const expanded = Math.min(16384, Math.max(8192, limit * 2))
       if (expanded > limit) {
@@ -108,7 +108,7 @@ export async function runPocketGeneration(
       }
     }
     if (empty()) throw new Error(result?.finish_reason === 'length'
-      ? 'The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model.'
+      ? preferences.automaticGenerationRetry ? 'The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model.' : 'The model reached its output limit before answering. Automatic retry is off; retry manually.'
       : 'The model returned no answer text. Check the provider or try another model.')
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const completed: PocketGenerationRun = { ...run, status: 'completed', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }

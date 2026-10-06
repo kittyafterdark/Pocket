@@ -143,3 +143,23 @@ test('empty provider output is a failed run and does not retry unless output was
     expect(f.events.at(-1).run.status).toBe('failed')
   }
 })
+
+
+test('manual retry preference prevents budget retry and survives normalization', async () => {
+  const { normalizePreferences } = await import('../src/domain/preferences.js')
+  expect(normalizePreferences({}).automaticGenerationRetry).toBe(true)
+  expect(normalizePreferences({ automaticGenerationRetry: false }).automaticGenerationRetry).toBe(false)
+  const f = generationFixture([{ content: '', finish_reason: 'length' }])
+  const load = f.host.loadPreferences
+  f.host.loadPreferences = async () => ({ ...await load(), automaticGenerationRetry: false })
+  await expect(runPocketGeneration(f.host, 'timeline-review', 'manual', { parameters: { max_tokens: 1100 } })).rejects.toThrow('retry manually')
+  expect(f.requests.length).toBe(1)
+  expect(f.events.at(-1).run.status).toBe('failed')
+})
+
+test('manual retry also disables malformed/truncated JSON retries', async () => {
+  const { parseWithTruncationRetry } = await import('../src/backend/structured.js')
+  let attempts = 0
+  await expect(parseWithTruncationRetry('{"events":', async () => { attempts++; return '{"events":[]}' }, false)).rejects.toThrow()
+  expect(attempts).toBe(0)
+})
