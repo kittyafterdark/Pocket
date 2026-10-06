@@ -835,6 +835,8 @@ export interface PocketActivityPresentation {
   batchMessages?: PocketActivityBatchMessage[]
   call?: PocketCallMarker
   storyAt?: string
+  storyTimeLabel?: string
+  storyTimezoneOffsetMinutes?: number
 }
 
 export interface PocketCallMarker {

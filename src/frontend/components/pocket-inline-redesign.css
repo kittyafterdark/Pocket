@@ -534,6 +534,9 @@
   letter-spacing: -.045em;
 }
 
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }
+
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {
   color: rgba(255,255,255,.74);
   font-size: 12px;

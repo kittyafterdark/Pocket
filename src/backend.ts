@@ -53,6 +53,7 @@ import { inspectPocketGeneration, runPocketGeneration } from './backend/generati
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { ArrivalIdle } from './backend/arrival-idle.js'
 import { normalizeWeatherOutlook } from './domain/app-review.js'
+import { snapshotActivityClock } from './domain/activity-clock.js'
 import { AppReviews } from './backend/app-reviews.js'
 import { IDENTITY_PROFILES_PATH, normalizeIdentityProfiles, saveIdentityProfile, applyIdentityProfile } from './domain/identity-profiles.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
@@ -365,6 +366,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
         conversationTitle: text(presentation?.conversationTitle, 120) || undefined,
         call: normalizeCallMarker(presentation?.call),
         storyAt: text(presentation?.storyAt, 80) || undefined,
+        storyTimeLabel: text(presentation?.storyTimeLabel, 160) || undefined,
+        storyTimezoneOffsetMinutes: typeof presentation?.storyTimezoneOffsetMinutes === 'number' && Number.isFinite(presentation.storyTimezoneOffsetMinutes) && Math.abs(presentation.storyTimezoneOffsetMinutes) <= 840 ? presentation.storyTimezoneOffsetMinutes : undefined,
         batchMessages: (Array.isArray(presentation?.batchMessages) ? presentation.batchMessages : []).slice(0, 24).flatMap((entry) => {
           if (!isRecord(entry)) return []
           const senderName = text(entry.senderName, 120)
@@ -4318,6 +4321,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           recipientActorIds: conversationDeviceActorIds(state, conversation),
           recipientNames: conversationDeviceActorIds(state, conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === personaActorId ? state.pocketPersona.displayName : 'Unknown')).filter(Boolean),
           batchMessages: batchPresentation,
+          ...snapshotActivityClock(state),
         },
         source: {
           messageId: text(input.messageId, 180) || actionOrigin?.hostMessageId || undefined,
@@ -4486,7 +4490,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           senderActorId, recipientActorIds,
           senderName: message.senderName, recipientNames, conversationTitle: conversation.title,
           call,
-          storyAt: state.roleplayClockPrecision === 'exact' || state.roleplayClockSource === 'manual' ? state.roleplayNow : undefined,
+          ...snapshotActivityClock(state),
         },
         source: { messageId: text(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id },
       }, command)

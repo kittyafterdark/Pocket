@@ -1,5 +1,6 @@
 import type { PocketActivity, PocketRoute } from '../types.js'
 import type { ActivityRenderOptions } from './activity.js'
+import { activityClock } from '../domain/activity-clock.js'
 import { callSummary } from '../domain/phone-events.js'
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text = ''): HTMLElementTagNameMap[K] {
@@ -68,13 +69,6 @@ function phoneStatus(time: string): HTMLDivElement {
   return status
 }
 
-function lockDate(storyAt?: string): string {
-  if (!storyAt) return ''
-  const value = new Date(storyAt)
-  if (Number.isNaN(value.getTime())) return ''
-  return new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(value)
-}
-
 function appHeader(title: string, subtitle: string, openRoute: () => void, avatarUrl?: string): HTMLButtonElement {
   const header = node('button', 'pocket-phone-app-header')
   header.type = 'button'; header.setAttribute('aria-label', `Open ${title} in Pocket`); header.addEventListener('click', openRoute)
@@ -107,7 +101,8 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
   if (options.textColor) phone.style.setProperty('--pocket-inline-text', options.textColor)
   if (options.surfaceColor) phone.style.setProperty('--pocket-inline-surface', options.surfaceColor)
 
-  const time = presentation.storyAt?.slice(11, 16) || ''
+  const clock = options.clock || activityClock(activity)
+  const time = clock.precision === 'exact' ? clock.time : ''
   const screen = node('div', 'pocket-phone-screen')
   screen.append(phoneStatus(time))
   phone.append(screen)
@@ -127,8 +122,10 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
 
     const lockHero = node('div', 'pocket-phone-lock-hero')
     const deviceLabel = presentation.kind === 'observed' ? `${recipients || 'Another actor'}'s phone` : (recipients ? `${recipients}'s phone` : 'Pocket')
-    lockHero.append(node('span', 'pocket-phone-lock-label', deviceLabel), node('span', 'pocket-phone-clock', time || '—:—'))
-    const date = lockDate(presentation.storyAt); if (date) lockHero.append(node('span', 'pocket-phone-lock-caption', date))
+    const display = node('span', 'pocket-phone-clock', clock.time || 'New message')
+    display.dataset.precision = clock.precision
+    lockHero.append(node('span', 'pocket-phone-lock-label', deviceLabel), display)
+    if (clock.date) lockHero.append(node('span', 'pocket-phone-lock-caption', clock.date))
 
     const notification = routeButton('', 'pocket-phone-notification', `Open ${presentation.kind === 'observed' ? `${recipients}'s phone · ` : ''}${title} in Pocket`)
     const app = node('span', 'pocket-phone-notification-app'); app.append(icon('message'), node('span', 'pocket-phone-app-label', 'Messages'))

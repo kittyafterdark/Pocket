@@ -44,6 +44,7 @@ import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from 
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { cropAvatarPhoto } from './components/avatar-crop.js'
+import { activityClock } from '../domain/activity-clock.js'
 import { refreshActivityConnectors } from './components/activity-connectors.js'
 import { renderAppReviewControl } from './components/app-review-control.js'
 import { renderDevicePicker } from './components/device-picker.js'
@@ -1568,7 +1569,7 @@ class PocketController {
     const wallpaper = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : this.preferences.chatWallpaper
     const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
     const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
-    return { appearance: this.preferences.inlineAppearance || 'cards', accent: appearance.colors.accent, background,
+    return { appearance: this.preferences.inlineAppearance || 'cards', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
       backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,

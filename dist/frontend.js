@@ -4358,6 +4358,31 @@ class PocketRouteHistory {
   }
 }
 
+// src/domain/activity-clock.ts
+function activityClock(activity, state) {
+  let { storyAt, storyTimeLabel, storyTimezoneOffsetMinutes } = activity.presentation || {};
+  if (!validStamp(storyAt) && !storyTimeLabel?.trim() && state && activity.source?.messageId) {
+    const sourceId = activity.source.messageId;
+    const selected = [...state.hostSwipeSelections || []].reverse().find((entry) => entry.hostMessageId === sourceId);
+    const snapshot = [...state.candidateClocks || []].reverse().find((entry) => entry.hostMessageId === sourceId && selected && entry.swipeId === selected.swipeId);
+    if (snapshot) {
+      storyAt = snapshot.source === "manual" || snapshot.precision === "exact" ? snapshot.roleplayNow : undefined;
+      storyTimeLabel = snapshot.source === "manual" || snapshot.precision === "exact" ? undefined : snapshot.label;
+      storyTimezoneOffsetMinutes = state.roleplayTimezoneOffsetMinutes;
+    }
+  }
+  if (validStamp(storyAt)) {
+    const offset = typeof storyTimezoneOffsetMinutes === "number" && Number.isFinite(storyTimezoneOffsetMinutes) && Math.abs(storyTimezoneOffsetMinutes) <= 840 ? storyTimezoneOffsetMinutes : 0;
+    const date = new Date(Date.parse(storyAt) - offset * 60000);
+    return { time: date.toISOString().slice(11, 16), date: new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(date), precision: "exact" };
+  }
+  const label = storyTimeLabel?.trim().slice(0, 160) || "";
+  return { time: label, date: "", precision: label ? "approximate" : "unknown" };
+}
+function validStamp(value) {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)));
+}
+
 // src/frontend/phone-screen.ts
 function node(tag, className, text = "") {
   const element = document.createElement(tag);
@@ -4456,14 +4481,6 @@ function phoneStatus(time) {
   status.append(indicators);
   return status;
 }
-function lockDate(storyAt) {
-  if (!storyAt)
-    return "";
-  const value = new Date(storyAt);
-  if (Number.isNaN(value.getTime()))
-    return "";
-  return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(value);
-}
 function appHeader(title, subtitle, openRoute, avatarUrl) {
   const header = node("button", "pocket-phone-app-header");
   header.type = "button";
@@ -4505,7 +4522,8 @@ function buildPhoneScreen(activity, openRoute, options) {
     phone.style.setProperty("--pocket-inline-text", options.textColor);
   if (options.surfaceColor)
     phone.style.setProperty("--pocket-inline-surface", options.surfaceColor);
-  const time = presentation.storyAt?.slice(11, 16) || "";
+  const clock = options.clock || activityClock(activity);
+  const time = clock.precision === "exact" ? clock.time : "";
   const screen = node("div", "pocket-phone-screen");
   screen.append(phoneStatus(time));
   phone.append(screen);
@@ -4526,10 +4544,11 @@ function buildPhoneScreen(activity, openRoute, options) {
     screen.style.backgroundPosition = options.backgroundPosition || "center";
     const lockHero = node("div", "pocket-phone-lock-hero");
     const deviceLabel = presentation.kind === "observed" ? `${recipients || "Another actor"}'s phone` : recipients ? `${recipients}'s phone` : "Pocket";
-    lockHero.append(node("span", "pocket-phone-lock-label", deviceLabel), node("span", "pocket-phone-clock", time || "—:—"));
-    const date = lockDate(presentation.storyAt);
-    if (date)
-      lockHero.append(node("span", "pocket-phone-lock-caption", date));
+    const display = node("span", "pocket-phone-clock", clock.time || "New message");
+    display.dataset.precision = clock.precision;
+    lockHero.append(node("span", "pocket-phone-lock-label", deviceLabel), display);
+    if (clock.date)
+      lockHero.append(node("span", "pocket-phone-lock-caption", clock.date));
     const notification = routeButton("", "pocket-phone-notification", `Open ${presentation.kind === "observed" ? `${recipients}'s phone · ` : ""}${title} in Pocket`);
     const app = node("span", "pocket-phone-notification-app");
     app.append(icon("message"), node("span", "pocket-phone-app-label", "Messages"));
@@ -5130,6 +5149,9 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   line-height: 1;
   letter-spacing: -.045em;
 }
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {
   color: rgba(255,255,255,.74);
@@ -7900,6 +7922,7 @@ class PocketController {
     const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient;
     return {
       appearance: this.preferences.inlineAppearance || "cards",
+      clock: activityClock(activity, this.state),
       accent: appearance.colors.accent,
       background,
       backgroundSize: `cover,${wallpaper.fit},cover`,

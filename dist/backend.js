@@ -2334,6 +2334,19 @@ function applyTimelineReview(events, snapshot, rows, narrative) {
   return changed;
 }
 
+// src/domain/activity-clock.ts
+function snapshotActivityClock(state) {
+  const exact = state.roleplayClockSource === "manual" || state.roleplayClockPrecision === "exact";
+  return {
+    storyAt: exact && validStamp(state.roleplayNow) ? state.roleplayNow : undefined,
+    storyTimeLabel: exact ? undefined : state.roleplayClockLabel?.trim().slice(0, 160) || undefined,
+    storyTimezoneOffsetMinutes: state.roleplayTimezoneOffsetMinutes
+  };
+}
+function validStamp(value) {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)));
+}
+
 // src/backend/narrative-content.ts
 var DROP_PART_TYPE = /(?:reason(?:ing)?|think(?:ing)?|analysis|tool[_-]?(?:use|call|result)|function[_-]?(?:call|result))/i;
 var WRAPPED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
@@ -3526,6 +3539,8 @@ function normalizeState(value, chatId, characterId, characterName) {
         conversationTitle: text2(presentation?.conversationTitle, 120) || undefined,
         call: normalizeCallMarker(presentation?.call),
         storyAt: text2(presentation?.storyAt, 80) || undefined,
+        storyTimeLabel: text2(presentation?.storyTimeLabel, 160) || undefined,
+        storyTimezoneOffsetMinutes: typeof presentation?.storyTimezoneOffsetMinutes === "number" && Number.isFinite(presentation.storyTimezoneOffsetMinutes) && Math.abs(presentation.storyTimezoneOffsetMinutes) <= 840 ? presentation.storyTimezoneOffsetMinutes : undefined,
         batchMessages: (Array.isArray(presentation?.batchMessages) ? presentation.batchMessages : []).slice(0, 24).flatMap((entry) => {
           if (!isRecord2(entry))
             return [];
@@ -7787,7 +7802,8 @@ async function applyAction(input, userId, source = "model") {
             conversationTitle: conversation.title,
             recipientActorIds: conversationDeviceActorIds(state, conversation),
             recipientNames: conversationDeviceActorIds(state, conversation).map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === personaActorId ? state.pocketPersona.displayName : "Unknown")).filter(Boolean),
-            batchMessages: batchPresentation
+            batchMessages: batchPresentation,
+            ...snapshotActivityClock(state)
           },
           source: {
             messageId: text2(input.messageId, 180) || actionOrigin?.hostMessageId || undefined,
@@ -7973,7 +7989,7 @@ async function applyAction(input, userId, source = "model") {
             recipientNames,
             conversationTitle: conversation.title,
             call,
-            storyAt: state.roleplayClockPrecision === "exact" || state.roleplayClockSource === "manual" ? state.roleplayNow : undefined
+            ...snapshotActivityClock(state)
           },
           source: { messageId: text2(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id }
         }, command);

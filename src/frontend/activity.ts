@@ -9,6 +9,7 @@ export interface ActivityRenderOptions {
   includeReceipt?: boolean
   includeArtifact?: boolean
   appearance?: 'cards' | 'phone'
+  clock?: ReturnType<typeof import('../domain/activity-clock.js').activityClock>
   accent?: string
   background?: string
   backgroundSize?: string
