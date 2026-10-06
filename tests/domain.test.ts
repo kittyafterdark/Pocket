@@ -1068,3 +1068,30 @@ test('identity profiles retain stable fields, isolate scene state and match sour
   expect(applied.phoneProfile).not.toBe(profile.phoneProfile)
   expect(() => normalizeIdentityProfiles({ version: 2 })).toThrow('newer')
 })
+
+
+test('weather outlooks use seven bounded days tied to the story date and units', async () => {
+  const { normalizeWeatherOutlook, usableWeatherOutlook, storyDate } = await import('../src/domain/app-review.js')
+  expect(storyDate('2026-10-06T01:00:00Z', 180)).toBe('2026-10-05')
+  const input = { startDate: '2026-10-05', location: 'City', unit: 'C', days: Array.from({length: 7}, () => ({condition:'Cloudy',high:24,low:14,details:'Light breeze.'})) }
+  const outlook = normalizeWeatherOutlook(input)!
+  expect(outlook.days[6].date).toBe('2026-10-11')
+  expect(normalizeWeatherOutlook({...input, days: input.days.slice(0,6)})).toBeUndefined()
+  expect(normalizeWeatherOutlook({...input, days: input.days.map(day=>({...day,low:30}))})).toBeUndefined()
+  const weather = { location:'City',unit:'C',outlook } as any
+  expect(usableWeatherOutlook(weather,'2026-10-05T12:00:00Z')).toEqual(outlook)
+  expect(usableWeatherOutlook({...weather,unit:'F'},'2026-10-05T12:00:00Z')).toBeUndefined()
+  expect(usableWeatherOutlook(weather,'2026-10-06T12:00:00Z')).toBeUndefined()
+})
+test('timeline review needs prose evidence, preserves concurrent edits and never invents or reopens events', async () => {
+  const { applyTimelineReview } = await import('../src/domain/app-review.js')
+  const events = [{id:'one',title:'Breakfast',description:'Planned.',completed:false},{id:'two',title:'Patrol',description:'Done.',completed:true}] as any
+  const snapshot = structuredClone(events), narrative = 'They finished breakfast and cleared the plates.'
+  expect(applyTimelineReview(events,snapshot,[{id:'unknown',description:'Invented',evidence:narrative},{id:'one',description:'Fake',completed:true,evidence:'Unsupported quote.'}],narrative)).toBe(0)
+  events[0].description='Manual edit'
+  expect(applyTimelineReview(events,snapshot,[{id:'one',description:'Overwrite',completed:true,evidence:narrative}],narrative)).toBe(0)
+  events[0].description='Planned.'
+  applyTimelineReview(events,snapshot,[{id:'one',description:'Finished together.',completed:true,evidence:narrative},{id:'two',completed:false,evidence:narrative}],narrative)
+  expect(events[0].completed).toBe(true); expect(events[1].completed).toBe(true)
+  expect(events.length).toBe(2)
+})

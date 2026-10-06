@@ -114,7 +114,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -201,7 +201,7 @@ export interface PocketContextDiagnostics {
 }
 
 export interface PocketOperationProgress {
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'world-seed' | 'persona-profile'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'world-seed' | 'persona-profile' | 'weather-week' | 'timeline-review'
   requestId: string
   phase: 'request' | 'generating' | 'thinking' | 'writing' | 'parsing' | 'saving' | 'complete' | 'error'
   message: string
@@ -706,6 +706,7 @@ export interface PocketContextReference {
 }
 
 export interface RoleplayWeather {
+  outlook?: import('./domain/app-review.js').WeatherOutlook
   location: string
   condition: string
   temperature: number

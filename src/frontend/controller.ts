@@ -36,6 +36,7 @@ import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
 import type { IdentityProfile } from '../domain/identity-profiles.js'
 import { identityProfileControls, refreshIdentityProfileControls } from './components/identity-profiles.js'
+import { weatherGlyph, weatherOutlook } from './components/weather-outlook.js'
 import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
@@ -206,6 +207,7 @@ class PocketController {
   private contactSources: PocketContactSourceOption[] = []
   private npcBank: PocketNpcBankEntry[] = []
   private identityProfiles: IdentityProfile[] = []
+  private appReviewScopes = new Map<string, string>()
   private contactSourcesRequested = false
   private lastTagKeys = new Set<string>()
   private tagKeyOrder: string[] = []
@@ -1376,7 +1378,7 @@ class PocketController {
     const action = this.screen.querySelector<HTMLButtonElement>(`[data-operation-action="${CSS.escape(requestId)}"]`) || this.setupModalBody?.querySelector<HTMLButtonElement>(`[data-operation-action="${CSS.escape(requestId)}"]`)
     if (action && (operation.phase === 'complete' || operation.phase === 'error')) {
       action.disabled = false
-      action.textContent = operation.phase === 'error' ? 'Retry enrichment' : 'Enrich with LLM'
+      action.textContent = action.dataset.operationIdle || (operation.phase === 'error' ? 'Retry enrichment' : 'Enrich with LLM')
       delete action.dataset.operationAction
       this.screen.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove()
       this.setupModalBody?.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove()
@@ -2506,6 +2508,7 @@ class PocketController {
 
   private renderCamera(): HTMLDivElement {
     const page = el('div', 'lp-camera lp-npc-camera')
+    page.dataset.captureState = this.cameraBusy ? 'generating' : this.cameraReady ? 'review' : 'compose'
     const contact = this.state!.contacts.find(entry => entry.id === this.cameraContactId)
     const subject = contact || (this.cameraContactId === '__draft__' ? this.cameraNpcDraft : null)
     const nav = el('header', 'lp-nav')
@@ -2543,6 +2546,7 @@ class PocketController {
     prompt.addEventListener('input', () => { this.cameraDraft.scene = prompt.value })
     const floating = fieldBlock('Photo description', prompt)
     floating.classList.add('lp-camera-floating-brief')
+    floating.hidden = this.cameraReady && !this.cameraBusy
     viewfinder.append(floating)
     const footer = el('div', 'lp-camera-bottom-strip')
     const optionRow = el('div', 'lp-row-between')
@@ -2582,7 +2586,12 @@ class PocketController {
     shutter.dataset.busy = String(this.cameraBusy)
     const album = button('Gallery', 'lp-nav-action')
     album.addEventListener('click', () => this.openApp('gallery'))
-    shutterRow.append(shutterAction, shutter, album)
+    album.classList.add('lp-camera-album')
+    album.setAttribute('aria-label', 'Open photo gallery')
+    if (this.cameraPreview) { const thumb = el('img'); thumb.src = this.cameraPreview; thumb.alt = ''; album.replaceChildren(thumb) }
+    else album.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 18 6-6 4 4 3-3 4 5"/></svg>'
+    shutterAction.append(el('span', 'lp-camera-shutter-label', this.cameraBusy ? 'Tap to stop' : this.cameraReady ? 'Retake' : 'Capture'))
+    shutterRow.append(album, shutter, shutterAction)
     const progress = el('div', 'lp-camera-progress', this.cameraProgress || (!this.caps?.imageGen ? 'Grant Image Generation permission in Settings' : ''))
     progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite')
     const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
@@ -2620,11 +2629,12 @@ class PocketController {
       const frame = button('Avatar framing', 'lp-camera-options-chip')
       const frameFields = el('div', 'lp-camera-sheet-fields'); frameFields.append(crop, framing)
       frame.addEventListener('click', () => showPocketSheet(frame, 'Avatar framing', frameFields))
-      footer.append(frame)
-      shutterAction.appendChild(use)
+      const review = el('div', 'lp-camera-review-actions')
+      review.append(el('span', 'lp-copy', 'Ready for ' + (subject?.name || 'this contact')), frame, use)
+      footer.append(review)
     }
     controls.append(mode, viewfinder, footer)
-    shutter.setAttribute('aria-label', this.cameraBusy ? 'Stop generating photo' : 'Take photo')
+    shutter.setAttribute('aria-label', this.cameraBusy ? 'Stop generating photo' : this.cameraReady ? 'Retake photo' : 'Take photo')
     controls.addEventListener('submit', (event) => {
       event.preventDefault()
       const scene = inputValue(prompt)
@@ -2637,6 +2647,7 @@ class PocketController {
         this.render()
         return
       }
+      if (this.cameraReady) { this.cameraReady = false; this.cameraProgress = ''; this.render(false); return }
       if (!scene) { prompt.focus(); return }
       this.cameraRequestId = requestId('camera')
       this.cameraBusy = true
@@ -2706,6 +2717,38 @@ class PocketController {
     return page
   }
 
+  private appReviewControl(task: 'weather-week' | 'timeline-review', label: string, type: string): HTMLElement {
+    const panel = el('section', 'lp-app-review')
+    const scope = JSON.stringify([this.state!.chatId, this.state!.characterId])
+    const operation = [...this.operations.values()].reverse().find(entry => entry.task === task && this.appReviewScopes.get(entry.requestId) === scope)
+    const busy = operation && !['complete', 'error'].includes(operation.phase)
+    const action = button(busy ? 'Working…' : label, 'lp-button lp-button-quiet')
+    action.disabled = Boolean(busy) || !this.caps?.generation
+    action.dataset.operationIdle = label
+    if (busy) action.dataset.operationAction = operation.requestId
+    action.addEventListener('click', () => {
+      for (const [key, entry] of this.operations) if (entry.task === task) this.operations.delete(key)
+      const operationRequestId = this.send(type, {})
+      this.appReviewScopes.set(operationRequestId, scope)
+      if (this.appReviewScopes.size > 100) this.appReviewScopes.delete(this.appReviewScopes.keys().next().value!)
+      this.recordOperationProgress({ task, requestId: operationRequestId, phase: 'request', message: 'Starting…' })
+      this.render(false)
+    })
+    panel.append(action)
+    if (busy) {
+      const stop = button('Stop', 'lp-button lp-button-quiet'); stop.dataset.operationStop = operation.requestId
+      stop.addEventListener('click', () => { this.send('lumiphone:cancel_app_review', { operationRequestId: operation.requestId }); this.recordOperationProgress({ ...operation, phase: 'error', message: 'Stopped. Your saved data is unchanged.' }) })
+      panel.append(stop)
+    }
+    if (operation) {
+      const status = el('div', 'lp-operation-progress')
+      const message = el('span', '', operation.message); message.dataset.operationMessage = 'true'; status.append(message)
+      status.dataset.operationRequest = operation.requestId; status.dataset.phase = operation.phase; status.setAttribute('role', 'status')
+      panel.append(status)
+    }
+    return panel
+  }
+
   private renderWeather(editing = false): HTMLDivElement {
     const weather = this.state!.weather
     const { page, content } = this.page('Weather', weather.location, { label: editing ? 'Save' : 'Edit', callback: () => {
@@ -2723,7 +2766,8 @@ class PocketController {
     const temp = el('div', 'lp-weather-temp', `${weather.temperature}°`)
     const bottom = el('div', 'lp-row-between')
     bottom.append(el('span', 'lp-weather-range', `H:${weather.high}°  L:${weather.low}°`), el('span', 'lp-weather-range', weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ''))
-    hero.append(top, temp, bottom)
+    hero.append(top, weatherGlyph(weather.condition), temp, bottom)
+    hero.dataset.condition = /rain|storm/i.test(weather.condition) ? 'rain' : /cloud|fog/i.test(weather.condition) ? 'cloud' : 'clear'
     const fields = el('div', 'lp-fields')
     const location = this.field('Location', weather.location)
     const condition = this.field('Condition', weather.condition)
@@ -2744,7 +2788,7 @@ class PocketController {
     details.placeholder = 'Atmosphere and roleplay weather details…'
     details.value = weather.details
     if (editing) content.append(hero, fields, fieldBlock('Atmosphere', details))
-    else content.append(hero, el('p', 'lp-weather-note', weather.details || 'Enjoy the day.'))
+    else content.append(hero, el('p', 'lp-weather-note', weather.details || 'Enjoy the day.'), weatherOutlook(weather, this.state!.roleplayNow, this.state!.roleplayTimezoneOffsetMinutes), this.appReviewControl('weather-week', weather.outlook ? 'Refresh story outlook' : 'Build story outlook', 'lumiphone:weather_week'))
     const save = () => { this.send('lumiphone:action', { action: 'weather', payload: {
       location: inputValue(location.input), condition: inputValue(condition.input), temperature: Number(temperature.input.value), unit: unit.value,
       high: Number(high.input.value), low: Number(low.input.value), details: details.value,
@@ -2778,9 +2822,15 @@ class PocketController {
       setNow,
     )
     content.appendChild(disclosure('Story clock · ' + formatTime(state.roleplayNow), nowCard))
+    const overview = el('div', 'lp-timeline-overview')
+    overview.append(el('strong', '', String(state.events.filter(event => !event.completed).length)), el('span', 'lp-copy', 'open beats'), el('strong', '', String(state.events.filter(event => event.completed).length)), el('span', 'lp-copy', 'resolved'))
+    content.append(overview, this.appReviewControl('timeline-review', 'Review recent story', 'lumiphone:timeline_review'))
     const timeline = el('div', 'lp-timeline')
-    const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+    const events = [...state.events].sort((a, b) => Number(a.completed) - Number(b.completed) || (a.completed ? Date.parse(b.start) - Date.parse(a.start) : Date.parse(a.start) - Date.parse(b.start)))
+    let section = ''
     for (const event of events) {
+      const nextSection = event.completed ? 'Resolved' : 'In the story'
+      if (section !== nextSection) { section = nextSection; timeline.append(el('h3', 'lp-timeline-section', section)) }
       const row = el('div', 'lp-event')
       row.dataset.completed = String(event.completed)
       const dot = el('span', 'lp-event-dot')

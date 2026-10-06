@@ -1037,6 +1037,41 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-npc-camera .lp-shutter[data-busy="true"]::after { width:65%; height:65%; margin:17.5%; border-radius:6px; background:var(--lp-danger,#e85c69); animation:none; }
   .lp-camera-shutter-action { justify-self:start; }
   .lp-camera-accept { min-height:36px; font-size:12px; padding:8px 10px; border-radius:12px; }
+  .lumiphone-shell .lp-camera-floating-brief { backdrop-filter:none; background:#1c1b20; border-radius:12px; box-shadow:0 6px 18px #0004; }
+  .lumiphone-shell .lp-camera-floating-brief[hidden] { display:none; }
+  .lumiphone-shell .lp-camera-floating-brief .lp-textarea { min-height:56px; }
+  .lp-camera-album { width:42px; height:42px; padding:0; overflow:hidden; border:1px solid #ffffff25; border-radius:9px; justify-self:start; }
+  .lp-camera-album img { width:100%; height:100%; object-fit:cover; }
+  .lp-camera-album svg { width:24px; height:24px; }
+  .lp-camera-shutter-action { justify-self:end; color:#fff9; font-size:10px; }
+  .lp-camera-review-actions { margin-top:12px; display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; padding-top:12px; border-top:1px solid #ffffff14; }
+  .lp-camera-review-actions .lp-camera-options-chip { margin:0; }
+  .lumiphone-shell .lp-camera-review-actions .lp-camera-accept { grid-column:1/-1; width:100%; min-height:42px; border-radius:10px; background:var(--lp-accent); color:var(--lp-on-accent,#fff); }
+  .lp-camera[data-capture-state="review"] .lp-npc-viewfinder::before { display:none; }
+  .lumiphone-shell .lp-weather-hero { position:relative; min-height:240px; border:1px solid var(--lp-border); background:var(--lp-surface); color:var(--lp-text); box-shadow:0 8px 24px #0002; border-radius:18px; overflow:hidden; }
+  .lp-weather-hero > .lp-weather-glyph { position:absolute; right:26px; top:64px; width:100px; height:100px; color:var(--lp-accent); opacity:.8; }
+  .lp-weather-glyph { display:inline-flex; width:26px; height:26px; color:var(--lp-accent); }
+  .lp-weather-glyph svg { width:100%; height:100%; }
+  .lp-weather-note { font-size:13px; line-height:1.6; color:var(--lp-muted); }
+  .lp-weather-week { padding:16px; background:var(--lp-surface); border:1px solid var(--lp-border); border-radius:14px; }
+  .lp-weather-empty { padding:20px 0 4px; color:var(--lp-muted); font-size:12px; }
+  .lp-weather-day { display:grid; grid-template-columns:40px 26px minmax(0,1fr); align-items:center; gap:10px; padding:12px 0; border-top:1px solid var(--lp-border); font-size:12px; }
+  .lp-weather-day-copy { display:grid; gap:4px; min-width:0; }
+  .lp-weather-day-copy small { font-size:10px; line-height:1.5; }
+  .lp-weather-day-range { grid-column:2/-1; display:grid; grid-template-columns:32px 1fr 32px; align-items:center; gap:8px; }
+  .lp-weather-range-rail { position:relative; height:4px; border-radius:3px; background:var(--lp-border); overflow:hidden; }
+  .lp-weather-range-rail > span { position:absolute; height:100%; border-radius:3px; background:var(--lp-accent); }
+  .lp-app-review { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .lp-app-review .lp-operation-progress { flex-basis:100%; padding:10px 0; color:var(--lp-muted); font-size:12px; }
+  .lp-app-review .lp-operation-progress[data-phase="error"] { color:var(--lp-destructive); }
+  .lp-timeline-overview { display:flex; align-items:baseline; gap:8px; padding:12px 0; }
+  .lp-timeline-overview strong { font-size:28px; font-weight:500; color:var(--lp-text); }
+  .lp-timeline-overview strong:not(:first-child) { margin-left:16px; }
+  .lp-timeline-section { position:relative; margin:12px 0 4px; padding:4px 0; background:var(--lp-bg); color:var(--lp-muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .lumiphone-shell .lp-event[data-completed="true"] { opacity:1; }
+  .lumiphone-shell .lp-event[data-completed="true"] .lp-title { text-decoration:none; color:var(--lp-muted); }
+  .lumiphone-shell .lp-event-card { width:100%; padding:16px; border-radius:12px; background:var(--lp-surface); }
+  .lp-event-card .lp-copy { line-height:1.65; }
   .lp-wallpaper-library { display:grid; gap:14px; }
   .lp-wallpaper-presets-button { grid-column:1/-1; }
   .lp-wallpaper-library-preview { min-height:190px; border-radius:18px; background-size:cover; background-position:center; display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:24px 16px 16px; color:#fff; box-shadow:inset 0 0 0 1px #ffffff18; }

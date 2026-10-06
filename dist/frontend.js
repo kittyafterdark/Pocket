@@ -491,7 +491,7 @@ function normalizePreferences(value) {
     const item = record2(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -4191,6 +4191,66 @@ function renderContactsView(host) {
   return page;
 }
 
+// src/domain/app-review.ts
+function storyDate(now, offset = 0) {
+  const stamp = Date.parse(now);
+  return Number.isFinite(stamp) ? new Date(stamp - offset * 60000).toISOString().slice(0, 10) : "";
+}
+function normalizeWeatherOutlook(value) {
+  const raw = value;
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw.startDate || "") || !Number.isFinite(Date.parse(raw.startDate)))
+    return;
+  const clean = (text, max) => typeof text === "string" ? text.trim().slice(0, max) : "";
+  const days = (Array.isArray(raw.days) ? raw.days : []).slice(0, 7).flatMap((day, i) => {
+    if (!day || !Number.isFinite(day.high) || !Number.isFinite(day.low) || !clean(day.condition, 80) || day.low > day.high)
+      return [];
+    return [{ date: new Date(Date.parse(raw.startDate) + i * 86400000).toISOString().slice(0, 10), condition: clean(day.condition, 80), high: Math.max(-150, Math.min(200, day.high)), low: Math.max(-150, Math.min(200, day.low)), details: clean(day.details, 240) }];
+  });
+  if (days.length !== 7)
+    return;
+  return { startDate: raw.startDate, location: clean(raw.location, 160), unit: raw.unit === "F" ? "F" : "C", generatedAt: clean(raw.generatedAt, 80), days };
+}
+function usableWeatherOutlook(weather, now, offset = 0) {
+  const outlook = normalizeWeatherOutlook(weather.outlook);
+  return outlook?.startDate === storyDate(now, offset) && outlook.location === weather.location && outlook.unit === weather.unit ? outlook : undefined;
+}
+
+// src/frontend/components/weather-outlook.ts
+function weatherGlyph(condition) {
+  const node = el("span", "lp-weather-glyph");
+  node.setAttribute("aria-hidden", "true");
+  const paths = /snow|sleet/i.test(condition) ? '<path d="M12 3v18M4 7l16 10M4 17 20 7M9 5l3 3 3-3M9 19l3-3 3 3"/>' : /rain|storm|shower/i.test(condition) ? '<path d="M6 15a4 4 0 1 1 1-8 5 5 0 0 1 10 1 3.5 3.5 0 0 1 0 7H6ZM8 18l-1 3m6-3-1 3m6-3-1 3"/>' : /cloud|overcast|fog/i.test(condition) ? '<path d="M6 18a4 4 0 1 1 1-8 5 5 0 0 1 10 1 3.5 3.5 0 0 1 0 7H6Z"/>' : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>';
+  node.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+  return node;
+}
+function weatherOutlook(weather, now, offset = 0) {
+  const panel = el("section", "lp-weather-week");
+  panel.setAttribute("aria-label", "Seven-day story forecast");
+  const outlook = usableWeatherOutlook(weather, now, offset);
+  panel.append(el("h3", "lp-title", "The week ahead"), el("p", "lp-copy", "A fictional outlook for planning scenes. Today’s established weather stays unchanged."));
+  if (!outlook) {
+    panel.append(el("p", "lp-weather-empty", weather.outlook ? "The story date, location or unit changed. Refresh the outlook for this scene." : "Build a seven-day outlook from this scene’s weather."));
+    return panel;
+  }
+  const min = Math.min(...outlook.days.map((day) => day.low)), max = Math.max(...outlook.days.map((day) => day.high)), span = Math.max(1, max - min);
+  for (const [i, day] of outlook.days.entries()) {
+    const row = el("div", "lp-weather-day");
+    const date = new Date(day.date + "T12:00:00Z");
+    row.append(el("strong", "", i === 0 ? "Today" : date.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" })), weatherGlyph(day.condition));
+    const body = el("div", "lp-weather-day-copy");
+    body.append(el("span", "", day.condition), el("small", "lp-copy", day.details));
+    row.append(body);
+    const range = el("div", "lp-weather-day-range"), rail = el("span", "lp-weather-range-rail"), fill = el("span");
+    fill.style.left = `${(day.low - min) / span * 100}%`;
+    fill.style.width = `${Math.max(3, (day.high - day.low) / span * 100)}%`;
+    rail.append(fill);
+    range.append(el("span", "", `${day.low}°`), rail, el("strong", "", `${day.high}°`));
+    row.append(range);
+    panel.append(row);
+  }
+  return panel;
+}
+
 // src/domain/notifications.ts
 function activeNotifications(notifications) {
   return notifications.filter((entry) => !entry.dismissedAt);
@@ -6680,6 +6740,41 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-npc-camera .lp-shutter[data-busy="true"]::after { width:65%; height:65%; margin:17.5%; border-radius:6px; background:var(--lp-danger,#e85c69); animation:none; }
   .lp-camera-shutter-action { justify-self:start; }
   .lp-camera-accept { min-height:36px; font-size:12px; padding:8px 10px; border-radius:12px; }
+  .lumiphone-shell .lp-camera-floating-brief { backdrop-filter:none; background:#1c1b20; border-radius:12px; box-shadow:0 6px 18px #0004; }
+  .lumiphone-shell .lp-camera-floating-brief[hidden] { display:none; }
+  .lumiphone-shell .lp-camera-floating-brief .lp-textarea { min-height:56px; }
+  .lp-camera-album { width:42px; height:42px; padding:0; overflow:hidden; border:1px solid #ffffff25; border-radius:9px; justify-self:start; }
+  .lp-camera-album img { width:100%; height:100%; object-fit:cover; }
+  .lp-camera-album svg { width:24px; height:24px; }
+  .lp-camera-shutter-action { justify-self:end; color:#fff9; font-size:10px; }
+  .lp-camera-review-actions { margin-top:12px; display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; padding-top:12px; border-top:1px solid #ffffff14; }
+  .lp-camera-review-actions .lp-camera-options-chip { margin:0; }
+  .lumiphone-shell .lp-camera-review-actions .lp-camera-accept { grid-column:1/-1; width:100%; min-height:42px; border-radius:10px; background:var(--lp-accent); color:var(--lp-on-accent,#fff); }
+  .lp-camera[data-capture-state="review"] .lp-npc-viewfinder::before { display:none; }
+  .lumiphone-shell .lp-weather-hero { position:relative; min-height:240px; border:1px solid var(--lp-border); background:var(--lp-surface); color:var(--lp-text); box-shadow:0 8px 24px #0002; border-radius:18px; overflow:hidden; }
+  .lp-weather-hero > .lp-weather-glyph { position:absolute; right:26px; top:64px; width:100px; height:100px; color:var(--lp-accent); opacity:.8; }
+  .lp-weather-glyph { display:inline-flex; width:26px; height:26px; color:var(--lp-accent); }
+  .lp-weather-glyph svg { width:100%; height:100%; }
+  .lp-weather-note { font-size:13px; line-height:1.6; color:var(--lp-muted); }
+  .lp-weather-week { padding:16px; background:var(--lp-surface); border:1px solid var(--lp-border); border-radius:14px; }
+  .lp-weather-empty { padding:20px 0 4px; color:var(--lp-muted); font-size:12px; }
+  .lp-weather-day { display:grid; grid-template-columns:40px 26px minmax(0,1fr); align-items:center; gap:10px; padding:12px 0; border-top:1px solid var(--lp-border); font-size:12px; }
+  .lp-weather-day-copy { display:grid; gap:4px; min-width:0; }
+  .lp-weather-day-copy small { font-size:10px; line-height:1.5; }
+  .lp-weather-day-range { grid-column:2/-1; display:grid; grid-template-columns:32px 1fr 32px; align-items:center; gap:8px; }
+  .lp-weather-range-rail { position:relative; height:4px; border-radius:3px; background:var(--lp-border); overflow:hidden; }
+  .lp-weather-range-rail > span { position:absolute; height:100%; border-radius:3px; background:var(--lp-accent); }
+  .lp-app-review { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .lp-app-review .lp-operation-progress { flex-basis:100%; padding:10px 0; color:var(--lp-muted); font-size:12px; }
+  .lp-app-review .lp-operation-progress[data-phase="error"] { color:var(--lp-destructive); }
+  .lp-timeline-overview { display:flex; align-items:baseline; gap:8px; padding:12px 0; }
+  .lp-timeline-overview strong { font-size:28px; font-weight:500; color:var(--lp-text); }
+  .lp-timeline-overview strong:not(:first-child) { margin-left:16px; }
+  .lp-timeline-section { position:relative; margin:12px 0 4px; padding:4px 0; background:var(--lp-bg); color:var(--lp-muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .lumiphone-shell .lp-event[data-completed="true"] { opacity:1; }
+  .lumiphone-shell .lp-event[data-completed="true"] .lp-title { text-decoration:none; color:var(--lp-muted); }
+  .lumiphone-shell .lp-event-card { width:100%; padding:16px; border-radius:12px; background:var(--lp-surface); }
+  .lp-event-card .lp-copy { line-height:1.65; }
   .lp-wallpaper-library { display:grid; gap:14px; }
   .lp-wallpaper-presets-button { grid-column:1/-1; }
   .lp-wallpaper-library-preview { min-height:190px; border-radius:18px; background-size:cover; background-position:center; display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:24px 16px 16px; color:#fff; box-shadow:inset 0 0 0 1px #ffffff18; }
@@ -7330,6 +7425,7 @@ class PocketController {
   contactSources = [];
   npcBank = [];
   identityProfiles = [];
+  appReviewScopes = new Map;
   contactSourcesRequested = false;
   lastTagKeys = new Set;
   tagKeyOrder = [];
@@ -8673,7 +8769,7 @@ class PocketController {
     const action = this.screen.querySelector(`[data-operation-action="${CSS.escape(requestId)}"]`) || this.setupModalBody?.querySelector(`[data-operation-action="${CSS.escape(requestId)}"]`);
     if (action && (operation.phase === "complete" || operation.phase === "error")) {
       action.disabled = false;
-      action.textContent = operation.phase === "error" ? "Retry enrichment" : "Enrich with LLM";
+      action.textContent = action.dataset.operationIdle || (operation.phase === "error" ? "Retry enrichment" : "Enrich with LLM");
       delete action.dataset.operationAction;
       this.screen.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove();
       this.setupModalBody?.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove();
@@ -9920,6 +10016,7 @@ ${body}`;
   }
   renderCamera() {
     const page = el("div", "lp-camera lp-npc-camera");
+    page.dataset.captureState = this.cameraBusy ? "generating" : this.cameraReady ? "review" : "compose";
     const contact = this.state.contacts.find((entry) => entry.id === this.cameraContactId);
     const subject = contact || (this.cameraContactId === "__draft__" ? this.cameraNpcDraft : null);
     const nav = el("header", "lp-nav");
@@ -9959,6 +10056,7 @@ ${body}`;
     });
     const floating = fieldBlock("Photo description", prompt);
     floating.classList.add("lp-camera-floating-brief");
+    floating.hidden = this.cameraReady && !this.cameraBusy;
     viewfinder.append(floating);
     const footer = el("div", "lp-camera-bottom-strip");
     const optionRow = el("div", "lp-row-between");
@@ -10020,7 +10118,17 @@ ${body}`;
     shutter.dataset.busy = String(this.cameraBusy);
     const album = button("Gallery", "lp-nav-action");
     album.addEventListener("click", () => this.openApp("gallery"));
-    shutterRow.append(shutterAction, shutter, album);
+    album.classList.add("lp-camera-album");
+    album.setAttribute("aria-label", "Open photo gallery");
+    if (this.cameraPreview) {
+      const thumb = el("img");
+      thumb.src = this.cameraPreview;
+      thumb.alt = "";
+      album.replaceChildren(thumb);
+    } else
+      album.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 18 6-6 4 4 3-3 4 5"/></svg>';
+    shutterAction.append(el("span", "lp-camera-shutter-label", this.cameraBusy ? "Tap to stop" : this.cameraReady ? "Retake" : "Capture"));
+    shutterRow.append(album, shutter, shutterAction);
     const progress = el("div", "lp-camera-progress", this.cameraProgress || (!this.caps?.imageGen ? "Grant Image Generation permission in Settings" : ""));
     progress.setAttribute("role", "status");
     progress.setAttribute("aria-live", "polite");
@@ -10085,11 +10193,12 @@ ${body}`;
       const frameFields = el("div", "lp-camera-sheet-fields");
       frameFields.append(crop, framing);
       frame.addEventListener("click", () => showPocketSheet(frame, "Avatar framing", frameFields));
-      footer.append(frame);
-      shutterAction.appendChild(use);
+      const review = el("div", "lp-camera-review-actions");
+      review.append(el("span", "lp-copy", "Ready for " + (subject?.name || "this contact")), frame, use);
+      footer.append(review);
     }
     controls.append(mode, viewfinder, footer);
-    shutter.setAttribute("aria-label", this.cameraBusy ? "Stop generating photo" : "Take photo");
+    shutter.setAttribute("aria-label", this.cameraBusy ? "Stop generating photo" : this.cameraReady ? "Retake photo" : "Take photo");
     controls.addEventListener("submit", (event) => {
       event.preventDefault();
       const scene = inputValue(prompt);
@@ -10100,6 +10209,12 @@ ${body}`;
         this.cameraReady = false;
         this.cameraProgress = "Cancelled";
         this.render();
+        return;
+      }
+      if (this.cameraReady) {
+        this.cameraReady = false;
+        this.cameraProgress = "";
+        this.render(false);
         return;
       }
       if (!scene) {
@@ -10177,6 +10292,49 @@ ${body}`;
     }
     return page;
   }
+  appReviewControl(task, label, type) {
+    const panel = el("section", "lp-app-review");
+    const scope = JSON.stringify([this.state.chatId, this.state.characterId]);
+    const operation = [...this.operations.values()].reverse().find((entry) => entry.task === task && this.appReviewScopes.get(entry.requestId) === scope);
+    const busy = operation && !["complete", "error"].includes(operation.phase);
+    const action = button(busy ? "Working…" : label, "lp-button lp-button-quiet");
+    action.disabled = Boolean(busy) || !this.caps?.generation;
+    action.dataset.operationIdle = label;
+    if (busy)
+      action.dataset.operationAction = operation.requestId;
+    action.addEventListener("click", () => {
+      for (const [key, entry] of this.operations)
+        if (entry.task === task)
+          this.operations.delete(key);
+      const operationRequestId = this.send(type, {});
+      this.appReviewScopes.set(operationRequestId, scope);
+      if (this.appReviewScopes.size > 100)
+        this.appReviewScopes.delete(this.appReviewScopes.keys().next().value);
+      this.recordOperationProgress({ task, requestId: operationRequestId, phase: "request", message: "Starting…" });
+      this.render(false);
+    });
+    panel.append(action);
+    if (busy) {
+      const stop = button("Stop", "lp-button lp-button-quiet");
+      stop.dataset.operationStop = operation.requestId;
+      stop.addEventListener("click", () => {
+        this.send("lumiphone:cancel_app_review", { operationRequestId: operation.requestId });
+        this.recordOperationProgress({ ...operation, phase: "error", message: "Stopped. Your saved data is unchanged." });
+      });
+      panel.append(stop);
+    }
+    if (operation) {
+      const status = el("div", "lp-operation-progress");
+      const message = el("span", "", operation.message);
+      message.dataset.operationMessage = "true";
+      status.append(message);
+      status.dataset.operationRequest = operation.requestId;
+      status.dataset.phase = operation.phase;
+      status.setAttribute("role", "status");
+      panel.append(status);
+    }
+    return panel;
+  }
   renderWeather(editing = false) {
     const weather = this.state.weather;
     const { page, content } = this.page("Weather", weather.location, { label: editing ? "Save" : "Edit", callback: () => {
@@ -10195,7 +10353,8 @@ ${body}`;
     const temp = el("div", "lp-weather-temp", `${weather.temperature}°`);
     const bottom = el("div", "lp-row-between");
     bottom.append(el("span", "lp-weather-range", `H:${weather.high}°  L:${weather.low}°`), el("span", "lp-weather-range", weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ""));
-    hero.append(top, temp, bottom);
+    hero.append(top, weatherGlyph(weather.condition), temp, bottom);
+    hero.dataset.condition = /rain|storm/i.test(weather.condition) ? "rain" : /cloud|fog/i.test(weather.condition) ? "cloud" : "clear";
     const fields = el("div", "lp-fields");
     const location = this.field("Location", weather.location);
     const condition = this.field("Condition", weather.condition);
@@ -10218,7 +10377,7 @@ ${body}`;
     if (editing)
       content.append(hero, fields, fieldBlock("Atmosphere", details));
     else
-      content.append(hero, el("p", "lp-weather-note", weather.details || "Enjoy the day."));
+      content.append(hero, el("p", "lp-weather-note", weather.details || "Enjoy the day."), weatherOutlook(weather, this.state.roleplayNow, this.state.roleplayTimezoneOffsetMinutes), this.appReviewControl("weather-week", weather.outlook ? "Refresh story outlook" : "Build story outlook", "lumiphone:weather_week"));
     const save = () => {
       this.send("lumiphone:action", { action: "weather", payload: {
         location: inputValue(location.input),
@@ -10254,9 +10413,18 @@ ${body}`;
     const clockLabel = state.roleplayClockLabel ? ` · ${state.roleplayClockLabel}` : "";
     nowCard.append(el("div", "lp-eyebrow", "Roleplay clock"), nowField, el("p", "lp-copy", `${clockSource}${clockPrecision}${clockLabel}`), setNow);
     content.appendChild(disclosure("Story clock · " + formatTime(state.roleplayNow), nowCard));
+    const overview = el("div", "lp-timeline-overview");
+    overview.append(el("strong", "", String(state.events.filter((event) => !event.completed).length)), el("span", "lp-copy", "open beats"), el("strong", "", String(state.events.filter((event) => event.completed).length)), el("span", "lp-copy", "resolved"));
+    content.append(overview, this.appReviewControl("timeline-review", "Review recent story", "lumiphone:timeline_review"));
     const timeline = el("div", "lp-timeline");
-    const events = [...state.events].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+    const events = [...state.events].sort((a, b) => Number(a.completed) - Number(b.completed) || (a.completed ? Date.parse(b.start) - Date.parse(a.start) : Date.parse(a.start) - Date.parse(b.start)));
+    let section = "";
     for (const event of events) {
+      const nextSection = event.completed ? "Resolved" : "In the story";
+      if (section !== nextSection) {
+        section = nextSection;
+        timeline.append(el("h3", "lp-timeline-section", section));
+      }
       const row = el("div", "lp-event");
       row.dataset.completed = String(event.completed);
       const dot = el("span", "lp-event-dot");

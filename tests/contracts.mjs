@@ -2089,7 +2089,9 @@ assert.equal(portraitRequest.contactId, savedDraftId)
 backendReceiver({ type: 'lumiphone:camera_progress', requestId: portraitRequest.requestId, imageDataUrl: 'data:image/png;base64,preview', phase: 'preview' })
 assert.ok(![...dockRoot.querySelectorAll('button')].some(node => node.textContent === 'Use photo'), 'partial previews cannot be applied')
 backendReceiver({ type: 'lumiphone:camera_done', requestId: portraitRequest.requestId, imageUrl: '/api/v1/images/portrait' })
-assert.ok(dockRoot.querySelector('.lp-shutter-row .lp-camera-accept'), 'acceptance belongs in the camera control strip')
+assert.ok(dockRoot.querySelector('.lp-camera-review-actions .lp-camera-accept'), 'acceptance has its own review flow rather than sharing the shutter row')
+assert.equal(dockRoot.querySelector('.lp-camera-floating-brief').hidden, true, 'review keeps the finished image unobscured')
+assert.equal(dockRoot.querySelector('.lp-shutter').getAttribute('aria-label'), 'Retake photo')
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
 await new Promise(resolve => setTimeout(resolve, 0))
 const photoApply = frontendSends.filter(message => message.type === 'lumiphone:set_contact_photo').at(-1)
@@ -2608,5 +2610,30 @@ try {
   assert.equal(frontendMessages.some(event => event.type === 'lumiphone:pocket_persona_preview' && event.requestId === 'cancel-profile-test'), false, 'cancelled provider results must be discarded')
 } finally { spindle.generate.quiet = priorQuiet }
 cleanup()
+
+const appQuiet = spindle.generate.quiet, appMessages = spindle.chat.getMessages
+try {
+  spindle.generate.quiet = async () => ({ content: JSON.stringify({ days: Array.from({ length: 7 }, () => ({ condition: 'Rain', high: 24, low: 14, details: 'Bring an umbrella.' })) }), finish_reason: 'stop' })
+  await frontendHandler({ type: 'lumiphone:weather_week', requestId: 'weather-week-test', chatId: 'profile-new-chat', characterId: 'char-a' }, 'user-a')
+  const weekState = frontendMessages.filter(event => event.type === 'lumiphone:state' && event.reason === 'weather-week').at(-1).state
+  assert.equal(weekState.weather.outlook.days.length, 7)
+  assert.equal(weekState.weather.outlook.days[0].condition, weekState.weather.condition, 'forecast preserves established today')
+  await frontendHandler({ type: 'lumiphone:action', chatId: 'profile-new-chat', characterId: 'char-a', action: 'event', payload: { title: 'Breakfast', description: 'Planned breakfast.', start: weekState.roleplayNow, end: weekState.roleplayNow } }, 'user-a')
+  const eventState = frontendMessages.filter(event => event.type === 'lumiphone:state' && event.state.chatId === 'profile-new-chat').at(-1).state
+  const breakfast = eventState.events.find(event => event.title === 'Breakfast')
+  spindle.chat.getMessages = async () => [{ role: 'assistant', content: 'They finished breakfast and cleared the plates.' }]
+  spindle.generate.quiet = async () => ({ content: JSON.stringify({ events: [{ id: breakfast.id, description: 'Breakfast finished together; the plates are cleared.', completed: true, evidence: 'They finished breakfast and cleared the plates.' }] }), finish_reason: 'stop' })
+  await frontendHandler({ type: 'lumiphone:timeline_review', requestId: 'timeline-review-test', chatId: 'profile-new-chat', characterId: 'char-a' }, 'user-a')
+  const reviewed = frontendMessages.filter(event => event.type === 'lumiphone:state' && event.reason === 'timeline-review').at(-1).state.events.find(event => event.id === breakfast.id)
+  assert.equal(reviewed.completed, true); assert.match(reviewed.description, /plates/)
+  let releaseWeek, startWeek
+  const weekStarted = new Promise(resolve => { startWeek = resolve })
+  spindle.generate.quiet = async () => { startWeek(); await new Promise(resolve => { releaseWeek = resolve }); return { content: JSON.stringify({ days: [] }), finish_reason: 'stop' } }
+  const pendingWeek = frontendHandler({ type: 'lumiphone:weather_week', requestId: 'cancel-week-test', chatId: 'profile-new-chat', characterId: 'char-a' }, 'user-a')
+  await weekStarted
+  await frontendHandler({ type: 'lumiphone:cancel_app_review', operationRequestId: 'cancel-week-test', chatId: 'profile-new-chat', characterId: 'char-a' }, 'user-a')
+  releaseWeek(); await pendingWeek
+  assert.equal(frontendMessages.some(event => event.type === 'lumiphone:operation_progress' && event.requestId === 'cancel-week-test' && event.phase === 'complete'), false, 'cancelled forecast never completes')
+} finally { spindle.generate.quiet = appQuiet; spindle.chat.getMessages = appMessages }
 
 console.log('Pocket contracts passed.')
