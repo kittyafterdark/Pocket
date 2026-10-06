@@ -1,18 +1,7 @@
-import POCKET_INLINE_REDESIGN from './pocket-inline-redesign.css' with { type: 'text' }
+import { SURFACE_TOKENS } from './style-tokens.js'
 /** Shared Pocket surfaces. Static rules only; dynamic tokens stay on each handset. */
 export const POCKET_DESIGN_SYSTEM = `
-  .lumiphone-shell, .lp-media-viewer {
-    --lp-space-1:4px; --lp-space-2:8px; --lp-space-3:12px; --lp-space-4:16px; --lp-space-5:24px;
-    --lp-radius:18px; --lp-radius-control:12px; --lp-radius-bubble:18px;
-    --lp-touch:44px; --lp-row-height:64px; --lp-outgoing:var(--lp-accent);
-    --lp-incoming:color-mix(in srgb,var(--lp-text) 8%,var(--lp-bg)); --lp-destructive:#ed7c8c; --lp-success:#71cfa1;
-    --lp-ease:cubic-bezier(.2,.8,.2,1); --lp-sheet-bg:var(--lp-bg,#141319);
-    --lp-elevation:0 12px 36px #0002;
-    --pocket-font-xs:calc(10px * var(--pocket-ui-scale,1));
-    --pocket-font-sm:calc(12px * var(--pocket-ui-scale,1));
-    --pocket-font-md:calc(14px * var(--pocket-ui-scale,1));
-    --pocket-control-h:44px;
-  }
+${SURFACE_TOKENS}
   .lumiphone-shell { container-type:inline-size; }
   .lumiphone-shell :is(button,input,textarea,select,summary) { font-family:inherit; }
   .lumiphone-shell :is(button,input,textarea,select,summary):focus-visible,
@@ -136,16 +125,6 @@ export const POCKET_DESIGN_SYSTEM = `
   .lp-media-viewer { --lp-text:#f7f5ff; --lp-bg:#141319; --lp-muted:#b9b5c5; --lp-border:#ffffff22; }
   .lp-media-viewer .lp-gallery-actions { display:flex; flex-wrap:wrap; justify-content:space-around; gap:8px; padding:16px 0; }
   .lp-media-viewer .lp-button { min-height:44px; font-size:13px; color:var(--lp-text); background:#ffffff0b; }
-  .pocket-receipt { width:min(100%,420px); min-height:52px; padding:10px 12px; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; border-radius:18px; border:1px solid color-mix(in srgb,var(--lumiverse-text,#fff) 12%,transparent); box-shadow:none; background:#222027; backdrop-filter:none; opacity:1; }
-  button.pocket-receipt:hover { background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 85%,var(--lumiverse-primary,#8b7dff)); }
-  .pocket-receipt-kind { padding:7px; border-radius:10px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 22%,transparent); font-size:9px; font-weight:750; }
-  .pocket-receipt-copy strong { font-size:11px; font-weight:650; }
-  .pocket-receipt-copy { display:grid; gap:3px; }
-  .pocket-receipt-copy span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; white-space:normal; font-size:12px; line-height:1.35; opacity:.8; }
-  .pocket-receipt-arrow { font-size:11px; opacity:.4; }
-  .pocket-receipt-details { margin:0 2px; font-size:9px; opacity:.42; order:3; }
-  .pocket-receipt-details summary { width:max-content; cursor:pointer; }
-  .pocket-receipt-details > span { display:block; margin-top:3px; max-width:460px; line-height:1.35; }
   .lp-bubble.lp-call-history { align-self:center; max-width:90%; border-radius:16px; background:var(--lp-surface); border:1px solid var(--lp-border); text-align:center; }
   @container (max-width:360px) {
     .lumiphone-shell .lp-content { padding-inline:12px; }
@@ -154,6 +133,5 @@ export const POCKET_DESIGN_SYSTEM = `
     .lumiphone-shell .lp-actions { flex-wrap:wrap; }
     .lumiphone-shell .lp-row { flex-wrap:wrap; }
   }
-  @media (prefers-reduced-motion:reduce) { .lumiphone-shell *, .pocket-inline-artifact { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
-${POCKET_INLINE_REDESIGN}
+  @media (prefers-reduced-motion:reduce) { .lumiphone-shell * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
 `

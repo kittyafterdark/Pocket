@@ -1,3 +1,4 @@
+import { INLINE_BASE_STYLES, INLINE_FINISH_STYLES } from './frontend/components/inline-styles.js'
 import { POCKET_DESIGN_SYSTEM } from './frontend/components/design-system.js'
 export const PHONE_STYLES = `
   .lumiphone-widget-root, .lumiphone-widget-root *, .lumiphone-drawer, .lumiphone-drawer * { box-sizing: border-box; }
@@ -524,23 +525,7 @@ export const PHONE_STYLES = `
   .lp-gallery-item[data-selected="true"] { outline:3px solid var(--lp-accent); outline-offset:2px; }
   .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
 
-  .pocket-receipt-host { display:block; margin:8px 0 2px; max-width:min(100%,460px); }
-  .pocket-inline-anchor { display:block; width:100%; margin:12px 0; min-height:0; }
-  .pocket-inline-anchor[hidden] { display:none !important; }
-  .pocket-inline-anchor .pocket-artifact-stack { width:100%; }
-  .pocket-artifact-stack { display:grid; gap:5px; }
-  .pocket-artifact-stack > .pocket-inline-frame { margin-inline:auto; }
-  .pocket-inline-transcript-row[hidden] { display:none; }
-  .pocket-receipt { appearance:none; width:100%; min-height:30px; padding:4px 7px; border:0; border-radius:9px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:7px; background:color-mix(in srgb,var(--lumiverse-fill,#17151d) 75%,transparent); color:var(--lumiverse-text,#f7f5ff); font:inherit; text-align:left; opacity:.72; }
-  button.pocket-receipt { cursor:pointer; }
-  button.pocket-receipt:hover { opacity:1; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 9%,var(--lumiverse-fill,#17151d)); }
-  button.pocket-receipt:focus-visible,.pocket-inline-artifact:focus-visible { outline:3px solid color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 55%,white); outline-offset:2px; }
-  .pocket-receipt-kind { padding:2px 5px; border-radius:7px; background:color-mix(in srgb,var(--lumiverse-primary,#8b7dff) 12%,transparent); font-size:8px; font-weight:800; }
-  .pocket-receipt-copy { min-width:0; display:flex; align-items:baseline; gap:6px; }
-  .pocket-receipt-copy strong,.pocket-receipt-copy span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .pocket-receipt-copy strong { font-size:9px; }
-  .pocket-receipt-copy span { opacity:.6; font-size:8px; }
-  .pocket-receipt-arrow { font-size:14px; opacity:.45; }
+${INLINE_BASE_STYLES}
   .lp-tracker-filters { display:flex; gap:6px; overflow:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-tracker-card { display:grid; gap:9px; border-left:3px solid color-mix(in srgb,var(--lp-accent) 68%,transparent); }
   .lp-tracker-card[role="button"]:focus-visible { outline:3px solid color-mix(in srgb,var(--lp-accent) 52%,white); outline-offset:2px; }
@@ -921,6 +906,7 @@ export const PHONE_STYLES = `
   .lp-contact-photo-editor .lp-actions { justify-content:flex-start; }
 
 ${POCKET_DESIGN_SYSTEM}
+${INLINE_FINISH_STYLES}
 
   /* Recipient columns follow the actual avatar, including profile overrides. */
   .lumiphone-shell, .lumiphone-screen { overflow:clip; }

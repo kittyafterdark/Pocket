@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { JSDOM } from 'jsdom'
 
+if (process.env.POCKET_VISUAL_DIR) {
+  const RealDate = Date
+  globalThis.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : ['2026-09-04T12:00:00.000Z'])) }
+    static now() { return new RealDate('2026-09-04T12:00:00.000Z').getTime() }
+  }
+}
+
 // Inspect open Pocket roots explicitly; normal document queries must not see their UI.
 function inlineAll(host, selector) {
   const result = [...host.querySelectorAll(selector)]
@@ -21,7 +29,7 @@ const frontendSource = await readFile(new URL('src/frontend.ts', root), 'utf8')
 const controllerSource = await readFile(new URL('src/frontend/controller.ts', root), 'utf8')
 const messagesSource = await readFile(new URL('src/frontend/apps/messages.ts', root), 'utf8')
 const surfaceSource = await readFile(new URL('src/frontend/surface.ts', root), 'utf8')
-const stylesSource = await readFile(new URL('src/styles.ts', root), 'utf8')
+const stylesSource = await readFile(new URL('src/styles.ts', root), 'utf8') + await readFile(new URL('src/frontend/components/inline-styles.ts', root), 'utf8')
 const inlineStyles = await readFile(new URL('src/frontend/components/pocket-inline-redesign.css', root), 'utf8')
 assert.doesNotMatch(inlineStyles, /:root\s*\{|!important/, 'inline styles must keep defaults local and avoid specificity escalation with important')
 for (const selectorLine of inlineStyles.split(/\r?\n/).map(line => line.trim()).filter(line => line.startsWith('.'))) {
@@ -1614,6 +1622,22 @@ let backendReceiver = null
 const tagReceivers = new Map()
 const frontendSends = []
 const frontendStyles = []
+
+// Controlled contract states double as visual fixtures; never export live user data.
+async function exportVisual(name, source) {
+  if (!process.env.POCKET_VISUAL_DIR) return
+  const preview = source.cloneNode(true)
+  const originals = [...source.querySelectorAll('pocket-inline-ui')]
+  for (const [index, island] of [...preview.querySelectorAll('pocket-inline-ui')].entries()) {
+    const template = document.createElement('template')
+    template.setAttribute('shadowrootmode', 'open')
+    template.innerHTML = originals[index].shadowRoot.innerHTML
+    island.append(template)
+  }
+  for (const image of preview.querySelectorAll('img')) image.removeAttribute('src')
+  await writeFile(new URL(name + '.html', 'file://' + process.env.POCKET_VISUAL_DIR.replaceAll('\\', '/') + '/'), '<!doctype html><meta charset="utf-8"><style>' + frontendStyles.join('\n') + '\nbody{margin:0;padding:24px;background:#151318;color:#eee;font-family:system-ui;--lumiverse-primary:#d7a978}main{max-width:560px;margin:auto}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style><main>' + preview.outerHTML + '</main>')
+}
+
 const drawerRoot = document.createElement('div')
 const widgetRoot = document.createElement('div')
 const dockRoot = document.createElement('div')
@@ -1735,6 +1759,7 @@ assert.ok([...drawerRoot.querySelectorAll('.lumiphone-device-footer button')].so
 
 assert.ok(npcDeviceRow.dataset.pocketDeviceKey, 'device selector rows must expose the logical phone id before opening them')
 assert.equal(drawerRoot.querySelectorAll('.lumiphone-device-row:not(.lumiphone-device-rp) .lumiphone-device-unread').length, 0, 'inspected actor phones must not show unread badges in the picker')
+await exportVisual('devices', drawerRoot)
 const npcLatestJump = npcDeviceRow
 assert.ok(npcLatestJump, 'actor phone with history must offer a latest-interaction jump')
 npcLatestJump.click()
@@ -1756,6 +1781,7 @@ assert.equal(identityShell.dataset.pocketDeviceKey, personaDeviceKey, 'returning
 assert.equal(identityShell.style.getPropertyValue('--lp-accent'), '#ff00aa')
 backendReceiver({ type: 'lumiphone:conversation_opened', conversationId: 'picker-latest' })
 backendReceiver({ type: 'lumiphone:message_progress', requestId: 'ui-slow-reply', chatId: 'chat-a', characterId: 'char-a', conversationId: 'picker-latest', phase: 'pending' })
+await exportVisual('chat', dockRoot)
 const stopReplyButton = dockRoot.querySelector('[aria-label="Stop generating reply"]')
 assert.ok(stopReplyButton && !stopReplyButton.disabled, 'busy composer must offer an enabled stop button')
 stopReplyButton.click()
@@ -1772,9 +1798,11 @@ assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'))
 const handsetHost = dockRoot.querySelector('.lumiphone-handset-host')
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 18.4)) < 0.01, 'desktop phone bounds are not 9:18.4')
 assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
+await exportVisual('home', dockRoot)
 const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Settings'))
 settingsIcon.click()
 assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
+await exportVisual('settings', dockRoot)
 dockRoot.remove()
 dockRoot.querySelector('[data-settings-category="camera"]').click()
 await new Promise(resolve => setTimeout(resolve, 0))
@@ -2075,6 +2103,7 @@ assert.ok(dockRoot.querySelector('.lp-photo-viewfinder'))
 assert.ok(dockRoot.querySelector('[data-image-picker-mounted="true"]'))
 ;[...dockRoot.querySelectorAll('dialog button')].find(node => node.textContent === 'Done').click()
 assert.match(dockRoot.querySelector('textarea').value, /Portrait of Draft Two/)
+await exportVisual('camera-compose', dockRoot)
 dockRoot.querySelector('form.lp-camera-body').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
 const cancelledPortrait = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
 const photoStop = dockRoot.querySelector('[aria-label="Stop generating photo"]')
@@ -2092,6 +2121,7 @@ backendReceiver({ type: 'lumiphone:camera_done', requestId: portraitRequest.requ
 assert.ok(dockRoot.querySelector('.lp-camera-review-actions .lp-camera-accept'), 'acceptance has its own review flow rather than sharing the shutter row')
 assert.equal(dockRoot.querySelector('.lp-camera-floating-brief').hidden, true, 'review keeps the finished image unobscured')
 assert.equal(dockRoot.querySelector('.lp-shutter').getAttribute('aria-label'), 'Retake photo')
+await exportVisual('camera-review', dockRoot)
 const captureCountBeforeRetake = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').length
 dockRoot.querySelector('.lp-shutter').click()
 assert.equal(dockRoot.querySelector('.lp-camera-floating-brief').hidden, false, 'Retake returns to composition before spending another generation')
@@ -2229,6 +2259,7 @@ assert.equal(streamingArtifactHost.querySelectorAll('pocket-inline-ui').length, 
 const streamingShadow = streamingArtifactHost.querySelector('pocket-inline-ui').shadowRoot
 assert.ok(streamingShadow.querySelector('style')?.textContent.includes('.pocket-phone-thread'), 'mock/older browser path must install styles inside the shadow root')
 assert.equal(streamingArtifactHost.querySelector('style'), null, 'isolated stylesheet fallback must never leak back into the host document')
+assert.doesNotMatch(streamingShadow.querySelector('style').textContent, /\.lumiphone-shell|\.lp-camera|\.lumiphone-drawer/, 'inline isolation must not ship handset, app or sidebar CSS')
 
 assert.match(inlineText(streamingArtifactHost) || '', /Rendered before the generation ends\./)
 backendReceiver({ type: 'lumiphone:candidate_activity_discard', activityIds: [streamingInlineActivity.id], origin: { chatId: 'chat-a', hostMessageId: 'host-message-a', swipeId: 0 } })
@@ -2323,6 +2354,7 @@ assert.equal(expandBatch.getAttribute('aria-expanded'), 'true')
 assert.equal(frontendSends.length, sendsBeforeExpand, 'inline expansion must not navigate or send a message')
 expandBatch.click()
 assert.equal(inlineAll(batchArtifactHost, '.pocket-inline-transcript-row:not([hidden])').length, 3)
+await exportVisual('scene-group', batchArtifactHost)
 const inlineAppearanceState = { ...savedDraftState, state: { ...savedDraftState.state, activities: [inlineMessageActivity, observedInlineActivity, sentInlineActivity, batchInlineActivity] } }
 backendReceiver({ ...inlineAppearanceState, preferences: { ...firstState.preferences, inlineAppearance: 'phone' } })
 assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.appearance, 'phone')
@@ -2344,6 +2376,9 @@ assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-device').dataset.screen,
 assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-notification'), null)
 assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-bubble').textContent, 'Bring some food when you come over.')
 assert.ok(inlineOne(sentArtifactHost, '.pocket-phone-composer-send svg'), 'mock composer should render a proper SVG send affordance')
+await exportVisual('phone-group', batchArtifactHost)
+await exportVisual('phone-lock', exactArtifactHost)
+await exportVisual('phone-chat', sentArtifactHost)
 const callUiActivity = { ...inlineMessageActivity, id: 'call-ui', kind: 'call', presentation: { kind: 'received', senderName: 'Alice', recipientNames: ['Kai'], call: { callId: 'call-ui-id', status: 'ended', speakerphone: true, durationSeconds: 240 } } }
 const callUiAnchor = document.createElement('div'); callUiAnchor.dataset.pocketInlineAnchor = callUiActivity.id; messageBubble.prepend(callUiAnchor)
 backendReceiver({ type: 'lumiphone:activity', activity: callUiActivity })
@@ -2352,11 +2387,13 @@ assert.equal(inlineOne(callUiAnchor, '.pocket-inline-artifact'), null, 'call mus
 assert.equal(inlineOne(callUiAnchor, '.pocket-mock-composer'), null)
 assert.ok(inlineOne(callUiAnchor, '.pocket-phone-call-controls svg'))
 assert.match(inlineText(callUiAnchor), /Call ended.*Speakerphone.*4:00/)
+await exportVisual('phone-call', callUiAnchor)
 backendReceiver({ ...inlineAppearanceState, state: { ...inlineAppearanceState.state, activities: [...inlineAppearanceState.state.activities, callUiActivity] }, preferences: { ...firstState.preferences, inlineAppearance: 'cards' } })
 assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.appearance, 'cards')
 assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.pocketUi, 'true', 'scene cards must declare the Pocket styling boundary')
 assert.equal(inlineOne(batchArtifactHost, '.lp-message-surface'), null, 'inline bubbles must not carry shared handset surface hooks')
 assert.equal(inlineOne(batchArtifactHost, '.pocket-mock-composer'), null)
+await exportVisual('scene-message', exactArtifactHost)
 
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
 backendReceiver({ type: 'lumiphone:activity', activity })

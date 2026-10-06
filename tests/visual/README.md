@@ -1,0 +1,7 @@
+Visual regression fixtures come from the actual frontend contract harness and tracker renderer, using controlled state, a fixed story clock, blocked external requests and Chromium. No live chat data or connections are exported.
+
+Run `bun run build` first, then `bun run test:visual`. Set `POCKET_PLAYWRIGHT_ROOT` to an existing Playwright installation if it is not locally available; the runner also looks for the sibling LumiTest diagnostics installation. Chromium must already be installed by that environment.
+
+Baselines cover mobile and desktop home, Settings, device switcher, messaging, camera composition/review, tracker presentations, scene message/group cards, and full-phone lock/chat/group/call states. Hostile global selectors must leave isolated artifacts unchanged. A deliberate internal styling mutation must change the capture, proving the comparator is active.
+
+An intentional design change can refresh baselines with `bun run test:visual:update`. Inspect the affected images before committing. A normal run never changes expected images; failures write actual images to ignored `tmp/visual`. Browser version and platform are recorded to prevent silently comparing incompatible rendering environments. These checks supplement live Lumi smoke tests; they do not replace dock lifecycle, keyboard, handset-scale or mobile fullscreen checks.

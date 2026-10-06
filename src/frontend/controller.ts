@@ -44,6 +44,7 @@ import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from 
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { cropAvatarPhoto } from './components/avatar-crop.js'
+import { renderAppReviewControl } from './components/app-review-control.js'
 import { renderDevicePicker } from './components/device-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
@@ -2718,35 +2719,11 @@ class PocketController {
   }
 
   private appReviewControl(task: 'weather-week' | 'timeline-review', label: string, type: string): HTMLElement {
-    const panel = el('section', 'lp-app-review')
-    const scope = JSON.stringify([this.state!.chatId, this.state!.characterId])
-    const operation = [...this.operations.values()].reverse().find(entry => entry.task === task && this.appReviewScopes.get(entry.requestId) === scope)
-    const busy = operation && !['complete', 'error'].includes(operation.phase)
-    const action = button(busy ? 'Working…' : label, 'lp-button lp-button-quiet')
-    action.disabled = Boolean(busy) || !this.caps?.generation
-    action.dataset.operationIdle = label
-    if (busy) action.dataset.operationAction = operation.requestId
-    action.addEventListener('click', () => {
-      for (const [key, entry] of this.operations) if (entry.task === task) this.operations.delete(key)
-      const operationRequestId = this.send(type, {})
-      this.appReviewScopes.set(operationRequestId, scope)
-      if (this.appReviewScopes.size > 100) this.appReviewScopes.delete(this.appReviewScopes.keys().next().value!)
-      this.recordOperationProgress({ task, requestId: operationRequestId, phase: 'request', message: 'Starting…' })
-      this.render(false)
-    })
-    panel.append(action)
-    if (busy) {
-      const stop = button('Stop', 'lp-button lp-button-quiet'); stop.dataset.operationStop = operation.requestId
-      stop.addEventListener('click', () => { this.send('lumiphone:cancel_app_review', { operationRequestId: operation.requestId }); this.recordOperationProgress({ ...operation, phase: 'error', message: 'Stopped. Your saved data is unchanged.' }) })
-      panel.append(stop)
-    }
-    if (operation) {
-      const status = el('div', 'lp-operation-progress')
-      const message = el('span', '', operation.message); message.dataset.operationMessage = 'true'; status.append(message)
-      status.dataset.operationRequest = operation.requestId; status.dataset.phase = operation.phase; status.setAttribute('role', 'status')
-      panel.append(status)
-    }
-    return panel
+    return renderAppReviewControl({
+      chatId: this.state!.chatId, characterId: this.state!.characterId, canGenerate: Boolean(this.caps?.generation),
+      operations: this.operations, scopes: this.appReviewScopes,
+      send: (type, payload) => this.send(type, payload), progress: operation => this.recordOperationProgress(operation), render: () => this.render(false),
+    }, task, label, type)
   }
 
   private renderWeather(editing = false): HTMLDivElement {
