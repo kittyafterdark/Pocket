@@ -5540,6 +5540,21 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] [hidden] { display: none; }
+
+/* Between-turn connectors stay compact even when prose artifacts use Full Phone. */
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] { width:100%; max-width:none; margin:8px 0; }
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] { display:none; }
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] { width:100%; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector { display:grid; gap:0; border:1px solid var(--pocket-inline-border); border-radius:12px; background:var(--pocket-inline-surface,#201e25); overflow:hidden; box-shadow:0 3px 12px #0002; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading { display:block; width:100%; padding:9px 12px; text-align:left; color:var(--pocket-inline-text); font-size:11px; font-weight:650; border-bottom:1px solid var(--pocket-inline-border); cursor:pointer; opacity:.8; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row { display:grid; position:relative; grid-template-columns:minmax(0,1fr); gap:3px; width:100%; padding:10px 12px; text-align:left; cursor:pointer; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row { border-top:1px solid var(--pocket-inline-border); }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] { text-align:right; border-right:2px solid var(--pocket-inline-accent); }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender { font-size:10px; font-weight:650; opacity:.65; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy { font-size:13px; line-height:1.45; white-space:pre-wrap; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }
 `;
 
 // src/frontend/components/inline-styles.ts
@@ -5613,6 +5628,101 @@ function isolatedActivity(content) {
   }
   root.append(content);
   return island;
+}
+
+// src/frontend/components/activity-connectors.ts
+function refreshActivityConnectors(entries, open) {
+  const byHost = new Map(entries.map((entry) => [entry.host, entry]));
+  const visited = new Set;
+  for (const entry of entries) {
+    if (visited.has(entry.host))
+      continue;
+    const group = [entry];
+    const key = connectorKey(entry);
+    if (key) {
+      let previous = adjacent(entry.host, "previousSibling");
+      while (previous && byHost.has(previous) && connectorKey(byHost.get(previous)) === key) {
+        group.unshift(byHost.get(previous));
+        previous = adjacent(previous, "previousSibling");
+      }
+      let next = adjacent(entry.host, "nextSibling");
+      while (next && byHost.has(next) && connectorKey(byHost.get(next)) === key) {
+        group.push(byHost.get(next));
+        next = adjacent(next, "nextSibling");
+      }
+    }
+    const leader = group[0];
+    for (const item of group) {
+      visited.add(item.host);
+      item.host.setAttribute("data-pocket-connector", "true");
+    }
+    const cache = JSON.stringify(group.map((item) => [item.activity, item.options, item.owner]));
+    leader.host.removeAttribute("hidden");
+    if (leader.host.getAttribute("data-pocket-connector-render") !== cache) {
+      leader.host.replaceChildren(isolatedActivity(connector(group, open)));
+      leader.host.setAttribute("data-pocket-connector-render", cache);
+    }
+    for (const item of group.slice(1)) {
+      item.host.replaceChildren();
+      item.host.setAttribute("hidden", "");
+      item.host.removeAttribute("data-pocket-connector-render");
+    }
+  }
+}
+function adjacent(host, direction) {
+  let node = host[direction];
+  while (node && (node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim()))
+    node = node[direction];
+  return node?.nodeType === 1 ? node : null;
+}
+function connectorKey(entry) {
+  const { activity } = entry;
+  if (!entry.owner || activity.kind !== "message" || activity.route.app !== "messages")
+    return "";
+  const conversation = activity.route.conversationId || activity.source?.conversationId;
+  return conversation ? JSON.stringify([activity.scope.chatId, activity.scope.characterId, activity.source?.messageId, conversation, entry.owner]) : "";
+}
+function connector(group, open) {
+  const first = group[0];
+  const frame = document.createElement("div");
+  frame.className = "pocket-inline-frame";
+  frame.dataset.pocketUi = "true";
+  frame.dataset.appearance = "connector";
+  for (const [token, value] of [["accent", first.options.accent], ["text", first.options.textColor], ["surface", first.options.surfaceColor]]) {
+    if (value)
+      frame.style.setProperty(`--pocket-inline-${token}`, value);
+  }
+  const section = document.createElement("section");
+  section.className = "pocket-connector";
+  const heading = document.createElement("button");
+  heading.type = "button";
+  heading.className = "pocket-connector-heading";
+  heading.textContent = first.activity.presentation?.conversationTitle || first.activity.title || "Messages";
+  heading.setAttribute("aria-label", `Open ${heading.textContent} in Pocket`);
+  heading.addEventListener("click", () => open(group.at(-1).activity));
+  section.append(heading);
+  for (const { activity } of group) {
+    const messages = activity.presentation?.batchMessages || [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === "sent" ? "sent" : "received", text: activity.summary || "", messageId: "" }];
+    for (const message of messages) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "pocket-connector-row";
+      row.dataset.direction = message.direction;
+      row.dataset.pocketConnectorActivity = activity.id;
+      const sender = document.createElement("span");
+      sender.className = "pocket-connector-sender";
+      sender.textContent = activity.kind === "call" ? "Call" : message.senderName;
+      const body = document.createElement("span");
+      body.className = "pocket-connector-copy";
+      body.textContent = message.text;
+      row.append(sender, body);
+      row.setAttribute("aria-label", `Open ${message.senderName}'s ${activity.kind === "call" ? "call" : "message"} in Pocket`);
+      row.addEventListener("click", () => open(message.messageId && activity.route.app === "messages" ? { ...activity, route: { ...activity.route, messageId: message.messageId } } : activity));
+      section.append(row);
+    }
+  }
+  frame.append(section);
+  return frame;
 }
 
 // src/frontend/activity.ts
@@ -5920,7 +6030,12 @@ function activityReceipt(ctx, activity, openRoute, options = {}) {
   wrapper.classList.add("pocket-receipt-host");
   wrapper.setAttribute("data-pocket-activity-id", activity.id);
   const communication = activity.kind === "message" || activity.kind === "call";
-  return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: communication, includeReceipt: !communication });
+  if (communication) {
+    wrapper.setAttribute("data-pocket-host", "true");
+    refreshActivityConnectors([{ host: wrapper, activity, options, owner: "" }], (entry) => openRoute(entry.route));
+    return wrapper;
+  }
+  return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: false, includeReceipt: true });
 }
 
 // src/frontend/components/avatar-crop.ts
@@ -7654,11 +7769,7 @@ class PocketController {
     if (options.resize)
       this.resizeExpanded();
     this.mountInlineArtifacts();
-    for (const [id, host] of this.injectedActivities) {
-      const activity = this.knownActivities.get(id);
-      if (activity)
-        renderActivityHost(host, activity, () => this.openActivity(activity), { ...this.inlineOptions(activity), includeArtifact: activity.kind === "message" || activity.kind === "call", includeReceipt: activity.kind !== "message" && activity.kind !== "call" });
-    }
+    this.refreshActivityConnectors();
     if (options.persist === false)
       return;
     window.clearTimeout(this.settingsSaveTimer);
@@ -7971,6 +8082,16 @@ class PocketController {
       }
       this.pendingActivities.delete(activity.id);
     }
+    this.refreshActivityConnectors();
+  }
+  refreshActivityConnectors() {
+    if (!this.state)
+      return;
+    const entries = [...this.injectedActivities].flatMap(([id, host]) => {
+      const activity = this.inlineActivity(id);
+      return activity && (activity.kind === "message" || activity.kind === "call") ? [{ host, activity, options: this.inlineOptions(activity), owner: activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId()) || "" }] : [];
+    });
+    refreshActivityConnectors(entries, (activity) => this.openActivity(activity));
   }
   pruneInactiveActivitySurfaces() {
     for (const [activityId, injected] of this.injectedActivities) {
@@ -7980,6 +8101,7 @@ class PocketController {
       this.injectedActivities.delete(activityId);
       this.pendingActivities.delete(activityId);
     }
+    this.refreshActivityConnectors();
     for (const activityId of [...this.pendingActivities.keys()]) {
       if (!this.inlineActivity(activityId))
         this.pendingActivities.delete(activityId);
@@ -8019,7 +8141,11 @@ class PocketController {
       return;
     if (this.tryRenderInlineArtifact(activity))
       return;
-    if (this.injectedActivities.has(activity.id) || !activity.source?.messageId)
+    if (this.injectedActivities.has(activity.id)) {
+      this.refreshActivityConnectors();
+      return;
+    }
+    if (!activity.source?.messageId)
       return;
     this.pendingActivities.set(activity.id, activity);
     this.sweepActivityReceipts();
@@ -8037,6 +8163,7 @@ class PocketController {
       this.pendingActivities.delete(activityId);
       this.injectedActivities.set(activityId, injected);
     }
+    this.refreshActivityConnectors();
     if (this.pendingActivities.size && !this.receiptSweepTimer) {
       this.receiptSweepTimer = window.setInterval(() => {
         if (!this.pendingActivities.size) {

@@ -25,8 +25,10 @@ const contracts = spawnSync(process.execPath, ['tests/contracts.mjs'], { cwd: ro
 if (contracts.status !== 0) throw contracts.error || new Error(contracts.stderr + contracts.stdout)
 const sampler = spawnSync('bun', ['scripts/preview-trackers.ts', join(fixtures, 'trackers.html')], { cwd: root, encoding: 'utf8' })
 if (sampler.status !== 0) throw sampler.error || new Error(sampler.stderr + sampler.stdout)
+const connectors = spawnSync('bun', ['scripts/preview-connectors.ts', join(fixtures, 'connectors.html')], { cwd: root, encoding: 'utf8' })
+if (connectors.status !== 0) throw connectors.error || new Error(connectors.stderr + connectors.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 13, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 14, 'A visual fixture failed to export; do not compare stale captures.')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
   if (!files.includes(name)) { response.writeHead(404).end(); return }

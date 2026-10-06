@@ -44,6 +44,7 @@ import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from 
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { cropAvatarPhoto } from './components/avatar-crop.js'
+import { refreshActivityConnectors } from './components/activity-connectors.js'
 import { renderAppReviewControl } from './components/app-review-control.js'
 import { renderDevicePicker } from './components/device-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
@@ -1431,10 +1432,7 @@ class PocketController {
     this.applyAppearance()
     if (options.resize) this.resizeExpanded()
     this.mountInlineArtifacts()
-    for (const [id, host] of this.injectedActivities) {
-      const activity = this.knownActivities.get(id)
-      if (activity) renderActivityHost(host, activity, () => this.openActivity(activity), { ...this.inlineOptions(activity), includeArtifact: activity.kind === 'message' || activity.kind === 'call', includeReceipt: activity.kind !== 'message' && activity.kind !== 'call' })
-    }
+    this.refreshActivityConnectors()
     if (options.persist === false) return
     window.clearTimeout(this.settingsSaveTimer)
     this.settingsSaveTimer = window.setTimeout(() => {
@@ -1736,6 +1734,16 @@ class PocketController {
       }
       this.pendingActivities.delete(activity.id)
     }
+    this.refreshActivityConnectors()
+  }
+
+  private refreshActivityConnectors(): void {
+    if (!this.state) return
+    const entries = [...this.injectedActivities].flatMap(([id, host]) => {
+      const activity = this.inlineActivity(id)
+      return activity && (activity.kind === 'message' || activity.kind === 'call') ? [{ host, activity, options: this.inlineOptions(activity), owner: activityDeviceOwner(this.state!, activity, this.currentDeviceOwnerActorId()) || '' }] : []
+    })
+    refreshActivityConnectors(entries, activity => this.openActivity(activity))
   }
 
   private pruneInactiveActivitySurfaces(): void {
@@ -1745,6 +1753,7 @@ class PocketController {
       this.injectedActivities.delete(activityId)
       this.pendingActivities.delete(activityId)
     }
+    this.refreshActivityConnectors()
     for (const activityId of [...this.pendingActivities.keys()]) {
       if (!this.inlineActivity(activityId)) this.pendingActivities.delete(activityId)
     }
@@ -1780,7 +1789,8 @@ class PocketController {
     const active = this.activeContext()
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) return
     if (this.tryRenderInlineArtifact(activity)) return
-    if (this.injectedActivities.has(activity.id) || !activity.source?.messageId) return
+    if (this.injectedActivities.has(activity.id)) { this.refreshActivityConnectors(); return }
+    if (!activity.source?.messageId) return
     this.pendingActivities.set(activity.id, activity)
     this.sweepActivityReceipts()
   }
@@ -1797,6 +1807,7 @@ class PocketController {
       this.pendingActivities.delete(activityId)
       this.injectedActivities.set(activityId, injected)
     }
+    this.refreshActivityConnectors()
     if (this.pendingActivities.size && !this.receiptSweepTimer) {
       this.receiptSweepTimer = window.setInterval(() => {
         if (!this.pendingActivities.size) {

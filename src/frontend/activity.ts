@@ -3,6 +3,7 @@ import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { callSummary } from '../domain/phone-events.js'
 import { buildPhoneScreen, callSymbol } from './phone-screen.js'
 import { isolatedActivity } from './components/activity-shadow.js'
+import { refreshActivityConnectors } from './components/activity-connectors.js'
 
 export interface ActivityRenderOptions {
   includeReceipt?: boolean
@@ -307,5 +308,10 @@ export function activityReceipt(
   wrapper.classList.add('pocket-receipt-host')
   wrapper.setAttribute('data-pocket-activity-id', activity.id)
   const communication = activity.kind === 'message' || activity.kind === 'call'
-  return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: communication, includeReceipt: !communication })
+  if (communication) {
+    wrapper.setAttribute('data-pocket-host', 'true')
+    refreshActivityConnectors([{ host: wrapper, activity, options, owner: '' }], entry => openRoute(entry.route))
+    return wrapper
+  }
+  return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: false, includeReceipt: true })
 }

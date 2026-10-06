@@ -2267,7 +2267,7 @@ assert.equal(streamingArtifactHost.childElementCount, 0, 'discarded provisional 
 assert.equal(streamingArtifactHost.hidden, true, 'discarded optimistic preview anchor must be hidden')
 
 backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
-assert.equal(inlineAll(messageBubble, '.pocket-inline-artifact[data-kind="received"]').length, 1, 'fallback communication uses the same notification renderer')
+assert.equal(inlineAll(messageBubble, '.pocket-connector-row[data-direction="received"]').length, 1, 'between-turn fallback uses a compact connector instead of a device scene')
 assert.equal(inlineAll(messageBubble, '[data-pocket-activity-id="inline-message-activity"] .pocket-receipt').length, 0, 'communication fallback must not add a competing provenance card')
 const exactArtifactHost = document.createElement('div')
 exactArtifactHost.className = 'pocket-inline-anchor'
