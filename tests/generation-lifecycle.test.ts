@@ -81,3 +81,29 @@ test('fullscreen converts viewport dimensions and keyboard offsets into host lay
     }
   } finally { (globalThis as any).window = previous }
 })
+
+test('arrival idle resets on activity, rejects stale asynchronous handoffs and isolates chats', async () => {
+  const { ArrivalIdle } = await import('../src/backend/arrival-idle.js')
+  let next = 0
+  const callbacks = new Map<number, () => void>()
+  const idle = new ArrivalIdle({ set: ((callback: () => void) => { callbacks.set(++next, callback); return next }) as typeof setTimeout, clear: ((timer: number) => { callbacks.delete(timer) }) as typeof clearTimeout })
+  const events: string[] = []
+  idle.schedule('user:chat:thread', async () => { events.push('old') })
+  idle.schedule('user:chat:thread', async () => { events.push('new') })
+  expect(callbacks.size).toBe(1)
+  const pending = callbacks.get(next)!
+  idle.cancel('user:chat:thread')
+  pending(); await Promise.resolve(); await Promise.resolve()
+  expect(events).toEqual([]) // A cancelled callback already queued by the event loop is rejected.
+  let release!: () => void
+  idle.schedule('user:chat:thread', async current => { await new Promise<void>(resolve => { release = resolve }); if (current()) events.push('stale') })
+  callbacks.get(next)!()
+  idle.cancel('user:chat:thread'); release(); await Promise.resolve(); await Promise.resolve()
+  expect(events).not.toContain('stale')
+  idle.schedule('user:chat:other', async () => { events.push('cancelled') })
+  idle.schedule('other:chat:thread', async current => { if (current()) events.push('other') })
+  idle.cancelPrefix('user:')
+  callbacks.get(next)!(); await Promise.resolve(); await Promise.resolve()
+  expect(events).toContain('other')
+  expect(events).not.toContain('cancelled')
+})

@@ -34,3 +34,30 @@ test('camera defaults bind image pickers, persist together and clear without los
   expect(sends.at(-1)).toBe('lumiphone:open_native_image_settings')
   dom.window.close()
 })
+
+
+test('device switcher caps recent phones, searches overflow and keeps latest-interaction routing', async () => {
+  const { renderDevicePicker } = await import('../src/frontend/components/device-picker.js')
+  const { latestDeviceInteraction, latestDeviceInteractions } = await import('../src/domain/device.js')
+  const { normalizePocketContact } = await import('../src/domain/contacts.js')
+  const dom = new JSDOM(); const previous = globalThis.document
+  try {
+    globalThis.document = dom.window.document
+    const now = '2026-10-05T12:00:00Z'
+    const contacts = Array.from({length: 12}, (_, i) => normalizePocketContact({ id: 'actor'+i, name: 'Actor '+i, source: { kind: 'npc', origin: 'manual' } }, { now, makeId: () => 'actor'+i, characterId: '', characterName: '' })!)
+    const state = { chatId: 'mock', characterId: 'mock', pocketPersonaActorId: 'owner', pocketPersona: { displayName: 'Owner' }, contacts, discoveredActors: [], notifications: [], conversations: contacts.map((contact, i) => ({ id: 'thread'+i, kind: 'direct', includesPocketPersona: true, participantActorIds: [contact.id], unreadCount: 0, messages: [{ id: 'message'+i, sender: 'contact', text: 'Preview '+i, createdAt: new Date(Date.parse(now)+i*1000).toISOString() }] })) } as any
+    const index = latestDeviceInteractions(state)
+    for (const owner of ['owner', ...contacts.map(contact => contact.id)]) expect(index.get(owner)).toEqual(latestDeviceInteraction(state, owner))
+    const routes: any[] = []
+    const picker = renderDevicePicker(state, 'owner', id => id, (id, route) => routes.push({id,route}))
+    expect(picker.querySelectorAll('[data-section="recent"] button').length).toBe(6)
+    expect(picker.querySelectorAll('[data-section="others"] .lumiphone-device-preview').length).toBe(0)
+    const search = picker.querySelector<HTMLInputElement>('input')!
+    search.value = 'Actor 0'; search.dispatchEvent(new dom.window.Event('input'))
+    const visible = picker.querySelectorAll<HTMLButtonElement>('.lumiphone-device-row:not([hidden])')
+    expect(visible.length).toBe(1); visible[0].click()
+    expect(routes[0]).toMatchObject({id: 'actor0',route: {conversationId: 'thread0',messageId: 'message0'}})
+    search.value = ''; search.dispatchEvent(new dom.window.Event('input'))
+    expect(picker.querySelectorAll('.lumiphone-device-row:not([hidden])').length).toBe(13)
+  } finally { globalThis.document = previous; dom.window.close() }
+})

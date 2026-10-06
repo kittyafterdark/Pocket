@@ -1,5 +1,8 @@
 import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
+import type { IdentityProfile } from '../../domain/identity-profiles.js'
+import { identityProfileControls } from '../components/identity-profiles.js'
+import { builtinWallpaperUrl } from '../../domain/wallpapers.js'
 import { normalizeJevSettings } from '../../domain/jev.js'
 import { disclosure, fieldBlock, outgoingSurface } from '../components/ui.js'
 import { button, el } from '../shared.js'
@@ -11,6 +14,7 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 type ActivePersona = { id: string; name: string } | null
 
 export interface SettingsViewHost {
+  identityProfiles?: IdentityProfile[]
   draft: DevicePreferences
   state: PhoneState
   section: string
@@ -145,9 +149,13 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   inline.addEventListener('change', () => commit(next => { next.inlineAppearance = inline.value === 'phone' ? 'phone' : 'cards' }))
   content.append(fieldBlock('Phone events in prose', inline), el('p', 'lp-copy', 'Choose compact scene cards or a miniature phone. This does not change who can write your character.'))
   const themeRow = el('div', 'lp-theme-grid')
-  for (const [name, swatch] of [['midnight', '#201a37'], ['porcelain', '#eeeae6'], ['rose', '#7a294e'], ['forest', '#1d5a41'], ['custom', settings.colors.accent]] as const) {
-    const dot = button(name[0].toUpperCase() + name.slice(1), 'lp-theme-preview'); dot.title = name; dot.style.setProperty('--theme-color', swatch); dot.setAttribute('aria-pressed', String(settings.theme === name))
-    dot.addEventListener('click', () => commit((next) => { next.theme = name; if (name !== 'custom') next.colors = themePalette(name) }))
+  for (const [name, wallpaper] of [['midnight', 'moonrise'], ['porcelain', 'coastal'], ['rose', 'rose-waves'], ['forest', 'forest'], ['custom', '']] as const) {
+    const dot = button('', 'lp-theme-preview'); dot.title = name; dot.setAttribute('aria-label', name === 'custom' ? 'Custom palette' : 'Apply palette ' + (themeRow.childElementCount + 1) + ' with wallpaper')
+    dot.style.setProperty('--theme-color', name === 'custom' ? settings.colors.accent : themePalette(name).accent)
+    const miniature = el('span', 'lp-theme-miniature'); miniature.style.backgroundImage = wallpaper ? 'url(' + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ')' : ''
+    miniature.append(el('span', '', '9:41'), el('span', 'lp-theme-miniature-dock', '● ● ●')); dot.append(miniature)
+    dot.setAttribute('aria-pressed', String(settings.theme === name))
+    dot.addEventListener('click', () => commit((next) => { next.theme = name; if (name !== 'custom') { next.colors = themePalette(name); next.homeWallpaper = { ...next.homeWallpaper, source: { kind: 'builtin', wallpaperId: wallpaper }, fit: 'cover', focalX: .5, focalY: .5 } } }))
     themeRow.appendChild(dot)
   }
   themes.appendChild(themeRow)
@@ -181,13 +189,15 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   custom.append(css, apply)
   const preview = el('div', 'lp-theme-live')
   preview.style.background = settings.colors.background; preview.style.color = settings.colors.text
-  preview.append(el('span', 'lp-copy', 'Pocket · Preview'), el('strong', '', 'A little more you.'))
+  preview.append(el('strong', 'lp-theme-preview-header', 'Alex'), el('span', 'lp-copy', 'Messages · Online'))
+  const incoming = el('span', 'lp-theme-preview-incoming', 'Coffee after work?'); preview.append(incoming)
   const sample = el('span', 'lp-message-surface', 'See you soon.'); sample.style.background = outgoingSurface(settings.colors.accent); sample.style.color = '#fff'
   preview.append(sample)
   const updatePreview = () => {
     preview.style.background = host.draft.colors.background
     preview.style.color = host.draft.colors.text
     sample.style.background = outgoingSurface(host.draft.colors.accent)
+    incoming.style.background = host.draft.colors.surface
     paletteControls.sync(host.draft.colors)
     for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.title === host.draft.theme))
     themeRow.querySelector<HTMLButtonElement>('button[title="custom"]')?.style.setProperty('--theme-color', host.draft.colors.accent)
@@ -235,6 +245,10 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const personaOperation = [...host.operations.values()].find((entry) => entry.task === 'persona-profile' && entry.phase !== 'complete' && entry.phase !== 'error')
   const describe = button(personaOperation ? 'Enriching…' : 'Enrich with LLM', 'lp-button lp-button-quiet')
   describe.disabled = !host.capabilities?.generation || Boolean(personaOperation)
+  const stop = button('Stop enrichment', 'lp-button lp-button-danger')
+  stop.hidden = !personaOperation
+  if (personaOperation) { stop.dataset.operationStop = personaOperation.requestId; describe.dataset.operationAction = personaOperation.requestId }
+  stop.addEventListener('click', () => host.send('lumiphone:cancel_persona_generation', { operationRequestId: stop.dataset.operationStop }))
   let personaProgress: HTMLDivElement | null = null
   const mountPersonaProgress = (requestId: string, message = 'Enriching phone profile…') => {
     personaProgress?.remove()
@@ -250,6 +264,8 @@ function persona(host: SettingsViewHost): HTMLDivElement {
     describe.disabled = true
     describe.textContent = 'Enriching…'
     const requestId = host.send('lumiphone:generate_pocket_persona')
+    describe.dataset.operationAction = requestId
+    stop.dataset.operationStop = requestId; stop.hidden = false; actions.append(stop)
     mountPersonaProgress(requestId)
   })
   const save = button('Save profile', 'lp-button'); save.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', {
@@ -268,7 +284,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
       canAppear: canAppear.querySelector('button')?.getAttribute('aria-pressed') === 'true',
     },
   }))
-  actions.append(describe, save); identity.append(source, fields, actions)
+  actions.append(describe, save, stop); identity.append(source, fields, actions)
   if (personaOperation) mountPersonaProgress(personaOperation.requestId, personaOperation.message)
   if (host.personaPreview) {
     const preview = el('section', 'lp-card lp-settings-section'); preview.dataset.pocketPersonaPreview = 'true'
@@ -284,6 +300,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
     const use = button('Use profile', 'lp-button'); use.addEventListener('click', () => host.send('lumiphone:save_pocket_persona', { persona: host.personaPreview })); preview.appendChild(use); identity.appendChild(preview)
   }
   content.appendChild(identity)
+  content.append(identityProfileControls(host.identityProfiles || [], 'persona', undefined, host.send, () => ({ name: name.value, pronouns: pronouns.value, role: role.value, identityBrief: profile.identityBrief, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })))
   if (!host.activePersona) return page
   const active = host.activePersona
   const current = host.draft.personaAppearance[active.id] || {
@@ -315,7 +332,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
 function messages(host: SettingsViewHost): HTMLDivElement {
   const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); host.update(next) }
   const { page, content } = host.page('Messages', 'Generation and context bridge')
-  const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })))
+  const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })), el('p', 'lp-copy', 'When someone is on the way, 20 seconds without typing or a new phone message continues the main roleplay. Continue to arrival starts it immediately; idle time does not mark them Here.'))
   const cadence = el('select', 'lp-select'); for (const [value, label] of [['instant', 'Instant'], ['quick', 'Quick'], ['natural', 'Natural'], ['relaxed', 'Relaxed']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.replyCadence === value; cadence.appendChild(option) }; cadence.addEventListener('change', () => commit((next) => { next.replyCadence = cadence.value as DevicePreferences['replyCadence'] })); replies.append(el('div', 'lp-label', 'Outgoing message grace'), cadence, el('p', 'lp-copy', 'Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision.'))
   const ambient = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.ambientMessaging === value; ambient.appendChild(option) }; ambient.addEventListener('change', () => commit((next) => { next.ambientMessaging = ambient.value as DevicePreferences['ambientMessaging'] })); replies.append(el('div', 'lp-label', 'Ambient messages'), ambient)
   replies.append(toggle('Show post-turn sync status', settings.showReconciliationStatus, (value) => commit((next) => { next.showReconciliationStatus = value }), 'Cosmetic only. Pocket still reconciles world state after eligible roleplay turns when this is hidden.'))

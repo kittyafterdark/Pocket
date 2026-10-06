@@ -754,24 +754,26 @@ function conversationDeviceActorIds(state, conversation) {
 function conversationVisibleOnDevice(state, conversation, deviceOwnerActorId) {
   return conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state));
 }
-function latestDeviceInteraction(state, owner) {
-  let latest = null;
-  let latestTime = -Infinity;
+function latestDeviceInteractions(state) {
+  const index = new Map;
+  const rank = (message) => Number.isFinite(Date.parse(message.createdAt)) ? Date.parse(message.createdAt) : -Infinity;
   for (const conversation of state.conversations) {
-    if (!conversationVisibleOnDevice(state, conversation, owner))
-      continue;
+    let latest;
     for (const message of conversation.messages) {
       if (message.candidateCommitState === "provisional" || message.sender === "system" && !message.call)
         continue;
-      const time = Date.parse(message.createdAt);
-      const rank = Number.isFinite(time) ? time : -Infinity;
-      if (!latest || rank >= latestTime) {
-        latest = { conversation, message };
-        latestTime = rank;
-      }
+      if (!latest || rank(message) >= rank(latest))
+        latest = message;
+    }
+    if (!latest)
+      continue;
+    for (const owner of conversationDeviceActorIds(state, conversation)) {
+      const prior = index.get(owner);
+      if (!prior || rank(latest) >= rank(prior.message))
+        index.set(owner, { conversation, message: latest });
     }
   }
-  return latest;
+  return index;
 }
 function activityDeviceOwner(state, activity, currentOwner) {
   if (activity.scope.chatId !== state.chatId || activity.scope.characterId !== state.characterId)
@@ -937,6 +939,54 @@ function inputValue(input) {
 }
 function requestId(prefix = "req") {
   return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
+}
+
+// src/frontend/components/identity-profiles.ts
+function identityProfileControls(profiles, kind, contactId, send, readProfile) {
+  const panel = el("section", "lp-card lp-settings-section lp-identity-library");
+  panel.dataset.profileKind = kind;
+  panel.append(el("strong", "", "Reusable phone profiles"), el("p", "lp-copy", "Save stable identity and texting style for other chats. Scene state and phone history stay here."));
+  const options = profiles.filter((entry) => entry.kind === kind);
+  const select = el("select", "lp-select");
+  select.setAttribute("aria-label", `Saved ${kind} profile`);
+  select.append(new Option(options.length ? "Choose a saved profile" : "No saved profiles yet", ""));
+  for (const entry of options)
+    select.append(new Option(entry.name, entry.id));
+  const use = button("Use profile", "lp-button lp-button-quiet");
+  use.disabled = true;
+  select.addEventListener("change", () => {
+    use.disabled = !select.value;
+  });
+  use.addEventListener("click", () => send("lumiphone:identity_profile_apply", { profileId: select.value, kind, contactId }));
+  const save = button("Save current profile", "lp-button");
+  save.dataset.identitySave = "true";
+  save.addEventListener("click", () => {
+    const requestId = send("lumiphone:identity_profile_save", { kind, contactId, profile: readProfile?.() });
+    panel.dataset.identityRequest = String(requestId || "");
+    save.textContent = "Saving…";
+    save.disabled = true;
+  });
+  const actions = el("div", "lp-row");
+  actions.append(save, use);
+  panel.append(select, actions);
+  return panel;
+}
+function refreshIdentityProfileControls(root, profiles, failed = false) {
+  for (const panel of root.querySelectorAll(".lp-identity-library")) {
+    const select = panel.querySelector("select");
+    const selected = select.value;
+    const entries = profiles.filter((entry) => entry.kind === panel.dataset.profileKind);
+    select.replaceChildren(new Option(entries.length ? "Choose a saved profile" : "No saved profiles yet", ""));
+    for (const entry of entries)
+      select.append(new Option(entry.name, entry.id));
+    select.value = selected;
+    const save = panel.querySelector("[data-identity-save]");
+    if (save.disabled) {
+      save.disabled = false;
+      save.textContent = failed ? "Retry saving profile" : "Saved · save again";
+    }
+    delete panel.dataset.identityRequest;
+  }
 }
 
 // src/frontend/components/ui.ts
@@ -1305,15 +1355,22 @@ function appearance(host) {
   }));
   content.append(fieldBlock("Phone events in prose", inline), el("p", "lp-copy", "Choose compact scene cards or a miniature phone. This does not change who can write your character."));
   const themeRow = el("div", "lp-theme-grid");
-  for (const [name, swatch] of [["midnight", "#201a37"], ["porcelain", "#eeeae6"], ["rose", "#7a294e"], ["forest", "#1d5a41"], ["custom", settings.colors.accent]]) {
-    const dot = button(name[0].toUpperCase() + name.slice(1), "lp-theme-preview");
+  for (const [name, wallpaper] of [["midnight", "moonrise"], ["porcelain", "coastal"], ["rose", "rose-waves"], ["forest", "forest"], ["custom", ""]]) {
+    const dot = button("", "lp-theme-preview");
     dot.title = name;
-    dot.style.setProperty("--theme-color", swatch);
+    dot.setAttribute("aria-label", name === "custom" ? "Custom palette" : "Apply palette " + (themeRow.childElementCount + 1) + " with wallpaper");
+    dot.style.setProperty("--theme-color", name === "custom" ? settings.colors.accent : themePalette(name).accent);
+    const miniature = el("span", "lp-theme-miniature");
+    miniature.style.backgroundImage = wallpaper ? "url(" + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ")" : "";
+    miniature.append(el("span", "", "9:41"), el("span", "lp-theme-miniature-dock", "● ● ●"));
+    dot.append(miniature);
     dot.setAttribute("aria-pressed", String(settings.theme === name));
     dot.addEventListener("click", () => commit((next) => {
       next.theme = name;
-      if (name !== "custom")
+      if (name !== "custom") {
         next.colors = themePalette(name);
+        next.homeWallpaper = { ...next.homeWallpaper, source: { kind: "builtin", wallpaperId: wallpaper }, fit: "cover", focalX: 0.5, focalY: 0.5 };
+      }
     }));
     themeRow.appendChild(dot);
   }
@@ -1383,7 +1440,9 @@ function appearance(host) {
   const preview = el("div", "lp-theme-live");
   preview.style.background = settings.colors.background;
   preview.style.color = settings.colors.text;
-  preview.append(el("span", "lp-copy", "Pocket · Preview"), el("strong", "", "A little more you."));
+  preview.append(el("strong", "lp-theme-preview-header", "Alex"), el("span", "lp-copy", "Messages · Online"));
+  const incoming = el("span", "lp-theme-preview-incoming", "Coffee after work?");
+  preview.append(incoming);
   const sample = el("span", "lp-message-surface", "See you soon.");
   sample.style.background = outgoingSurface(settings.colors.accent);
   sample.style.color = "#fff";
@@ -1392,6 +1451,7 @@ function appearance(host) {
     preview.style.background = host.draft.colors.background;
     preview.style.color = host.draft.colors.text;
     sample.style.background = outgoingSurface(host.draft.colors.accent);
+    incoming.style.background = host.draft.colors.surface;
     paletteControls.sync(host.draft.colors);
     for (const choice of themeRow.querySelectorAll("button"))
       choice.setAttribute("aria-pressed", String(choice.title === host.draft.theme));
@@ -1456,6 +1516,13 @@ function persona(host) {
   const personaOperation = [...host.operations.values()].find((entry) => entry.task === "persona-profile" && entry.phase !== "complete" && entry.phase !== "error");
   const describe = button(personaOperation ? "Enriching…" : "Enrich with LLM", "lp-button lp-button-quiet");
   describe.disabled = !host.capabilities?.generation || Boolean(personaOperation);
+  const stop = button("Stop enrichment", "lp-button lp-button-danger");
+  stop.hidden = !personaOperation;
+  if (personaOperation) {
+    stop.dataset.operationStop = personaOperation.requestId;
+    describe.dataset.operationAction = personaOperation.requestId;
+  }
+  stop.addEventListener("click", () => host.send("lumiphone:cancel_persona_generation", { operationRequestId: stop.dataset.operationStop }));
   let personaProgress = null;
   const mountPersonaProgress = (requestId, message = "Enriching phone profile…") => {
     personaProgress?.remove();
@@ -1472,6 +1539,10 @@ function persona(host) {
     describe.disabled = true;
     describe.textContent = "Enriching…";
     const requestId = host.send("lumiphone:generate_pocket_persona");
+    describe.dataset.operationAction = requestId;
+    stop.dataset.operationStop = requestId;
+    stop.hidden = false;
+    actions.append(stop);
     mountPersonaProgress(requestId);
   });
   const save = button("Save profile", "lp-button");
@@ -1491,7 +1562,7 @@ function persona(host) {
       canAppear: canAppear.querySelector("button")?.getAttribute("aria-pressed") === "true"
     }
   }));
-  actions.append(describe, save);
+  actions.append(describe, save, stop);
   identity.append(source, fields, actions);
   if (personaOperation)
     mountPersonaProgress(personaOperation.requestId, personaOperation.message);
@@ -1506,6 +1577,7 @@ function persona(host) {
     identity.appendChild(preview);
   }
   content.appendChild(identity);
+  content.append(identityProfileControls(host.identityProfiles || [], "persona", undefined, host.send, () => ({ name: name.value, pronouns: pronouns.value, role: role.value, identityBrief: profile.identityBrief, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })));
   if (!host.activePersona)
     return page;
   const active = host.activePersona;
@@ -1582,7 +1654,7 @@ function messages(host) {
   const replies = el("section", "lp-card lp-settings-section");
   replies.append(el("div", "lp-eyebrow", "Reply behavior"), toggle("Decide on a reply after user DMs", settings.autoReplyAfterSend, (value) => commit((next) => {
     next.autoReplyAfterSend = value;
-  })));
+  })), el("p", "lp-copy", "When someone is on the way, 20 seconds without typing or a new phone message continues the main roleplay. Continue to arrival starts it immediately; idle time does not mark them Here."));
   const cadence = el("select", "lp-select");
   for (const [value, label] of [["instant", "Instant"], ["quick", "Quick"], ["natural", "Natural"], ["relaxed", "Relaxed"]]) {
     const option = el("option", "", label);
@@ -2872,7 +2944,7 @@ function handoffActivity(host, conversation, relay) {
   const copy = el("div", "lp-grow");
   const arrival = relay.kind === "arrival";
   const title = arrival ? completed ? "Continued toward arrival" : failed ? "Couldn’t continue toward arrival" : generating ? "Continuing toward arrival…" : accepted ? "Host accepted the arrival bridge" : "Preparing arrival bridge…" : completed ? "Continued in roleplay" : failed ? "Couldn’t continue in roleplay" : generating ? "Continuing in roleplay…" : accepted ? "Host accepted the handoff" : "Preparing roleplay handoff…";
-  const subtitle = arrival ? completed ? `${actor} is still marked on the way until the RP establishes arrival.` : failed ? continuation.error || relay.injectionError || "The arrival bridge is still pending." : generating ? "Pocket delivered the phone exchange without claiming the actor is already present." : accepted ? "Waiting for arrival-relay injection." : "Returning narrative control to the main RP while keeping the actor off-scene." : completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || "The handoff is still pending." : generating ? "Pocket delivered the conversation context to the scene." : accepted ? "Waiting for relay injection." : "Gathering the latest phone exchange.";
+  const subtitle = arrival ? completed ? `${actor} is still marked on the way until the RP establishes arrival.` : failed ? continuation.error || relay.injectionError || "The arrival bridge is still pending." : generating ? `${actor} is moving toward you; you can continue chatting.` : accepted ? "Waiting for arrival-relay injection." : `${actor} is moving toward you; you can continue chatting. After a quiet moment, Pocket continues the roleplay.` : completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || "The handoff is still pending." : generating ? "Pocket delivered the conversation context to the scene." : accepted ? "Waiting for relay injection." : "Gathering the latest phone exchange.";
   copy.append(el("strong", "", title), el("span", "lp-copy", subtitle));
   primary.append(mark, copy);
   if (completed) {
@@ -3121,7 +3193,7 @@ function renderMessagesView(host) {
     }
     bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
     if (message.generation || message.origin || !host.readOnlyDevice) {
-      const tools = el("span", "lp-bubble-tools");
+      const tools = el("div", "lp-bubble-tools");
       if (message.generation && !host.readOnlyDevice) {
         const retry = button("↻", "lp-bubble-action");
         retry.textContent = "Retry message";
@@ -3146,6 +3218,7 @@ function renderMessagesView(host) {
         remove.type = "button";
         remove.title = "Delete message";
         remove.setAttribute("aria-label", "Delete message");
+        remove.dataset.destructive = "true";
         remove.addEventListener("click", () => host.send("lumiphone:delete", { kind: "message", conversationId: conversation.id, id: message.id }));
         tools.appendChild(remove);
       }
@@ -3721,6 +3794,8 @@ function contactEditor(host, contact, draft = null) {
     content.appendChild(photoCard);
   content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
+    if (contact.source.kind === "character")
+      content.append(identityProfileControls(host.identityProfiles || [], "character", contact.id, host.send, () => ({ name: name.value, role: role.value, identityBrief: description.value, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })));
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button("Use source photo", "lp-button lp-button-quiet");
       sourcePhoto.addEventListener("click", () => host.send("lumiphone:set_contact_photo", { contactId: contact.id, useSource: true }));
@@ -4081,7 +4156,8 @@ function renderContactsView(host) {
     for (const entry of contacts) {
       const row = button("", "lp-card lp-contact-row");
       const identity = identityBlock({ name: entry.name, meta: entry.role, className: "lp-grow" });
-      row.append(avatar(entry), identity, el("span", entry.presence.inScene ? "lp-presence" : "lp-presence lp-presence-away"));
+      const status = el("span", entry.presence.inScene ? "lp-contact-presence-label" : "lp-contact-presence-label lp-contact-presence-away", entry.presence.inScene ? "Here" : "Away");
+      row.append(avatar(entry), identity, status);
       row.addEventListener("click", () => host.select(entry.id, "detail"));
       list.appendChild(row);
     }
@@ -5607,6 +5683,23 @@ var PHONE_STYLES = `
   .lp-setup .lp-operation-progress { display:grid; gap:7px; padding:12px; border:1px solid var(--lp-border); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); font-size:12px; }
   .lp-setup .lp-operation-progress[data-phase="error"] { border-color:var(--lumiverse-danger,#c65c65); }
   .lp-setup .lp-setup-connection-select [role="listbox"] { position:relative; top:auto; left:auto; right:auto; margin-top:6px; }
+  .lumiphone-device-search { width:100%; min-height:38px; padding:8px 11px; margin:0 0 14px; border:1px solid var(--pocket-border,var(--lumiverse-border,#ffffff14)); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); color:var(--lumiverse-text,#eee); font:inherit; }
+  .lumiphone-device-row[hidden], .lumiphone-device-section[hidden] { display:none; }
+  .lumiphone-shell .lp-sheet .lp-bubble-tools { display:grid; grid-template-columns:1fr; gap:6px; }
+  .lumiphone-shell .lp-sheet .lp-bubble-action { display:flex; align-items:center; justify-content:flex-start; gap:12px; border:1px solid var(--lp-border); color:var(--lp-text); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action::before { content:'↻'; font-size:19px; width:24px; text-align:center; color:var(--lp-accent); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action[aria-label="Generation info"]::before { content:'ⓘ'; }
+  .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"] { color:var(--lp-destructive); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"]::before { content:'×'; color:inherit; }
+  .lumiphone-shell .lp-theme-preview::before { content:none; }
+  .lumiphone-shell .lp-theme-miniature { display:flex; flex-direction:column; align-items:center; justify-content:space-between; width:100%; aspect-ratio:9 / 12; padding:14px 6px 6px; border-radius:10px; border:1px solid var(--lp-border); background-color:var(--theme-color); background-size:cover; background-position:center; color:#fff; font-size:17px; font-weight:400; text-shadow:0 1px 5px #0007; }
+  .lumiphone-shell .lp-theme-miniature-dock { width:100%; border-radius:6px; padding:3px; background:#0004; font-size:12px; letter-spacing:5px; }
+  .lumiphone-shell .lp-theme-preview-incoming { padding:11px 14px; border-radius:14px 14px 14px 4px; background:var(--lp-surface); justify-self:start; font-size:13px; }
+  .lumiphone-shell .lp-contact-list { display:grid; gap:2px; }
+  .lumiphone-shell .lp-contact-row { border-radius:10px; min-height:64px; padding:10px 12px; background:transparent; border:1px solid transparent; }
+  .lumiphone-shell .lp-contact-row:hover { background:color-mix(in srgb,var(--lp-text) 4%,var(--lp-surface)); border-color:var(--lp-border); }
+  .lumiphone-shell .lp-contact-presence-label { font-size:10px; color:var(--lp-success); padding:4px 7px; border-radius:6px; background:color-mix(in srgb,var(--lp-success) 8%,transparent); }
+  .lumiphone-shell .lp-contact-presence-away { color:var(--lp-muted); background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
   .lp-setup-generation { display:grid; gap:10px; min-width:0; }
   @media(max-width:480px) { .lp-setup .lp-setup-modes { grid-template-columns:1fr; } .lp-setup .lp-setup-hero { padding:18px; } .lp-setup .lp-setup-diagram { width:48px; height:66px; padding:10px; } .lp-setup .lp-setup-footer { grid-template-columns:1fr 1fr; } .lp-setup .lp-setup-footer > p { grid-column:1 / -1; } }
   .lumiphone-launcher {
@@ -6987,7 +7080,8 @@ function renderDevicePicker(state, selected, deviceKey, select) {
   for (const conversation of state.conversations)
     for (const id of conversationDeviceActorIds(state, conversation))
       ids.add(id);
-  const entries = [...ids].map((actorId) => ({ actorId, actor: resolvePocketActor(state, actorId), latest: latestDeviceInteraction(state, actorId) })).filter((entry) => entry.actor);
+  const latestByDevice = latestDeviceInteractions(state);
+  const entries = [...ids].map((actorId) => ({ actorId, actor: resolvePocketActor(state, actorId), latest: latestByDevice.get(actorId) || null })).filter((entry) => entry.actor);
   const list = el("div", "lumiphone-device-list");
   const section = (title, kind) => {
     const group = el("section", "lumiphone-device-section");
@@ -6996,14 +7090,14 @@ function renderDevicePicker(state, selected, deviceKey, select) {
     list.append(group);
     return group;
   };
-  const addRow = (entry, group) => {
+  const addRow = (entry, group, compact = false) => {
     const { actorId, actor, latest } = entry;
     if (!actor)
       return;
     const isPersona = actorId === personaId;
     const row = button("", "lumiphone-device-row");
     row.dataset.selected = String(actorId === selected);
-    row.dataset.recent = String(Boolean(latest) && !isPersona);
+    row.dataset.recent = String(Boolean(latest) && !isPersona && !compact);
     row.dataset.persona = String(isPersona);
     row.dataset.pocketDeviceOwner = actorId;
     row.dataset.pocketDeviceKey = deviceKey(actorId);
@@ -7035,7 +7129,7 @@ function renderDevicePicker(state, selected, deviceKey, select) {
         meta.append(badge);
       }
     } else {
-      if (latest) {
+      if (latest && !compact) {
         const preview = latest.message.call ? `Call ${latest.message.call.status}` : latest.message.text || (latest.message.imageId || latest.message.imageUrl ? "Photo" : "Message");
         const line = el("span", "lumiphone-device-preview");
         line.append(glyph(latest.message.call ? "call" : "message"), el("span", "", preview));
@@ -7060,17 +7154,32 @@ function renderDevicePicker(state, selected, deviceKey, select) {
   const own = entries.find((entry) => entry.actorId === personaId);
   if (own)
     addRow(own, section("Your phone", "persona"));
-  const recent = entries.filter((entry) => entry.actorId !== personaId && entry.latest).sort((a, b) => (Date.parse(b.latest.message.createdAt) || 0) - (Date.parse(a.latest.message.createdAt) || 0));
+  const recent = entries.filter((entry) => entry.actorId !== personaId && entry.latest).sort((a, b) => (Date.parse(b.latest.message.createdAt) || 0) - (Date.parse(a.latest.message.createdAt) || 0)).slice(0, 6);
   if (recent.length) {
     const group = section("Recent", "recent");
     for (const entry of recent)
       addRow(entry, group);
   }
-  const others = entries.filter((entry) => entry.actorId !== personaId && !entry.latest);
+  const recentIds = new Set(recent.map((entry) => entry.actorId));
+  const others = entries.filter((entry) => entry.actorId !== personaId && !recentIds.has(entry.actorId));
   if (others.length) {
     const group = section("Others", "others");
     for (const entry of others)
-      addRow(entry, group);
+      addRow(entry, group, true);
+  }
+  if (entries.length > 9) {
+    const search = el("input", "lumiphone-device-search");
+    search.type = "search";
+    search.placeholder = "Find a phone";
+    search.setAttribute("aria-label", "Find a Pocket device");
+    search.addEventListener("input", () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      for (const row of list.querySelectorAll(".lumiphone-device-row"))
+        row.hidden = !row.textContent?.toLocaleLowerCase().includes(query);
+      for (const group of list.querySelectorAll("section"))
+        group.hidden = !group.querySelector(".lumiphone-device-row:not([hidden])");
+    });
+    list.prepend(search);
   }
   return list;
 }
@@ -7220,6 +7329,7 @@ class PocketController {
   focusedHandoffRelays = new Set;
   contactSources = [];
   npcBank = [];
+  identityProfiles = [];
   contactSourcesRequested = false;
   lastTagKeys = new Set;
   tagKeyOrder = [];
@@ -7824,6 +7934,13 @@ class PocketController {
   send(type, payload = {}) {
     const context = this.activeContext();
     const id = String(payload.requestId || requestId());
+    if (type === "lumiphone:generate_pocket_persona")
+      this.operations.set(id, { task: "persona-profile", requestId: id, phase: "generating", message: "Enriching phone profile…" });
+    if (type === "lumiphone:cancel_persona_generation") {
+      const operation = this.operations.get(String(payload.operationRequestId || ""));
+      if (operation)
+        this.recordOperationProgress({ ...operation, phase: "error", message: "Enrichment stopped. You can retry whenever you’re ready." });
+    }
     this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId(), ...payload });
     return id;
   }
@@ -8026,6 +8143,7 @@ class PocketController {
         this.deviceOwnerActorId = personaDeviceId;
       this.syncSurfaceIdentity();
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries : [];
+      this.identityProfiles = Array.isArray(payload.identityProfiles) ? payload.identityProfiles : [];
       this.npcBankGroups = Array.isArray(payload.npcBank?.groups) ? payload.npcBank.groups : [];
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId);
@@ -8070,7 +8188,7 @@ class PocketController {
         this.openPocket(pending);
       else if (this.expanded && this.currentApp === "settings")
         this.updateSettingsDiagnostics();
-      else if (this.expanded)
+      else if (this.expanded && payload.reason !== "identity_profile_saved")
         this.render(false);
       if (this.unreadCount() > previousUnread && !this.expanded)
         this.launcher.animate([
@@ -8210,6 +8328,20 @@ class PocketController {
       if (this.setupModalOpen && this.setupPersonaEditing)
         this.renderFirstChatPersonaEditor();
       else if (this.currentApp === "settings")
+        this.render(false);
+      return;
+    }
+    if (payload.type === "lumiphone:identity_profile_saved") {
+      refreshIdentityProfileControls(this.screen, this.identityProfiles);
+      if (this.setupModalBody)
+        refreshIdentityProfileControls(this.setupModalBody, this.identityProfiles);
+      return;
+    }
+    if (payload.type === "lumiphone:identity_profile_applied") {
+      this.personaPreview = null;
+      if (this.setupModalOpen)
+        this.setupPersonaEditing ? this.renderFirstChatPersonaEditor() : this.renderFirstChatSetupBody();
+      else if (this.expanded)
         this.render(false);
       return;
     }
@@ -8466,8 +8598,14 @@ class PocketController {
         galleryAction.button.textContent = galleryAction.idle;
         this.galleryActionButtons.delete(payload.requestId);
       }
+      const identitySaveError = this.screen.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]') || this.setupModalBody?.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]');
+      if (identitySaveError) {
+        refreshIdentityProfileControls(this.screen, this.identityProfiles, true);
+        if (this.setupModalBody)
+          refreshIdentityProfileControls(this.setupModalBody, this.identityProfiles, true);
+      }
       this.showError(payload.error || "Pocket could not complete that action.");
-      if (this.expanded)
+      if (this.expanded && !identitySaveError)
         this.render(false);
     }
   }
@@ -8530,11 +8668,14 @@ class PocketController {
     if (label)
       label.textContent = operation.message;
     node.dataset.phase = operation.phase;
-    const action = this.setupModalBody?.querySelector(`[data-operation-action="${CSS.escape(requestId)}"]`);
+    if (operation.phase === "complete" || operation.phase === "error")
+      node.querySelector(".lp-indeterminate")?.remove();
+    const action = this.screen.querySelector(`[data-operation-action="${CSS.escape(requestId)}"]`) || this.setupModalBody?.querySelector(`[data-operation-action="${CSS.escape(requestId)}"]`);
     if (action && (operation.phase === "complete" || operation.phase === "error")) {
       action.disabled = false;
       action.textContent = operation.phase === "error" ? "Retry enrichment" : "Enrich with LLM";
       delete action.dataset.operationAction;
+      this.screen.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove();
       this.setupModalBody?.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove();
     }
     return true;
@@ -9525,6 +9666,7 @@ ${body}`;
       },
       sources: this.contactSources,
       npcBank: this.npcBank,
+      identityProfiles: this.identityProfiles,
       capabilities: this.caps,
       selectedGroupId: this.selectedContactGroupId,
       bankGroups: this.npcBankGroups,
@@ -10285,6 +10427,7 @@ ${body}`;
   renderSettings() {
     this.settingsDraft ||= structuredClone(this.preferences);
     return renderSettingsView({
+      identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
       state: this.state,
       section: this.selectedSettingsSection,
@@ -10675,6 +10818,8 @@ ${body}`;
     enrich.addEventListener("click", () => {
       enrich.disabled = true;
       enrich.textContent = "Enriching…";
+      for (const old of body.querySelectorAll(".lp-operation-progress"))
+        old.remove();
       const operationRequestId = this.send("lumiphone:generate_pocket_persona");
       this.operations.set(operationRequestId, { task: "persona-profile", requestId: operationRequestId, phase: "generating", message: "Enriching phone profile…" });
       enrich.dataset.operationAction = operationRequestId;
@@ -10710,7 +10855,7 @@ ${body}`;
       });
     });
     actions.append(enrich, save);
-    body.append(fields, actions);
+    body.append(fields, actions, identityProfileControls(this.identityProfiles, "persona", undefined, (type, payload) => this.send(type, payload), () => ({ name: name.value, pronouns: pronouns.value, role: role.value, identityBrief: profile.identityBrief, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })));
     if (personaOperation) {
       enrich.dataset.operationAction = personaOperation.requestId;
       actions.append(stopButton(personaOperation.requestId));

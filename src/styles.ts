@@ -40,6 +40,23 @@ export const PHONE_STYLES = `
   .lp-setup .lp-operation-progress { display:grid; gap:7px; padding:12px; border:1px solid var(--lp-border); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); font-size:12px; }
   .lp-setup .lp-operation-progress[data-phase="error"] { border-color:var(--lumiverse-danger,#c65c65); }
   .lp-setup .lp-setup-connection-select [role="listbox"] { position:relative; top:auto; left:auto; right:auto; margin-top:6px; }
+  .lumiphone-device-search { width:100%; min-height:38px; padding:8px 11px; margin:0 0 14px; border:1px solid var(--pocket-border,var(--lumiverse-border,#ffffff14)); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); color:var(--lumiverse-text,#eee); font:inherit; }
+  .lumiphone-device-row[hidden], .lumiphone-device-section[hidden] { display:none; }
+  .lumiphone-shell .lp-sheet .lp-bubble-tools { display:grid; grid-template-columns:1fr; gap:6px; }
+  .lumiphone-shell .lp-sheet .lp-bubble-action { display:flex; align-items:center; justify-content:flex-start; gap:12px; border:1px solid var(--lp-border); color:var(--lp-text); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action::before { content:'↻'; font-size:19px; width:24px; text-align:center; color:var(--lp-accent); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action[aria-label="Generation info"]::before { content:'ⓘ'; }
+  .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"] { color:var(--lp-destructive); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"]::before { content:'×'; color:inherit; }
+  .lumiphone-shell .lp-theme-preview::before { content:none; }
+  .lumiphone-shell .lp-theme-miniature { display:flex; flex-direction:column; align-items:center; justify-content:space-between; width:100%; aspect-ratio:9 / 12; padding:14px 6px 6px; border-radius:10px; border:1px solid var(--lp-border); background-color:var(--theme-color); background-size:cover; background-position:center; color:#fff; font-size:17px; font-weight:400; text-shadow:0 1px 5px #0007; }
+  .lumiphone-shell .lp-theme-miniature-dock { width:100%; border-radius:6px; padding:3px; background:#0004; font-size:12px; letter-spacing:5px; }
+  .lumiphone-shell .lp-theme-preview-incoming { padding:11px 14px; border-radius:14px 14px 14px 4px; background:var(--lp-surface); justify-self:start; font-size:13px; }
+  .lumiphone-shell .lp-contact-list { display:grid; gap:2px; }
+  .lumiphone-shell .lp-contact-row { border-radius:10px; min-height:64px; padding:10px 12px; background:transparent; border:1px solid transparent; }
+  .lumiphone-shell .lp-contact-row:hover { background:color-mix(in srgb,var(--lp-text) 4%,var(--lp-surface)); border-color:var(--lp-border); }
+  .lumiphone-shell .lp-contact-presence-label { font-size:10px; color:var(--lp-success); padding:4px 7px; border-radius:6px; background:color-mix(in srgb,var(--lp-success) 8%,transparent); }
+  .lumiphone-shell .lp-contact-presence-away { color:var(--lp-muted); background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
   .lp-setup-generation { display:grid; gap:10px; min-width:0; }
   @media(max-width:480px) { .lp-setup .lp-setup-modes { grid-template-columns:1fr; } .lp-setup .lp-setup-hero { padding:18px; } .lp-setup .lp-setup-diagram { width:48px; height:66px; padding:10px; } .lp-setup .lp-setup-footer { grid-template-columns:1fr 1fr; } .lp-setup .lp-setup-footer > p { grid-column:1 / -1; } }
   .lumiphone-launcher {

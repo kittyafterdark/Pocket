@@ -416,7 +416,10 @@ assert.equal(arrivalRelay.reason, 'arriving')
 assert.equal(arrivalRelay.actorState, 'arriving')
 assert.deepEqual(autoConversation.availability, { state: 'arriving' }, 'arrival relay must not localize the actor')
 assert.equal(autoConversation.lastDecision.normalizedAction, 'arrival_handoff')
-assert.equal(appendedChatMessages.length, beforeArrivalAppendCount + 1, 'arrival handoff must trigger one native main-RP generation')
+assert.equal(appendedChatMessages.length, beforeArrivalAppendCount, 'arrival waits for quiet time instead of immediately interrupting phone chat')
+await frontendHandler({ type: 'lumiphone:continue_arrival', requestId: 'manual-arrival-now', chatId: 'chat-a', characterId: 'char-a', conversationId: firstConversationId }, 'user-a')
+await new Promise(resolve => setTimeout(resolve, 40))
+assert.equal(appendedChatMessages.length, beforeArrivalAppendCount + 1, 'Continue to arrival still starts the main RP immediately')
 assert.equal(appendedChatMessages.at(-1).options.triggerGeneration, true)
 assert.match(appendedChatMessages.at(-1).message.content, /toward the arrival/i)
 const arrivalEvent = arrivalState.events.find((entry) => entry.source?.relayId === arrivalRelay.id)
@@ -2548,15 +2551,41 @@ const stoppedRequest = frontendSends.at(-1).requestId
 assert.equal(frontendSends.at(-1).type, 'lumiphone:cancel_persona_generation')
 assert.equal(frontendSends.at(-1).operationRequestId, stoppedRequest)
 assert.equal(setupRoot.querySelector('[data-operation-stop]'), null, 'Stop immediately removes the active cancellation control')
+assert.equal(setupRoot.querySelector('.lp-operation-progress .lp-indeterminate'), null, 'stopped enrichment has no animated progress bar')
 backendReceiver({ type: 'lumiphone:pocket_persona_preview', requestId: stoppedRequest, persona: { ...savedDraftState.state.pocketPersona, displayName: 'Cancelled result' } })
 assert.doesNotMatch(setupRoot.textContent, /Cancelled result/)
 ;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Retry enrichment').click()
 const abandonedRequest = frontendSends.at(-1).requestId
+assert.equal(setupRoot.querySelectorAll('.lp-operation-progress').length, 1, 'retry replaces stopped status rather than stacking status boxes')
 ;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === '← Back to setup').click()
 backendReceiver({ type: 'lumiphone:error', requestId: abandonedRequest, error: 'Failed while away' })
 backendReceiver({ type: 'lumiphone:operation_progress', task: 'persona-profile', requestId: abandonedRequest, phase: 'writing', message: 'Late writing…' })
 ;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Customize').click()
 assert.equal([...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM').disabled, false, 'errors while away release enrichment on reentry')
+
+const libraryDraft = setupRoot.querySelector('textarea')
+libraryDraft.value = 'Keep my unsaved identity details'
+const librarySave = setupRoot.querySelector('[data-identity-save]')
+librarySave.click()
+assert.equal(frontendSends.at(-1).type, 'lumiphone:identity_profile_save')
+assert.ok(Object.values(frontendSends.at(-1).profile.phoneProfile).includes('Keep my unsaved identity details'), 'save library reads the current draft')
+backendReceiver({ type: 'lumiphone:identity_profile_saved', requestId: frontendSends.at(-1).requestId })
+assert.equal(libraryDraft.value, 'Keep my unsaved identity details', 'saving a reusable profile preserves unsaved editor fields')
+assert.equal(librarySave.disabled, false)
+
+await frontendHandler({ type: 'lumiphone:get_state', chatId: 'profile-source-chat', characterId: 'char-a' }, 'user-a')
+const profileSourceState = frontendMessages.filter(event => event.type === 'lumiphone:state' && event.state.chatId === 'profile-source-chat').at(-1).state
+const characterProfileContact = profileSourceState.contacts.find(entry => entry.source.kind === 'character' && entry.source.characterId === 'char-a')
+await frontendHandler({ type: 'lumiphone:identity_profile_save', chatId: 'profile-source-chat', characterId: 'char-a', kind: 'persona', profile: { name: 'Reusable owner', pronouns: 'they', role: 'Hero', identityBrief: 'Stable brief', phoneProfile: { personality: 'Practical', appearance: 'Blond', textingStyle: 'Short messages' } } }, 'user-a')
+await frontendHandler({ type: 'lumiphone:identity_profile_save', chatId: 'profile-source-chat', characterId: 'char-a', kind: 'character', contactId: characterProfileContact.id, profile: { name: 'Reusable character', role: 'Hero', identityBrief: 'Stable character', phoneProfile: { personality: 'Patient', appearance: 'Tall', textingStyle: 'Precise' } } }, 'user-a')
+assert.equal(storage.get('identity-profiles.json').entries.length, 2)
+await frontendHandler({ type: 'lumiphone:get_state', chatId: 'profile-new-chat', characterId: 'char-a' }, 'user-a')
+const restoredProfiles = frontendMessages.filter(event => event.type === 'lumiphone:state' && event.state.chatId === 'profile-new-chat').at(-1).state
+assert.equal(restoredProfiles.pocketPersona.phoneProfile.textingStyle, 'Short messages')
+assert.equal(restoredProfiles.setup.personaConfigured, true)
+assert.equal(restoredProfiles.contacts.find(entry => entry.source.kind === 'character').phoneProfile.textingStyle, 'Precise')
+assert.equal(restoredProfiles.conversations.flatMap(entry => entry.messages).length, 0, 'profile reuse must never copy old phone messages')
+assert.equal(restoredProfiles.contacts.find(entry => entry.source.kind === 'character').presence.inScene, false, 'profile reuse never imports scene presence')
 
 // A slow provider may finish after cancellation; its result must never become a preview.
 const priorQuiet = spindle.generate.quiet

@@ -1,6 +1,6 @@
 import type { PhoneState, PocketRoute } from '../../types.js'
 import { resolvePocketActor } from '../../domain/actors.js'
-import { conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, latestDeviceInteraction, notificationBelongsToDevice, pocketPersonaActorId } from '../../domain/device.js'
+import { conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, latestDeviceInteractions, notificationBelongsToDevice, pocketPersonaActorId } from '../../domain/device.js'
 import { button, el, formatDate } from '../shared.js'
 
 const GLYPHS = {
@@ -20,20 +20,21 @@ export function renderDevicePicker(state: PhoneState, selected: string, deviceKe
   const personaId = pocketPersonaActorId(state)
   const ids = new Set([personaId])
   for (const conversation of state.conversations) for (const id of conversationDeviceActorIds(state, conversation)) ids.add(id)
-  const entries = [...ids].map(actorId => ({ actorId, actor: resolvePocketActor(state, actorId), latest: latestDeviceInteraction(state, actorId) })).filter(entry => entry.actor)
+  const latestByDevice = latestDeviceInteractions(state)
+  const entries = [...ids].map(actorId => ({ actorId, actor: resolvePocketActor(state, actorId), latest: latestByDevice.get(actorId) || null })).filter(entry => entry.actor)
   const list = el('div', 'lumiphone-device-list')
   const section = (title: string, kind: string) => {
     const group = el('section', 'lumiphone-device-section'); group.dataset.section = kind
     group.append(el('h3', 'lumiphone-device-section-title', title)); list.append(group)
     return group
   }
-  const addRow = (entry: typeof entries[number], group: HTMLElement) => {
+  const addRow = (entry: typeof entries[number], group: HTMLElement, compact = false) => {
     const { actorId, actor, latest } = entry
     if (!actor) return
     const isPersona = actorId === personaId
     const row = button('', 'lumiphone-device-row')
     row.dataset.selected = String(actorId === selected)
-    row.dataset.recent = String(Boolean(latest) && !isPersona)
+    row.dataset.recent = String(Boolean(latest) && !isPersona && !compact)
     row.dataset.persona = String(isPersona)
     row.dataset.pocketDeviceOwner = actorId
     row.dataset.pocketDeviceKey = deviceKey(actorId)
@@ -59,7 +60,7 @@ export function renderDevicePicker(state: PhoneState, selected: string, deviceKe
         badge.setAttribute('aria-label', `${unread} unread`); meta.append(badge)
       }
     } else {
-      if (latest) {
+      if (latest && !compact) {
         const preview = latest.message.call ? `Call ${latest.message.call.status}` : latest.message.text || (latest.message.imageId || latest.message.imageUrl ? 'Photo' : 'Message')
         const line = el('span', 'lumiphone-device-preview')
         line.append(glyph(latest.message.call ? 'call' : 'message'), el('span', '', preview)); identity.append(line)
@@ -78,9 +79,19 @@ export function renderDevicePicker(state: PhoneState, selected: string, deviceKe
   }
   const own = entries.find(entry => entry.actorId === personaId)
   if (own) addRow(own, section('Your phone', 'persona'))
-  const recent = entries.filter(entry => entry.actorId !== personaId && entry.latest).sort((a, b) => (Date.parse(b.latest!.message.createdAt) || 0) - (Date.parse(a.latest!.message.createdAt) || 0))
+  const recent = entries.filter(entry => entry.actorId !== personaId && entry.latest).sort((a, b) => (Date.parse(b.latest!.message.createdAt) || 0) - (Date.parse(a.latest!.message.createdAt) || 0)).slice(0, 6)
   if (recent.length) { const group = section('Recent', 'recent'); for (const entry of recent) addRow(entry, group) }
-  const others = entries.filter(entry => entry.actorId !== personaId && !entry.latest)
-  if (others.length) { const group = section('Others', 'others'); for (const entry of others) addRow(entry, group) }
+  const recentIds = new Set(recent.map(entry => entry.actorId))
+  const others = entries.filter(entry => entry.actorId !== personaId && !recentIds.has(entry.actorId))
+  if (others.length) { const group = section('Others', 'others'); for (const entry of others) addRow(entry, group, true) }
+  if (entries.length > 9) {
+    const search = el('input', 'lumiphone-device-search'); search.type = 'search'; search.placeholder = 'Find a phone'; search.setAttribute('aria-label', 'Find a Pocket device')
+    search.addEventListener('input', () => {
+      const query = search.value.trim().toLocaleLowerCase()
+      for (const row of list.querySelectorAll<HTMLElement>('.lumiphone-device-row')) row.hidden = !row.textContent?.toLocaleLowerCase().includes(query)
+      for (const group of list.querySelectorAll<HTMLElement>('section')) group.hidden = !group.querySelector('.lumiphone-device-row:not([hidden])')
+    })
+    list.prepend(search)
+  }
   return list
 }

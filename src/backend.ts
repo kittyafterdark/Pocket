@@ -51,6 +51,8 @@ import { generatedEventSuggestion, normalizeEventSuggestion } from './domain/sch
 import { ReplyJobs } from './backend/reply-jobs.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
+import { ArrivalIdle } from './backend/arrival-idle.js'
+import { IDENTITY_PROFILES_PATH, normalizeIdentityProfiles, saveIdentityProfile, applyIdentityProfile } from './domain/identity-profiles.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
 import { sanitizeNarrativeContent, stripPocketPresentationMarkup } from './backend/narrative-content.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
@@ -82,6 +84,7 @@ interface CameraJob { controller: AbortController; cancelled: boolean; chatId: s
 const cameraJobs = new Map<string, CameraJob>()
 const personaJobs = new Map<string, CameraJob>()
 const replyJobs = new ReplyJobs()
+const arrivalIdle = new ArrivalIdle()
 const replyJobScope = (chatId: string, characterId: string, conversationId: string, userId?: string) => JSON.stringify([userId || '', chatId, characterId, conversationId])
 const notificationThrottle = new Map<string, number>()
 const ambientFlights = new Set<string>()
@@ -842,6 +845,16 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
       stateChanged ||= changed
     }
   }
+  if (raw === null) {
+    const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries
+    const personaProfile = profiles.find(entry => entry.kind === 'persona' && entry.sourceId && entry.sourceId === state.pocketPersona.linkedPersonaId)
+    if (personaProfile) { state.pocketPersona = { ...applyIdentityProfile(state.pocketPersona, personaProfile), source: 'manual' }; state.setup.personaConfigured = true; stateChanged = true }
+    for (const contact of state.contacts) {
+      const source = contact.source
+      const profile = source.kind === 'character' ? profiles.find(entry => entry.kind === 'character' && entry.sourceId === source.characterId) : undefined
+      if (profile) { Object.assign(contact, applyIdentityProfile(contact, profile)); stateChanged = true }
+    }
+  }
   if (stateChanged) await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId })
   return state
 }
@@ -1210,6 +1223,7 @@ async function validateChangedWallpaperSources(existing: DevicePreferences, next
 async function sendState(state: PhoneState, userId?: string, reason = 'refresh', open = false): Promise<void> {
   const preferences = await loadPreferences(userId)
   const npcBank = await loadNpcBank(userId)
+  const identityProfiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries
   let generation: PocketGenerationInfo = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride }
   try { generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId) }
   catch (error) { spindle.log.warn(`Pocket could not inspect generation profiles: ${error instanceof Error ? error.message : String(error)}`) }
@@ -1233,7 +1247,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
     if ('avatarOverrideUrl' in contact) contact.avatarOverrideUrl = image.url
     else contact.avatarUrl = image.url
   }))
-  send({ type: 'lumiphone:state', state: displayState, npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -3340,6 +3354,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     sendActivity(activity, userId)
     sendNotification(notification, userId)
     if (relayToContinue) setTimeout(() => void requestRelayContinuation(context.chatId, context.characterId, relayToContinue!.id, userId), 0)
+    else if (conversation.availability.state === 'arriving') void scheduleArrivalContinuation(context.chatId, context.characterId, conversation.id, userId)
     send({
       type: 'lumiphone:message_progress', requestId, chatId: context.chatId, characterId: context.characterId,
       conversationId: conversation.id, actorId: actor.actorId, contactId: actor.contact?.id, speakerContactId: actor.actorId, phase: 'done',
@@ -3795,6 +3810,33 @@ function burstTimerKey(chatId: string, characterId: string, conversationId: stri
   return `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`
 }
 
+async function scheduleArrivalContinuation(chatId: string, characterId: string, conversationId: string, userId?: string): Promise<void> {
+  const key = burstTimerKey(chatId, characterId, conversationId, userId)
+  arrivalIdle.schedule(key, async current => {
+    try {
+      const view = currentView(userId)
+      if (!view || view.chatId !== chatId || view.characterId !== characterId) return
+      const preferences = await loadPreferences(userId)
+      if (!preferences.autoReplyAfterSend || !current()) return
+      let relayId = ''
+      await withStateLock(stateKey(chatId, characterId), async () => {
+        const state = await loadState(chatId, characterId, userId)
+        const conversation = state.conversations.find(entry => entry.id === conversationId && entry.kind === 'direct' && entry.includesPocketPersona !== false)
+        if (!current() || !conversation || conversation.availability.state !== 'arriving' || conversation.outgoingBurst?.held || (conversation.outgoingBurst?.open && !conversation.outgoingBurst.finalized)) return
+        const actor = resolvePocketActor(state, conversationActorIds(conversation)[0])
+        if (!actor?.contact || actor.contact.presence.inScene) return
+        const contact = actorAsGenerationContact(actor, nowIso())
+        const decision = normalizeReplyDecision({ rawAction: 'arrival_handoff', rawReason: 'arriving', contact, conversation, explicitRemoteOverride: false, createdAt: nowIso() })
+        const relay = commitArrivalHandoff(state, conversation, contact, decision)
+        if (relay.continuation.state !== 'idle') return
+        relayId = relay.id
+        await saveState(state, userId); await sendState(state, userId, 'arrival_idle')
+      })
+      if (current() && relayId) await requestRelayContinuation(chatId, characterId, relayId, userId)
+    } catch (error) { spindle.log.warn('Pocket idle arrival skipped: ' + (error instanceof Error ? error.message : String(error))) }
+  })
+}
+
 async function scheduleReplyBurst(chatId: string, characterId: string, conversationId: string, userId?: string): Promise<void> {
   const timerKey = burstTimerKey(chatId, characterId, conversationId, userId)
   const previous = replyBurstTimers.get(timerKey)
@@ -3922,7 +3964,8 @@ async function maybeReplyAfterSendJob(chatId: string, characterId: string, conve
     send({ type: 'lumiphone:message_progress', requestId, chatId, characterId, conversationId, actorId: actor.actorId, contactId: actor.contact?.id, phase: 'done' }, userId)
     progressRequestId = ''
     if (outcome?.relayId) {
-      void requestRelayContinuation(chatId, characterId, outcome.relayId, userId)
+      if (outcome.action === 'arrival_handoff') void scheduleArrivalContinuation(chatId, characterId, conversationId, userId)
+      else void requestRelayContinuation(chatId, characterId, outcome.relayId, userId)
       return
     }
     if (outcome?.action !== 'reply') return
@@ -4648,6 +4691,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       sendNotification(notification, userId)
     }
     if (action === 'message' && source === 'user' && preferences.autoReplyAfterSend && typeof result.conversationId === 'string') {
+      arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, result.conversationId, userId))
       void scheduleReplyBurst(context.chatId, context.characterId, result.conversationId, userId)
     }
     for (const relayId of [...new Set(relayIds)]) setTimeout(() => void requestRelayContinuation(context.chatId, context.characterId, relayId, userId), 0)
@@ -4713,7 +4757,12 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
             const presentation = await characterPresentationFor(option.sourceId, userId)
             option = { ...option, avatarUrl: presentation.avatarUrl || option.avatarUrl, accent: presentation.accent || option.accent }
           }
-          const imported = contactFromSource(option)
+          let imported = contactFromSource(option)
+          if (option.kind === 'character') {
+            const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries
+            const saved = profiles.find(entry => entry.kind === 'character' && entry.sourceId === option.sourceId)
+            if (saved) imported = applyIdentityProfile(imported, saved)
+          }
           const sourceKey = contactSourceKey(imported.source)
           if (sourceKey) state.suppressedContactSourceKeys = state.suppressedContactSourceKeys.filter((entry) => entry !== sourceKey)
           const contact = upsertContact(state, imported)
@@ -4999,6 +5048,46 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences')
         break
       }
+      case 'lumiphone:identity_profile_save': {
+        const state = await loadState(context.chatId, context.characterId, userId)
+        const kind = payload.kind === 'persona' ? 'persona' : 'character'
+        const contact = state.contacts.find(entry => entry.id === text(payload.contactId, 180) && entry.source.kind === 'character')
+        if (kind === 'character' && !contact) throw new Error('Choose a character contact to save its profile.')
+        let value = kind === 'persona' ? state.pocketPersona : contact!
+        const sourceId = kind === 'persona' ? state.pocketPersona.linkedPersonaId || (await resolveActivePocketPersona(userId))?.linkedPersonaId || '' : contact!.source.kind === 'character' ? contact!.source.characterId : ''
+        if (isRecord(payload.profile)) {
+          const draft = normalizeIdentityProfiles({ version: 1, entries: [{ ...payload.profile, id: 'draft', kind, sourceId, updatedAt: nowIso() }] }).entries[0]
+          if (!draft) throw new Error('Give this profile a name before saving it.')
+          value = applyIdentityProfile(value, draft)
+        }
+        await withStateLock('identity-profiles:' + viewKey(userId), async () => {
+          const bank = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId }))
+          saveIdentityProfile(bank, value, kind, sourceId, nowIso(), () => id('profile'))
+          await spindle.userStorage.setJson(IDENTITY_PROFILES_PATH, bank, { indent: 2, userId })
+        })
+        await sendState(state, userId, 'identity_profile_saved')
+        send({ type: 'lumiphone:identity_profile_saved', requestId }, userId)
+        break
+      }
+      case 'lumiphone:identity_profile_apply': {
+        const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries
+        const profile = profiles.find(entry => entry.id === text(payload.profileId, 180) && entry.kind === payload.kind)
+        if (!profile) throw new Error('That saved profile is unavailable.')
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          if (profile.kind === 'persona') {
+            state.pocketPersona = { ...applyIdentityProfile(state.pocketPersona, profile), source: 'manual' }
+            state.setup.personaConfigured = true
+          } else {
+            const contact = state.contacts.find(entry => entry.id === text(payload.contactId, 180) && entry.source.kind === 'character')
+            if (!contact) throw new Error('Choose a character contact to apply this profile.')
+            Object.assign(contact, applyIdentityProfile(contact, profile))
+          }
+          await saveState(state, userId); await sendState(state, userId, 'identity_profile_applied')
+        })
+        send({ type: 'lumiphone:identity_profile_applied', requestId }, userId)
+        break
+      }
       case 'lumiphone:save_pocket_persona': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
@@ -5200,6 +5289,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         break
       }
       case 'lumiphone:composer_state': {
+        const conversationId = text(payload.conversationId, 180)
+        arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, conversationId, userId))
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
           const conversation = state.conversations.find((entry) => entry.id === text(payload.conversationId, 180))
@@ -5208,10 +5299,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           conversation.outgoingBurst.updatedAt = nowIso()
           await saveState(state, userId)
         })
-        if (!bool(payload.held)) void scheduleReplyBurst(context.chatId, context.characterId, text(payload.conversationId, 180), userId)
+        if (!bool(payload.held)) { void scheduleReplyBurst(context.chatId, context.characterId, conversationId, userId); void scheduleArrivalContinuation(context.chatId, context.characterId, conversationId, userId) }
         break
       }
       case 'lumiphone:cancel_message_generation': {
+        arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, text(payload.conversationId, 180), userId))
         const conversationId = text(payload.conversationId, 180)
         replyJobs.cancel(replyJobScope(context.chatId, context.characterId, conversationId, userId))
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
@@ -5262,6 +5354,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         break
       }
       case 'lumiphone:continue_arrival': {
+        arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, text(payload.conversationId, 180), userId))
         let relayId = ''
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
@@ -5604,7 +5697,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       }
       case 'lumiphone:export_data': {
         const state = await loadState(context.chatId, context.characterId, userId)
-        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 6, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId), npcBank: await loadNpcBank(userId) } }, userId)
+        send({ type: 'lumiphone:export_data', requestId, data: { product: 'Pocket', exportVersion: 6, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId), npcBank: await loadNpcBank(userId), identityProfiles: normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })) } }, userId)
         break
       }
       case 'lumiphone:import_data': {
@@ -5624,7 +5717,10 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           if (isFutureNpcBank(payload.data.npcBank)) throw new Error('This backup uses a newer NPC Bank schema.')
           importedNpcBank = normalizeNpcBank(payload.data.npcBank, nowIso())
         }
+        const importedIdentityProfiles = payload.data.identityProfiles === undefined ? null : normalizeIdentityProfiles(payload.data.identityProfiles)
+        if (importedIdentityProfiles) normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId }))
         await saveState(state, userId)
+        if (importedIdentityProfiles) await spindle.userStorage.setJson(IDENTITY_PROFILES_PATH, importedIdentityProfiles, { indent: 2, userId })
         if (importedPreferences) await savePreferences(importedPreferences, userId)
         if (importedNpcBank) await saveNpcBank(importedNpcBank, userId)
         await sendState(state, userId, 'import')
@@ -6186,6 +6282,7 @@ spindle.permissions.onChanged(({ permission, granted }) => {
 })
 
 spindle.on('CHAT_SWITCHED', async (payload: any, userId?: string) => {
+  arrivalIdle.cancelPrefix(viewKey(userId) + ':')
   const chatId = text(payload?.chatId, 180)
   if (!chatId) return
   try {
@@ -6207,6 +6304,7 @@ spindle.on('PERSONA_CHANGED', async (_payload: any, userId?: string) => {
 })
 
 spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
+  arrivalIdle.cancelPrefix(viewKey(userId) + ':')
   const chatId = text(payload?.chatId, 180)
   const generationId = text(payload?.generationId, 180)
   if (!chatId || !generationId || !spindle.permissions.has('chats')) return

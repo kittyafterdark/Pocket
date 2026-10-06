@@ -2258,6 +2258,96 @@ async function parseWithTruncationRetry(content, retry) {
   }
 }
 
+// src/backend/arrival-idle.ts
+class ArrivalIdle {
+  clock;
+  timers = new Map;
+  constructor(clock = { set: setTimeout, clear: clearTimeout }) {
+    this.clock = clock;
+  }
+  schedule(key, work, delay = 20000) {
+    this.cancel(key);
+    const token = {};
+    const timer = this.clock.set(() => {
+      if (this.timers.get(key)?.token !== token)
+        return;
+      work(() => this.timers.get(key)?.token === token).finally(() => {
+        if (this.timers.get(key)?.token === token)
+          this.timers.delete(key);
+      });
+    }, delay);
+    this.timers.set(key, { timer, token });
+  }
+  cancel(key) {
+    const entry = this.timers.get(key);
+    if (entry)
+      this.clock.clear(entry.timer);
+    this.timers.delete(key);
+  }
+  cancelPrefix(prefix) {
+    for (const key of this.timers.keys())
+      if (key.startsWith(prefix))
+        this.cancel(key);
+  }
+}
+
+// src/domain/identity-profiles.ts
+var IDENTITY_PROFILES_PATH = "identity-profiles.json";
+var compact = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+function normalizeIdentityProfiles(value) {
+  const raw = value;
+  if (raw?.version && raw.version > 1)
+    throw new Error("Update Pocket before editing these newer saved profiles.");
+  const entries = [];
+  for (const item of Array.isArray(raw?.entries) ? raw.entries : []) {
+    if (!item || !["persona", "character"].includes(item.kind))
+      continue;
+    const id = compact(item.id, 180), name = compact(item.name, 120);
+    if (!id || !name || entries.some((entry) => entry.id === id))
+      continue;
+    entries.push({
+      id,
+      kind: item.kind,
+      sourceId: compact(item.sourceId, 180),
+      name,
+      pronouns: compact(item.pronouns, 120),
+      role: compact(item.role, 120),
+      identityBrief: compact(item.identityBrief, 1200),
+      phoneProfile: { personality: compact(item.phoneProfile?.personality, 600), appearance: compact(item.phoneProfile?.appearance, 360), textingStyle: compact(item.phoneProfile?.textingStyle, 600) },
+      updatedAt: compact(item.updatedAt, 80)
+    });
+  }
+  return { version: 1, entries: entries.slice(-100) };
+}
+function saveIdentityProfile(bank, value, kind, sourceId, now, makeId) {
+  const name = "displayName" in value ? value.displayName : value.name;
+  const prior = bank.entries.find((entry) => entry.kind === kind && (sourceId ? entry.sourceId === sourceId : !entry.sourceId && entry.name === name));
+  const entry = normalizeIdentityProfiles({ version: 1, entries: [{
+    id: prior?.id || makeId(),
+    kind,
+    sourceId,
+    name,
+    pronouns: "pronouns" in value ? value.pronouns : "",
+    role: value.role,
+    identityBrief: value.identityBrief,
+    phoneProfile: value.phoneProfile,
+    updatedAt: now
+  }] }).entries[0];
+  if (!entry)
+    throw new Error("Give this profile a name before saving it.");
+  bank.entries = [...bank.entries.filter((item) => item.id !== entry.id), entry].slice(-100);
+  return entry;
+}
+function applyIdentityProfile(target, profile) {
+  return {
+    ...target,
+    role: profile.role,
+    identityBrief: profile.identityBrief,
+    phoneProfile: { ...profile.phoneProfile },
+    ..."displayName" in target ? { displayName: profile.name, pronouns: profile.pronouns } : { name: profile.name, description: profile.identityBrief }
+  };
+}
+
 // src/backend/narrative-content.ts
 var DROP_PART_TYPE = /(?:reason(?:ing)?|think(?:ing)?|analysis|tool[_-]?(?:use|call|result)|function[_-]?(?:call|result))/i;
 var WRAPPED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
@@ -2490,13 +2580,13 @@ ${channel}` : "";
 // src/backend/continuity.ts
 var PAUSE_REASONS = new Set(["ended", "busy", "away", "sleeping", "unknown"]);
 var LOCAL_REASONS = new Set(["in_scene", "arrived", "took_action", "continued_in_person"]);
-function compact(value, max) {
+function compact2(value, max) {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
 }
 function conversationTailSnapshot(conversation, createdAt) {
   const recent = conversation.messages.slice(-6);
   return {
-    text: recent.map((message) => `${message.senderName}: ${compact(message.text, 360)}`).join(`
+    text: recent.map((message) => `${message.senderName}: ${compact2(message.text, 360)}`).join(`
 `).slice(0, 2400),
     recentMessageIds: recent.map((message) => message.id),
     updatedAt: createdAt
@@ -2660,7 +2750,7 @@ function relayIdFromMessages(messages) {
   return "";
 }
 function relayLatestExchange(conversation) {
-  return conversation.messages.slice(-3).map((message) => `${message.senderName}: ${compact(message.text, 520)}`).join(`
+  return conversation.messages.slice(-3).map((message) => `${message.senderName}: ${compact2(message.text, 520)}`).join(`
 `).slice(0, 1800);
 }
 function relayForGeneration(state, generationId) {
@@ -2916,7 +3006,7 @@ function jevSourceKey(value) {
 }
 
 // src/backend/references.ts
-function compact2(value, max) {
+function compact3(value, max) {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
 }
 function availabilityCopy(conversation) {
@@ -2937,8 +3027,8 @@ function createPocketReference(input) {
     sender: message.sender,
     senderActorId: message.senderActorId,
     senderContactId: message.senderContactId,
-    senderName: compact2(message.senderName || (message.sender === "persona" ? state.pocketPersona.displayName : "Participant"), 120),
-    text: compact2(message.text, 420),
+    senderName: compact3(message.senderName || (message.sender === "persona" ? state.pocketPersona.displayName : "Participant"), 120),
+    text: compact3(message.text, 420),
     createdAt: message.createdAt
   }]);
   const participants = conversationDeviceActorIds(state, conversation).slice(0, 16).flatMap((actorId) => {
@@ -2948,9 +3038,9 @@ function createPocketReference(input) {
     return [{
       actorId,
       contactId: actor.contact?.id,
-      name: compact2(actor.name, 120),
-      role: compact2(actor.role, 100),
-      identityBrief: compact2(actor.identityBrief, 180)
+      name: compact3(actor.name, 120),
+      role: compact3(actor.role, 100),
+      identityBrief: compact3(actor.identityBrief, 180)
     }];
   });
   const kind = conversation.kind === "group" ? "Group chat" : "Direct message";
@@ -2961,12 +3051,12 @@ function createPocketReference(input) {
     characterId: state.characterId,
     sourceApp: "messages",
     conversationId: conversation.id,
-    conversationTitle: compact2(conversation.title || participantNames, 120) || "Pocket conversation",
+    conversationTitle: compact3(conversation.title || participantNames, 120) || "Pocket conversation",
     conversationKind: conversation.kind,
     scope,
     visibility: "context",
     participants,
-    snapshot: compact2(`${kind} with ${participantNames}. ${availabilityCopy(conversation)}`, 600),
+    snapshot: compact3(`${kind} with ${participantNames}. ${availabilityCopy(conversation)}`, 600),
     messages,
     createdAt,
     status: "armed"
@@ -2974,12 +3064,12 @@ function createPocketReference(input) {
 }
 function serializePocketReference(reference, maxChars = 2200) {
   const budget = Math.max(1200, Math.min(3000, maxChars));
-  const participantNames = compact2(reference.participants.map((entry) => entry.name).join(", "), 360) || "Unknown participants";
+  const participantNames = compact3(reference.participants.map((entry) => entry.name).join(", "), 360) || "Unknown participants";
   const identityRows = reference.participants.slice(0, 8).map((entry) => {
     const detail = [entry.role, entry.identityBrief].filter(Boolean).join(" \u2014 ");
     return detail ? `- ${entry.name}: ${detail}` : `- ${entry.name}`;
   });
-  const messageRows = reference.messages.map((message) => `${message.senderName}: ${JSON.stringify(compact2(message.text, 360))}`);
+  const messageRows = reference.messages.map((message) => `${message.senderName}: ${JSON.stringify(compact3(message.text, 360))}`);
   const fixedStart = [
     "=== POCKET USER REFERENCE \u2014 THIS TURN ===",
     `referenceId: ${reference.id}`,
@@ -2988,7 +3078,7 @@ function serializePocketReference(reference, maxChars = 2200) {
     `Conversation: ${reference.conversationTitle}`,
     `Participants: ${participantNames}`,
     "",
-    `Pocket context: ${compact2(reference.snapshot, 320)}`
+    `Pocket context: ${compact3(reference.snapshot, 320)}`
   ];
   const fixedEnd = [
     "",
@@ -3046,6 +3136,7 @@ var jevFlights = new Set;
 var cameraJobs = new Map;
 var personaJobs = new Map;
 var replyJobs = new ReplyJobs;
+var arrivalIdle = new ArrivalIdle;
 var replyJobScope = (chatId, characterId, conversationId, userId) => JSON.stringify([userId || "", chatId, characterId, conversationId]);
 var notificationThrottle = new Map;
 var ambientFlights = new Set;
@@ -3861,6 +3952,23 @@ async function loadState(chatId, characterId, userId) {
       stateChanged ||= changed;
     }
   }
+  if (raw === null) {
+    const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries;
+    const personaProfile = profiles.find((entry) => entry.kind === "persona" && entry.sourceId && entry.sourceId === state.pocketPersona.linkedPersonaId);
+    if (personaProfile) {
+      state.pocketPersona = { ...applyIdentityProfile(state.pocketPersona, personaProfile), source: "manual" };
+      state.setup.personaConfigured = true;
+      stateChanged = true;
+    }
+    for (const contact of state.contacts) {
+      const source = contact.source;
+      const profile = source.kind === "character" ? profiles.find((entry) => entry.kind === "character" && entry.sourceId === source.characterId) : undefined;
+      if (profile) {
+        Object.assign(contact, applyIdentityProfile(contact, profile));
+        stateChanged = true;
+      }
+    }
+  }
   if (stateChanged)
     await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId });
   return state;
@@ -4269,6 +4377,7 @@ async function validateChangedWallpaperSources(existing, next, userId) {
 async function sendState(state, userId, reason = "refresh", open = false) {
   const preferences = await loadPreferences(userId);
   const npcBank = await loadNpcBank(userId);
+  const identityProfiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries;
   let generation = { mode: preferences.generationMode, effective: null, connections: [], history: preferences.generationHistory, modelOverride: preferences.sidecarModelOverride };
   try {
     generation = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
@@ -4301,7 +4410,7 @@ async function sendState(state, userId, reason = "refresh", open = false) {
     else
       contact.avatarUrl = image.url;
   }));
-  send({ type: "lumiphone:state", state: displayState, npcBank, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
+  send({ type: "lumiphone:state", state: displayState, npcBank, identityProfiles, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
 }
 function viewKey(userId) {
   return userId || "_default";
@@ -6407,6 +6516,8 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
     sendNotification(notification, userId);
     if (relayToContinue)
       setTimeout(() => void requestRelayContinuation(context.chatId, context.characterId, relayToContinue.id, userId), 0);
+    else if (conversation.availability.state === "arriving")
+      scheduleArrivalContinuation(context.chatId, context.characterId, conversation.id, userId);
     send({
       type: "lumiphone:message_progress",
       requestId,
@@ -6967,6 +7078,41 @@ function replyCadenceMs(preferences) {
 function burstTimerKey(chatId, characterId, conversationId, userId) {
   return `${viewKey(userId)}:${stateKey(chatId, characterId)}:${conversationId}`;
 }
+async function scheduleArrivalContinuation(chatId, characterId, conversationId, userId) {
+  const key = burstTimerKey(chatId, characterId, conversationId, userId);
+  arrivalIdle.schedule(key, async (current) => {
+    try {
+      const view = currentView(userId);
+      if (!view || view.chatId !== chatId || view.characterId !== characterId)
+        return;
+      const preferences = await loadPreferences(userId);
+      if (!preferences.autoReplyAfterSend || !current())
+        return;
+      let relayId = "";
+      await withStateLock(stateKey(chatId, characterId), async () => {
+        const state = await loadState(chatId, characterId, userId);
+        const conversation = state.conversations.find((entry) => entry.id === conversationId && entry.kind === "direct" && entry.includesPocketPersona !== false);
+        if (!current() || !conversation || conversation.availability.state !== "arriving" || conversation.outgoingBurst?.held || conversation.outgoingBurst?.open && !conversation.outgoingBurst.finalized)
+          return;
+        const actor = resolvePocketActor(state, conversationActorIds(conversation)[0]);
+        if (!actor?.contact || actor.contact.presence.inScene)
+          return;
+        const contact = actorAsGenerationContact(actor, nowIso());
+        const decision = normalizeReplyDecision({ rawAction: "arrival_handoff", rawReason: "arriving", contact, conversation, explicitRemoteOverride: false, createdAt: nowIso() });
+        const relay = commitArrivalHandoff(state, conversation, contact, decision);
+        if (relay.continuation.state !== "idle")
+          return;
+        relayId = relay.id;
+        await saveState(state, userId);
+        await sendState(state, userId, "arrival_idle");
+      });
+      if (current() && relayId)
+        await requestRelayContinuation(chatId, characterId, relayId, userId);
+    } catch (error) {
+      spindle.log.warn("Pocket idle arrival skipped: " + (error instanceof Error ? error.message : String(error)));
+    }
+  });
+}
 async function scheduleReplyBurst(chatId, characterId, conversationId, userId) {
   const timerKey = burstTimerKey(chatId, characterId, conversationId, userId);
   const previous = replyBurstTimers.get(timerKey);
@@ -7123,7 +7269,10 @@ ${burstMessages.map((message) => message.text.slice(0, 1200)).join(`
     send({ type: "lumiphone:message_progress", requestId, chatId, characterId, conversationId, actorId: actor.actorId, contactId: actor.contact?.id, phase: "done" }, userId);
     progressRequestId = "";
     if (outcome?.relayId) {
-      requestRelayContinuation(chatId, characterId, outcome.relayId, userId);
+      if (outcome.action === "arrival_handoff")
+        scheduleArrivalContinuation(chatId, characterId, conversationId, userId);
+      else
+        requestRelayContinuation(chatId, characterId, outcome.relayId, userId);
       return;
     }
     if (outcome?.action !== "reply")
@@ -7969,6 +8118,7 @@ async function applyAction(input, userId, source = "model") {
       sendNotification(notification, userId);
     }
     if (action === "message" && source === "user" && preferences.autoReplyAfterSend && typeof result.conversationId === "string") {
+      arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, result.conversationId, userId));
       scheduleReplyBurst(context.chatId, context.characterId, result.conversationId, userId);
     }
     for (const relayId of [...new Set(relayIds)])
@@ -8041,7 +8191,13 @@ async function handleFrontend(payload, userId) {
             const presentation = await characterPresentationFor(option.sourceId, userId);
             option = { ...option, avatarUrl: presentation.avatarUrl || option.avatarUrl, accent: presentation.accent || option.accent };
           }
-          const imported = contactFromSource(option);
+          let imported = contactFromSource(option);
+          if (option.kind === "character") {
+            const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries;
+            const saved = profiles.find((entry) => entry.kind === "character" && entry.sourceId === option.sourceId);
+            if (saved)
+              imported = applyIdentityProfile(imported, saved);
+          }
           const sourceKey = contactSourceKey(imported.source);
           if (sourceKey)
             state.suppressedContactSourceKeys = state.suppressedContactSourceKeys.filter((entry) => entry !== sourceKey);
@@ -8372,6 +8528,51 @@ async function handleFrontend(payload, userId) {
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, "preferences");
         break;
       }
+      case "lumiphone:identity_profile_save": {
+        const state = await loadState(context.chatId, context.characterId, userId);
+        const kind = payload.kind === "persona" ? "persona" : "character";
+        const contact = state.contacts.find((entry) => entry.id === text2(payload.contactId, 180) && entry.source.kind === "character");
+        if (kind === "character" && !contact)
+          throw new Error("Choose a character contact to save its profile.");
+        let value = kind === "persona" ? state.pocketPersona : contact;
+        const sourceId = kind === "persona" ? state.pocketPersona.linkedPersonaId || (await resolveActivePocketPersona(userId))?.linkedPersonaId || "" : contact.source.kind === "character" ? contact.source.characterId : "";
+        if (isRecord2(payload.profile)) {
+          const draft = normalizeIdentityProfiles({ version: 1, entries: [{ ...payload.profile, id: "draft", kind, sourceId, updatedAt: nowIso() }] }).entries[0];
+          if (!draft)
+            throw new Error("Give this profile a name before saving it.");
+          value = applyIdentityProfile(value, draft);
+        }
+        await withStateLock("identity-profiles:" + viewKey(userId), async () => {
+          const bank = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId }));
+          saveIdentityProfile(bank, value, kind, sourceId, nowIso(), () => id("profile"));
+          await spindle.userStorage.setJson(IDENTITY_PROFILES_PATH, bank, { indent: 2, userId });
+        });
+        await sendState(state, userId, "identity_profile_saved");
+        send({ type: "lumiphone:identity_profile_saved", requestId }, userId);
+        break;
+      }
+      case "lumiphone:identity_profile_apply": {
+        const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries;
+        const profile = profiles.find((entry) => entry.id === text2(payload.profileId, 180) && entry.kind === payload.kind);
+        if (!profile)
+          throw new Error("That saved profile is unavailable.");
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          if (profile.kind === "persona") {
+            state.pocketPersona = { ...applyIdentityProfile(state.pocketPersona, profile), source: "manual" };
+            state.setup.personaConfigured = true;
+          } else {
+            const contact = state.contacts.find((entry) => entry.id === text2(payload.contactId, 180) && entry.source.kind === "character");
+            if (!contact)
+              throw new Error("Choose a character contact to apply this profile.");
+            Object.assign(contact, applyIdentityProfile(contact, profile));
+          }
+          await saveState(state, userId);
+          await sendState(state, userId, "identity_profile_applied");
+        });
+        send({ type: "lumiphone:identity_profile_applied", requestId }, userId);
+        break;
+      }
       case "lumiphone:save_pocket_persona": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
@@ -8600,6 +8801,8 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
         break;
       }
       case "lumiphone:composer_state": {
+        const conversationId = text2(payload.conversationId, 180);
+        arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, conversationId, userId));
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           const conversation = state.conversations.find((entry) => entry.id === text2(payload.conversationId, 180));
@@ -8609,11 +8812,14 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
           conversation.outgoingBurst.updatedAt = nowIso();
           await saveState(state, userId);
         });
-        if (!bool2(payload.held))
-          scheduleReplyBurst(context.chatId, context.characterId, text2(payload.conversationId, 180), userId);
+        if (!bool2(payload.held)) {
+          scheduleReplyBurst(context.chatId, context.characterId, conversationId, userId);
+          scheduleArrivalContinuation(context.chatId, context.characterId, conversationId, userId);
+        }
         break;
       }
       case "lumiphone:cancel_message_generation": {
+        arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, text2(payload.conversationId, 180), userId));
         const conversationId = text2(payload.conversationId, 180);
         replyJobs.cancel(replyJobScope(context.chatId, context.characterId, conversationId, userId));
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
@@ -8668,6 +8874,7 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
         break;
       }
       case "lumiphone:continue_arrival": {
+        arrivalIdle.cancel(burstTimerKey(context.chatId, context.characterId, text2(payload.conversationId, 180), userId));
         let relayId = "";
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
@@ -9077,7 +9284,7 @@ ${marker}`;
       }
       case "lumiphone:export_data": {
         const state = await loadState(context.chatId, context.characterId, userId);
-        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 6, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId), npcBank: await loadNpcBank(userId) } }, userId);
+        send({ type: "lumiphone:export_data", requestId, data: { product: "Pocket", exportVersion: 6, state: { ...state, processedCommands: [] }, preferences: await loadPreferences(userId), npcBank: await loadNpcBank(userId), identityProfiles: normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })) } }, userId);
         break;
       }
       case "lumiphone:import_data": {
@@ -9100,7 +9307,12 @@ ${marker}`;
             throw new Error("This backup uses a newer NPC Bank schema.");
           importedNpcBank = normalizeNpcBank(payload.data.npcBank, nowIso());
         }
+        const importedIdentityProfiles = payload.data.identityProfiles === undefined ? null : normalizeIdentityProfiles(payload.data.identityProfiles);
+        if (importedIdentityProfiles)
+          normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId }));
         await saveState(state, userId);
+        if (importedIdentityProfiles)
+          await spindle.userStorage.setJson(IDENTITY_PROFILES_PATH, importedIdentityProfiles, { indent: 2, userId });
         if (importedPreferences)
           await savePreferences(importedPreferences, userId);
         if (importedNpcBank)
@@ -9641,6 +9853,7 @@ spindle.permissions.onChanged(({ permission, granted }) => {
   send({ type: "lumiphone:capabilities", capabilities: capabilities() });
 });
 spindle.on("CHAT_SWITCHED", async (payload, userId) => {
+  arrivalIdle.cancelPrefix(viewKey(userId) + ":");
   const chatId = text2(payload?.chatId, 180);
   if (!chatId)
     return;
@@ -9663,6 +9876,7 @@ spindle.on("PERSONA_CHANGED", async (_payload, userId) => {
   } catch {}
 });
 spindle.on("GENERATION_STARTED", async (payload, userId) => {
+  arrivalIdle.cancelPrefix(viewKey(userId) + ":");
   const chatId = text2(payload?.chatId, 180);
   const generationId = text2(payload?.generationId, 180);
   if (!chatId || !generationId || !spindle.permissions.has("chats"))

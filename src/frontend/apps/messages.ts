@@ -251,7 +251,7 @@ function handoffActivity(host: MessagesViewHost, conversation: PocketConversatio
     ? completed ? 'Continued toward arrival' : failed ? 'Couldn’t continue toward arrival' : generating ? 'Continuing toward arrival…' : accepted ? 'Host accepted the arrival bridge' : 'Preparing arrival bridge…'
     : completed ? 'Continued in roleplay' : failed ? 'Couldn’t continue in roleplay' : generating ? 'Continuing in roleplay…' : accepted ? 'Host accepted the handoff' : 'Preparing roleplay handoff…'
   const subtitle = arrival
-    ? completed ? `${actor} is still marked on the way until the RP establishes arrival.` : failed ? continuation.error || relay.injectionError || 'The arrival bridge is still pending.' : generating ? 'Pocket delivered the phone exchange without claiming the actor is already present.' : accepted ? 'Waiting for arrival-relay injection.' : 'Returning narrative control to the main RP while keeping the actor off-scene.'
+    ? completed ? `${actor} is still marked on the way until the RP establishes arrival.` : failed ? continuation.error || relay.injectionError || 'The arrival bridge is still pending.' : generating ? `${actor} is moving toward you; you can continue chatting.` : accepted ? 'Waiting for arrival-relay injection.' : `${actor} is moving toward you; you can continue chatting. After a quiet moment, Pocket continues the roleplay.`
     : completed ? `${actor} continued in the main RP.` : failed ? continuation.error || relay.injectionError || 'The handoff is still pending.' : generating ? 'Pocket delivered the conversation context to the scene.' : accepted ? 'Waiting for relay injection.' : 'Gathering the latest phone exchange.'
   copy.append(el('strong', '', title), el('span', 'lp-copy', subtitle))
   primary.append(mark, copy)
@@ -481,7 +481,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
     bubble.append(document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
     if (message.generation || message.origin || !host.readOnlyDevice) {
-      const tools = el('span', 'lp-bubble-tools')
+      const tools = el('div', 'lp-bubble-tools')
       if (message.generation && !host.readOnlyDevice) {
         const retry = button('↻', 'lp-bubble-action')
         retry.textContent = 'Retry message'; retry.type = 'button'; retry.title = 'Retry'
@@ -500,6 +500,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
         const remove = button('×', 'lp-bubble-action')
         remove.textContent = 'Delete message'; remove.type = 'button'; remove.title = 'Delete message'
         remove.setAttribute('aria-label', 'Delete message')
+        remove.dataset.destructive = 'true'
         remove.addEventListener('click', () => host.send('lumiphone:delete', { kind: 'message', conversationId: conversation.id, id: message.id }))
         tools.appendChild(remove)
       }

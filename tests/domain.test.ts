@@ -1050,3 +1050,21 @@ test('device latest interaction ignores other phones, provisional writes and sys
   state.conversations[1].messages.push(message('call', '2026-06-01', { sender: 'system', call: { status: 'ended' } }) as any)
   expect(latestDeviceInteraction(state, 'alice')?.message.id).toBe('call')
 })
+
+test('identity profiles retain stable fields, isolate scene state and match source IDs rather than names', async () => {
+  const { normalizeIdentityProfiles, saveIdentityProfile, applyIdentityProfile } = await import('../src/domain/identity-profiles.js')
+  const bank = normalizeIdentityProfiles(null)
+  const source: any = { displayName: 'Same name', pronouns: 'they', role: 'Hero', identityBrief: 'Stable identity', phoneProfile: { personality: 'Patient', appearance: 'Tall', textingStyle: 'Short' }, source: 'manual', linkedPersonaId: 'persona-a', memories: ['secret scene'], presence: { inScene: true } }
+  const profile = saveIdentityProfile(bank, source, 'persona', 'persona-a', '2026-10-05', () => 'one')
+  saveIdentityProfile(bank, source, 'persona', 'persona-b', '2026-10-05', () => 'two')
+  expect(bank.entries).toHaveLength(2)
+  expect(JSON.stringify(bank)).not.toContain('secret scene')
+  expect(JSON.stringify(bank)).not.toContain('presence')
+  const target: any = { ...source, linkedPersonaId: 'new-chat-owner', memories: ['this chat only'], presence: { inScene: false } }
+  const applied = applyIdentityProfile(target, profile)
+  expect(applied.linkedPersonaId).toBe('new-chat-owner')
+  expect(applied.memories).toEqual(['this chat only'])
+  expect(applied.presence.inScene).toBe(false)
+  expect(applied.phoneProfile).not.toBe(profile.phoneProfile)
+  expect(() => normalizeIdentityProfiles({ version: 2 })).toThrow('newer')
+})

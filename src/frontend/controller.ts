@@ -34,6 +34,8 @@ import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
+import type { IdentityProfile } from '../domain/identity-profiles.js'
+import { identityProfileControls, refreshIdentityProfileControls } from './components/identity-profiles.js'
 import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
@@ -203,6 +205,7 @@ class PocketController {
   private focusedHandoffRelays = new Set<string>()
   private contactSources: PocketContactSourceOption[] = []
   private npcBank: PocketNpcBankEntry[] = []
+  private identityProfiles: IdentityProfile[] = []
   private contactSourcesRequested = false
   private lastTagKeys = new Set<string>()
   private tagKeyOrder: string[] = []
@@ -738,6 +741,11 @@ class PocketController {
   private send(type: string, payload: Record<string, unknown> = {}): string {
     const context = this.activeContext()
     const id = String(payload.requestId || requestId())
+    if (type === 'lumiphone:generate_pocket_persona') this.operations.set(id, { task: 'persona-profile', requestId: id, phase: 'generating', message: 'Enriching phone profile…' })
+    if (type === 'lumiphone:cancel_persona_generation') {
+      const operation = this.operations.get(String(payload.operationRequestId || ''))
+      if (operation) this.recordOperationProgress({ ...operation, phase: 'error', message: 'Enrichment stopped. You can retry whenever you’re ready.' })
+    }
     this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId(), ...payload })
     return id
   }
@@ -958,6 +966,7 @@ class PocketController {
       if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId)) this.deviceOwnerActorId = personaDeviceId
       this.syncSurfaceIdentity()
       this.npcBank = Array.isArray(payload.npcBank?.entries) ? payload.npcBank.entries as PocketNpcBankEntry[] : []
+      this.identityProfiles = Array.isArray(payload.identityProfiles) ? payload.identityProfiles : []
       this.npcBankGroups = Array.isArray(payload.npcBank?.groups) ? payload.npcBank.groups as PocketContactGroup[] : []
       for (const conversationId of this.manualMessageOverrides) {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
@@ -992,7 +1001,7 @@ class PocketController {
       this.pendingRoute = null
       if (pending) this.openPocket(pending)
       else if (this.expanded && this.currentApp === 'settings') this.updateSettingsDiagnostics()
-      else if (this.expanded) this.render(false)
+      else if (this.expanded && payload.reason !== 'identity_profile_saved') this.render(false)
       if (this.unreadCount() > previousUnread && !this.expanded) this.launcher.animate([
         { transform: 'scale(1)' }, { transform: 'scale(1.13) rotate(-4deg)' }, { transform: 'scale(1)' },
       ], { duration: 420, easing: 'ease-out' })
@@ -1107,6 +1116,17 @@ class PocketController {
       this.personaPreview = payload.persona as ChatPocketPersona
       if (this.setupModalOpen && this.setupPersonaEditing) this.renderFirstChatPersonaEditor()
       else if (this.currentApp === 'settings') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:identity_profile_saved') {
+      refreshIdentityProfileControls(this.screen, this.identityProfiles)
+      if (this.setupModalBody) refreshIdentityProfileControls(this.setupModalBody, this.identityProfiles)
+      return
+    }
+    if (payload.type === 'lumiphone:identity_profile_applied') {
+      this.personaPreview = null
+      if (this.setupModalOpen) this.setupPersonaEditing ? this.renderFirstChatPersonaEditor() : this.renderFirstChatSetupBody()
+      else if (this.expanded) this.render(false)
       return
     }
     if (payload.type === 'lumiphone:pocket_persona_saved') {
@@ -1295,8 +1315,13 @@ class PocketController {
       if (operation) this.recordOperationProgress({ ...operation, phase: 'error', message: payload.error || 'Operation failed' })
       const galleryAction = this.galleryActionButtons.get(payload.requestId)
       if (galleryAction) { galleryAction.button.disabled = false; galleryAction.button.textContent = galleryAction.idle; this.galleryActionButtons.delete(payload.requestId) }
+      const identitySaveError = this.screen.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]') || this.setupModalBody?.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]')
+      if (identitySaveError) {
+        refreshIdentityProfileControls(this.screen, this.identityProfiles, true)
+        if (this.setupModalBody) refreshIdentityProfileControls(this.setupModalBody, this.identityProfiles, true)
+      }
       this.showError(payload.error || 'Pocket could not complete that action.')
-      if (this.expanded) this.render(false)
+      if (this.expanded && !identitySaveError) this.render(false)
     }
   }
 
@@ -1347,11 +1372,13 @@ class PocketController {
     const label = node.querySelector<HTMLElement>('[data-operation-message]')
     if (label) label.textContent = operation.message
     node.dataset.phase = operation.phase
-    const action = this.setupModalBody?.querySelector<HTMLButtonElement>(`[data-operation-action="${CSS.escape(requestId)}"]`)
+    if (operation.phase === 'complete' || operation.phase === 'error') node.querySelector('.lp-indeterminate')?.remove()
+    const action = this.screen.querySelector<HTMLButtonElement>(`[data-operation-action="${CSS.escape(requestId)}"]`) || this.setupModalBody?.querySelector<HTMLButtonElement>(`[data-operation-action="${CSS.escape(requestId)}"]`)
     if (action && (operation.phase === 'complete' || operation.phase === 'error')) {
       action.disabled = false
       action.textContent = operation.phase === 'error' ? 'Retry enrichment' : 'Enrich with LLM'
       delete action.dataset.operationAction
+      this.screen.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove()
       this.setupModalBody?.querySelector(`[data-operation-stop="${CSS.escape(requestId)}"]`)?.remove()
     }
     return true
@@ -2255,7 +2282,7 @@ class PocketController {
       state: this.state!, selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
       generationBrief: this.npcBriefs.get(`${this.state!.chatId}:${this.state!.characterId}`) || '',
       updateGenerationBrief: brief => { this.npcBriefs.set(`${this.state!.chatId}:${this.state!.characterId}`, brief) },
-      sources: this.contactSources, npcBank: this.npcBank, capabilities: this.caps,
+      sources: this.contactSources, npcBank: this.npcBank, identityProfiles: this.identityProfiles, capabilities: this.caps,
       selectedGroupId: this.selectedContactGroupId, bankGroups: this.npcBankGroups,
       collectionDraft: this.collectionDrafts.get(collectionKey), collectionSaving: Boolean(this.collectionRequest),
       updateCollectionDraft: draft => { this.collectionDrafts.set(collectionKey, draft) },
@@ -2909,6 +2936,7 @@ class PocketController {
   private renderSettings(): HTMLDivElement {
     this.settingsDraft ||= structuredClone(this.preferences)
     return renderSettingsView({
+      identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
       state: this.state!,
       section: this.selectedSettingsSection,
@@ -3267,6 +3295,7 @@ class PocketController {
     enrich.addEventListener('click', () => {
       enrich.disabled = true
       enrich.textContent = 'Enriching…'
+      for (const old of body.querySelectorAll('.lp-operation-progress')) old.remove()
       const operationRequestId = this.send('lumiphone:generate_pocket_persona')
       this.operations.set(operationRequestId, { task: 'persona-profile', requestId: operationRequestId, phase: 'generating', message: 'Enriching phone profile…' })
       enrich.dataset.operationAction = operationRequestId
@@ -3303,7 +3332,7 @@ class PocketController {
     })
 
     actions.append(enrich, save)
-    body.append(fields, actions)
+    body.append(fields, actions, identityProfileControls(this.identityProfiles, 'persona', undefined, (type, payload) => this.send(type, payload), () => ({ name: name.value, pronouns: pronouns.value, role: role.value, identityBrief: profile.identityBrief, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })))
     if (personaOperation) {
       enrich.dataset.operationAction = personaOperation.requestId
       actions.append(stopButton(personaOperation.requestId))

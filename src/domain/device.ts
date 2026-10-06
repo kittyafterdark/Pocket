@@ -43,6 +43,25 @@ export function latestDeviceInteraction(state: PhoneState, owner: string): { con
   return latest
 }
 
+/** Build the device activity index once, preserving storage-order ties and ownership. */
+export function latestDeviceInteractions(state: PhoneState): Map<string, { conversation: PocketConversation; message: PhoneMessage }> {
+  const index = new Map<string, { conversation: PocketConversation; message: PhoneMessage }>()
+  const rank = (message: PhoneMessage) => Number.isFinite(Date.parse(message.createdAt)) ? Date.parse(message.createdAt) : -Infinity
+  for (const conversation of state.conversations) {
+    let latest: PhoneMessage | undefined
+    for (const message of conversation.messages) {
+      if (message.candidateCommitState === 'provisional' || (message.sender === 'system' && !message.call)) continue
+      if (!latest || rank(message) >= rank(latest)) latest = message
+    }
+    if (!latest) continue
+    for (const owner of conversationDeviceActorIds(state, conversation)) {
+      const prior = index.get(owner)
+      if (!prior || rank(latest) >= rank(prior.message)) index.set(owner, { conversation, message: latest })
+    }
+  }
+  return index
+}
+
 /** Choose an actual participating phone, preferring the observed recipient. */
 export function activityDeviceOwner(state: PhoneState, activity: PocketActivity, currentOwner: string): string | null {
   if (activity.scope.chatId !== state.chatId || activity.scope.characterId !== state.characterId) return null

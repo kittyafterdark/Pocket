@@ -1,5 +1,7 @@
 import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketNpcBankEntry, PocketOperationProgress, PocketRoute, PocketContactGroup } from '../../types.js'
 import { renderContactGroups } from './contact-groups.js'
+import type { IdentityProfile } from '../../domain/identity-profiles.js'
+import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -9,6 +11,7 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export type ContactView = NonNullable<Extract<PocketRoute, { app: 'contacts' }>['view']>
 
 export interface ContactsViewHost {
+  identityProfiles?: IdentityProfile[]
   state: PhoneState
   selectedContactId: string
   selectedView: ContactView
@@ -164,6 +167,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow,
   )
   if (contact) {
+    if (contact.source.kind === 'character') content.append(identityProfileControls(host.identityProfiles || [], 'character', contact.id, host.send, () => ({ name: name.value, role: role.value, identityBrief: description.value, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })))
     if (contact.avatarOverrideUrl && contact.sourceAvatarUrl) {
       const sourcePhoto = button('Use source photo', 'lp-button lp-button-quiet')
       sourcePhoto.addEventListener('click', () => host.send('lumiphone:set_contact_photo', { contactId: contact.id, useSource: true }))
@@ -474,7 +478,8 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     for (const entry of contacts) {
       const row = button('', 'lp-card lp-contact-row')
       const identity = identityBlock({ name: entry.name, meta: entry.role, className: 'lp-grow' })
-      row.append(avatar(entry), identity, el('span', entry.presence.inScene ? 'lp-presence' : 'lp-presence lp-presence-away'))
+      const status = el('span', entry.presence.inScene ? 'lp-contact-presence-label' : 'lp-contact-presence-label lp-contact-presence-away', entry.presence.inScene ? 'Here' : 'Away')
+      row.append(avatar(entry), identity, status)
       row.addEventListener('click', () => host.select(entry.id, 'detail'))
       list.appendChild(row)
     }
