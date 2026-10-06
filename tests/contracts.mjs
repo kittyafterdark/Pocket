@@ -2092,6 +2092,14 @@ backendReceiver({ type: 'lumiphone:camera_done', requestId: portraitRequest.requ
 assert.ok(dockRoot.querySelector('.lp-camera-review-actions .lp-camera-accept'), 'acceptance has its own review flow rather than sharing the shutter row')
 assert.equal(dockRoot.querySelector('.lp-camera-floating-brief').hidden, true, 'review keeps the finished image unobscured')
 assert.equal(dockRoot.querySelector('.lp-shutter').getAttribute('aria-label'), 'Retake photo')
+const captureCountBeforeRetake = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').length
+dockRoot.querySelector('.lp-shutter').click()
+assert.equal(dockRoot.querySelector('.lp-camera-floating-brief').hidden, false, 'Retake returns to composition before spending another generation')
+assert.equal(frontendSends.filter(message => message.type === 'lumiphone:camera_generate').length, captureCountBeforeRetake)
+dockRoot.querySelector('.lp-shutter').click()
+const retakeRequest = frontendSends.filter(message => message.type === 'lumiphone:camera_generate').at(-1)
+backendReceiver({ type: 'lumiphone:camera_done', requestId: retakeRequest.requestId, imageUrl: '/api/v1/images/portrait' })
+
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use photo').click()
 await new Promise(resolve => setTimeout(resolve, 0))
 const photoApply = frontendSends.filter(message => message.type === 'lumiphone:set_contact_photo').at(-1)
