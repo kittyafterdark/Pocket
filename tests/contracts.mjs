@@ -1398,6 +1398,7 @@ reconciliationBefore.trackers.push({
   id: 'reconcile-tracker', key: 'scene_tension', label: 'Scene Tension', kind: 'meter', modelPrompt: 'Increase only when the scene becomes tense.',
   value: 10, initialValue: 10, min: 0, max: 100, updateMode: 'model', allowModelWrite: true, visibleToModel: true,
 })
+reconciliationBefore.events.push({ id: 'stable-beat', title: 'Press Conference', description: 'Agency conference', completed: false, lane: 'Continuity', createdBy: 'model', start: reconciliationBefore.roleplayNow, end: reconciliationBefore.roleplayNow, color: '#ffffff' })
 storage.set(reconciliationStatePath, reconciliationBefore)
 spindle.chat.getMessages = async () => [
   { id: 'reconcile-user', revision: 1, role: 'user', content: 'It is around 3–4 AM. Alice is across town, away from me. The clear night is tenser now.' },
@@ -1412,6 +1413,7 @@ spindle.generate.quiet = async (request) => {
   assert.match(systemPrompt, /RP WORLD STATE delta/)
   assert.match(userPrompt, /CURRENT POCKET STATE — ADVISORY/)
   assert.match(userPrompt, /RECENT NARRATIVE — AUTHORITATIVE/)
+  assert.match(userPrompt, /stable-beat/, 'Automatic reconciliation receives stable event IDs')
   assert.match(userPrompt, /Increase only when the scene becomes tense./, 'Reconciliation receives saved tracker update guidance')
   assert.doesNotMatch(userPrompt, /Do not leak this tool thought/)
   return { content: JSON.stringify({
@@ -1424,6 +1426,7 @@ spindle.generate.quiet = async (request) => {
     facts: [],
     actors: [{ name: 'Alice', status: 'away', presence: 'away', activity: 'across town', location: 'across town', visibility: 'public', knownBy: [], ttl: 'turn' }],
     timeline: [],
+    eventUpdates: [{ id: 'stable-beat', description: 'The conference was resolved in this controlled narrative.', completed: true, evidence: 'Alice remains across town while the clear night continues.' }],
     trackerOps: [{ key: 'scene_tension', operation: 'add', amount: 5, reason: 'The scene grew tenser.' }],
   }) }
 }
@@ -1431,6 +1434,8 @@ await backendEvents.get('GENERATION_ENDED')({ chatId: 'chat-reconcile', generati
 let reconciliationAfter = storage.get(reconciliationStatePath)
 assert.equal(reconciliationAfter.stateRevision, 1)
 assert.equal(reconciliationAfter.lastReconciliation.generationId, 'gen-reconcile')
+assert.equal(reconciliationAfter.events.find(event => event.id === 'stable-beat').completed, true, 'Existing beats update by ID without a title or scope match')
+assert.ok(reconciliationAfter.lastReconciliation.domains.includes('timeline'))
 assert.equal(reconciliationAfter.lastReconciliation.messageId, 'reconcile-assistant')
 assert.ok(reconciliationAfter.lastReconciliation.domains.includes('clock'))
 assert.ok(reconciliationAfter.lastReconciliation.domains.includes('weather'))

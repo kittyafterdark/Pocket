@@ -52,12 +52,12 @@ import { ReplyJobs } from './backend/reply-jobs.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { ArrivalIdle } from './backend/arrival-idle.js'
-import { normalizeWeatherOutlook } from './domain/app-review.js'
+import { applyTimelineReview, normalizeWeatherOutlook } from './domain/app-review.js'
 import { snapshotActivityClock } from './domain/activity-clock.js'
 import { AppReviews } from './backend/app-reviews.js'
 import { IDENTITY_PROFILES_PATH, normalizeIdentityProfiles, saveIdentityProfile, applyIdentityProfile } from './domain/identity-profiles.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
-import { sanitizeNarrativeContent, stripPocketPresentationMarkup } from './backend/narrative-content.js'
+import { narrativeExcerpt, sanitizeNarrativeContent, stripPocketPresentationMarkup } from './backend/narrative-content.js'
 import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, persistentHandoffContext, relayForGeneration, relayIdFromMessages, relayLatestExchange } from './backend/continuity.js'
 import { assertPocketImageResolved, resolvePocketImageSource } from './backend/image-sources.js'
 import { effectiveImageRequest, runImageJob } from './backend/image-jobs.js'
@@ -2842,7 +2842,7 @@ function applyNarrativeSeedState(state: PhoneState, seed: NarrativeSeedSnapshot)
       existing.whenKind = item.whenKind
       existing.whenText = item.whenText
       existing.actorContactIds = actorContactIds.length ? actorContactIds : existing.actorContactIds
-      existing.completed = item.completed
+      existing.completed = existing.completed || item.completed
 
       // Collapse only duplicate model-seeded siblings for this current seed item.
       const duplicateIds = new Set(candidates.filter((event) => event.id !== existing.id).map((event) => event.id))
@@ -2958,8 +2958,9 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
 
     const recentNarrative = sourceMessages.map((message, index) => {
       const role = message?.role === 'assistant' ? 'ASSISTANT NARRATIVE' : 'USER NARRATIVE'
-      return `${role} [${index + 1}]: ${sanitizeNarrativeContent(message?.content, 1_300)}`
-    }).join('\n\n').slice(-5_200)
+      return `${role} [${index + 1}]: ${narrativeExcerpt(message?.content, 2_600)}`
+    }).join('\n\n').slice(-10_400)
+    const timelineSnapshot = structuredClone(state.events.filter(event => !event.completed).slice(0, 16))
     const modelWritableTrackers = state.trackers
       .filter((tracker) => tracker.allowModelWrite && tracker.updateMode === 'model')
       .slice(0, 12)
@@ -2987,7 +2988,8 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
         details: state.weather.details,
       },
       inSceneActors: state.contacts.filter((contact) => contact.presence.inScene).map((contact) => contact.name).slice(0, 16),
-      activeTimeline: state.events.filter((event) => seededEventLane(event) && !event.completed).slice(-8).map((event) => ({
+      activeTimeline: timelineSnapshot.map((event) => ({
+        id: event.id,
         title: event.title,
         description: event.description,
         whenText: event.whenText,
@@ -3013,6 +3015,7 @@ Return strict JSON only:
   "facts":[{"text":"actor-specific factual state","visibility":"public|scene|private","knownBy":["exact actor names"],"actors":["REQUIRED subject actor names"],"ttl":"turn|scene|persistent"}],
   "actors":[{"name":"exact known actor name","status":"available|busy|away|asleep|in_scene|unknown","presence":"with_persona|away|unknown","activity":"short current activity","location":"short location","visibility":"public|scene|private","knownBy":["exact actor names"],"ttl":"turn|scene|persistent"}],
   "timeline":[{"scope":"world|actor","title":"event/beat","description":"short detail","whenText":"Now|Later today|Tomorrow|etc","whenKind":"exact|approximate|relative|unscheduled","actors":["REQUIRED when scope=actor; empty when scope=world"],"completed":false,"visibility":"public|scene|private","knownBy":["exact actor names"]}],
+  "eventUpdates":[{"id":"existing activeTimeline id","description":"established context or resolution","completed":true,"evidence":"exact quotation from RECENT NARRATIVE, at least 12 characters"}],
   "trackerOps":[{"key":"ONLY a key from MODEL-WRITABLE TRACKERS","operation":"set|add|subtract|reset|set_state","amount":0,"state":"state value for set_state","reason":"short evidence from recent narrative"}]
 }
 
@@ -3031,7 +3034,7 @@ Rules:
 - Actor status is world/physical state only. busy does NOT mean unable to text.
 - actors[].presence is RELATIVE PHYSICAL CO-LOCATION with the Pocket Persona: with_persona only when recent prose supports that they are together; away only when recent prose supports separation; unknown when the latest prose does not establish it. Do not preserve a stale CURRENT POCKET STATE presence merely because it is already there.
 - CURRENT POCKET STATE is advisory and may be stale. It exists so you can emit corrections, not as evidence. RECENT NARRATIVE is authoritative when they conflict.
-- For an existing active Continuity/Current-goal timeline item that recent prose clearly resolves, emit the same beat with completed=true. Use whenText="Now" only when the latest supplied prose makes it explicitly current.
+- Update existing activeTimeline beats through eventUpdates using their exact id and an exact prose quotation. Summarize or complete only when supported by the narrative; never complete solely because a scheduled time passed. Do not recreate an existing beat in timeline with a different title. For legacy timeline updates, keep the existing title and actor scope. Use whenText="Now" only when the latest supplied prose makes it explicitly current.
 - trackerOps is an EPHEMERAL delta list. Use ONLY keys listed under MODEL-WRITABLE TRACKERS and only when recent prose directly supports the change. Do not infer tracker changes from CURRENT POCKET STATE. Use [] when nothing changed.
 - Prefer 0–6 world facts, 0–6 actor facts, 0–8 actor updates, and 0–4 timeline rows.
 - Use exact names from KNOWN ACTORS when possible.`,
@@ -3062,14 +3065,15 @@ ${recentNarrative}`,
     await withStateLock(stateKey(chatId, characterId), async () => {
       const latest = await loadState(chatId, characterId, userId)
       const alreadyApplied = latest.lastReconciliation?.sourceKey === sourceKey
-      const continuityChanged = alreadyApplied ? false : applyNarrativeSeedState(latest, seed)
+      const continuityChanged = alreadyApplied ? false : applyNarrativeSeedState(latest, { ...seed, timeline: fresh.timeline })
       const presenceChanged = alreadyApplied ? false : applyNarrativeActorPresence(latest, fresh.actors, fresh.updatedAt)
       const trackersChanged = alreadyApplied ? false : applyNarrativeTrackerDeltas(latest, trackerDeltas, fresh.updatedAt)
+      const timelineChanged = alreadyApplied ? 0 : applyTimelineReview(latest.events, timelineSnapshot, parsed.eventUpdates, recentNarrative)
       const domains = new Set<NonNullable<PhoneState['lastReconciliation']>['domains'][number]>(['continuity'])
       if (fresh.world.clock.time || fresh.world.clock.dayPart || fresh.world.clock.label) domains.add('clock')
       if (fresh.world.weather) domains.add('weather')
       if (fresh.actors.some((actor) => actor.presence !== 'unknown') || presenceChanged) domains.add('presence')
-      if (seed.timeline.length) domains.add('timeline')
+      if (seed.timeline.length || timelineChanged) domains.add('timeline')
       if (trackerDeltas.length || trackersChanged) domains.add('trackers')
       if (!alreadyApplied) {
         const nextRevision = Math.max(0, latest.stateRevision || 0) + 1

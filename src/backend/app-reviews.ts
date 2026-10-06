@@ -1,6 +1,6 @@
 import type { PhoneState } from '../types.js'
 import { normalizeWeatherOutlook, storyDate, applyTimelineReview } from '../domain/app-review.js'
-import { sanitizeNarrativeContent } from './narrative-content.js'
+import { narrativeExcerpt } from './narrative-content.js'
 
 type ReviewTask = 'weather-week' | 'timeline-review'
 interface ReviewJob { controller: AbortController; cancelled: boolean; chatId: string; characterId: string; userId?: string; task: ReviewTask }
@@ -39,9 +39,10 @@ export class AppReviews {
     send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'generating', message: task === 'weather-week' ? 'Building the story outlook…' : 'Reading recent story beats…' }, userId)
     try {
       const state = await loadState(context.chatId, context.characterId, userId)
-      const snapshot = structuredClone(state.events.slice(-16))
+      const snapshot = structuredClone(state.events.filter(event => !event.completed).slice(0, 16))
+      let applied = 0
       const startDate = storyDate(state.roleplayNow, state.roleplayTimezoneOffsetMinutes)
-      const narrative = task === 'timeline-review' ? (await getMessages(context.chatId)).filter((message) => message.role === 'user' || message.role === 'assistant').slice(-6).map((message) => sanitizeNarrativeContent(message.content, 2200)).join('\n\n').slice(-12000) : ''
+      const narrative = task === 'timeline-review' ? (await getMessages(context.chatId)).filter((message) => message.role === 'user' || message.role === 'assistant').slice(-12).map((message) => narrativeExcerpt(message.content, 4000)).join('\n\n').slice(-24000) : ''
       if (task === 'timeline-review' && (!snapshot.length || !narrative.trim())) throw new Error('Add a timeline beat and some committed roleplay text before reviewing.')
       const prompt = task === 'weather-week'
         ? 'Create a FICTIONAL seven-day forecast for scene planning from the supplied RP weather. Return JSON {"days":[{"condition":"short condition","high":number,"low":number,"details":"short scene-friendly atmosphere"}]} with exactly seven days, today first, in the supplied unit. Today must match current conditions and range. Keep plausible progression, never claim real meteorological data or canonical future story events.'
@@ -57,10 +58,10 @@ export class AppReviews {
           if (!outlook) throw new Error('The model did not return seven valid forecast days. Try again.')
           outlook.days[0] = { ...outlook.days[0], condition: state.weather.condition, high: state.weather.high, low: state.weather.low, details: state.weather.details.slice(0, 240) }
           latest.weather.outlook = outlook
-        } else applyTimelineReview(latest.events, snapshot, response.events, narrative)
+        } else applied = applyTimelineReview(latest.events, snapshot, response.events, narrative)
         await saveState(latest, userId); await sendState(latest, userId, task)
       })
-      send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'complete', message: task === 'weather-week' ? 'Seven-day story outlook ready.' : 'Recent beats reviewed. Unsupported or edited events were left unchanged.' }, userId)
+      send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'complete', message: task === 'weather-week' ? 'Seven-day story outlook ready.' : applied ? `${applied} timeline updates applied.` : 'No supported changes found in the supplied story. Events were left unchanged.' }, userId)
     } catch (error) {
       if (!job.cancelled) { send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'error', message: error instanceof Error ? error.message : 'Review failed. Try again.' }, userId); throw error }
     } finally { if (this.jobs.get(jobKey) === job) this.jobs.delete(jobKey) }

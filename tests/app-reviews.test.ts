@@ -62,3 +62,28 @@ test('review rejects concurrent duplicates and never overwrites weather edited d
   expect(f.saves()).toBe(0)
   expect(f.updates.at(-1)?.phase).toBe('error')
 })
+
+
+test('timeline review keeps older open beats and late resolution in long prose', async () => {
+  const evidence = 'The press conference was over and everyone had gone home.'
+  const event = { id: 'old-open', title: 'Press Conference', description: 'Agency conference', completed: false }
+  let state = { events: [event, ...Array.from({ length: 20 }, (_, i) => ({ ...event, id: 'resolved-' + i, completed: true }))], roleplayNow: '', weather: {} } as unknown as PhoneState
+  const statuses: string[] = []
+  const reviews = new AppReviews({
+    loadState: async () => structuredClone(state), saveState: async next => { state = next }, sendState: async () => {},
+    send: payload => statuses.push((payload as { message: string }).message),
+    getMessages: async () => [{ role: 'assistant', content: 'At the conference. ' + 'Long scene. '.repeat(500) + evidence }],
+    runStructuredGeneration: async (_task, _id, request) => {
+      const messages = request.messages as Array<{ content: string }>
+      const supplied = JSON.parse(messages[1].content)
+      expect(supplied.events.map((entry: { id: string }) => entry.id)).toEqual(['old-open'])
+      expect(supplied.recentProse).toContain(evidence)
+      return { events: [{ id: 'old-open', completed: true, description: 'The agency conference finished.', evidence }] }
+    },
+    withStateLock: async (_key, callback) => callback(), stateKey: () => 'fixture', nowIso: () => '',
+  })
+  await reviews.run(context, 'timeline-review', 'review', 'owner')
+  expect(state.events[0].completed).toBe(true)
+  expect(state.events[0].description).toBe('The agency conference finished.')
+  expect(statuses.at(-1)).toContain('updates applied')
+})

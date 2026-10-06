@@ -66,6 +66,16 @@ export function sanitizeNarrativeContent(value: unknown, max = 4_000): string {
   return stripMachineWrappers(visibleStructuredText(value)).slice(0, Math.max(0, max))
 }
 
+/** Keep both scene setup and resolution when a long turn exceeds the context budget. */
+export function narrativeExcerpt(value: unknown, max: number): string {
+  const clean = sanitizeNarrativeContent(value, Number.MAX_SAFE_INTEGER)
+  if (clean.length <= max) return clean
+  const gap = '\n[Earlier prose omitted]\n'
+  const room = Math.max(0, max - gap.length)
+  const head = Math.floor(room / 3)
+  return clean.slice(0, head) + gap + clean.slice(-Math.max(1, room - head))
+}
+
 /** Strip Pocket-only display markers from persisted host prose without otherwise
  * classifying or truncating the surrounding narrative. */
 export function stripPocketPresentationMarkup(value: string): string {
