@@ -39,6 +39,7 @@ export const PHONE_STYLES = `
   .lp-setup .lp-setup-start { background:var(--lp-accent); color:var(--lumiverse-text-on-primary,#111); border-color:transparent; }
   .lp-setup .lp-operation-progress { display:grid; gap:7px; padding:12px; border:1px solid var(--lp-border); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); font-size:12px; }
   .lp-setup .lp-operation-progress[data-phase="error"] { border-color:var(--lumiverse-danger,#c65c65); }
+  .lp-setup .lp-setup-connection-select [role="listbox"] { position:relative; top:auto; left:auto; right:auto; margin-top:6px; }
   .lp-setup-generation { display:grid; gap:10px; min-width:0; }
   @media(max-width:480px) { .lp-setup .lp-setup-modes { grid-template-columns:1fr; } .lp-setup .lp-setup-hero { padding:18px; } .lp-setup .lp-setup-diagram { width:48px; height:66px; padding:10px; } .lp-setup .lp-setup-footer { grid-template-columns:1fr 1fr; } .lp-setup .lp-setup-footer > p { grid-column:1 / -1; } }
   .lumiphone-launcher {

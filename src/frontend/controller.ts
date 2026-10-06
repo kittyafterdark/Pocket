@@ -3073,7 +3073,7 @@ class PocketController {
         this.renderFirstChatSetupBody()
       }
       if (this.ctx.components.mountSelect) {
-        afterAttachment(connectionMount, () => this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', portal: false, onChange: changeConnection }))
+        afterAttachment(connectionMount, () => this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', portal: false, className: 'lp-setup-connection-select', maxHeight: 220, onChange: changeConnection }))
       } else {
         const connection = el('select', 'lp-select'); connection.setAttribute('aria-label', 'Pocket connection')
         connection.append(new Option('Choose connection', ''))
