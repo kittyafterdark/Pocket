@@ -2958,7 +2958,7 @@ class PocketController {
     this.setupAwaitingGreeting = false
     this.setupModalOpen = true
     this.setupPersonaEditing = false
-    const modal = this.ctx.ui.showModal({ title: 'Set up Pocket', width: 500, maxHeight: 680 })
+    const modal = this.ctx.ui.showModal({ title: 'Set up Pocket', width: 620, maxHeight: 760 })
     const body = el('div', 'lp-settings-section lp-setup')
     this.setupModalBody = body
     this.setupModalDismiss = () => modal.dismiss()
@@ -2980,15 +2980,29 @@ class PocketController {
     for (const cleanup of this.setupControlCleanups.splice(0)) cleanup()
     body.replaceChildren()
 
-    body.appendChild(el('p', 'lp-copy', 'Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline.'))
-    const authorship = el('section', 'lp-card lp-settings-section')
-    authorship.append(el('div', 'lp-eyebrow', 'Who writes your character?'))
-    const mode = el('select', 'lp-select'); mode.setAttribute('aria-label', 'Character authorship')
-    for (const [value, label] of [['roleplay', 'Roleplay · I write my character'], ['impersonation', 'Impersonation · AI writes both sides']] as const) {
-      const option = el('option', '', label); option.value = value; option.selected = (state.setup.authorship || 'roleplay') === value; mode.append(option)
+    const hero = el('header', 'lp-setup-hero')
+    const diagram = el('div', 'lp-setup-diagram'); diagram.innerHTML = PHONE_ICON; diagram.setAttribute('aria-hidden', 'true')
+    const intro = el('div', 'lp-setup-intro')
+    intro.append(el('div', 'lp-setup-code', 'POCKET / INITIALIZE'), el('h1', 'lp-setup-title', 'A phone for your story.'), el('p', 'lp-copy', 'Connect a model, choose its owner, and bring your world along.'))
+    hero.append(intro, diagram); body.appendChild(hero)
+    const stage = (section: HTMLElement, number: string, title: string, status: string, ready = false) => {
+      section.classList.add('lp-setup-stage'); section.dataset.setupStage = number
+      const heading = el('div', 'lp-setup-stage-heading')
+      const index = el('span', 'lp-setup-index', number); index.setAttribute('aria-hidden', 'true')
+      const badge = el('span', 'lp-setup-status', status); badge.dataset.ready = String(ready)
+      heading.append(index, el('h2', 'lp-setup-stage-title', title), badge); section.prepend(heading)
     }
-    mode.addEventListener('change', () => this.send('lumiphone:set_authorship', { authorship: mode.value }))
-    authorship.append(mode, el('p', 'lp-copy', 'Roleplay keeps your side yours. You can always send manually inside Pocket. This choice applies only to this chat.'))
+    const authorship = el('section', 'lp-card lp-settings-section')
+    stage(authorship, '01', 'Who writes your character?', 'This chat')
+    const mode = el('input'); mode.type = 'hidden'; mode.value = state.setup.authorship || 'roleplay'
+    const modes = el('div', 'lp-setup-modes'); modes.setAttribute('role', 'radiogroup'); modes.setAttribute('aria-label', 'Character authorship')
+    for (const [value, title, copy] of [['roleplay', 'Roleplay', 'You write your character. Pocket writes the people around them.'], ['impersonation', 'Impersonation', 'AI can write both sides, including your character’s phone messages.']] as const) {
+      const choice = el('label', 'lp-setup-mode'); const radio = el('input'); radio.type = 'radio'; radio.name = 'pocket-authorship-' + this.surfaceId; radio.value = value; radio.checked = mode.value === value
+      const wording = el('span', 'lp-setup-mode-copy'); wording.append(el('strong', '', title), el('span', '', copy))
+      radio.addEventListener('change', () => { if (!radio.checked) return; mode.value = value; this.send('lumiphone:set_authorship', { authorship: value }) })
+      choice.append(radio, wording); modes.append(choice)
+    }
+    authorship.append(modes, el('p', 'lp-copy', 'You can always send messages manually inside Pocket.'))
 
     const effective = this.generation?.effective
     const latestTest = [...(this.generation?.history || this.preferences.generationHistory || [])]
@@ -2997,7 +3011,6 @@ class PocketController {
     const llmReady = Boolean(this.caps?.generation && effective?.configured)
     const llm = el('section', 'lp-card lp-settings-section')
     llm.append(
-      el('div', 'lp-eyebrow', llmReady ? '✓ LLM' : '○ LLM'),
       el('strong', '', effective?.name || 'No effective connection'),
       el('p', 'lp-copy', effective
         ? `${effective.provider} · ${effective.model || 'model not set'}`
@@ -3009,6 +3022,7 @@ class PocketController {
           : latestTest.status === 'completed' ? `✓ Test passed · ${latestTest.latencyMs ?? 0} ms`
             : `Test failed · ${latestTest.error || 'Unknown provider error'}`))
     }
+    stage(llm, '02', 'Connect your model', llmReady ? 'Connected' : 'Needs connection', llmReady)
     const llmActions = el('div', 'lp-row')
     const test = button('Test LLM', 'lp-button lp-button-quiet')
     test.disabled = !this.caps?.generation || latestTest?.status === 'started'
@@ -3028,6 +3042,12 @@ class PocketController {
     })
     llmActions.append(test, configureLlm)
     llm.appendChild(llmActions)
+    const afterAttachment = (target: HTMLElement, mount: () => { destroy(): void }) => {
+      let stopped = false; let observer: MutationObserver | undefined; let handle: { destroy(): void } | undefined
+      this.setupControlCleanups.push(() => { stopped = true; observer?.disconnect(); handle?.destroy() })
+      const attach = () => { if (stopped || handle || !target.isConnected) return; observer?.disconnect(); handle = mount() }
+      queueMicrotask(() => { if (stopped) return; if (target.isConnected) attach(); else { observer = new MutationObserver(attach); observer.observe(document.body, { childList: true, subtree: true }) } })
+    }
     const sourceControls = el('div', 'lp-setup-generation')
     const source = el('select', 'lp-select'); source.setAttribute('aria-label', 'Pocket generation source')
     for (const [value, label] of [['roleplay', 'Follow roleplay connection'], ['sidecar', 'Choose a Pocket connection']]) {
@@ -3046,8 +3066,7 @@ class PocketController {
         this.renderFirstChatSetupBody()
       }
       if (this.ctx.components.mountSelect) {
-        const handle = this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', onChange: changeConnection })
-        this.setupControlCleanups.push(() => handle.destroy())
+        afterAttachment(connectionMount, () => this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: 'Pocket connection', placeholder: 'Choose connection', onChange: changeConnection }))
       } else {
         const connection = el('select', 'lp-select'); connection.setAttribute('aria-label', 'Pocket connection')
         connection.append(new Option('Choose connection', ''))
@@ -3055,21 +3074,22 @@ class PocketController {
         connection.addEventListener('change', () => changeConnection(connection.value)); connectionMount.append(connection)
       }
       const modelMount = el('div', 'lp-model-combobox')
-      const handle = this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: 'llm', id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: 'Use connection model', onChange: value => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) })
-      this.setupControlCleanups.push(() => handle.destroy())
-      sourceControls.append(connectionMount, modelMount)
+      afterAttachment(modelMount, () => this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: 'llm', id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: 'Use connection model', onChange: value => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) }))
+      const connectionLabel = el('div', 'lp-setup-field', 'Connection'); connectionLabel.append(connectionMount)
+      const modelLabel = el('div', 'lp-setup-field', 'Model'); modelLabel.append(modelMount)
+      sourceControls.append(connectionLabel, modelLabel)
     }
     llm.append(sourceControls)
 
     const personaReady = Boolean(state.setup.personaConfigured)
     const persona = el('section', 'lp-card lp-settings-section')
     persona.append(
-      el('div', 'lp-eyebrow', personaReady ? '✓ PERSONA' : '○ PERSONA'),
       el('strong', '', personaReady ? state.pocketPersona.displayName : (this.activePersona?.name || 'Choose the phone owner')),
       el('p', 'lp-copy', personaReady
         ? 'This character owns Pocket and is the recipient role for private DMs.'
         : 'Choose who Pocket follows as the phone owner.'),
     )
+    stage(persona, '03', 'Choose the phone owner', personaReady ? 'Linked' : 'Choose owner', personaReady)
     const personaActions = el('div', 'lp-row')
     if (this.activePersona) {
       const follow = button(`Follow ${this.activePersona.name}`, 'lp-button')
@@ -3093,7 +3113,6 @@ class PocketController {
     const goal = state.events.find((event) => event.lane === 'Current goal' && !event.completed)
     const world = el('section', 'lp-card lp-settings-section')
     world.append(
-      el('div', 'lp-eyebrow', worldStatus === 'seeded' ? '✓ WORLD · OPTIONAL' : worldStatus === 'skipped' ? '— WORLD · OPTIONAL' : '○ WORLD · OPTIONAL'),
       el('strong', '', worldStatus === 'seeded' ? 'Seeded from this roleplay' : worldStatus === 'skipped' ? 'Skipped' : 'No world baseline yet'),
       el('p', 'lp-copy',
         worldStatus === 'seeded'
@@ -3102,6 +3121,7 @@ class PocketController {
             ? 'Pocket will start without situational first-turn hooks. You can add world state later.'
             : 'Seed a sanitized world snapshot from the current RP. Raw narrative is not used as phone history.'),
     )
+    stage(world, '04', 'Bring in your world', worldStatus === 'seeded' ? 'Seeded' : 'Optional', worldStatus === 'seeded')
     const worldActions = el('div', 'lp-row')
     const worldOperation = [...this.operations.values()].find((entry) => entry.task === 'world-seed' && entry.phase !== 'complete' && entry.phase !== 'error')
     const seed = button(worldOperation ? 'Seeding…' : worldStatus === 'seeded' ? 'Reseed from RP' : 'Seed from current RP', 'lp-button')
@@ -3147,7 +3167,10 @@ class PocketController {
       this.setupModalDismiss?.()
     })
 
-    body.append(authorship, llm, persona, world, start, later)
+    const footer = el('footer', 'lp-setup-footer')
+    const readiness = el('p', 'lp-copy', !llmReady ? 'Connect a model to continue.' : !personaReady ? 'Choose a phone owner to continue.' : 'Your phone is ready. World setup is optional.'); readiness.setAttribute('role', 'status')
+    start.classList.add('lp-setup-start'); footer.append(readiness, later, start)
+    body.append(authorship, llm, persona, world, footer)
   }
 
   private renderFirstChatPersonaEditor(): void {
@@ -3156,6 +3179,7 @@ class PocketController {
     if (!body || !state) return
     body.replaceChildren()
 
+    for (const cleanup of this.setupControlCleanups.splice(0)) cleanup()
     const profile = this.personaPreview || state.pocketPersona
     const phoneProfile = profile.phoneProfile || { personality: '', appearance: '', textingStyle: '' }
 
@@ -3168,7 +3192,8 @@ class PocketController {
 
     body.append(
       back,
-      el('div', 'lp-eyebrow', 'Persona · phone profile'),
+      el('div', 'lp-setup-code', 'POCKET / IDENTITY'),
+      el('h1', 'lp-setup-title', 'Make it their phone.'),
       el('p', 'lp-copy', 'Keep this compact and useful for texting. Pocket does not need a full prose character card to generate a DM.'),
     )
 
@@ -3212,18 +3237,11 @@ class PocketController {
     source.addEventListener('change', syncSource)
     syncSource()
 
-    const fields = el('section', 'lp-card lp-settings-section')
+    const fields = el('section', 'lp-card lp-settings-section lp-setup-profile')
+    const labelled = (title: string, control: HTMLElement) => { const label = el('label', 'lp-setup-field', title); label.append(control); return label }
     fields.append(
-      source,
-      name,
-      pronouns,
-      role,
-      el('div', 'lp-label', 'Personality'),
-      personality,
-      el('div', 'lp-label', 'Minimal appearance'),
-      appearance,
-      el('div', 'lp-label', 'Texting quirks'),
-      textingStyle,
+      labelled('Profile source', source), labelled('Display name', name), labelled('Pronouns', pronouns), labelled('Role', role),
+      labelled('Personality', personality), labelled('Appearance', appearance), labelled('Texting style', textingStyle),
     )
 
     const actions = el('div', 'lp-row')

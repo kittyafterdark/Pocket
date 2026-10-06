@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { JSDOM } from 'jsdom'
 
 // Inspect open Pocket roots explicitly; normal document queries must not see their UI.
@@ -1610,6 +1610,7 @@ dom.window.HTMLElement.prototype.scrollIntoView = () => { handoffScrollCount += 
 let backendReceiver = null
 const tagReceivers = new Map()
 const frontendSends = []
+const frontendStyles = []
 const drawerRoot = document.createElement('div')
 const widgetRoot = document.createElement('div')
 const dockRoot = document.createElement('div')
@@ -1641,9 +1642,9 @@ let dockRequestCount = 0
 let dockDestroyCount = 0
 const injected = []
 const frontendContext = {
-  components: { mountModelCombobox: (target, options) => { if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
+  components: { mountModelCombobox: (target, options) => { assert.equal(target.isConnected, true, 'host model controls must mount only on connected targets'); target.dataset.modelPickerMounted = 'true'; if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
   dom: {
-    addStyle: () => () => {},
+    addStyle: css => { frontendStyles.push(css); return () => {} },
     findMessageElement: (messageId) => messageId === 'host-message-a' ? messageBubble : null,
     inject: (target, html) => { const wrapper = document.createElement('span'); wrapper.innerHTML = html; target.appendChild(wrapper); injected.push(wrapper); return wrapper },
     uninject: (element) => element.remove(),
@@ -2467,16 +2468,46 @@ const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:sa
 assert.deepEqual(withPhoto.avatarSource, { kind: 'asset', assetId: 'framed-draft' })
 assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/framed-draft')
 
+const beforeGreetingSetupCount = shownModals.length
+const originalLatestMessageId = frontendContext.messages.getLatestMessageId
+frontendContext.messages.getLatestMessageId = () => null
 backendReceiver({ ...savedDraftState, reason: 'chat_switched', state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false, dismissed: false, authorship: 'roleplay' } } })
-const setupAuthorship = shownModals.at(-1).root.querySelector('select[aria-label="Character authorship"]')
+assert.equal(shownModals.length, beforeGreetingSetupCount, 'setup must not cover an empty chat still choosing its greeting')
+frontendContext.messages.getLatestMessageId = originalLatestMessageId
+backendReceiver({ ...savedDraftState, reason: 'chat_switched', state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false, dismissed: false, authorship: 'roleplay' } } })
+assert.equal(shownModals.length, beforeGreetingSetupCount + 1, 'setup opens once the greeting exists')
+document.body.append(shownModals.at(-1).root)
+const setupAuthorship = shownModals.at(-1).root.querySelector('input[type="radio"][value="roleplay"]')
 assert.ok(setupAuthorship, 'authorship choice must appear in first-run setup')
 assert.equal(setupAuthorship.value, 'roleplay')
-setupAuthorship.value = 'impersonation'
-setupAuthorship.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+const impersonationChoice = shownModals.at(-1).root.querySelector('input[type="radio"][value="impersonation"]')
+impersonationChoice.click()
 assert.equal(frontendSends.at(-1).type, 'lumiphone:set_authorship')
 assert.equal(frontendSends.at(-1).authorship, 'impersonation')
 const setupRoot = shownModals.at(-1).root
+assert.equal(setupRoot.querySelectorAll('[data-setup-stage]').length, 4)
+assert.match(setupRoot.querySelector('.lp-setup-footer').textContent, /Start Pocket/)
+document.body.append(setupRoot)
+const setupSource = setupRoot.querySelector('[aria-label="Pocket generation source"]')
+setupSource.value = 'sidecar'; setupSource.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.equal(setupRoot.querySelector('.lp-setup-generation [data-model-picker-mounted]').dataset.modelPickerMounted, 'true', 'setup mounts the native picker after joining its modal')
+const exportSetupPreview = async (filename) => {
+  if (!process.env.POCKET_SETUP_PREVIEW) return
+  const preview = setupRoot.cloneNode(true)
+  const liveFields = [...setupRoot.querySelectorAll('input,select,textarea')]
+  ;[...preview.querySelectorAll('input,select,textarea')].forEach((field, index) => {
+    const live = liveFields[index]
+    if (field.tagName === 'INPUT') { field.setAttribute('value', live.value); field.toggleAttribute('checked', live.checked) }
+    else if (field.tagName === 'TEXTAREA') field.textContent = live.value
+    else [...field.options].forEach((option, i) => option.toggleAttribute('selected', live.options[i].selected))
+  })
+  for (const model of preview.querySelectorAll('[data-model-picker-mounted]')) { const input = document.createElement('input'); input.className = 'lp-input'; input.placeholder = 'Use connection model'; input.setAttribute('aria-label', 'Model'); model.append(input) }
+  await writeFile(filename, '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#151318;color:#eee;padding:24px;--lumiverse-primary:#d7a978}.preview{max-width:580px;margin:auto}'+frontendStyles.join('\n')+'</style><main class="preview">'+preview.innerHTML+'</main>')
+}
+await exportSetupPreview(process.env.POCKET_SETUP_PREVIEW)
 ;[...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Customize').click()
+await exportSetupPreview(process.env.POCKET_SETUP_PREVIEW?.replace('.html', '-persona.html'))
 const originalEnrich = [...setupRoot.querySelectorAll('button')].find(node => node.textContent === 'Enrich with LLM')
 originalEnrich.click()
 const enrichRequest = frontendSends.at(-1).requestId

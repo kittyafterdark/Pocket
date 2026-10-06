@@ -5573,15 +5573,41 @@ var PHONE_STYLES = `
     color: #f7f5ff; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .lumiphone-handset-host { margin:auto; cursor:default; overscroll-behavior:contain; }
-  .lp-setup { --lp-accent:var(--lumiverse-primary,currentColor); --lp-text:var(--lumiverse-text,#eee); --lp-muted:var(--lumiverse-text-muted,#999); --lp-border:var(--lumiverse-border,#ffffff14); font:400 14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--lp-text); display:grid; gap:20px; min-width:0; }
+  .lp-setup { --lp-accent:var(--lumiverse-primary,#9399ab); --lp-text:var(--lumiverse-text,#eee); --lp-muted:var(--lumiverse-text-muted,#a5a3ac); --lp-border:var(--lumiverse-border,#ffffff14); --lp-setup-surface:var(--lumiverse-bg-elevated,#201e25); font:400 14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--lp-text); display:grid; gap:16px; min-width:0; }
   .lp-setup, .lp-setup * { box-sizing:border-box; }
-  .lp-setup > .lp-card { display:grid; gap:10px; padding:0 0 20px; border:0; border-bottom:1px solid var(--lp-border); border-radius:0; background:none; box-shadow:none; }
-  .lp-setup .lp-eyebrow { font-size:11px; font-weight:750; letter-spacing:.06em; color:var(--lp-muted); }
-  .lp-setup .lp-copy { font-size:12px; line-height:1.5; color:var(--lp-muted); margin:0; }
-  .lp-setup .lp-row { flex-wrap:wrap; gap:8px; }
-  .lp-setup :is(.lp-select,.lp-input,.lp-textarea) { width:100%; min-width:0; min-height:42px; font:inherit; color:var(--lp-text); padding:10px; background:var(--lumiverse-fill-subtle,#ffffff08); border:1px solid var(--lp-border); border-radius:10px; }
-  .lp-setup .lp-button { min-height:40px; font-size:12px; color:var(--lp-text); background:var(--lumiverse-fill,#ffffff0c); }
+  .lp-setup .lp-setup-hero { display:flex; align-items:center; gap:18px; padding:22px; border:1px solid var(--lp-border); border-radius:16px; background:linear-gradient(90deg,transparent 23px,var(--lp-border) 24px,transparent 25px),linear-gradient(transparent 23px,var(--lp-border) 24px,transparent 25px); background-size:24px 24px; }
+  .lp-setup .lp-setup-intro { flex:1; min-width:0; }
+  .lp-setup .lp-setup-code { font:600 10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.12em; color:var(--lp-accent); }
+  .lp-setup .lp-setup-title { font-size:25px; line-height:1.15; letter-spacing:-.04em; font-weight:700; margin:9px 0; color:var(--lp-text); }
+  .lp-setup .lp-setup-diagram { flex:none; width:60px; height:80px; padding:13px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:14px; background:var(--lp-setup-surface); color:var(--lp-accent); box-shadow:0 6px 16px #0002; transform:rotate(7deg); }
+  .lp-setup .lp-setup-diagram svg { width:100%; height:100%; }
+  .lp-setup > .lp-card { display:grid; gap:12px; padding:18px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-setup-surface); box-shadow:0 3px 10px #0001; min-width:0; }
+  .lp-setup .lp-setup-stage-heading { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .lp-setup .lp-setup-index { color:var(--lp-accent); font:600 11px ui-monospace,Consolas,monospace; border-right:1px solid var(--lp-border); padding-right:10px; }
+  .lp-setup .lp-setup-stage-title { font:650 14px/1.4 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--lp-text); margin:0; flex:1; min-width:140px; }
+  .lp-setup .lp-setup-status { font:500 10px/1.5 ui-monospace,Consolas,monospace; color:var(--lp-muted); padding:3px 7px; border:1px solid var(--lp-border); border-radius:6px; }
+  .lp-setup .lp-setup-status[data-ready="true"] { color:var(--lp-accent); border-color:color-mix(in srgb,var(--lp-accent) 30%,var(--lp-border)); }
+  .lp-setup .lp-copy { font-size:12px; line-height:1.6; color:var(--lp-muted); margin:0; overflow-wrap:anywhere; }
+  .lp-setup .lp-row { display:flex; flex-wrap:wrap; gap:8px; }
+  .lp-setup :is(.lp-select,.lp-input,.lp-textarea) { width:100%; min-width:0; min-height:42px; font:inherit; color:var(--lp-text); padding:10px; background:var(--lumiverse-fill-subtle,#ffffff05); border:1px solid var(--lp-border); border-radius:9px; }
+  .lp-setup .lp-button { appearance:none; border:1px solid var(--lp-border); border-radius:9px; min-height:40px; padding:9px 14px; font:600 12px/1.4 Inter,ui-sans-serif,system-ui,sans-serif; color:var(--lp-text); background:var(--lumiverse-fill,#ffffff08); cursor:pointer; white-space:normal; }
+  .lp-setup .lp-button:disabled { opacity:.45; cursor:default; }
+  .lp-setup :is(button,input,select,textarea):focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; }
+  .lp-setup .lp-setup-modes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  .lp-setup .lp-setup-mode { display:flex; align-items:flex-start; gap:9px; border:1px solid var(--lp-border); border-radius:10px; padding:13px; cursor:pointer; background:var(--lumiverse-fill-subtle,#ffffff03); }
+  .lp-setup .lp-setup-mode:has(input:checked) { border-color:color-mix(in srgb,var(--lp-accent) 55%,var(--lp-border)); background:color-mix(in srgb,var(--lp-accent) 7%,var(--lp-setup-surface)); }
+  .lp-setup .lp-setup-mode input { appearance:auto; accent-color:var(--lp-accent); margin:3px 0 0; width:14px; height:14px; flex:none; }
+  .lp-setup .lp-setup-mode-copy { display:grid; gap:5px; min-width:0; }
+  .lp-setup .lp-setup-mode-copy strong { font-size:13px; }
+  .lp-setup .lp-setup-mode-copy > span { font-size:11px; line-height:1.5; color:var(--lp-muted); }
+  .lp-setup .lp-setup-field { display:grid; gap:7px; font-size:11px; font-weight:600; color:var(--lp-muted); min-width:0; }
+  .lp-setup .lp-setup-profile { gap:16px; }
+  .lp-setup .lp-setup-footer { display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:12px; padding:8px 0 2px; }
+  .lp-setup .lp-setup-start { background:var(--lp-accent); color:var(--lumiverse-text-on-primary,#111); border-color:transparent; }
+  .lp-setup .lp-operation-progress { display:grid; gap:7px; padding:12px; border:1px solid var(--lp-border); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); font-size:12px; }
+  .lp-setup .lp-operation-progress[data-phase="error"] { border-color:var(--lumiverse-danger,#c65c65); }
   .lp-setup-generation { display:grid; gap:10px; min-width:0; }
+  @media(max-width:480px) { .lp-setup .lp-setup-modes { grid-template-columns:1fr; } .lp-setup .lp-setup-hero { padding:18px; } .lp-setup .lp-setup-diagram { width:48px; height:66px; padding:10px; } .lp-setup .lp-setup-footer { grid-template-columns:1fr 1fr; } .lp-setup .lp-setup-footer > p { grid-column:1 / -1; } }
   .lumiphone-launcher {
     appearance: none; width: 58px; height: 58px; padding: 0; border: 0;
     border-radius: 18px; display: grid; place-items: center; position: relative; cursor: pointer;
@@ -10311,7 +10337,7 @@ ${body}`;
     this.setupAwaitingGreeting = false;
     this.setupModalOpen = true;
     this.setupPersonaEditing = false;
-    const modal = this.ctx.ui.showModal({ title: "Set up Pocket", width: 500, maxHeight: 680 });
+    const modal = this.ctx.ui.showModal({ title: "Set up Pocket", width: 620, maxHeight: 760 });
     const body = el("div", "lp-settings-section lp-setup");
     this.setupModalBody = body;
     this.setupModalDismiss = () => modal.dismiss();
@@ -10334,27 +10360,61 @@ ${body}`;
     for (const cleanup of this.setupControlCleanups.splice(0))
       cleanup();
     body.replaceChildren();
-    body.appendChild(el("p", "lp-copy", "Pocket needs an LLM and a phone owner. World setup is optional, but gives first-turn messages, Weather, and Timeline a clean shared baseline."));
+    const hero = el("header", "lp-setup-hero");
+    const diagram = el("div", "lp-setup-diagram");
+    diagram.innerHTML = PHONE_ICON;
+    diagram.setAttribute("aria-hidden", "true");
+    const intro = el("div", "lp-setup-intro");
+    intro.append(el("div", "lp-setup-code", "POCKET / INITIALIZE"), el("h1", "lp-setup-title", "A phone for your story."), el("p", "lp-copy", "Connect a model, choose its owner, and bring your world along."));
+    hero.append(intro, diagram);
+    body.appendChild(hero);
+    const stage = (section, number, title, status, ready = false) => {
+      section.classList.add("lp-setup-stage");
+      section.dataset.setupStage = number;
+      const heading = el("div", "lp-setup-stage-heading");
+      const index = el("span", "lp-setup-index", number);
+      index.setAttribute("aria-hidden", "true");
+      const badge = el("span", "lp-setup-status", status);
+      badge.dataset.ready = String(ready);
+      heading.append(index, el("h2", "lp-setup-stage-title", title), badge);
+      section.prepend(heading);
+    };
     const authorship = el("section", "lp-card lp-settings-section");
-    authorship.append(el("div", "lp-eyebrow", "Who writes your character?"));
-    const mode = el("select", "lp-select");
-    mode.setAttribute("aria-label", "Character authorship");
-    for (const [value, label] of [["roleplay", "Roleplay · I write my character"], ["impersonation", "Impersonation · AI writes both sides"]]) {
-      const option = el("option", "", label);
-      option.value = value;
-      option.selected = (state.setup.authorship || "roleplay") === value;
-      mode.append(option);
+    stage(authorship, "01", "Who writes your character?", "This chat");
+    const mode = el("input");
+    mode.type = "hidden";
+    mode.value = state.setup.authorship || "roleplay";
+    const modes = el("div", "lp-setup-modes");
+    modes.setAttribute("role", "radiogroup");
+    modes.setAttribute("aria-label", "Character authorship");
+    for (const [value, title, copy] of [["roleplay", "Roleplay", "You write your character. Pocket writes the people around them."], ["impersonation", "Impersonation", "AI can write both sides, including your character’s phone messages."]]) {
+      const choice = el("label", "lp-setup-mode");
+      const radio = el("input");
+      radio.type = "radio";
+      radio.name = "pocket-authorship-" + this.surfaceId;
+      radio.value = value;
+      radio.checked = mode.value === value;
+      const wording = el("span", "lp-setup-mode-copy");
+      wording.append(el("strong", "", title), el("span", "", copy));
+      radio.addEventListener("change", () => {
+        if (!radio.checked)
+          return;
+        mode.value = value;
+        this.send("lumiphone:set_authorship", { authorship: value });
+      });
+      choice.append(radio, wording);
+      modes.append(choice);
     }
-    mode.addEventListener("change", () => this.send("lumiphone:set_authorship", { authorship: mode.value }));
-    authorship.append(mode, el("p", "lp-copy", "Roleplay keeps your side yours. You can always send manually inside Pocket. This choice applies only to this chat."));
+    authorship.append(modes, el("p", "lp-copy", "You can always send messages manually inside Pocket."));
     const effective = this.generation?.effective;
     const latestTest = [...this.generation?.history || this.preferences.generationHistory || []].reverse().find((entry) => entry.task === "connection-test");
     const llmReady = Boolean(this.caps?.generation && effective?.configured);
     const llm = el("section", "lp-card lp-settings-section");
-    llm.append(el("div", "lp-eyebrow", llmReady ? "✓ LLM" : "○ LLM"), el("strong", "", effective?.name || "No effective connection"), el("p", "lp-copy", effective ? `${effective.provider} · ${effective.model || "model not set"}` : "Pocket needs a usable Lumiverse text-generation connection."));
+    llm.append(el("strong", "", effective?.name || "No effective connection"), el("p", "lp-copy", effective ? `${effective.provider} · ${effective.model || "model not set"}` : "Pocket needs a usable Lumiverse text-generation connection."));
     if (latestTest) {
       llm.appendChild(el("p", "lp-copy", latestTest.status === "started" ? "● Testing…" : latestTest.status === "completed" ? `✓ Test passed · ${latestTest.latencyMs ?? 0} ms` : `Test failed · ${latestTest.error || "Unknown provider error"}`));
     }
+    stage(llm, "02", "Connect your model", llmReady ? "Connected" : "Needs connection", llmReady);
     const llmActions = el("div", "lp-row");
     const test = button("Test LLM", "lp-button lp-button-quiet");
     test.disabled = !this.caps?.generation || latestTest?.status === "started";
@@ -10374,6 +10434,32 @@ ${body}`;
     });
     llmActions.append(test, configureLlm);
     llm.appendChild(llmActions);
+    const afterAttachment = (target, mount) => {
+      let stopped = false;
+      let observer;
+      let handle;
+      this.setupControlCleanups.push(() => {
+        stopped = true;
+        observer?.disconnect();
+        handle?.destroy();
+      });
+      const attach = () => {
+        if (stopped || handle || !target.isConnected)
+          return;
+        observer?.disconnect();
+        handle = mount();
+      };
+      queueMicrotask(() => {
+        if (stopped)
+          return;
+        if (target.isConnected)
+          attach();
+        else {
+          observer = new MutationObserver(attach);
+          observer.observe(document.body, { childList: true, subtree: true });
+        }
+      });
+    };
     const sourceControls = el("div", "lp-setup-generation");
     const source = el("select", "lp-select");
     source.setAttribute("aria-label", "Pocket generation source");
@@ -10396,8 +10482,7 @@ ${body}`;
         this.renderFirstChatSetupBody();
       };
       if (this.ctx.components.mountSelect) {
-        const handle = this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: "Pocket connection", placeholder: "Choose connection", onChange: changeConnection });
-        this.setupControlCleanups.push(() => handle.destroy());
+        afterAttachment(connectionMount, () => this.ctx.components.mountSelect(connectionMount, { value: this.preferences.sidecarConnectionId, options: connectionOptions, ariaLabel: "Pocket connection", placeholder: "Choose connection", onChange: changeConnection }));
       } else {
         const connection = el("select", "lp-select");
         connection.setAttribute("aria-label", "Pocket connection");
@@ -10408,14 +10493,18 @@ ${body}`;
         connectionMount.append(connection);
       }
       const modelMount = el("div", "lp-model-combobox");
-      const handle = this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: "llm", id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: "Use connection model", onChange: (value) => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) });
-      this.setupControlCleanups.push(() => handle.destroy());
-      sourceControls.append(connectionMount, modelMount);
+      afterAttachment(modelMount, () => this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: "llm", id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: "Use connection model", onChange: (value) => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) }));
+      const connectionLabel = el("div", "lp-setup-field", "Connection");
+      connectionLabel.append(connectionMount);
+      const modelLabel = el("div", "lp-setup-field", "Model");
+      modelLabel.append(modelMount);
+      sourceControls.append(connectionLabel, modelLabel);
     }
     llm.append(sourceControls);
     const personaReady = Boolean(state.setup.personaConfigured);
     const persona = el("section", "lp-card lp-settings-section");
-    persona.append(el("div", "lp-eyebrow", personaReady ? "✓ PERSONA" : "○ PERSONA"), el("strong", "", personaReady ? state.pocketPersona.displayName : this.activePersona?.name || "Choose the phone owner"), el("p", "lp-copy", personaReady ? "This character owns Pocket and is the recipient role for private DMs." : "Choose who Pocket follows as the phone owner."));
+    persona.append(el("strong", "", personaReady ? state.pocketPersona.displayName : this.activePersona?.name || "Choose the phone owner"), el("p", "lp-copy", personaReady ? "This character owns Pocket and is the recipient role for private DMs." : "Choose who Pocket follows as the phone owner."));
+    stage(persona, "03", "Choose the phone owner", personaReady ? "Linked" : "Choose owner", personaReady);
     const personaActions = el("div", "lp-row");
     if (this.activePersona) {
       const follow = button(`Follow ${this.activePersona.name}`, "lp-button");
@@ -10437,7 +10526,8 @@ ${body}`;
     const worldStatus = state.setup.worldStatus || "unconfigured";
     const goal = state.events.find((event) => event.lane === "Current goal" && !event.completed);
     const world = el("section", "lp-card lp-settings-section");
-    world.append(el("div", "lp-eyebrow", worldStatus === "seeded" ? "✓ WORLD · OPTIONAL" : worldStatus === "skipped" ? "— WORLD · OPTIONAL" : "○ WORLD · OPTIONAL"), el("strong", "", worldStatus === "seeded" ? "Seeded from this roleplay" : worldStatus === "skipped" ? "Skipped" : "No world baseline yet"), el("p", "lp-copy", worldStatus === "seeded" ? goal ? `Timeline goal: ${goal.title}` : "Weather and Timeline were seeded; no clear current goal was found." : worldStatus === "skipped" ? "Pocket will start without situational first-turn hooks. You can add world state later." : "Seed a sanitized world snapshot from the current RP. Raw narrative is not used as phone history."));
+    world.append(el("strong", "", worldStatus === "seeded" ? "Seeded from this roleplay" : worldStatus === "skipped" ? "Skipped" : "No world baseline yet"), el("p", "lp-copy", worldStatus === "seeded" ? goal ? `Timeline goal: ${goal.title}` : "Weather and Timeline were seeded; no clear current goal was found." : worldStatus === "skipped" ? "Pocket will start without situational first-turn hooks. You can add world state later." : "Seed a sanitized world snapshot from the current RP. Raw narrative is not used as phone history."));
+    stage(world, "04", "Bring in your world", worldStatus === "seeded" ? "Seeded" : "Optional", worldStatus === "seeded");
     const worldActions = el("div", "lp-row");
     const worldOperation = [...this.operations.values()].find((entry) => entry.task === "world-seed" && entry.phase !== "complete" && entry.phase !== "error");
     const seed = button(worldOperation ? "Seeding…" : worldStatus === "seeded" ? "Reseed from RP" : "Seed from current RP", "lp-button");
@@ -10482,7 +10572,12 @@ ${body}`;
       this.send("lumiphone:dismiss_setup");
       this.setupModalDismiss?.();
     });
-    body.append(authorship, llm, persona, world, start, later);
+    const footer = el("footer", "lp-setup-footer");
+    const readiness = el("p", "lp-copy", !llmReady ? "Connect a model to continue." : !personaReady ? "Choose a phone owner to continue." : "Your phone is ready. World setup is optional.");
+    readiness.setAttribute("role", "status");
+    start.classList.add("lp-setup-start");
+    footer.append(readiness, later, start);
+    body.append(authorship, llm, persona, world, footer);
   }
   renderFirstChatPersonaEditor() {
     const body = this.setupModalBody;
@@ -10490,6 +10585,8 @@ ${body}`;
     if (!body || !state)
       return;
     body.replaceChildren();
+    for (const cleanup of this.setupControlCleanups.splice(0))
+      cleanup();
     const profile = this.personaPreview || state.pocketPersona;
     const phoneProfile = profile.phoneProfile || { personality: "", appearance: "", textingStyle: "" };
     const back = button("← Back to setup", "lp-button lp-button-quiet");
@@ -10498,7 +10595,7 @@ ${body}`;
       this.personaPreview = null;
       this.renderFirstChatSetupBody();
     });
-    body.append(back, el("div", "lp-eyebrow", "Persona · phone profile"), el("p", "lp-copy", "Keep this compact and useful for texting. Pocket does not need a full prose character card to generate a DM."));
+    body.append(back, el("div", "lp-setup-code", "POCKET / IDENTITY"), el("h1", "lp-setup-title", "Make it their phone."), el("p", "lp-copy", "Keep this compact and useful for texting. Pocket does not need a full prose character card to generate a DM."));
     const source = el("select", "lp-select");
     for (const [value, label] of [["lumiverse", "Follow Lumiverse Persona"], ["manual", "Use Pocket profile"]]) {
       const option = el("option", "", label);
@@ -10532,8 +10629,13 @@ ${body}`;
     };
     source.addEventListener("change", syncSource);
     syncSource();
-    const fields = el("section", "lp-card lp-settings-section");
-    fields.append(source, name, pronouns, role, el("div", "lp-label", "Personality"), personality, el("div", "lp-label", "Minimal appearance"), appearance, el("div", "lp-label", "Texting quirks"), textingStyle);
+    const fields = el("section", "lp-card lp-settings-section lp-setup-profile");
+    const labelled = (title, control) => {
+      const label = el("label", "lp-setup-field", title);
+      label.append(control);
+      return label;
+    };
+    fields.append(labelled("Profile source", source), labelled("Display name", name), labelled("Pronouns", pronouns), labelled("Role", role), labelled("Personality", personality), labelled("Appearance", appearance), labelled("Texting style", textingStyle));
     const actions = el("div", "lp-row");
     const personaOperation = [...this.operations.values()].find((entry) => entry.task === "persona-profile" && entry.phase !== "complete" && entry.phase !== "error");
     const enrich = button(personaOperation ? "Enriching…" : "Enrich with LLM", "lp-button lp-button-quiet");
