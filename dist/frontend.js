@@ -4227,7 +4227,7 @@ function weatherOutlook(weather, now, offset = 0) {
   const panel = el("section", "lp-weather-week");
   panel.setAttribute("aria-label", "Seven-day story forecast");
   const outlook = usableWeatherOutlook(weather, now, offset);
-  panel.append(el("h3", "lp-title", "The week ahead"), el("p", "lp-copy", "A fictional outlook for planning scenes. Today’s established weather stays unchanged."));
+  panel.append(el("h3", "lp-title", "The week ahead · °" + weather.unit), el("p", "lp-copy", "A fictional outlook for planning scenes. Today’s established weather stays unchanged."));
   if (!outlook) {
     panel.append(el("p", "lp-weather-empty", weather.outlook ? "The story date, location or unit changed. Refresh the outlook for this scene." : "Build a seven-day outlook from this scene’s weather."));
     return panel;
@@ -6773,7 +6773,7 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-timeline-section { position:relative; margin:12px 0 4px; padding:4px 0; background:var(--lp-bg); color:var(--lp-muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
   .lumiphone-shell .lp-event[data-completed="true"] { opacity:1; }
   .lumiphone-shell .lp-event[data-completed="true"] .lp-title { text-decoration:none; color:var(--lp-muted); }
-  .lumiphone-shell .lp-event-card { width:100%; padding:16px; border-radius:12px; background:var(--lp-surface); }
+  .lumiphone-shell .lp-event-card { width:100%; padding:16px; border:1px solid var(--lp-border); border-radius:12px; background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-bg)); box-shadow:0 3px 10px #0002; }
   .lp-event-card .lp-copy { line-height:1.65; }
   .lp-wallpaper-library { display:grid; gap:14px; }
   .lp-wallpaper-presets-button { grid-column:1/-1; }
@@ -10350,7 +10350,7 @@ ${body}`;
     const hero = el("div", "lp-weather-hero");
     const top = el("div");
     top.append(el("div", "lp-weather-condition", weather.condition), el("div", "lp-copy", weather.location));
-    const temp = el("div", "lp-weather-temp", `${weather.temperature}°`);
+    const temp = el("div", "lp-weather-temp", `${weather.temperature}°${weather.unit}`);
     const bottom = el("div", "lp-row-between");
     bottom.append(el("span", "lp-weather-range", `H:${weather.high}°  L:${weather.low}°`), el("span", "lp-weather-range", weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ""));
     hero.append(top, weatherGlyph(weather.condition), temp, bottom);

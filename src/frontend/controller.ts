@@ -2763,7 +2763,7 @@ class PocketController {
     const hero = el('div', 'lp-weather-hero')
     const top = el('div')
     top.append(el('div', 'lp-weather-condition', weather.condition), el('div', 'lp-copy', weather.location))
-    const temp = el('div', 'lp-weather-temp', `${weather.temperature}°`)
+    const temp = el('div', 'lp-weather-temp', `${weather.temperature}°${weather.unit}`)
     const bottom = el('div', 'lp-row-between')
     bottom.append(el('span', 'lp-weather-range', `H:${weather.high}°  L:${weather.low}°`), el('span', 'lp-weather-range', weather.updatedAt ? `Updated ${formatTime(weather.updatedAt)}` : ''))
     hero.append(top, weatherGlyph(weather.condition), temp, bottom)

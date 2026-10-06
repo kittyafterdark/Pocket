@@ -15,7 +15,7 @@ export function weatherOutlook(weather: RoleplayWeather, now: string, offset = 0
   const panel = el('section', 'lp-weather-week')
   panel.setAttribute('aria-label', 'Seven-day story forecast')
   const outlook = usableWeatherOutlook(weather, now, offset)
-  panel.append(el('h3', 'lp-title', 'The week ahead'), el('p', 'lp-copy', 'A fictional outlook for planning scenes. Today’s established weather stays unchanged.'))
+  panel.append(el('h3', 'lp-title', 'The week ahead · °' + weather.unit), el('p', 'lp-copy', 'A fictional outlook for planning scenes. Today’s established weather stays unchanged.'))
   if (!outlook) { panel.append(el('p', 'lp-weather-empty', weather.outlook ? 'The story date, location or unit changed. Refresh the outlook for this scene.' : 'Build a seven-day outlook from this scene’s weather.')); return panel }
   const min = Math.min(...outlook.days.map(day => day.low)), max = Math.max(...outlook.days.map(day => day.high)), span = Math.max(1, max - min)
   for (const [i, day] of outlook.days.entries()) {

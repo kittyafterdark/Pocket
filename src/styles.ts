@@ -1070,7 +1070,7 @@ ${POCKET_DESIGN_SYSTEM}
   .lp-timeline-section { position:relative; margin:12px 0 4px; padding:4px 0; background:var(--lp-bg); color:var(--lp-muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
   .lumiphone-shell .lp-event[data-completed="true"] { opacity:1; }
   .lumiphone-shell .lp-event[data-completed="true"] .lp-title { text-decoration:none; color:var(--lp-muted); }
-  .lumiphone-shell .lp-event-card { width:100%; padding:16px; border-radius:12px; background:var(--lp-surface); }
+  .lumiphone-shell .lp-event-card { width:100%; padding:16px; border:1px solid var(--lp-border); border-radius:12px; background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-bg)); box-shadow:0 3px 10px #0002; }
   .lp-event-card .lp-copy { line-height:1.65; }
   .lp-wallpaper-library { display:grid; gap:14px; }
   .lp-wallpaper-presets-button { grid-column:1/-1; }
