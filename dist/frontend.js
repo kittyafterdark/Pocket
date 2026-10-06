@@ -5702,7 +5702,8 @@ function connector(group, open) {
   heading.addEventListener("click", () => open(group.at(-1).activity));
   section.append(heading);
   for (const { activity } of group) {
-    const messages = activity.presentation?.batchMessages || [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === "sent" ? "sent" : "received", text: activity.summary || "", messageId: "" }];
+    const batch = activity.presentation?.batchMessages;
+    const messages = batch?.length ? batch : [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === "sent" ? "sent" : "received", text: activity.summary || "", messageId: "" }];
     for (const message of messages) {
       const row = document.createElement("button");
       row.type = "button";

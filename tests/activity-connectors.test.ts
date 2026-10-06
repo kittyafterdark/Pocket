@@ -22,6 +22,9 @@ test('between-turn Full Phone entries become one exchange with exact-message nav
   const f = fixture()
   try {
     const sent = f.make(f.sent), reply = f.make(f.received)
+    // Backend normalization supplies [] even on single-message presentations.
+    sent.activity.presentation!.batchMessages = []
+    reply.activity.presentation!.batchMessages = []
     const opened: PocketActivity[] = []
     refreshActivityConnectors([reply, sent], activity => opened.push(activity))
     expect(f.rows(sent).length).toBe(2)

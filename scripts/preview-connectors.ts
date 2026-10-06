@@ -11,7 +11,7 @@ const sent: PocketActivity = {
   id: 'sent', kind: 'message', title: 'Sam', summary: 'Are you coming?',
   scope: { chatId: 'fixture', characterId: 'fixture' }, createdAt: '2026-09-04T12:00:00Z',
   source: { messageId: 'turn' }, route: { app: 'messages', conversationId: 'conversation', messageId: 'sent-message' },
-  presentation: { kind: 'sent', senderName: 'Alex', conversationTitle: 'Sam' },
+  presentation: { kind: 'sent', senderName: 'Alex', conversationTitle: 'Sam', batchMessages: [] },
 }
 const reply: PocketActivity = { ...sent, id: 'reply', summary: 'On my way. Keep the coffee warm!', route: { app: 'messages', conversationId: 'conversation', messageId: 'reply-message' }, presentation: { kind: 'received', senderName: 'Sam', conversationTitle: 'Sam' } }
 const entries = [sent, reply].map(activity => {
