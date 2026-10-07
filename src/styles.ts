@@ -43,9 +43,9 @@ export const PHONE_STYLES = `
   .lp-setup .lp-setup-connection-select [role="listbox"] { position:relative; top:auto; left:auto; right:auto; margin-top:6px; }
   .lumiphone-device-search { width:100%; min-height:38px; padding:8px 11px; margin:0 0 14px; border:1px solid var(--pocket-border,var(--lumiverse-border,#ffffff14)); border-radius:9px; background:var(--lumiverse-fill-subtle,#ffffff05); color:var(--lumiverse-text,#eee); font:inherit; }
   .lumiphone-device-row[hidden], .lumiphone-device-section[hidden] { display:none; }
-  .lumiphone-shell .lp-sheet .lp-bubble-tools { display:grid; grid-template-columns:1fr; gap:6px; }
-  .lumiphone-shell .lp-sheet .lp-bubble-action { display:flex; align-items:center; justify-content:flex-start; gap:12px; border:1px solid var(--lp-border); color:var(--lp-text); }
-  .lumiphone-shell .lp-sheet .lp-bubble-action::before { content:'↻'; font-size:19px; width:24px; text-align:center; color:var(--lp-accent); }
+  .lumiphone-shell .lp-sheet .lp-bubble-tools { display:grid; grid-template-columns:1fr; gap:calc(6px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action { display:flex; align-items:center; justify-content:flex-start; gap:calc(12px * var(--pocket-ui-scale)); border:1px solid var(--lp-border); color:var(--lp-text); }
+  .lumiphone-shell .lp-sheet .lp-bubble-action::before { content:'↻'; font-size:calc(19px * var(--pocket-ui-scale)); width:calc(24px * var(--pocket-ui-scale)); text-align:center; color:var(--lp-accent); }
   .lumiphone-shell .lp-sheet .lp-bubble-action[aria-label="Generation info"]::before { content:'ⓘ'; }
   .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"] { color:var(--lp-destructive); }
   .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"]::before { content:'×'; color:inherit; }
@@ -1101,7 +1101,7 @@ ${INLINE_FINISH_STYLES}
   .lp-camera-bottom-strip .lp-shutter-row { padding-top:12px; }
   .lp-camera-bottom-strip .lp-disclosure { margin-top:8px; }
   .lp-camera-options-chip { appearance:none; display:block; margin:8px auto 0; border:1px solid #ffffff24; border-radius:20px; padding:7px 14px; background:#ffffff0b; color:#ffffffb8; font:inherit; font-size:11px; cursor:pointer; }
-  .lp-camera-sheet-fields { display:grid; gap:12px; text-align:left; }
+  .lp-camera-sheet-fields { display:grid; gap:calc(12px * var(--pocket-ui-scale)); text-align:left; }
   .lp-avatar-framing { display:grid; place-items:center; padding:12px; }
   .lp-avatar-framing img { width:96px; height:96px; border-radius:50%; object-fit:cover; }
   .lp-avatar-framing-controls { display:grid; gap:12px; }

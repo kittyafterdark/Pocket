@@ -2,6 +2,29 @@ import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 import { defaultPreferences } from '../src/domain/preferences.js'
 import { renderSettingsView } from '../src/frontend/apps/settings.js'
+import { showPocketSheet } from '../src/frontend/components/ui.js'
+
+test('native sheets convert handset bounds through host zoom and restore focus on close', () => {
+  const dom = new JSDOM('<body><div class="lumiphone-shell"><button>Options</button></div></body>')
+  const previousDocument = globalThis.document; const previousWindow = globalThis.window
+  Object.assign(globalThis, { document: dom.window.document, window: dom.window })
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+  dom.window.HTMLDialogElement.prototype.close = function () { this.dispatchEvent(new dom.window.Event('close')) }
+  try {
+    const shell = document.querySelector<HTMLElement>('.lumiphone-shell')!
+    Object.defineProperty(shell, 'offsetWidth', { value: 600 })
+    shell.getBoundingClientRect = () => ({ left: 0, width: 510, height: 700, bottom: 700 }) as DOMRect
+    const anchor = shell.querySelector('button')!
+    const sheet = showPocketSheet(anchor, 'Options', document.createElement('div'))!
+    const dialog = shell.querySelector('dialog')!
+    expect(parseFloat(dialog.style.width) * .85).toBeCloseTo(486)
+    expect(parseFloat(dialog.style.left) * .85).toBeCloseTo(12)
+    expect(parseFloat(dialog.style.maxHeight) * .85).toBeCloseTo(630)
+    sheet.dismiss()
+    expect(shell.querySelector('dialog')).toBeNull()
+    expect(document.activeElement).toBe(anchor)
+  } finally { Object.assign(globalThis, { document: previousDocument, window: previousWindow }); dom.window.close() }
+})
 
 test('camera defaults bind image pickers, persist together and clear without losing the visual profile', () => {
   const dom = new JSDOM('<!doctype html><body></body>')

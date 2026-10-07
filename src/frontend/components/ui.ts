@@ -111,13 +111,17 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
   panel.append(heading, content, close); dialog.append(panel); parent.append(dialog)
   const bounds = parent.getBoundingClientRect()
   if (parent.matches('.lumiphone-shell')) {
+    // Top-layer dialogs inherit CSS zoom; bounds are already visual pixels.
+    const layoutWidth = (parent as HTMLElement).offsetWidth
+    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
+    const layoutPx = (pixels: number) => pixels / zoom
     dialog.style.position = 'fixed'
     dialog.style.margin = '0'
-    dialog.style.left = `${bounds.left + 12}px`
+    dialog.style.left = `${layoutPx(bounds.left + 12)}px`
     dialog.style.top = 'auto'
-    dialog.style.bottom = `${Math.max(12, window.innerHeight - bounds.bottom + 24)}px`
-    dialog.style.width = `${Math.max(0, bounds.width - 24)}px`
-    dialog.style.maxHeight = `${Math.max(120, bounds.height - 70)}px`
+    dialog.style.bottom = `${layoutPx(Math.max(12, window.innerHeight - bounds.bottom + 24))}px`
+    dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`
+    dialog.style.maxHeight = `${layoutPx(Math.max(120, bounds.height - 70))}px`
   }
   dialog.showModal()
   return { dismiss }

@@ -33,7 +33,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 22, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 24, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
@@ -59,6 +59,23 @@ try {
       await page.evaluate(() => document.fonts.ready)
       if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
       if (file === 'chat-invite.html') await page.locator('.lp-event-invite').scrollIntoViewIfNeeded()
+      if (file.startsWith('sheet-')) {
+        // Recreate the native top-layer mount after JSDOM's layout-free export.
+        await page.locator('dialog.lp-sheet').evaluate(dialog => {
+          const bounds = dialog.closest('.lumiphone-shell').getBoundingClientRect()
+          dialog.removeAttribute('open')
+          Object.assign(dialog.style, { position:'fixed', margin:'0', left:bounds.left + 12 + 'px', top:'auto', bottom:Math.max(12, window.innerHeight - bounds.bottom + 24) + 'px', width:Math.max(0, bounds.width - 24) + 'px', maxHeight:Math.max(120, bounds.height - 70) + 'px' })
+          dialog.showModal()
+        })
+        const panel = page.locator('.lp-sheet-panel')
+        const initial = await panel.evaluate(node => parseFloat(getComputedStyle(node).paddingTop))
+        await page.locator('.lumiphone-shell').evaluate(node => node.style.setProperty('--pocket-ui-scale', '1.3'))
+        assert.ok(Math.abs((await panel.evaluate(node => parseFloat(getComputedStyle(node).paddingTop))) / initial - 1.3) < .01, 'Sheet spacing must follow interface scale')
+        assert.ok(await page.locator('.lp-sheet-close').isVisible(), 'Scaled sheet must retain its close action')
+        await page.locator('.lp-sheet-close').scrollIntoViewIfNeeded()
+        assert.ok(await page.locator('.lp-sheet-close').evaluate(node => node.getBoundingClientRect().bottom <= node.closest('dialog').getBoundingClientRect().bottom), 'Long camera options must scroll to Done')
+        await page.locator('dialog.lp-sheet').evaluate(node => { node.scrollTop = 0 })
+      }
       const name = file.replace('.html', `-${width}.png`)
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide' })
       if (update || updateCases.includes(file.replace('.html', ''))) await writeFile(join(baseline, name), actual)

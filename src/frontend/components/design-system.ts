@@ -93,12 +93,12 @@ ${SURFACE_TOKENS}
   .lumiphone-shell .lp-group-message .lp-bubble { max-width:100%; margin-top:0; }
   .lumiphone-shell .lp-bubble-time { font-size:9px; opacity:.78; padding-right:30px; min-height:22px; margin-top:6px; }
   .lp-message-more { position:absolute; bottom:2px; right:2px; width:44px; height:44px; border:0; border-radius:50%; background:transparent; color:inherit; font-size:20px; cursor:pointer; }
-  .lp-sheet { box-sizing:border-box; width:min(440px,calc(100% - 24px)); max-height:calc(100dvh - 48px); border:1px solid var(--lp-border,#ffffff25); border-radius:24px; padding:0; background:var(--lp-sheet-bg,#17151d); color:var(--lp-text,#f7f5ff); box-shadow:0 24px 80px #0008; }
+  .lp-sheet { box-sizing:border-box; width:min(440px,calc(100% - 24px)); max-height:calc(100dvh - 48px); border:1px solid var(--lp-border,#ffffff25); border-radius:calc(24px * var(--pocket-ui-scale,1)); padding:0; background:var(--lp-sheet-bg,#17151d); color:var(--lp-text,#f7f5ff); box-shadow:0 24px 80px #0008; }
   .lp-sheet::backdrop { background:#0006; backdrop-filter:blur(4px); }
-  .lp-sheet-panel { display:grid; gap:16px; padding:20px; padding-bottom:max(20px,env(safe-area-inset-bottom)); }
-  .lp-sheet-actions, .lp-sheet .lp-bubble-tools { display:grid; gap:6px; margin:0; }
-  .lp-sheet .lp-bubble-action { width:100%; min-height:44px; opacity:1; font-size:14px; border-radius:12px; justify-content:start; padding:12px; background:#ffffff09; }
-  .lp-sheet .lp-button { min-height:44px; }
+  .lp-sheet-panel { display:grid; gap:calc(16px * var(--pocket-ui-scale,1)); padding:calc(20px * var(--pocket-ui-scale,1)); padding-bottom:max(calc(20px * var(--pocket-ui-scale,1)),env(safe-area-inset-bottom)); }
+  .lp-sheet-actions, .lp-sheet .lp-bubble-tools { display:grid; gap:calc(6px * var(--pocket-ui-scale,1)); margin:0; }
+  .lp-sheet .lp-bubble-action { width:100%; min-height:max(44px,calc(44px * var(--pocket-ui-scale,1))); opacity:1; font-size:calc(14px * var(--pocket-ui-scale,1)); border-radius:calc(12px * var(--pocket-ui-scale,1)); justify-content:start; padding:calc(12px * var(--pocket-ui-scale,1)); background:#ffffff09; }
+  .lp-sheet .lp-button { min-height:max(44px,calc(44px * var(--pocket-ui-scale,1))); }
   .lumiphone-shell .lp-notification-row { padding:0; border-radius:18px; }
   .lp-notification-open { gap:10px; align-items:flex-start; }
   .lp-notification-avatar { flex:0 0 32px; height:32px; border-radius:10px; background:var(--lp-incoming); display:grid!important; place-items:center; font-size:13px; }

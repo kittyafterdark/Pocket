@@ -1650,6 +1650,8 @@ async function exportVisual(name, source) {
     island.append(template)
   }
   for (const image of preview.querySelectorAll('img')) image.removeAttribute('src')
+  // JSDOM has no layout: native sheet bounds are supplied by the controlled browser fixture.
+  if (name.startsWith('sheet-')) preview.querySelector('dialog').removeAttribute('style')
   await writeFile(new URL(name + '.html', 'file://' + process.env.POCKET_VISUAL_DIR.replaceAll('\\', '/') + '/'), '<!doctype html><meta charset="utf-8"><style>' + frontendStyles.join('\n') + '\nbody{margin:0;padding:24px;background:#151318;color:#eee;font-family:system-ui;--lumiverse-primary:#d7a978}main{max-width:560px;margin:auto}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style><main>' + preview.outerHTML + '</main>')
 }
 
@@ -2131,6 +2133,7 @@ contactNameDraft.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 assert.ok(dockRoot.querySelector('.lp-photo-viewfinder'))
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Camera options').click()
 assert.ok(dockRoot.querySelector('[data-image-picker-mounted="true"]'))
+await exportVisual('sheet-camera', dockRoot)
 ;[...dockRoot.querySelectorAll('dialog button')].find(node => node.textContent === 'Done').click()
 assert.match(dockRoot.querySelector('textarea').value, /Portrait of Draft Two/)
 await exportVisual('camera-compose', dockRoot)
@@ -2481,6 +2484,7 @@ moreAction.click()
 assert.equal(dockRoot.querySelectorAll('dialog[open]').length, 1, 'message actions must open an accessible sheet')
 const deleteAction = dockRoot.querySelector('dialog button[aria-label="Delete message"]')
 assert.ok(deleteAction, 'delete remains available in the message sheet')
+await exportVisual('sheet-message', dockRoot)
 deleteAction.click()
 assert.ok(frontendSends.some(payload => payload.type === 'lumiphone:delete' && payload.id === 'burst-0'))
 dockRoot.querySelector('.lp-sheet-close').click()
