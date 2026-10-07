@@ -1,3 +1,5 @@
+<img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/5cae7d35-77d1-450b-9007-5e81ba1f9af2" />
+
 # Pocket
 
 Pocket is a live-mounted Lumiverse Spindle extension that gives every chat + character pair its own persistent in-world phone.
@@ -15,6 +17,10 @@ The extension identifier and storage namespace intentionally remain `lumiphone` 
 - **Timeline** — roleplay clock, event lanes, completed story beats, and exact, approximate, relative, or unscheduled story time.
 - **Trackers** — bounded values with optional automatic change-per-hour and model visibility.
 - **Settings** — device-wide theme colors, home/chat image wallpapers, separate desktop handset and cross-device UI scales, real animation timing, context inspection, discovered-model selection, notification behavior, visual profiles, backup, import, and separate reset controls.
+
+<img width="409" height="853" alt="image" src="https://github.com/user-attachments/assets/883405f1-5382-410a-9d5f-b16387102b52" />
+
+
 
 On desktop, the 58px draggable launcher opens a centered strict 9:18.4 phone in an opt-in transparent/chromeless host dock. Closing Pocket destroys that dock, and reopening creates a fresh one. `handsetScale` (`0.80`–`1.25`) controls only the physical desktop handset; pixel dimensions are derived again from the current viewport on every mount, open, resize, keyboard viewport change, and scale edit. `uiScale` (`0.70`–`1.30`) controls Pocket's primitive sizes and density on desktop and mobile. Narrow/mobile viewports always use the host's full available viewport and safe-area/visual-viewport handling rather than shrinking the surface. Use the visible top-left dismiss button or a deliberate up/left status-area gesture; the home indicator returns to Home first, then closes the phone.
 
@@ -166,13 +172,4 @@ State arrays and text fields are normalized and bounded on every read. Tracker r
 - `src/backend.ts` — Spindle adapters and canonical command pipeline.
 - `src/styles.ts` — centralized phone/design tokens and responsive states.
 
-## Development
-
-```bash
-npm run verify
-node scripts/mount-local.mjs --enable
-```
-
-`npm run verify` typechecks, bundles both entries, runs pure migration/projection/surface/context tests, and runs the backend + simulated-DOM host contract. The contract covers v9/v5 migration, burst-provenance idempotency, authoritative chat-scope recovery, targeted separate relay injection, one-shot reference injection/consumption/failure/cancellation, reference prompt budgets and non-presence semantics, blocked-permission retry, host acceptance/start/consumption phases, impossible-marker context freshness, source-specific Character/Council replies, scene Character/Persona exclusion and snapshot staleness, outgoing burst batching/typing hold/manual flush, pause/handoff behavior, Gallery/asset/URL resolution and Home/Chat/Persona persistence, group speaker bounds, duplicate tool delivery, sidecar connection/model override, scene-planner fallback, Gallery current-RP update, cancellation of a late Camera result, future import rejection, app mounting, click/Enter sending, Tracker Save/history behavior, tag routing, dock recreation, wallpaper layering, and semantic handset/UI scaling. After one manual handoff in a running Lumiverse instance, `npm run test:real-host-relay` checks the persisted host trace for native-call acceptance, matching start, bounded serialized relay content, injection association, and an included phone exchange without initiating another paid generation. A simulated DOM is not labeled as visual QA.
-
-The live installation is managed through Lumiverse's Extensions tab. After publishing changes, use Pocket's **Update** action there; its installed checkout is `Lumiverse/data/extensions/lumiphone/repo` and built entries are `dist/backend.js` and `dist/frontend.js`.
+ its installed checkout is `Lumiverse/data/extensions/lumiphone/repo` and built entries are `dist/backend.js` and `dist/frontend.js`.
