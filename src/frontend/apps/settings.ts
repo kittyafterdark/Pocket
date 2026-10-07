@@ -149,7 +149,7 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   inline.addEventListener('change', () => commit(next => { next.inlineAppearance = inline.value === 'phone' ? 'phone' : 'cards' }))
   content.append(fieldBlock('Phone events in prose', inline), el('p', 'lp-copy', 'Choose compact scene cards or a miniature phone. This does not change who can write your character.'))
   const themeRow = el('div', 'lp-theme-grid')
-  for (const [name, wallpaper] of [['midnight', 'oled-moon'], ['porcelain', 'coastal'], ['rose', 'rose-waves'], ['forest', 'oled-forest'], ['pink', 'pink-hearts'], ['custom', '']] as const) {
+  for (const [name, wallpaper] of [['midnight', 'moonrise'], ['porcelain', 'coastal'], ['rose', 'rose-waves'], ['forest', 'forest'], ['pink', 'pink-hearts'], ['custom', '']] as const) {
     const dot = button('', 'lp-theme-preview'); dot.title = name; dot.setAttribute('aria-label', ({ midnight: 'Black and violet palette', porcelain: 'Light neutral palette', rose: 'Dark rose palette', forest: 'Black and mint palette', pink: 'Bubblegum pink palette', custom: 'Custom palette' })[name])
     dot.style.setProperty('--theme-color', name === 'custom' ? settings.colors.accent : themePalette(name).accent)
     const miniature = el('span', 'lp-theme-miniature'); miniature.style.backgroundImage = wallpaper ? 'url(' + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ')' : ''

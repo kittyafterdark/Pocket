@@ -1827,6 +1827,9 @@ const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) 
 settingsIcon.click()
 assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
 await exportVisual('settings', dockRoot)
+const appearanceFixture = structuredClone(identityUiState)
+appearanceFixture.preferences.personaAppearance['persona-test'].enabled = false
+backendReceiver({ ...appearanceFixture, reason: 'preferences' })
 dockRoot.querySelector('[data-settings-category="personalization"]').click()
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent.includes('Device appearance')).click()
 for (const theme of ['midnight', 'forest', 'pink']) {

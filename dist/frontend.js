@@ -1397,7 +1397,7 @@ function appearance(host) {
   }));
   content.append(fieldBlock("Phone events in prose", inline), el("p", "lp-copy", "Choose compact scene cards or a miniature phone. This does not change who can write your character."));
   const themeRow = el("div", "lp-theme-grid");
-  for (const [name, wallpaper] of [["midnight", "oled-moon"], ["porcelain", "coastal"], ["rose", "rose-waves"], ["forest", "oled-forest"], ["pink", "pink-hearts"], ["custom", ""]]) {
+  for (const [name, wallpaper] of [["midnight", "moonrise"], ["porcelain", "coastal"], ["rose", "rose-waves"], ["forest", "forest"], ["pink", "pink-hearts"], ["custom", ""]]) {
     const dot = button("", "lp-theme-preview");
     dot.title = name;
     dot.setAttribute("aria-label", { midnight: "Black and violet palette", porcelain: "Light neutral palette", rose: "Dark rose palette", forest: "Black and mint palette", pink: "Bubblegum pink palette", custom: "Custom palette" }[name]);
@@ -10543,6 +10543,7 @@ var PHONE_STYLES = `
     display: grid; grid-template-rows: 34px minmax(0,1fr) 24px;
   }
   .lumiphone-shell[hidden], .lumiphone-launcher[hidden] { display: none !important; }
+  .lumiphone-shell[data-theme="pink"] { --lp-surface-2:#f4d4e6; --lp-muted:#754b63; --lp-border:rgba(56,18,44,.18); --lp-shadow:rgba(80,20,55,.24); }
   .lumiphone-shell[data-theme="porcelain"] { --lp-bg:#f2f0ed; --lp-surface:rgba(255,255,255,.9); --lp-surface-2:rgba(226,222,218,.82); --lp-text:#231f2a; --lp-muted:#746e78; --lp-border:rgba(37,30,45,.12); --lp-shadow:rgba(35,28,46,.24); }
   .lumiphone-shell[data-theme="rose"] { --lp-bg:#1b1018; --lp-surface:rgba(53,27,43,.9); --lp-surface-2:rgba(94,43,69,.75); --lp-text:#fff4fa; --lp-muted:#ceaebb; --lp-border:rgba(255,209,229,.13); --lp-shadow:rgba(38,7,24,.5); }
   .lumiphone-shell[data-theme="forest"] { --lp-bg:#0d1713; --lp-surface:rgba(23,48,38,.9); --lp-surface-2:rgba(38,77,59,.76); --lp-text:#effcf5; --lp-muted:#9ebcad; --lp-border:rgba(204,255,224,.12); --lp-shadow:rgba(3,26,16,.54); }
