@@ -1,5 +1,6 @@
 import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
+import { SAMPLER_FIELDS } from '../../domain/samplers.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { builtinWallpaperUrl } from '../../domain/wallpapers.js'
@@ -392,6 +393,26 @@ function generation(host: SettingsViewHost): HTMLDivElement {
   const diagnostic = el('p', 'lp-copy', 'Not tested yet.'); diagnostic.dataset.pocketGenerationDiagnostic = 'true'
   const run = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test'); if (run) diagnostic.textContent = run.status === 'started' ? '● Testing…' : run.status === 'completed' ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || 'Unknown provider error'}`
   card.append(fieldBlock('Generation mode', mode), fieldBlock('Connection profile', connections), controlRow('Model override', modelMount), el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic)
+  const samplers = el('section', 'lp-card lp-settings-section')
+  samplers.append(el('div', 'lp-title', 'Sampler overrides'), el('p', 'lp-copy', 'Apply to Pocket text generation in either mode. Leave blank to keep existing defaults. Provider support varies.'))
+  const inputs: HTMLInputElement[] = []
+  for (const [key, label, min, max, step] of SAMPLER_FIELDS) {
+    const input = el('input', 'lp-input'); input.type = 'number'; input.min = String(min); input.max = String(max); input.step = String(step)
+    input.placeholder = 'Use default'; input.value = settings.samplerOverrides?.[key]?.toString() ?? ''; input.dataset.pocketSampler = key
+    input.addEventListener('change', () => {
+      if (!input.checkValidity()) { input.reportValidity(); return }
+      commit(next => {
+        next.samplerOverrides = { ...next.samplerOverrides }
+        if (!input.value.trim()) delete next.samplerOverrides[key]
+        else next.samplerOverrides[key] = Number(input.value)
+      })
+    })
+    inputs.push(input); samplers.append(fieldBlock(label, input))
+  }
+  const reset = button('Use sampler defaults', 'lp-button lp-button-quiet')
+  reset.addEventListener('click', () => { commit(next => { next.samplerOverrides = {} }); for (const input of inputs) input.value = '' })
+  samplers.append(reset)
+  card.appendChild(samplers)
   if (!host.state.setup.initialized && host.resumeSetup) {
     const resume = button('Continue Pocket setup', 'lp-button'); resume.addEventListener('click', host.resumeSetup); card.append(resume)
   }

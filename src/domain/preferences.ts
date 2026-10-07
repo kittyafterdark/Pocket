@@ -1,6 +1,7 @@
 import type { DevicePreferences, PocketImageSource, PocketWallpaper, PhonePalette, PhoneTheme } from '../types.js'
 import { normalizeJevSettings } from './jev.js'
 import { builtinWallpaper } from './wallpapers.js'
+import { normalizeSamplerOverrides } from './samplers.js'
 
 export const PREFERENCES_VERSION = 5 as const
 export const PREFERENCES_PATH = 'device/preferences.json'
@@ -116,6 +117,7 @@ export function defaultPreferences(): DevicePreferences {
     automaticGenerationRetry: true,
     sidecarConnectionId: '',
     sidecarModelOverride: '',
+    samplerOverrides: {},
     autoReplyAfterSend: false,
     replyCadence: 'natural',
     ambientMessaging: 'off',
@@ -233,6 +235,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
     sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, '', 500),
+    samplerOverrides: normalizeSamplerOverrides(raw.samplerOverrides),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     replyCadence: raw.replyCadence === 'instant' || raw.replyCadence === 'quick' || raw.replyCadence === 'relaxed' ? raw.replyCadence : 'natural',
     ambientMessaging: raw.ambientMessaging === 'sparse' || raw.ambientMessaging === 'normal' ? raw.ambientMessaging : 'off',

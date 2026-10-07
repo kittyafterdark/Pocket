@@ -1,5 +1,7 @@
 import type { DevicePreferences, PocketConnectionSummary, PocketGenerationInfo, PocketGenerationRun } from '../types.js'
 
+import { normalizeSamplerOverrides } from '../domain/samplers.js'
+
 type GenerationTask = PocketGenerationRun['task']
 type GenerateInput = Record<string, unknown>
 
@@ -71,6 +73,8 @@ export async function runPocketGeneration(
   try {
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const request = { ...input, reasoning: input.reasoning ?? { source: 'off' } } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
+    const samplers = normalizeSamplerOverrides(preferences.samplerOverrides)
+    if (Object.keys(samplers).length) request.parameters = { ...(request.parameters || {}), ...samplers }
     if (preferences.generationMode === 'sidecar') {
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }

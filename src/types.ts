@@ -230,6 +230,7 @@ export interface DevicePreferences {
   automaticGenerationRetry: boolean
   sidecarConnectionId: string
   sidecarModelOverride: string
+  samplerOverrides?: Partial<Record<'temperature' | 'top_p' | 'top_k' | 'min_p' | 'frequency_penalty' | 'presence_penalty' | 'repetition_penalty', number>>
   autoReplyAfterSend: boolean
   replyCadence: ReplyCadence
   ambientMessaging: AmbientMessageFrequency

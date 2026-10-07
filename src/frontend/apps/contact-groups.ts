@@ -78,6 +78,8 @@ export function renderContactGroups(host: ContactsViewHost) {
   const { page, content } = host.page(bank ? 'NPC Bank' : 'Contact Groups', bank ? `${host.npcBank.length} reusable profiles` : 'Collections for this roleplay', { label: 'New', callback: () => host.selectGroup('', bank ? 'cast-config' : 'group-config') })
   const groups = bank ? host.bankGroups : host.state.contactGroups || []
   const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = bank ? 'Search casts and saved NPCs' : 'Search contact groups'
+  search.setAttribute('aria-label', bank ? 'Search NPC Bank' : 'Search contact groups')
+  const noMatches = el('p', 'lp-copy', 'No matching profiles or casts.'); noMatches.hidden = true
   const cards: Array<{ node: HTMLElement; terms: string }> = []
   content.append(search)
   if (!bank) { const portable = button('NPC Bank & portable casts', 'lp-button lp-button-quiet'); portable.addEventListener('click', () => host.selectGroup('', 'bank')); content.append(portable) }
@@ -112,11 +114,13 @@ export function renderContactGroups(host: ContactsViewHost) {
     const edit = button('Edit saved profile', 'lp-button lp-button-quiet'); edit.addEventListener('click', () => host.select(entry.id, 'bank-entry')); actions.append(edit)
     const linked = host.state.contacts.find(contact => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
     const add = button(linked ? 'Open local contact' : 'Add to this chat'); add.addEventListener('click', () => linked ? host.select(linked.id, 'detail') : host.send('lumiphone:npc_bank_add', { bankId: entry.id })); actions.append(add)
-    row.append(actions); profiles!.body.append(row); cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.tags.join(' ')}`.toLowerCase() })
+    row.append(actions); profiles!.body.append(row); cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.aliases.join(' ')} ${entry.tags.join(' ')}`.toLowerCase() })
   }
+  content.append(noMatches)
   search.addEventListener('input', () => {
     const query = search.value.trim().toLowerCase()
     for (const card of cards) card.node.hidden = !card.terms.includes(query)
+    noMatches.hidden = !query || cards.some(card => !card.node.hidden)
     for (const group of [casts, profiles]) if (group) group.section.hidden = Boolean(query && !cards.some(card => group.body.contains(card.node) && !card.node.hidden))
   })
   return page

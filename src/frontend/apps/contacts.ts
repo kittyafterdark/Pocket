@@ -293,7 +293,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
       row.append(identity, actions)
       bankBody.appendChild(row)
       bankRows.push(row)
-      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || 'Pocket NPC'} npc bank`.toLocaleLowerCase() })
+      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || 'Pocket NPC'} ${entry.aliases.join(' ')} ${entry.tags.join(' ')} npc bank`.toLocaleLowerCase() })
     }
   }
   content.appendChild(bank)

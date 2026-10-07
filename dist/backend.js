@@ -413,6 +413,29 @@ function builtinWallpaperUrl(id) {
   return item ? `data:image/svg+xml,${encodeURIComponent(item.svg)}` : "";
 }
 
+// src/domain/samplers.ts
+var SAMPLER_FIELDS = [
+  ["temperature", "Temperature", 0, 2, 0.01],
+  ["top_p", "Top P", 0, 1, 0.01],
+  ["top_k", "Top K", 0, 500, 1],
+  ["min_p", "Min P", 0, 1, 0.01],
+  ["frequency_penalty", "Frequency penalty", -2, 2, 0.01],
+  ["presence_penalty", "Presence penalty", -2, 2, 0.01],
+  ["repetition_penalty", "Repetition penalty", 0, 3, 0.01]
+];
+function normalizeSamplerOverrides(value) {
+  const result = {};
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return result;
+  const raw = value;
+  for (const [key, , min, max, step] of SAMPLER_FIELDS) {
+    const entry = raw[key];
+    if (typeof entry === "number" && Number.isFinite(entry) && entry >= min && entry <= max && (step !== 1 || Number.isInteger(entry)))
+      result[key] = entry;
+  }
+  return result;
+}
+
 // src/domain/preferences.ts
 var PREFERENCES_VERSION = 5;
 var PREFERENCES_PATH = "device/preferences.json";
@@ -551,6 +574,7 @@ function defaultPreferences() {
     automaticGenerationRetry: true,
     sidecarConnectionId: "",
     sidecarModelOverride: "",
+    samplerOverrides: {},
     autoReplyAfterSend: false,
     replyCadence: "natural",
     ambientMessaging: "off",
@@ -666,6 +690,7 @@ function normalizePreferences(value) {
     automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
+    samplerOverrides: normalizeSamplerOverrides(raw.samplerOverrides),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
     ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
@@ -2172,6 +2197,9 @@ async function runPocketGeneration(host, task, requestId, input, userId) {
     if (input.signal instanceof AbortSignal)
       input.signal.throwIfAborted();
     const request = { ...input, reasoning: input.reasoning ?? { source: "off" } };
+    const samplers = normalizeSamplerOverrides(preferences.samplerOverrides);
+    if (Object.keys(samplers).length)
+      request.parameters = { ...request.parameters || {}, ...samplers };
     if (preferences.generationMode === "sidecar") {
       request.connection_id = info.effective.id;
       if (preferences.sidecarModelOverride)

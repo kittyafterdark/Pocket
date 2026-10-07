@@ -349,6 +349,29 @@ function builtinWallpaperUrl(id) {
   return item ? `data:image/svg+xml,${encodeURIComponent(item.svg)}` : "";
 }
 
+// src/domain/samplers.ts
+var SAMPLER_FIELDS = [
+  ["temperature", "Temperature", 0, 2, 0.01],
+  ["top_p", "Top P", 0, 1, 0.01],
+  ["top_k", "Top K", 0, 500, 1],
+  ["min_p", "Min P", 0, 1, 0.01],
+  ["frequency_penalty", "Frequency penalty", -2, 2, 0.01],
+  ["presence_penalty", "Presence penalty", -2, 2, 0.01],
+  ["repetition_penalty", "Repetition penalty", 0, 3, 0.01]
+];
+function normalizeSamplerOverrides(value) {
+  const result = {};
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return result;
+  const raw = value;
+  for (const [key, , min, max, step] of SAMPLER_FIELDS) {
+    const entry = raw[key];
+    if (typeof entry === "number" && Number.isFinite(entry) && entry >= min && entry <= max && (step !== 1 || Number.isInteger(entry)))
+      result[key] = entry;
+  }
+  return result;
+}
+
 // src/domain/preferences.ts
 var PREFERENCES_VERSION = 5;
 var HEX = /^#[0-9a-f]{6}$/i;
@@ -486,6 +509,7 @@ function defaultPreferences() {
     automaticGenerationRetry: true,
     sidecarConnectionId: "",
     sidecarModelOverride: "",
+    samplerOverrides: {},
     autoReplyAfterSend: false,
     replyCadence: "natural",
     ambientMessaging: "off",
@@ -601,6 +625,7 @@ function normalizePreferences(value) {
     automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
     sidecarConnectionId: text(raw.sidecarConnectionId, "", 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, "", 500),
+    samplerOverrides: normalizeSamplerOverrides(raw.samplerOverrides),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
     ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
@@ -1865,6 +1890,44 @@ function generation(host) {
   if (run)
     diagnostic.textContent = run.status === "started" ? "● Testing…" : run.status === "completed" ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || "Unknown provider error"}`;
   card.append(fieldBlock("Generation mode", mode), fieldBlock("Connection profile", connections), controlRow("Model override", modelMount), el("p", "lp-copy", "Leave blank to use the model configured on the selected connection profile."), effectiveCard, test, diagnostic);
+  const samplers = el("section", "lp-card lp-settings-section");
+  samplers.append(el("div", "lp-title", "Sampler overrides"), el("p", "lp-copy", "Apply to Pocket text generation in either mode. Leave blank to keep existing defaults. Provider support varies."));
+  const inputs = [];
+  for (const [key, label, min, max, step] of SAMPLER_FIELDS) {
+    const input = el("input", "lp-input");
+    input.type = "number";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.placeholder = "Use default";
+    input.value = settings.samplerOverrides?.[key]?.toString() ?? "";
+    input.dataset.pocketSampler = key;
+    input.addEventListener("change", () => {
+      if (!input.checkValidity()) {
+        input.reportValidity();
+        return;
+      }
+      commit((next) => {
+        next.samplerOverrides = { ...next.samplerOverrides };
+        if (!input.value.trim())
+          delete next.samplerOverrides[key];
+        else
+          next.samplerOverrides[key] = Number(input.value);
+      });
+    });
+    inputs.push(input);
+    samplers.append(fieldBlock(label, input));
+  }
+  const reset = button("Use sampler defaults", "lp-button lp-button-quiet");
+  reset.addEventListener("click", () => {
+    commit((next) => {
+      next.samplerOverrides = {};
+    });
+    for (const input of inputs)
+      input.value = "";
+  });
+  samplers.append(reset);
+  card.appendChild(samplers);
   if (!host.state.setup.initialized && host.resumeSetup) {
     const resume = button("Continue Pocket setup", "lp-button");
     resume.addEventListener("click", host.resumeSetup);
@@ -3718,6 +3781,9 @@ function renderContactGroups(host) {
   const search = el("input", "lp-input");
   search.type = "search";
   search.placeholder = bank ? "Search casts and saved NPCs" : "Search contact groups";
+  search.setAttribute("aria-label", bank ? "Search NPC Bank" : "Search contact groups");
+  const noMatches = el("p", "lp-copy", "No matching profiles or casts.");
+  noMatches.hidden = true;
   const cards = [];
   content.append(search);
   if (!bank) {
@@ -3782,12 +3848,14 @@ function renderContactGroups(host) {
       actions.append(add);
       row.append(actions);
       profiles.body.append(row);
-      cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.tags.join(" ")}`.toLowerCase() });
+      cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.aliases.join(" ")} ${entry.tags.join(" ")}`.toLowerCase() });
     }
+  content.append(noMatches);
   search.addEventListener("input", () => {
     const query = search.value.trim().toLowerCase();
     for (const card of cards)
       card.node.hidden = !card.terms.includes(query);
+    noMatches.hidden = !query || cards.some((card) => !card.node.hidden);
     for (const group of [casts, profiles])
       if (group)
         group.section.hidden = Boolean(query && !cards.some((card) => group.body.contains(card.node) && !card.node.hidden));
@@ -4108,7 +4176,7 @@ function importView(host) {
       row.append(identity, actions);
       bankBody.appendChild(row);
       bankRows.push(row);
-      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || "Pocket NPC"} npc bank`.toLocaleLowerCase() });
+      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || "Pocket NPC"} ${entry.aliases.join(" ")} ${entry.tags.join(" ")} npc bank`.toLocaleLowerCase() });
     }
   }
   content.appendChild(bank);
