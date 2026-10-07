@@ -8,7 +8,7 @@
     "build:backend": "bun build src/backend.ts --target=bun --format=esm --outfile=dist/backend.js",
     "build:frontend": "bun build src/frontend.ts --target=browser --format=esm --outfile=dist/frontend.js",
     "typecheck": "bunx tsc --noEmit",
-    "verify": "bun run typecheck && bun run build && bun test tests/domain.test.ts tests/generation-lifecycle.test.ts tests/tracker-display.test.ts tests/weather-display.test.ts tests/event-invite.test.ts tests/image-jobs.test.ts tests/settings-camera.test.ts tests/app-reviews.test.ts tests/activity-connectors.test.ts tests/activity-clock.test.ts && node tests/contracts.mjs",
+    "verify": "bun run typecheck && bun run build && bun test tests/domain.test.ts tests/generation-lifecycle.test.ts tests/tracker-display.test.ts tests/weather-display.test.ts tests/event-invite.test.ts tests/image-jobs.test.ts tests/settings-camera.test.ts tests/touch-scroll.test.ts tests/app-reviews.test.ts tests/activity-connectors.test.ts tests/activity-clock.test.ts && node tests/contracts.mjs",
     "test:visual": "node scripts/check-visual.mjs",
     "test:visual:update": "node scripts/check-visual.mjs --update",
     "test:real-host-relay": "node scripts/check-real-host-relay.mjs",

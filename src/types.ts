@@ -220,6 +220,7 @@ export interface DevicePreferences {
   animation: OpenAnimation
   animationDurationMs: number
   reducedMotion: boolean
+  nativeTouchScrolling: boolean
   autoOpenOnModelAction: boolean
   inlineAppearance?: 'cards' | 'phone'
   pushNotifications: boolean
