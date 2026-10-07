@@ -1,10 +1,11 @@
+import { clockLabel } from './clock-label.js'
 import type { PhoneState, PocketActivity, PocketActivityPresentation, PocketRoleplayClockSnapshot } from '../types.js'
 
 export function snapshotActivityClock(state: PhoneState): Pick<PocketActivityPresentation, 'storyAt' | 'storyTimeLabel' | 'storyTimezoneOffsetMinutes'> {
   const exact = state.roleplayClockSource === 'manual' || state.roleplayClockPrecision === 'exact'
   return {
     storyAt: exact && validStamp(state.roleplayNow) ? state.roleplayNow : undefined,
-    storyTimeLabel: exact ? undefined : state.roleplayClockLabel?.trim().slice(0, 160) || undefined,
+    storyTimeLabel: exact ? undefined : clockLabel(state.roleplayClockLabel) || undefined,
     storyTimezoneOffsetMinutes: state.roleplayTimezoneOffsetMinutes,
   }
 }
@@ -27,7 +28,7 @@ export function activityClock(activity: PocketActivity, state?: PhoneState): { t
     const date = new Date(Date.parse(storyAt!) - offset * 60_000)
     return { time: date.toISOString().slice(11, 16), date: new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(date), precision: 'exact' }
   }
-  const label = storyTimeLabel?.trim().slice(0, 160) || ''
+  const label = clockLabel(storyTimeLabel)
   return { time: label, date: '', precision: label ? 'approximate' : 'unknown' }
 }
 

@@ -25,6 +25,7 @@ import type {
   PhoneTracker,
   SwarmVisualProfile,
 } from '../types.js'
+import { clockLabel } from '../domain/clock-label.js'
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
@@ -1904,8 +1905,8 @@ class PocketController {
     const home = el('div', 'lp-home')
     const head = el('div', 'lp-home-head')
     const left = el('div')
-    const roleplayClockText = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' && state.roleplayClockLabel
-      ? state.roleplayClockLabel
+    const roleplayClockText = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact'
+      ? clockLabel(state.roleplayClockLabel) || 'Story time'
       : formatTime(state.roleplayNow)
     left.append(el('div', 'lp-home-date', formatDate(state.roleplayNow, false)), el('div', 'lp-home-clock', roleplayClockText))
     const weather = el('button', 'lp-home-weather')

@@ -36,6 +36,7 @@ import type {
   SwarmVisualProfile,
 } from './types.js'
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
+import { clockDayPart, clockLabel, CLOCK_DAY_PART_KEYS } from './domain/clock-label.js'
 import { projectPhoneContext } from './domain/projection.js'
 import { assertPersonaAuthorship, callSummary, normalizeCallMarker } from './domain/phone-events.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
@@ -622,7 +623,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayNow: text(value.roleplayNow, 80) || fallback.roleplayNow,
     roleplayClockSource: value.roleplayClockSource === 'manual' || value.roleplayClockSource === 'narrative' ? value.roleplayClockSource : 'legacy',
     roleplayClockPrecision: value.roleplayClockPrecision === 'exact' || value.roleplayClockPrecision === 'approximate' || value.roleplayClockPrecision === 'relative' ? value.roleplayClockPrecision : 'unknown',
-    roleplayClockLabel: text(value.roleplayClockLabel, 160),
+    roleplayClockLabel: value.roleplayClockPrecision === 'exact' || value.roleplayClockSource === 'manual' ? text(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
     hostSwipeSelections,
@@ -2254,9 +2255,9 @@ function normalizePostTurnAudit(value: unknown): PostTurnAuditResult {
   const clock: PostTurnAuditClock = {
     date: /^\d{4}-\d{2}-\d{2}$/.test(text(rawClock.date, 20)) ? text(rawClock.date, 20) : '',
     time: /^\d{2}:\d{2}$/.test(text(rawClock.time, 10)) ? text(rawClock.time, 10) : '',
-    dayPart: text(rawClock.dayPart ?? rawClock.day_part, 80),
+    dayPart: clockDayPart(rawClock.dayPart ?? rawClock.day_part),
     precision: rawClock.precision === 'exact' || rawClock.precision === 'approximate' || rawClock.precision === 'relative' ? rawClock.precision : 'unknown',
-    label: text(rawClock.label, 160),
+    label: rawClock.precision === 'exact' ? clockLabel(rawClock.label) : clockLabel(rawClock.label, rawClock.dayPart ?? rawClock.day_part),
     advanceMinutes: Number.isFinite(rawAdvance) ? Math.max(-1_440, Math.min(1_440, Math.round(rawAdvance))) : 0,
   }
   const rawMessages = Array.isArray(raw.phoneMessages) ? raw.phoneMessages : Array.isArray(raw.phone_messages) ? raw.phone_messages : []
@@ -2306,10 +2307,10 @@ function normalizeNarrativeSeed(value: unknown, sourceKey = '', sourceMessageIds
     clock: {
       date: /^\d{4}-\d{2}-\d{2}$/.test(text(rawClock.date, 20)) ? text(rawClock.date, 20) : '',
       time: /^\d{2}:\d{2}$/.test(text(rawClock.time, 10)) ? text(rawClock.time, 10) : '',
-      dayPart: text(rawClock.dayPart, 80),
+      dayPart: clockDayPart(rawClock.dayPart),
       precision: rawClock.precision === 'exact' || rawClock.precision === 'approximate' || rawClock.precision === 'relative'
         ? rawClock.precision : 'unknown',
-      label: text(rawClock.label, 160),
+      label: rawClock.precision === 'exact' ? clockLabel(rawClock.label) : clockLabel(rawClock.label, rawClock.dayPart),
     },
   }
 
@@ -2621,7 +2622,7 @@ async function reconcilePostTurnCandidate(
 
 Return strict JSON only:
 {
-  "clock":{"date":"YYYY-MM-DD or empty","time":"HH:MM or empty","dayPart":"short or empty","precision":"exact|approximate|relative|unknown","label":"short human-readable time or empty","advanceMinutes":0},
+  "clock":{"date":"YYYY-MM-DD or empty","time":"HH:MM or empty","dayPart":"${CLOCK_DAY_PART_KEYS.join('|')} or empty","precision":"exact|approximate|relative|unknown","label":"HH:MM only for exact time; otherwise empty","advanceMinutes":0},
   "phoneMessages":[{"channel":"dm|gc","speaker":"exact actor name","target":"exact DM recipient or empty for gc","conversation":"exact group title or empty for dm","text":"exact message body"}]
 }
 
@@ -2630,7 +2631,7 @@ CLOCK RULES:
 - exact requires an explicit current-scene clock time in the supplied narrative. Do not invent minutes.
 - advanceMinutes is ONLY for explicit elapsed scene progression inside the CURRENT ASSISTANT TURN, e.g. "ten minutes later" or "an hour passed". Sum multiple explicit forward/backward scene advances when clear.
 - Do NOT use event ages or retrospective phrases such as "he was asleep twenty minutes ago" as scene advancement.
-- Approximate/daypart evidence may use approximate or relative with a label.
+- Approximate evidence must use a listed dayPart key and an empty label. Never put scenery, sentences, or descriptions in clock fields. Relative elapsed time uses advanceMinutes; do not invent a day part.
 
 PHONE RECOVERY RULES:
 - Inspect only phone messages newly authored as events in CURRENT ASSISTANT TURN.
@@ -3009,7 +3010,7 @@ Return strict JSON only:
 {
   "world":{
     "setting":"short shared setting/location/era if explicitly established, else empty",
-    "clock":{"date":"YYYY-MM-DD only if narratively established, else empty","time":"HH:MM 24-hour only if an explicit narrative clock time is established, else empty","dayPart":"morning|afternoon|evening|night|etc if established","precision":"exact|approximate|relative|unknown","label":"human-readable narrative time such as 05:42 AM or early morning"},
+    "clock":{"date":"YYYY-MM-DD only if narratively established, else empty","time":"HH:MM 24-hour only if an explicit narrative clock time is established, else empty","dayPart":"${CLOCK_DAY_PART_KEYS.join('|')} or empty if not established","precision":"exact|approximate|relative|unknown","label":"HH:MM only for exact time; otherwise empty"},
     "facts":["genuinely actor-neutral shared world/group facts only"],
     "weather":{"condition":"short condition","location":"where it applies","details":"short atmospheric detail"} | null
   },
@@ -3026,7 +3027,7 @@ Rules:
 - A named actor doing/feeling/planning/having something is NEVER a world fact. Put it in facts/actors with that actor explicitly listed.
 - weather is null unless weather/atmosphere is actually established by the prose. Never invent temperature.
 - world.clock comes ONLY from temporal evidence inside RECENT NARRATIVE. Never copy the computer/session/Pocket clock into it.
-- If prose explicitly says "Sent 05:42am", "at 11", or another clock time that clearly anchors the current scene, normalize it to HH:MM and use precision=exact. If only "morning", "later that afternoon", "after patrol", etc. is known, use approximate/relative and DO NOT invent an exact time.
+- If prose explicitly says "Sent 05:42am", "at 11", or another clock time that clearly anchors the current scene, normalize it to HH:MM and use precision=exact. If only "morning", "later that afternoon", "after patrol", etc. is known, use approximate/relative with a listed dayPart key and empty label; DO NOT invent an exact time or put scenery/prose in clock fields.
 - date stays empty unless the narrative itself establishes a calendar date. An explicit time without a date is valid.
 - facts is actor-specific only. Every facts entry MUST have at least one subject in actors.
 - timeline scope=world only for group/world events. If an event concerns a named actor (Shoto's press conference, Bakugo's cooking shift, Mina's arrival), scope=actor and actors MUST identify them.

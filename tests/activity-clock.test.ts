@@ -1,10 +1,22 @@
 import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 import { activityClock, snapshotActivityClock } from '../src/domain/activity-clock.js'
+import { clockDayPart, clockLabel } from '../src/domain/clock-label.js'
 import { buildPhoneScreen } from '../src/frontend/phone-screen.js'
 import type { PhoneState, PocketActivity } from '../src/types.js'
 
 const activity: PocketActivity = { id: 'activity', kind: 'message', title: 'Sam', summary: 'On my way.', scope: { chatId: 'chat', characterId: 'character' }, createdAt: '2026-10-06T12:00:00Z', route: { app: 'messages' }, source: { messageId: 'turn' }, presentation: { kind: 'received', senderName: 'Sam' } }
+
+test('clock labels accept fixed day parts and reject scenery without inventing time', () => {
+  expect(clockDayPart('late_morning')).toBe('late_morning')
+  expect(clockLabel('', 'early_morning')).toBe('Early morning')
+  expect(clockLabel('evening, city lights on outside the windows')).toBe('Evening')
+  expect(clockLabel('the city lights are on')).toBe('')
+  expect(clockLabel('25:90')).toBe('')
+  expect(clockLabel('6:30 AM')).toBe('6:30 AM')
+  expect(clockLabel('+15 minutes')).toBe('+15 minutes')
+  expect(activityClock({ ...activity, presentation: { storyTimeLabel: 'evening, city lights on outside the windows' } }).time).toBe('Evening')
+})
 
 test('activity clocks preserve approximate labels instead of inventing numeric times', () => {
   const state = { roleplayNow: '2026-10-06T12:00:00Z', roleplayClockSource: 'narrative', roleplayClockPrecision: 'approximate', roleplayClockLabel: 'Afternoon', roleplayTimezoneOffsetMinutes: 180 } as PhoneState

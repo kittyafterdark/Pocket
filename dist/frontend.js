@@ -1,3 +1,24 @@
+// src/domain/clock-label.ts
+var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
+function clockDayPart(value) {
+  if (typeof value !== "string")
+    return "";
+  const key = value.trim().toLowerCase().replace(/[_-]/g, " ");
+  const match = [...CLOCK_DAY_PART_KEYS].sort((a, b) => b.length - a.length).find((part) => key === part.replaceAll("_", " ") || key.startsWith(part.replaceAll("_", " ") + ","));
+  return match || "";
+}
+function clockLabel(value, dayPart) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const key = clockDayPart(dayPart) || clockDayPart(raw);
+  if (key) {
+    const label = key.replaceAll("_", " ");
+    return raw.toLowerCase() === label ? raw : label[0].toUpperCase() + label.slice(1);
+  }
+  if (/^(?:[01]?\d|2[0-3]):[0-5]\d(?:\s*[AP]M)?$/i.test(raw) || /^[+-]?\d{1,4} minutes?$/.test(raw))
+    return raw;
+  return "";
+}
+
 // src/domain/trackers.ts
 var TRACKER_HISTORY_LIMIT = 40;
 var KINDS = new Set(["meter", "counter", "state", "timer"]);
@@ -4579,7 +4600,7 @@ function activityClock(activity, state) {
     const date = new Date(Date.parse(storyAt) - offset * 60000);
     return { time: date.toISOString().slice(11, 16), date: new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(date), precision: "exact" };
   }
-  const label = storyTimeLabel?.trim().slice(0, 160) || "";
+  const label = clockLabel(storyTimeLabel);
   return { time: label, date: "", precision: label ? "approximate" : "unknown" };
 }
 function validStamp(value) {
@@ -8486,7 +8507,7 @@ class PocketController {
     const home = el("div", "lp-home");
     const head = el("div", "lp-home-head");
     const left = el("div");
-    const roleplayClockText = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" && state.roleplayClockLabel ? state.roleplayClockLabel : formatTime(state.roleplayNow);
+    const roleplayClockText = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? clockLabel(state.roleplayClockLabel) || "Story time" : formatTime(state.roleplayNow);
     left.append(el("div", "lp-home-date", formatDate(state.roleplayNow, false)), el("div", "lp-home-clock", roleplayClockText));
     const weather = el("button", "lp-home-weather");
     weather.type = "button";
