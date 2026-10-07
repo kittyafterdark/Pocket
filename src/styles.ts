@@ -226,6 +226,8 @@ export const PHONE_STYLES = `
 
   .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
   .lp-thread .lp-nav { position:relative; }
+  .lumiphone-app-view.lp-thread { overflow:hidden; }
+  .lp-thread .lp-bubbles { overscroll-behavior:contain; }
   .lp-conversation-menu { position:relative; justify-self:end; }
   .lp-conversation-menu > summary { display:grid; place-items:center; min-width:30px; cursor:pointer; list-style:none; font-size:18px; line-height:1; }
   .lp-conversation-menu > summary::-webkit-details-marker { display:none; }
@@ -537,8 +539,8 @@ export const PHONE_STYLES = `
     .lp-gallery-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   }
   .lumiphone-widget-root[data-fullscreen="true"] { width:100%; height:var(--lp-visual-height,100%); max-width:none; overflow:hidden; contain:layout paint; }
-  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; grid-template-rows:calc(34px + env(safe-area-inset-top)) minmax(0,1fr) calc(24px + env(safe-area-inset-bottom)); }
-  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-statusbar { height:calc(34px + env(safe-area-inset-top)); padding-top:calc(5px + env(safe-area-inset-top)); }
+  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; grid-template-rows:calc(34px + var(--app-interactive-safe-top, 0px)) minmax(0,1fr) calc(24px + env(safe-area-inset-bottom)); }
+  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-statusbar { height:calc(34px + var(--app-interactive-safe-top, 0px)); padding-top:calc(5px + var(--app-interactive-safe-top, 0px)); }
   .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-homebar { padding-bottom:env(safe-area-inset-bottom); }
   .lumiphone-widget-root[data-fullscreen="true"] .lp-compose { padding-bottom:max(8px,env(safe-area-inset-bottom)); }
   @media (max-width: 360px) {

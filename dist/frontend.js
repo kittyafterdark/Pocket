@@ -910,6 +910,7 @@ var PHONE_ASPECT = 9 / 18.4;
 var PHONE_BASE_WIDTH = 360;
 var PHONE_SCALE_MIN = 0.8;
 var PHONE_SCALE_MAX = 1.25;
+var surfaceStyles = new WeakMap;
 function currentViewport() {
   const visual = window.visualViewport;
   return {
@@ -950,17 +951,32 @@ function applyVisualViewportSurface(host, toLayoutPx = (pixels) => pixels) {
   const height = Math.max(1, Math.round(visual?.height || window.innerHeight));
   const offsetLeft = Math.round(visual?.offsetLeft || 0);
   const offsetTop = Math.round(visual?.offsetTop || 0);
-  host.style.width = `${toLayoutPx(width)}px`;
-  host.style.height = `${toLayoutPx(height)}px`;
-  host.style.position = "absolute";
-  host.style.left = "0";
-  host.style.top = "0";
-  host.style.transform = `translate3d(${toLayoutPx(offsetLeft)}px,${toLayoutPx(offsetTop)}px,0)`;
-  host.style.margin = "0";
-  host.style.setProperty("--lp-visual-height", `${toLayoutPx(height)}px`);
+  const styles = {
+    width: `${toLayoutPx(width)}px`,
+    height: `${toLayoutPx(height)}px`,
+    position: "absolute",
+    left: "0px",
+    top: "0px",
+    margin: "0px",
+    transform: `translate3d(${toLayoutPx(offsetLeft)}px,${toLayoutPx(offsetTop)}px,0)`,
+    "--lp-visual-height": `${toLayoutPx(height)}px`
+  };
+  let previous = surfaceStyles.get(host);
+  if (!previous) {
+    previous = new Map;
+    surfaceStyles.set(host, previous);
+  }
+  for (const [property, value] of Object.entries(styles)) {
+    const saved = previous.get(property);
+    if (saved?.requested === value && host.style.getPropertyValue(property) === saved.applied)
+      continue;
+    host.style.setProperty(property, value);
+    previous.set(property, { requested: value, applied: host.style.getPropertyValue(property) });
+  }
   return { width, height, offsetLeft, offsetTop };
 }
 function clearVisualViewportSurface(host) {
+  surfaceStyles.delete(host);
   for (const property of ["width", "height", "position", "left", "top", "transform", "margin"])
     host.style.removeProperty(property);
   host.style.removeProperty("--lp-visual-height");
@@ -7219,7 +7235,8 @@ class PocketController {
         const scale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--lumiverse-ui-scale"));
         return pixels / (Number.isFinite(scale) && scale > 0 ? scale : 1);
       });
-      mobile.setVisible(true);
+      if (!mobile.isVisible())
+        mobile.setVisible(true);
       return true;
     }
     if (this.mobileWidget) {
@@ -10863,6 +10880,8 @@ var PHONE_STYLES = `
 
   .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
   .lp-thread .lp-nav { position:relative; }
+  .lumiphone-app-view.lp-thread { overflow:hidden; }
+  .lp-thread .lp-bubbles { overscroll-behavior:contain; }
   .lp-conversation-menu { position:relative; justify-self:end; }
   .lp-conversation-menu > summary { display:grid; place-items:center; min-width:30px; cursor:pointer; list-style:none; font-size:18px; line-height:1; }
   .lp-conversation-menu > summary::-webkit-details-marker { display:none; }
@@ -11174,8 +11193,8 @@ var PHONE_STYLES = `
     .lp-gallery-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   }
   .lumiphone-widget-root[data-fullscreen="true"] { width:100%; height:var(--lp-visual-height,100%); max-width:none; overflow:hidden; contain:layout paint; }
-  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; grid-template-rows:calc(34px + env(safe-area-inset-top)) minmax(0,1fr) calc(24px + env(safe-area-inset-bottom)); }
-  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-statusbar { height:calc(34px + env(safe-area-inset-top)); padding-top:calc(5px + env(safe-area-inset-top)); }
+  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-shell { border:0; border-radius:0; box-shadow:none; aspect-ratio:auto; grid-template-rows:calc(34px + var(--app-interactive-safe-top, 0px)) minmax(0,1fr) calc(24px + env(safe-area-inset-bottom)); }
+  .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-statusbar { height:calc(34px + var(--app-interactive-safe-top, 0px)); padding-top:calc(5px + var(--app-interactive-safe-top, 0px)); }
   .lumiphone-widget-root[data-fullscreen="true"] .lumiphone-homebar { padding-bottom:env(safe-area-inset-bottom); }
   .lumiphone-widget-root[data-fullscreen="true"] .lp-compose { padding-bottom:max(8px,env(safe-area-inset-bottom)); }
   @media (max-width: 360px) {

@@ -69,7 +69,7 @@ describe('generation lifecycle', () => {
 test('fullscreen converts viewport dimensions and keyboard offsets into host layout pixels', () => {
   const previous = globalThis.window
   const values = new Map<string, string>()
-  const style: any = { setProperty: (name: string, value: string) => values.set(name, value) }
+  const style: any = { getPropertyValue: (name: string) => values.get(name) || '', setProperty: (name: string, value: string) => { values.set(name, value); style[name] = value } }
   try {
     ;(globalThis as any).window = { innerWidth: 556, innerHeight: 930, visualViewport: { width: 556, height: 520, offsetLeft: 8, offsetTop: 90 } }
     for (const scale of [.7, .9, 1, 1.25]) {
@@ -162,4 +162,32 @@ test('manual retry also disables malformed/truncated JSON retries', async () => 
   let attempts = 0
   await expect(parseWithTruncationRetry('{"events":', async () => { attempts++; return '{"events":[]}' }, false)).rejects.toThrow()
   expect(attempts).toBe(0)
+})
+
+
+test('repeated standalone viewport notifications leave handset styles untouched, but keyboard and zoom changes apply', () => {
+  const previous = globalThis.window
+  const values = new Map<string, string>(); const writes: string[] = []
+  const style: any = { getPropertyValue: (name: string) => values.get(name) || '', setProperty: (name: string, value: string) => { values.set(name, name === 'transform' ? value.replaceAll(',', ', ') : value); writes.push(name) } }
+  const viewport = { width: 393, height: 852, offsetLeft: 0, offsetTop: 0 }
+  try {
+    ;(globalThis as any).window = { innerWidth: 393, innerHeight: 852, visualViewport: viewport }
+    const host = { style } as HTMLElement
+    applyVisualViewportSurface(host)
+    writes.length = 0
+    for (let i = 0; i < 20; i++) applyVisualViewportSurface(host)
+    expect(writes).toEqual([])
+    viewport.height = 490; viewport.offsetTop = 60
+    applyVisualViewportSurface(host)
+    expect(writes).toEqual(['height', 'transform', '--lp-visual-height'])
+    expect(values.get('height')).toBe('490px')
+    writes.length = 0
+    applyVisualViewportSurface(host, pixels => pixels / 1.25)
+    expect(values.get('width')).toBe('314.4px')
+    expect(values.get('height')).toBe('392px')
+    expect(writes.length).toBeGreaterThan(0)
+    writes.length = 0
+    applyVisualViewportSurface(host, pixels => pixels / 1.25)
+    expect(writes).toEqual([])
+  } finally { (globalThis as any).window = previous }
 })

@@ -608,7 +608,7 @@ class PocketController {
         const scale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--lumiverse-ui-scale'))
         return pixels / (Number.isFinite(scale) && scale > 0 ? scale : 1)
       })
-      mobile.setVisible(true)
+      if (!mobile.isVisible()) mobile.setVisible(true)
       return true
     }
     if (this.mobileWidget) {
