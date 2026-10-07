@@ -319,6 +319,7 @@ var frame = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="600" heigh
 var gradient = (top, bottom) => `<defs><linearGradient id="g" x2=".75" y2="1"><stop stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs><path fill="url(#g)" d="M0 0h600v1067H0z"/>`;
 var pattern = (background, art, size = 60) => frame(`<defs><pattern id="p" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${art}</pattern></defs><path fill="${background}" d="M0 0h600v1067H0z"/><path fill="url(#p)" d="M0 0h600v1067H0z"/>`);
 var BUILTIN_WALLPAPERS = [
+  { id: "sunset", name: "Sunset Cove", collection: "Scenes", scrim: 0.08, svg: frame(gradient("#746184", "#f7c49a") + '<circle cx="390" cy="570" r="92" fill="#ffe0af"/><g fill="none" stroke="#f9dbca" stroke-width="12" stroke-linecap="round" opacity=".38"><path d="M85 330h130M310 245h100"/></g><path d="M0 690Q150 610 300 690T600 680v387H0z" fill="#c58780"/><path d="M0 835Q190 670 370 820T600 815v252H0z" fill="#9b6875"/><path d="M0 965Q260 785 600 980v87H0z" fill="#59485f"/><path d="M325 710h130m-115 28h95" stroke="#ffd7ad" stroke-width="8" stroke-linecap="round" opacity=".6"/>') },
   { id: "pink-hearts", name: "Pink Hearts", collection: "Patterns", scrim: 0.05, svg: pattern("#ffabd7", '<path d="M30 18c-12-13-28 6-14 19l14 13 14-13c14-13-2-32-14-19z" fill="#fff4fa"/><path d="M76 66c-8-9-19 4-9 13l9 9 9-9c10-9-1-22-9-13z" fill="#ff61ad"/>', 100) },
   { id: "oled-moon", name: "Black Moonrise", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><circle cx="440" cy="280" r="58" fill="#b8adff"/><g fill="#b8adff"><circle cx="95" cy="130" r="3"/><circle cx="260" cy="400" r="2"/><circle cx="500" cy="100" r="2"/></g><path d="M0 920L200 700l210 170 190-250" fill="none" stroke="#8b7dff" stroke-width="3"/>') },
   { id: "oled-forest", name: "Black Forest", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><g fill="none" stroke="#63d8a4" stroke-width="3"><path d="M0 800Q180 660 600 890M0 950Q350 660 600 950"/><path d="M100 550v170m-55-85 55-100 55 100m190-190v250m-80-110 80-150 80 150"/></g>') },
@@ -383,15 +384,15 @@ var THEME_COLORS = {
     chatSecondary: "#faf8f6"
   },
   rose: {
-    accent: "#ff78a8",
-    bezel: "#321722",
-    background: "#1b1018",
-    surface: "#28131c",
-    text: "#fff4f7",
-    wallpaperPrimary: "#4a1830",
-    wallpaperSecondary: "#7a294e",
-    chatPrimary: "#4b1d31",
-    chatSecondary: "#1d1117"
+    accent: "#ffb27d",
+    bezel: "#291d21",
+    background: "#171318",
+    surface: "#271e25",
+    text: "#fff5ec",
+    wallpaperPrimary: "#796484",
+    wallpaperSecondary: "#e8a27b",
+    chatPrimary: "#30222a",
+    chatSecondary: "#19151b"
   },
   forest: {
     accent: "#63d8a4",
@@ -1397,10 +1398,11 @@ function appearance(host) {
   }));
   content.append(fieldBlock("Phone events in prose", inline), el("p", "lp-copy", "Choose compact scene cards or a miniature phone. This does not change who can write your character."));
   const themeRow = el("div", "lp-theme-grid");
-  for (const [name, wallpaper] of [["midnight", "moonrise"], ["porcelain", "coastal"], ["rose", "rose-waves"], ["forest", "forest"], ["pink", "pink-hearts"], ["custom", ""]]) {
+  for (const [name, wallpaper] of [["midnight", "moonrise"], ["porcelain", "coastal"], ["rose", "sunset"], ["forest", "forest"], ["pink", "pink-hearts"], ["custom", ""]]) {
     const dot = button("", "lp-theme-preview");
-    dot.title = name;
-    dot.setAttribute("aria-label", { midnight: "Black and violet palette", porcelain: "Light neutral palette", rose: "Dark rose palette", forest: "Black and mint palette", pink: "Bubblegum pink palette", custom: "Custom palette" }[name]);
+    dot.title = name === "rose" ? "Sunset" : name;
+    dot.dataset.theme = name;
+    dot.setAttribute("aria-label", { midnight: "Black and violet palette", porcelain: "Light neutral palette", rose: "Sunset palette with soft orange accents", forest: "Black and mint palette", pink: "Bubblegum pink palette", custom: "Custom palette" }[name]);
     dot.style.setProperty("--theme-color", name === "custom" ? settings.colors.accent : themePalette(name).accent);
     const miniature = el("span", "lp-theme-miniature");
     miniature.style.backgroundImage = wallpaper ? "url(" + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ")" : "";
@@ -1501,7 +1503,7 @@ function appearance(host) {
     incoming.style.background = settings.colors.surface;
     paletteControls.sync(settings.colors);
     for (const choice of themeRow.querySelectorAll("button"))
-      choice.setAttribute("aria-pressed", String(choice.title === settings.theme));
+      choice.setAttribute("aria-pressed", String(choice.dataset.theme === settings.theme));
     themeRow.querySelector('button[title="custom"]')?.style.setProperty("--theme-color", settings.colors.accent);
   };
   content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, disclosure("Custom CSS", custom));
@@ -1650,7 +1652,7 @@ function persona(host) {
   }), "Appearance only; connections and notifications remain device-wide."));
   const theme = el("select", "lp-select");
   for (const themeName of ["midnight", "porcelain", "rose", "forest", "pink", "custom"]) {
-    const option = el("option", "", themeName);
+    const option = el("option", "", themeName === "rose" ? "Sunset" : themeName);
     option.value = themeName;
     option.selected = current.theme === themeName;
     theme.appendChild(option);
@@ -10545,7 +10547,7 @@ var PHONE_STYLES = `
   .lumiphone-shell[hidden], .lumiphone-launcher[hidden] { display: none !important; }
   .lumiphone-shell[data-theme="pink"] { --lp-surface-2:#f4d4e6; --lp-muted:#754b63; --lp-border:rgba(56,18,44,.18); --lp-shadow:rgba(80,20,55,.24); }
   .lumiphone-shell[data-theme="porcelain"] { --lp-bg:#f2f0ed; --lp-surface:rgba(255,255,255,.9); --lp-surface-2:rgba(226,222,218,.82); --lp-text:#231f2a; --lp-muted:#746e78; --lp-border:rgba(37,30,45,.12); --lp-shadow:rgba(35,28,46,.24); }
-  .lumiphone-shell[data-theme="rose"] { --lp-bg:#1b1018; --lp-surface:rgba(53,27,43,.9); --lp-surface-2:rgba(94,43,69,.75); --lp-text:#fff4fa; --lp-muted:#ceaebb; --lp-border:rgba(255,209,229,.13); --lp-shadow:rgba(38,7,24,.5); }
+  .lumiphone-shell[data-theme="rose"] { --lp-bg:#171318; --lp-surface:#271e25; --lp-surface-2:#3b2b31; --lp-text:#fff5ec; --lp-muted:#d1b8ad; --lp-border:rgba(255,201,160,.17); --lp-shadow:rgba(28,16,23,.5); }
   .lumiphone-shell[data-theme="forest"] { --lp-bg:#0d1713; --lp-surface:rgba(23,48,38,.9); --lp-surface-2:rgba(38,77,59,.76); --lp-text:#effcf5; --lp-muted:#9ebcad; --lp-border:rgba(204,255,224,.12); --lp-shadow:rgba(3,26,16,.54); }
   .lumiphone-statusbar {
     height: 34px; padding: 5px 16px 0; display: grid; grid-template-columns: minmax(0,1fr) 92px minmax(0,1fr); align-items: start;

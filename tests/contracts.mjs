@@ -1832,9 +1832,9 @@ appearanceFixture.preferences.personaAppearance['persona-test'].enabled = false
 backendReceiver({ ...appearanceFixture, reason: 'preferences' })
 dockRoot.querySelector('[data-settings-category="personalization"]').click()
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent.includes('Device appearance')).click()
-for (const theme of ['midnight', 'forest', 'pink']) {
-  dockRoot.querySelector('button[title="' + theme + '"]').click()
-  await exportVisual('appearance-' + theme, dockRoot)
+for (const theme of ['midnight', 'forest', 'pink', 'rose']) {
+  dockRoot.querySelector('button[title="' + (theme === 'rose' ? 'Sunset' : theme) + '"]').click()
+  await exportVisual('appearance-' + (theme === 'rose' ? 'sunset' : theme), dockRoot)
 }
 backendReceiver({ ...identityUiState, reason: 'preferences' })
 dockRoot.querySelector('.lumiphone-homebar button').click()
@@ -2483,7 +2483,7 @@ dockRoot.querySelector('.lumiphone-homebar button').click()
 dockRoot.querySelector('[data-settings-category="personalization"]').click()
 ;[...dockRoot.querySelectorAll('.lp-settings-category')].find(node => node.textContent.includes('Device appearance')).click()
 dockRoot.querySelector('[data-image-target="device-chat"] .lp-wallpaper-presets-button').click()
-assert.equal(dockRoot.querySelectorAll('.lp-wallpaper-library-card').length, 17)
+assert.equal(dockRoot.querySelectorAll('.lp-wallpaper-library-card').length, 18)
 ;[...dockRoot.querySelectorAll('dialog .lp-chip')].find(node => node.textContent === 'Patterns').click()
 assert.equal(dockRoot.querySelectorAll('.lp-wallpaper-library-card:not([hidden])').length, 7)
 dockRoot.querySelector('[data-wallpaper-id="sage-check"]').click()

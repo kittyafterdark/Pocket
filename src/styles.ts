@@ -106,7 +106,7 @@ export const PHONE_STYLES = `
   .lumiphone-shell[hidden], .lumiphone-launcher[hidden] { display: none !important; }
   .lumiphone-shell[data-theme="pink"] { --lp-surface-2:#f4d4e6; --lp-muted:#754b63; --lp-border:rgba(56,18,44,.18); --lp-shadow:rgba(80,20,55,.24); }
   .lumiphone-shell[data-theme="porcelain"] { --lp-bg:#f2f0ed; --lp-surface:rgba(255,255,255,.9); --lp-surface-2:rgba(226,222,218,.82); --lp-text:#231f2a; --lp-muted:#746e78; --lp-border:rgba(37,30,45,.12); --lp-shadow:rgba(35,28,46,.24); }
-  .lumiphone-shell[data-theme="rose"] { --lp-bg:#1b1018; --lp-surface:rgba(53,27,43,.9); --lp-surface-2:rgba(94,43,69,.75); --lp-text:#fff4fa; --lp-muted:#ceaebb; --lp-border:rgba(255,209,229,.13); --lp-shadow:rgba(38,7,24,.5); }
+  .lumiphone-shell[data-theme="rose"] { --lp-bg:#171318; --lp-surface:#271e25; --lp-surface-2:#3b2b31; --lp-text:#fff5ec; --lp-muted:#d1b8ad; --lp-border:rgba(255,201,160,.17); --lp-shadow:rgba(28,16,23,.5); }
   .lumiphone-shell[data-theme="forest"] { --lp-bg:#0d1713; --lp-surface:rgba(23,48,38,.9); --lp-surface-2:rgba(38,77,59,.76); --lp-text:#effcf5; --lp-muted:#9ebcad; --lp-border:rgba(204,255,224,.12); --lp-shadow:rgba(3,26,16,.54); }
   .lumiphone-statusbar {
     height: 34px; padding: 5px 16px 0; display: grid; grid-template-columns: minmax(0,1fr) 92px minmax(0,1fr); align-items: start;

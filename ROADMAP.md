@@ -35,13 +35,13 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 - [x] Contacts: subtle NPC Bank archive hint; separate portable casts and individual profiles.
 - [x] Theme previews use miniature chat UI; visual preset swatches with SVG wallpapers instead of names.
 - [x] Associate remaining Settings fields; audit keyboard Space activation and prevent avatar scrolling.
-- [x] Appearance: sequential edits preserve theme selection; immediate preview updates, explicit Custom state, OLED presets and bubblegum hearts.
+- [x] Appearance: sequential edits preserve theme selection; immediate preview updates, explicit Custom state, OLED presets, bubblegum hearts and soft-orange Sunset with SVG scenery.
 - [x] Contacts library navigation, scaled handset sheets and separate conversation invite cards.
 - [x] Narrative clocks use constrained day-part keys; generation supports manual/automatic retry; Timeline updates existing beats automatically.
 
 ## Protection and maintenance (after visible UI settles)
 
-- [x] Controlled visual regression matrix: 60 mobile/desktop baselines for home/settings/chat/camera/sidebar/tracker widgets/weather/cards/full phone/connectors and clock precision.
+- [x] Controlled visual regression matrix: 62 mobile/desktop baselines for home/settings/chat/camera/sidebar/tracker widgets/weather/cards/full phone/connectors and clock precision.
 - [x] Expand controlled coverage for handset/UI-scale extremes, long notifications and Appearance palettes.
 - [x] Hostile global-theme fixture verifies Shadow DOM isolation and visual stability.
 - [x] Separate inline styling from handset/app styling; activity ShadowRoots only receive inline styles.

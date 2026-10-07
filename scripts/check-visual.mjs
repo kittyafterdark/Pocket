@@ -33,7 +33,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 30, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 31, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)

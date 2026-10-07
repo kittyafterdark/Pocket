@@ -25,6 +25,13 @@ test('appearance changes keep the latest palette and update preview without reop
     expect(saved.inlineAppearance).toBe('phone')
     view.querySelector<HTMLButtonElement>('button[title="custom"]')!.click()
     expect(saved.colors).toEqual(themePalette('pink'))
+    view.querySelector<HTMLButtonElement>('button[title="Sunset"]')!.click()
+    expect(saved.theme).toBe('rose')
+    expect(saved.colors.accent).toBe('#ffb27d')
+    expect(view.querySelector('button[title="Sunset"]')!.getAttribute('aria-pressed')).toBe('true')
+    expect(saved.homeWallpaper.source).toEqual({ kind: 'builtin', wallpaperId: 'sunset' })
+    expect(saved.inlineAppearance).toBe('phone')
+    expect(normalizePreferences(saved).colors).toEqual(themePalette('rose'))
     expect(view.querySelectorAll('.lp-theme-preview').length).toBe(6)
     expect(view.querySelector('.lp-theme-custom-label')!.textContent).toBe('Custom')
   } finally { globalThis.document = previous; dom.window.close() }

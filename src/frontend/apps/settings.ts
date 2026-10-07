@@ -149,8 +149,8 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   inline.addEventListener('change', () => commit(next => { next.inlineAppearance = inline.value === 'phone' ? 'phone' : 'cards' }))
   content.append(fieldBlock('Phone events in prose', inline), el('p', 'lp-copy', 'Choose compact scene cards or a miniature phone. This does not change who can write your character.'))
   const themeRow = el('div', 'lp-theme-grid')
-  for (const [name, wallpaper] of [['midnight', 'moonrise'], ['porcelain', 'coastal'], ['rose', 'rose-waves'], ['forest', 'forest'], ['pink', 'pink-hearts'], ['custom', '']] as const) {
-    const dot = button('', 'lp-theme-preview'); dot.title = name; dot.setAttribute('aria-label', ({ midnight: 'Black and violet palette', porcelain: 'Light neutral palette', rose: 'Dark rose palette', forest: 'Black and mint palette', pink: 'Bubblegum pink palette', custom: 'Custom palette' })[name])
+  for (const [name, wallpaper] of [['midnight', 'moonrise'], ['porcelain', 'coastal'], ['rose', 'sunset'], ['forest', 'forest'], ['pink', 'pink-hearts'], ['custom', '']] as const) {
+    const dot = button('', 'lp-theme-preview'); dot.title = name === 'rose' ? 'Sunset' : name; dot.dataset.theme = name; dot.setAttribute('aria-label', ({ midnight: 'Black and violet palette', porcelain: 'Light neutral palette', rose: 'Sunset palette with soft orange accents', forest: 'Black and mint palette', pink: 'Bubblegum pink palette', custom: 'Custom palette' })[name])
     dot.style.setProperty('--theme-color', name === 'custom' ? settings.colors.accent : themePalette(name).accent)
     const miniature = el('span', 'lp-theme-miniature'); miniature.style.backgroundImage = wallpaper ? 'url(' + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ')' : ''
     miniature.append(el('span', '', '9:41'), el('span', 'lp-theme-miniature-dock', '● ● ●')); dot.append(miniature); if (name === 'custom') dot.append(el('span', 'lp-theme-custom-label', 'Custom')); const selected = el('span', 'lp-theme-selected', '✓'); selected.setAttribute('aria-hidden', 'true'); dot.append(selected)
@@ -199,7 +199,7 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
     sample.style.background = outgoingSurface(settings.colors.accent)
     incoming.style.background = settings.colors.surface
     paletteControls.sync(settings.colors)
-    for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.title === settings.theme))
+    for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.dataset.theme === settings.theme))
     themeRow.querySelector<HTMLButtonElement>('button[title="custom"]')?.style.setProperty('--theme-color', settings.colors.accent)
   }
   content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, disclosure('Custom CSS', custom)); return page
@@ -312,7 +312,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const card = el('section', 'lp-card lp-settings-section')
   card.append(el('div', 'lp-eyebrow', 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
   const theme = el('select', 'lp-select')
-  for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'pink', 'custom'] as const) { const option = el('option', '', themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
+  for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'pink', 'custom'] as const) { const option = el('option', '', themeName === 'rose' ? 'Sunset' : themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
   theme.addEventListener('change', () => commit((item) => { item.theme = theme.value as PhoneSettings['theme']; if (item.theme !== 'custom') item.colors = themePalette(item.theme) }))
   const paletteControls = themeColorControls(current.colors, (key, value) => commit(item => { item.theme = 'custom'; item.colors[key] = value }))
   const personaWallpapers = el('section', 'lp-settings-section')

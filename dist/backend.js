@@ -379,6 +379,7 @@ var frame = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="600" heigh
 var gradient = (top, bottom) => `<defs><linearGradient id="g" x2=".75" y2="1"><stop stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs><path fill="url(#g)" d="M0 0h600v1067H0z"/>`;
 var pattern = (background, art, size = 60) => frame(`<defs><pattern id="p" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${art}</pattern></defs><path fill="${background}" d="M0 0h600v1067H0z"/><path fill="url(#p)" d="M0 0h600v1067H0z"/>`);
 var BUILTIN_WALLPAPERS = [
+  { id: "sunset", name: "Sunset Cove", collection: "Scenes", scrim: 0.08, svg: frame(gradient("#746184", "#f7c49a") + '<circle cx="390" cy="570" r="92" fill="#ffe0af"/><g fill="none" stroke="#f9dbca" stroke-width="12" stroke-linecap="round" opacity=".38"><path d="M85 330h130M310 245h100"/></g><path d="M0 690Q150 610 300 690T600 680v387H0z" fill="#c58780"/><path d="M0 835Q190 670 370 820T600 815v252H0z" fill="#9b6875"/><path d="M0 965Q260 785 600 980v87H0z" fill="#59485f"/><path d="M325 710h130m-115 28h95" stroke="#ffd7ad" stroke-width="8" stroke-linecap="round" opacity=".6"/>') },
   { id: "pink-hearts", name: "Pink Hearts", collection: "Patterns", scrim: 0.05, svg: pattern("#ffabd7", '<path d="M30 18c-12-13-28 6-14 19l14 13 14-13c14-13-2-32-14-19z" fill="#fff4fa"/><path d="M76 66c-8-9-19 4-9 13l9 9 9-9c10-9-1-22-9-13z" fill="#ff61ad"/>', 100) },
   { id: "oled-moon", name: "Black Moonrise", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><circle cx="440" cy="280" r="58" fill="#b8adff"/><g fill="#b8adff"><circle cx="95" cy="130" r="3"/><circle cx="260" cy="400" r="2"/><circle cx="500" cy="100" r="2"/></g><path d="M0 920L200 700l210 170 190-250" fill="none" stroke="#8b7dff" stroke-width="3"/>') },
   { id: "oled-forest", name: "Black Forest", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><g fill="none" stroke="#63d8a4" stroke-width="3"><path d="M0 800Q180 660 600 890M0 950Q350 660 600 950"/><path d="M100 550v170m-55-85 55-100 55 100m190-190v250m-80-110 80-150 80 150"/></g>') },
@@ -444,15 +445,15 @@ var THEME_COLORS = {
     chatSecondary: "#faf8f6"
   },
   rose: {
-    accent: "#ff78a8",
-    bezel: "#321722",
-    background: "#1b1018",
-    surface: "#28131c",
-    text: "#fff4f7",
-    wallpaperPrimary: "#4a1830",
-    wallpaperSecondary: "#7a294e",
-    chatPrimary: "#4b1d31",
-    chatSecondary: "#1d1117"
+    accent: "#ffb27d",
+    bezel: "#291d21",
+    background: "#171318",
+    surface: "#271e25",
+    text: "#fff5ec",
+    wallpaperPrimary: "#796484",
+    wallpaperSecondary: "#e8a27b",
+    chatPrimary: "#30222a",
+    chatSecondary: "#19151b"
   },
   forest: {
     accent: "#63d8a4",

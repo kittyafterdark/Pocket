@@ -21,8 +21,8 @@ const THEME_COLORS: Record<Exclude<PhoneTheme, 'custom'>, PhonePalette> = {
     wallpaperPrimary: '#eeeae6', wallpaperSecondary: '#cfd9e8', chatPrimary: '#e4def8', chatSecondary: '#faf8f6',
   },
   rose: {
-    accent: '#ff78a8', bezel: '#321722', background: '#1b1018', surface: '#28131c', text: '#fff4f7',
-    wallpaperPrimary: '#4a1830', wallpaperSecondary: '#7a294e', chatPrimary: '#4b1d31', chatSecondary: '#1d1117',
+    accent: '#ffb27d', bezel: '#291d21', background: '#171318', surface: '#271e25', text: '#fff5ec',
+    wallpaperPrimary: '#796484', wallpaperSecondary: '#e8a27b', chatPrimary: '#30222a', chatSecondary: '#19151b',
   },
   forest: {
     accent: '#63d8a4', bezel: '#080d0a', background: '#000000', surface: '#0e1712', text: '#f1fff8',
