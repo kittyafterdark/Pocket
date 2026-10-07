@@ -4288,15 +4288,23 @@ function renderContactsView(host) {
   const search = el("input", "lp-input");
   search.type = "search";
   search.placeholder = "Search contacts";
-  const filters = el("div", "lp-chipbar");
+  const toolbar = el("div", "lp-contact-toolbar");
+  const filters = el("div", "lp-chipbar lp-contact-filters");
+  filters.setAttribute("aria-label", "Filter contacts");
+  const library = el("div", "lp-contact-library");
+  library.setAttribute("role", "group");
+  library.setAttribute("aria-label", "Contact library");
+  library.append(el("span", "lp-contact-library-label", "Library"));
   const all = button("All", "lp-chip");
   const here = button("Here", "lp-chip");
   const recent = button("Recent", "lp-chip");
   all.setAttribute("aria-pressed", "true");
   filters.append(all, here, recent);
-  const groups = button("Groups", "lp-chip");
+  const groups = button("Groups", "lp-contact-library-action");
+  groups.title = "Contact groups for this roleplay";
+  groups.setAttribute("aria-description", groups.title);
   groups.addEventListener("click", () => host.selectGroup("", "groups"));
-  const bank = button("NPC Bank", "lp-chip");
+  const bank = button("NPC Bank", "lp-contact-library-action");
   bank.title = "Reusable NPC profiles and casts across chats";
   bank.setAttribute("aria-description", bank.title);
   const bankIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -4305,8 +4313,6 @@ function renderContactsView(host) {
   bankIcon.setAttribute("height", "12");
   bankIcon.setAttribute("aria-hidden", "true");
   bankIcon.setAttribute("focusable", "false");
-  bankIcon.style.verticalAlign = "middle";
-  bankIcon.style.marginRight = "5px";
   const bankPath = document.createElementNS(bankIcon.namespaceURI, "path");
   bankPath.setAttribute("d", "M4 8h16v12H4zM3 4h18v4H3zM9 12h6");
   bankPath.setAttribute("fill", "none");
@@ -4316,7 +4322,8 @@ function renderContactsView(host) {
   bankIcon.append(bankPath);
   bank.prepend(bankIcon);
   bank.addEventListener("click", () => host.selectGroup("", "bank"));
-  filters.append(groups, bank);
+  library.append(groups, bank);
+  toolbar.append(filters, library);
   const sync = button("Sync current scene", "lp-button lp-button-quiet");
   const sceneOperation = [...host.operations.values()].find((entry) => entry.task === "scene-sync" && entry.phase !== "complete" && entry.phase !== "error");
   sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation);
@@ -4359,7 +4366,7 @@ function renderContactsView(host) {
   recent.addEventListener("click", () => useFilter("recent"));
   search.addEventListener("input", () => renderList(active));
   renderList();
-  content.append(search, filters, sync, snapshotStatus);
+  content.append(search, toolbar, sync, snapshotStatus);
   if (sceneOperation) {
     const progress = el("div", "lp-operation-progress");
     progress.dataset.operationRequest = sceneOperation.requestId;
@@ -10614,6 +10621,13 @@ var PHONE_STYLES = `
   .lp-textarea { min-height:96px; resize:vertical; line-height:1.5; }
   .lp-label { display:grid; gap:5px; color:var(--lp-muted); font-size:9px; font-weight:680; }
   .lp-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .lp-contact-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:calc(10px * var(--pocket-ui-scale)); }
+  .lp-contact-filters { flex:none; }
+  .lp-contact-library { margin-left:auto; display:flex; align-items:center; gap:calc(6px * var(--pocket-ui-scale)); padding-left:calc(10px * var(--pocket-ui-scale)); border-left:1px solid var(--lp-border); }
+  .lp-contact-library-label { color:var(--lp-muted); font-size:var(--pocket-font-xs); letter-spacing:.06em; text-transform:uppercase; }
+  .lp-contact-library-action { appearance:none; display:inline-flex; align-items:center; justify-content:center; gap:calc(6px * var(--pocket-ui-scale)); min-height:calc(34px * var(--pocket-ui-scale)); padding:calc(7px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); border:1px solid var(--lp-border); border-radius:calc(9px * var(--pocket-ui-scale)); background:var(--lp-surface); color:var(--lp-text); font:inherit; font-size:var(--pocket-font-sm); white-space:nowrap; cursor:pointer; }
+  .lp-contact-library-action:hover { background:var(--lp-surface-2); border-color:var(--lp-accent); }
+  .lp-contact-library-action svg { width:calc(13px * var(--pocket-ui-scale)); height:calc(13px * var(--pocket-ui-scale)); flex:none; }
   .lp-chipbar { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-chip { appearance:none; white-space:nowrap; min-height:29px; padding:5px 9px; border:1px solid var(--lp-border); border-radius:99px; background:var(--lp-surface); color:var(--lp-muted); font:inherit; font-size:9px; font-weight:700; cursor:pointer; }
   .lp-chip[aria-pressed="true"] { border-color:transparent; background:var(--lp-accent); color:#fff; }

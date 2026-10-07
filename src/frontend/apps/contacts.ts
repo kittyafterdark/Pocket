@@ -452,19 +452,25 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
 
   const { page, content } = host.page('Contacts', `${host.state.contacts.length} people`, { label: 'Add', callback: () => host.select('', 'import') })
   const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = 'Search contacts'
-  const filters = el('div', 'lp-chipbar')
+  const toolbar = el('div', 'lp-contact-toolbar')
+  const filters = el('div', 'lp-chipbar lp-contact-filters')
+  filters.setAttribute('aria-label', 'Filter contacts')
+  const library = el('div', 'lp-contact-library')
+  library.setAttribute('role', 'group'); library.setAttribute('aria-label', 'Contact library')
+  library.append(el('span', 'lp-contact-library-label', 'Library'))
   const all = button('All', 'lp-chip'); const here = button('Here', 'lp-chip'); const recent = button('Recent', 'lp-chip')
   all.setAttribute('aria-pressed', 'true'); filters.append(all, here, recent)
-  const groups = button('Groups', 'lp-chip'); groups.addEventListener('click', () => host.selectGroup('', 'groups'))
-  const bank = button('NPC Bank', 'lp-chip')
+  const groups = button('Groups', 'lp-contact-library-action');
+  groups.title = 'Contact groups for this roleplay'; groups.setAttribute('aria-description', groups.title); groups.addEventListener('click', () => host.selectGroup('', 'groups'))
+  const bank = button('NPC Bank', 'lp-contact-library-action')
   bank.title = 'Reusable NPC profiles and casts across chats'; bank.setAttribute('aria-description', bank.title)
   const bankIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   bankIcon.setAttribute('viewBox', '0 0 24 24'); bankIcon.setAttribute('width', '12'); bankIcon.setAttribute('height', '12'); bankIcon.setAttribute('aria-hidden', 'true'); bankIcon.setAttribute('focusable', 'false')
-  bankIcon.style.verticalAlign = 'middle'; bankIcon.style.marginRight = '5px'
+
   const bankPath = document.createElementNS(bankIcon.namespaceURI, 'path')
   bankPath.setAttribute('d', 'M4 8h16v12H4zM3 4h18v4H3zM9 12h6'); bankPath.setAttribute('fill', 'none'); bankPath.setAttribute('stroke', 'currentColor'); bankPath.setAttribute('stroke-width', '1.5'); bankPath.setAttribute('stroke-linejoin', 'round')
   bankIcon.append(bankPath); bank.prepend(bankIcon)
-  bank.addEventListener('click', () => host.selectGroup('', 'bank')); filters.append(groups, bank)
+  bank.addEventListener('click', () => host.selectGroup('', 'bank')); library.append(groups, bank); toolbar.append(filters, library)
   const sync = button('Sync current scene', 'lp-button lp-button-quiet')
   const sceneOperation = [...host.operations.values()].find((entry) => entry.task === 'scene-sync' && entry.phase !== 'complete' && entry.phase !== 'error')
   sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation)
@@ -498,7 +504,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
   all.addEventListener('click', () => useFilter('all')); here.addEventListener('click', () => useFilter('here')); recent.addEventListener('click', () => useFilter('recent'))
   search.addEventListener('input', () => renderList(active))
   renderList()
-  content.append(search, filters, sync, snapshotStatus)
+  content.append(search, toolbar, sync, snapshotStatus)
   if (sceneOperation) {
     const progress = el('div', 'lp-operation-progress')
     progress.dataset.operationRequest = sceneOperation.requestId

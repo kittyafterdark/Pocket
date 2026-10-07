@@ -204,6 +204,13 @@ export const PHONE_STYLES = `
   .lp-textarea { min-height:96px; resize:vertical; line-height:1.5; }
   .lp-label { display:grid; gap:5px; color:var(--lp-muted); font-size:9px; font-weight:680; }
   .lp-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .lp-contact-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:calc(10px * var(--pocket-ui-scale)); }
+  .lp-contact-filters { flex:none; }
+  .lp-contact-library { margin-left:auto; display:flex; align-items:center; gap:calc(6px * var(--pocket-ui-scale)); padding-left:calc(10px * var(--pocket-ui-scale)); border-left:1px solid var(--lp-border); }
+  .lp-contact-library-label { color:var(--lp-muted); font-size:var(--pocket-font-xs); letter-spacing:.06em; text-transform:uppercase; }
+  .lp-contact-library-action { appearance:none; display:inline-flex; align-items:center; justify-content:center; gap:calc(6px * var(--pocket-ui-scale)); min-height:calc(34px * var(--pocket-ui-scale)); padding:calc(7px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); border:1px solid var(--lp-border); border-radius:calc(9px * var(--pocket-ui-scale)); background:var(--lp-surface); color:var(--lp-text); font:inherit; font-size:var(--pocket-font-sm); white-space:nowrap; cursor:pointer; }
+  .lp-contact-library-action:hover { background:var(--lp-surface-2); border-color:var(--lp-accent); }
+  .lp-contact-library-action svg { width:calc(13px * var(--pocket-ui-scale)); height:calc(13px * var(--pocket-ui-scale)); flex:none; }
   .lp-chipbar { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-chip { appearance:none; white-space:nowrap; min-height:29px; padding:5px 9px; border:1px solid var(--lp-border); border-radius:99px; background:var(--lp-surface); color:var(--lp-muted); font:inherit; font-size:9px; font-weight:700; cursor:pointer; }
   .lp-chip[aria-pressed="true"] { border-color:transparent; background:var(--lp-accent); color:#fff; }

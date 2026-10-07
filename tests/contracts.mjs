@@ -2529,6 +2529,8 @@ dockRoot.querySelector('.lumiphone-homebar button').click()
 ;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
 const uiBank = { ...uiCollections, npcBank: storage.get('device/npc-bank.json') }
 backendReceiver(uiBank)
+assert.deepEqual([...dockRoot.querySelectorAll('.lp-contact-filters button')].map(node => node.textContent), ['All', 'Here', 'Recent'], 'Only contact filters belong in the chip bar')
+assert.deepEqual([...dockRoot.querySelectorAll('.lp-contact-library button')].map(node => node.textContent), ['Groups', 'NPC Bank'], 'Groups and the reusable bank share a separate library area')
 await exportVisual('contacts', dockRoot)
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'NPC Bank').click()
 assert.ok(dockRoot.querySelector('.lp-bank-casts'), 'portable casts have their own section')
