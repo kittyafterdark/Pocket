@@ -942,6 +942,7 @@ ${INLINE_FINISH_STYLES}
   .lp-message-picker-row .lp-identity-line,
   .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }
   .lp-message-picker-row .lp-identity-name { line-height:1.4; }
+  .lumiphone-shell [data-pocket-search-result][hidden] { display:none !important; }
   .lp-message-picker-row[hidden], .lp-section[hidden], .lp-field[hidden], .lp-tracker-config-fields[hidden] { display:none; }
   .lp-template-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
   .lp-template-card { appearance:none; padding:18px 12px; border:1px solid var(--lp-border); border-radius:20px; display:grid; justify-items:start; gap:7px; background:var(--lp-surface); color:var(--lp-text); text-align:left; cursor:pointer; }

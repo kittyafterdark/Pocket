@@ -355,9 +355,9 @@ var SAMPLER_FIELDS = [
   ["top_p", "Top P", 0, 1, 0.01],
   ["top_k", "Top K", 0, 500, 1],
   ["min_p", "Min P", 0, 1, 0.01],
-  ["frequency_penalty", "Frequency penalty", -2, 2, 0.01],
-  ["presence_penalty", "Presence penalty", -2, 2, 0.01],
-  ["repetition_penalty", "Repetition penalty", 0, 3, 0.01]
+  ["frequency_penalty", "Frequency penalty", 0, 2, 0.01],
+  ["presence_penalty", "Presence penalty", 0, 2, 0.01],
+  ["repetition_penalty", "Repetition penalty", 0, 2, 0.01]
 ];
 function normalizeSamplerOverrides(value) {
   const result = {};
@@ -366,7 +366,9 @@ function normalizeSamplerOverrides(value) {
   const raw = value;
   for (const [key, , min, max, step] of SAMPLER_FIELDS) {
     const entry = raw[key];
-    if (typeof entry === "number" && Number.isFinite(entry) && entry >= min && entry <= max && (step !== 1 || Number.isInteger(entry)))
+    const lower = key === "frequency_penalty" || key === "presence_penalty" ? -2 : min;
+    const upper = key === "repetition_penalty" ? 3 : max;
+    if (typeof entry === "number" && Number.isFinite(entry) && entry >= lower && entry <= upper && (step !== 1 || Number.isInteger(entry)))
       result[key] = entry;
   }
   return result;
@@ -1890,44 +1892,57 @@ function generation(host) {
   if (run)
     diagnostic.textContent = run.status === "started" ? "● Testing…" : run.status === "completed" ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || "Unknown provider error"}`;
   card.append(fieldBlock("Generation mode", mode), fieldBlock("Connection profile", connections), controlRow("Model override", modelMount), el("p", "lp-copy", "Leave blank to use the model configured on the selected connection profile."), effectiveCard, test, diagnostic);
-  const samplers = el("section", "lp-card lp-settings-section");
-  samplers.append(el("div", "lp-title", "Sampler overrides"), el("p", "lp-copy", "Apply to Pocket text generation in either mode. Leave blank to keep existing defaults. Provider support varies."));
-  const inputs = [];
+  const samplers = el("div", "lp-settings-section");
+  samplers.append(el("p", "lp-copy", "Overrides apply to Pocket text generation in either mode. Default keeps existing generation settings. Provider support varies."));
+  const refreshers = [];
+  const hints = { temperature: 1, top_p: 0.95, top_k: 0, min_p: 0, frequency_penalty: 0, presence_penalty: 0, repetition_penalty: 0 };
   for (const [key, label, min, max, step] of SAMPLER_FIELDS) {
-    const input = el("input", "lp-input");
-    input.type = "number";
+    const row = el("div", "lp-style-control");
+    const input = el("input");
+    input.type = "range";
     input.min = String(min);
     input.max = String(max);
     input.step = String(step);
-    input.placeholder = "Use default";
-    input.value = settings.samplerOverrides?.[key]?.toString() ?? "";
     input.dataset.pocketSampler = key;
-    input.addEventListener("change", () => {
-      if (!input.checkValidity()) {
-        input.reportValidity();
-        return;
-      }
+    const value = el("span", "lp-copy");
+    const reset = button("Default", "lp-button lp-button-quiet");
+    reset.setAttribute("aria-label", `Use default for ${label}`);
+    const refresh = () => {
+      const saved = settings.samplerOverrides?.[key];
+      input.value = String(saved ?? hints[key]);
+      value.textContent = saved === undefined ? "Default" : String(saved);
+      reset.disabled = saved === undefined;
+    };
+    const head = el("div", "lp-row-between");
+    head.append(value, reset);
+    input.addEventListener("input", () => {
+      commit((next) => {
+        next.samplerOverrides = { ...next.samplerOverrides, [key]: Number(input.value) };
+      });
+      refresh();
+    });
+    reset.addEventListener("click", () => {
       commit((next) => {
         next.samplerOverrides = { ...next.samplerOverrides };
-        if (!input.value.trim())
-          delete next.samplerOverrides[key];
-        else
-          next.samplerOverrides[key] = Number(input.value);
+        delete next.samplerOverrides[key];
       });
+      refresh();
     });
-    inputs.push(input);
-    samplers.append(fieldBlock(label, input));
+    row.append(fieldBlock(label, input), head);
+    samplers.append(row);
+    refreshers.push(refresh);
+    refresh();
   }
   const reset = button("Use sampler defaults", "lp-button lp-button-quiet");
   reset.addEventListener("click", () => {
     commit((next) => {
       next.samplerOverrides = {};
     });
-    for (const input of inputs)
-      input.value = "";
+    for (const refresh of refreshers)
+      refresh();
   });
   samplers.append(reset);
-  card.appendChild(samplers);
+  card.appendChild(disclosure("Sampler overrides", samplers));
   if (!host.state.setup.initialized && host.resumeSetup) {
     const resume = button("Continue Pocket setup", "lp-button");
     resume.addEventListener("click", host.resumeSetup);
@@ -3669,6 +3684,23 @@ function renderMessagesView(host) {
   return page;
 }
 
+// src/frontend/components/ranked-search.ts
+var normalize = (value) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase();
+function applyRankedSearch(rows, value) {
+  const query = normalize(value), tokens = query.split(/\s+/).filter(Boolean);
+  const ranked = rows.map((row, index) => {
+    const name = normalize(row.name), terms = normalize(row.terms);
+    const matches = tokens.every((token) => terms.includes(token));
+    const score = !query ? 0 : name === query ? 0 : name.startsWith(query) ? 1 : name.split(/\s+/).some((word) => word.startsWith(query)) ? 2 : name.includes(query) ? 3 : tokens.every((token) => name.includes(token)) ? 4 : 5;
+    row.node.dataset.pocketSearchResult = "true";
+    row.node.hidden = !matches;
+    return { row, index, score };
+  }).sort((a, b) => a.score - b.score || a.index - b.index);
+  for (const { row } of ranked)
+    row.node.parentElement?.appendChild(row.node);
+  return ranked.filter(({ row }) => !row.node.hidden).length;
+}
+
 // src/frontend/apps/contact-groups.ts
 function members(host, bank) {
   return bank ? host.npcBank : host.state.contacts;
@@ -3826,7 +3858,7 @@ function renderContactGroups(host) {
     actions.append(remove);
     body.append(actions);
     (casts?.body || content).append(section);
-    cards.push({ node: section, terms: `${group.name} ${people.map((entry) => entry.name).join(" ")}`.toLowerCase() });
+    cards.push({ node: section, name: group.name, terms: `${group.name} ${people.map((entry) => entry.name).join(" ")}`.toLowerCase() });
   }
   if (!groups.length)
     (casts?.body || content).append(el("p", "lp-copy", bank ? "Save a cast to reuse the same NPCs in other chats." : "Organize a cast, family, team, or faction here."));
@@ -3848,17 +3880,18 @@ function renderContactGroups(host) {
       actions.append(add);
       row.append(actions);
       profiles.body.append(row);
-      cards.push({ node: row, terms: `${entry.name} ${entry.role} ${entry.aliases.join(" ")} ${entry.tags.join(" ")}`.toLowerCase() });
+      cards.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role} ${entry.aliases.join(" ")} ${entry.tags.join(" ")}`.toLowerCase() });
     }
   content.append(noMatches);
   search.addEventListener("input", () => {
     const query = search.value.trim().toLowerCase();
-    for (const card of cards)
-      card.node.hidden = !card.terms.includes(query);
-    noMatches.hidden = !query || cards.some((card) => !card.node.hidden);
+    const visible = applyRankedSearch(cards, query);
+    noMatches.hidden = !query || visible > 0;
     for (const group of [casts, profiles])
-      if (group)
+      if (group) {
+        group.section.dataset.pocketSearchResult = "true";
         group.section.hidden = Boolean(query && !cards.some((card) => group.body.contains(card.node) && !card.node.hidden));
+      }
   });
   return page;
 }
@@ -4176,7 +4209,7 @@ function importView(host) {
       row.append(identity, actions);
       bankBody.appendChild(row);
       bankRows.push(row);
-      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || "Pocket NPC"} ${entry.aliases.join(" ")} ${entry.tags.join(" ")} npc bank`.toLocaleLowerCase() });
+      searchableRows.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role || "Pocket NPC"} ${entry.aliases.join(" ")} ${entry.tags.join(" ")} npc bank`.toLocaleLowerCase() });
     }
   }
   content.appendChild(bank);
@@ -4201,7 +4234,7 @@ function importView(host) {
       row.append(identity, trailing);
       body.appendChild(row);
       sourceRows.push(row);
-      searchableRows.push({ node: row, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() });
+      searchableRows.push({ node: row, name: source.name, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() });
     }
     content.appendChild(section);
     searchableSections.push({ section, rows: sourceRows });
@@ -4210,14 +4243,11 @@ function importView(host) {
     content.appendChild(el("p", "lp-copy", "No importable Characters or active Council members were returned. Manual NPC contacts remain available."));
   const applySearch = () => {
     const query = search.value.trim().toLocaleLowerCase();
-    let visible = 0;
-    for (const entry of searchableRows) {
-      entry.node.hidden = Boolean(query && !entry.terms.includes(query));
-      if (!entry.node.hidden)
-        visible += 1;
-    }
-    for (const entry of searchableSections)
+    const visible = applyRankedSearch(searchableRows, query);
+    for (const entry of searchableSections) {
+      entry.section.dataset.pocketSearchResult = "true";
       entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden));
+    }
     noMatches.hidden = !query || visible > 0;
   };
   search.addEventListener("input", applySearch);
@@ -11549,6 +11579,7 @@ ${INLINE_FINISH_STYLES}
   .lp-message-picker-row .lp-identity-line,
   .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }
   .lp-message-picker-row .lp-identity-name { line-height:1.4; }
+  .lumiphone-shell [data-pocket-search-result][hidden] { display:none !important; }
   .lp-message-picker-row[hidden], .lp-section[hidden], .lp-field[hidden], .lp-tracker-config-fields[hidden] { display:none; }
   .lp-template-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
   .lp-template-card { appearance:none; padding:18px 12px; border:1px solid var(--lp-border); border-radius:20px; display:grid; justify-items:start; gap:7px; background:var(--lp-surface); color:var(--lp-text); text-align:left; cursor:pointer; }

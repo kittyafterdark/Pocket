@@ -3,6 +3,7 @@ import { renderContactGroups } from './contact-groups.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
+import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { actionGroup, controlRow, disclosure, fieldBlock, identityBlock, sectionBlock, statusBadge } from '../components/ui.js'
@@ -189,7 +190,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
   search.type = 'search'
   search.placeholder = 'Search saved or importable contacts'
   search.setAttribute('aria-label', 'Search contacts to add')
-  const searchableRows: Array<{ node: HTMLElement; terms: string }> = []
+  const searchableRows: Array<{ node: HTMLElement; name: string; terms: string }> = []
   const searchableSections: Array<{ section: HTMLElement; rows: HTMLElement[] }> = []
   const noMatches = el('p', 'lp-copy', 'No matching saved or importable contacts.')
   noMatches.dataset.contactSearchEmpty = 'true'
@@ -293,7 +294,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
       row.append(identity, actions)
       bankBody.appendChild(row)
       bankRows.push(row)
-      searchableRows.push({ node: row, terms: `${entry.name} ${entry.role || 'Pocket NPC'} ${entry.aliases.join(' ')} ${entry.tags.join(' ')} npc bank`.toLocaleLowerCase() })
+      searchableRows.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role || 'Pocket NPC'} ${entry.aliases.join(' ')} ${entry.tags.join(' ')} npc bank`.toLocaleLowerCase() })
     }
   }
   content.appendChild(bank)
@@ -317,7 +318,7 @@ function importView(host: ContactsViewHost): HTMLDivElement {
       row.append(identity, trailing)
       body.appendChild(row)
       sourceRows.push(row)
-      searchableRows.push({ node: row, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() })
+      searchableRows.push({ node: row, name: source.name, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() })
     }
     content.appendChild(section)
     searchableSections.push({ section, rows: sourceRows })
@@ -326,12 +327,11 @@ function importView(host: ContactsViewHost): HTMLDivElement {
 
   const applySearch = () => {
     const query = search.value.trim().toLocaleLowerCase()
-    let visible = 0
-    for (const entry of searchableRows) {
-      entry.node.hidden = Boolean(query && !entry.terms.includes(query))
-      if (!entry.node.hidden) visible += 1
+    const visible = applyRankedSearch(searchableRows, query)
+    for (const entry of searchableSections) {
+      entry.section.dataset.pocketSearchResult = 'true'
+      entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden))
     }
-    for (const entry of searchableSections) entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden))
     noMatches.hidden = !query || visible > 0
   }
   search.addEventListener('input', applySearch)

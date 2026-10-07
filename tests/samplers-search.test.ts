@@ -31,16 +31,18 @@ test('sampler controls save, clear, reset and reopen with persisted values', () 
       return renderSettingsView({ draft: saved, section: 'generation', state: { setup: { initialized: true } }, page: () => ({ page, content }), mountModelCombobox: () => {}, update: (next: any) => { saved = normalizePreferences(next) } } as any)
     }
     let view = render()
+    expect(view.querySelector('details')!.open).toBe(false)
+    expect(view.querySelector('summary')!.textContent).toBe('Sampler overrides')
     for (const input of view.querySelectorAll<HTMLInputElement>('[data-pocket-sampler]')) {
-      expect(input.type).toBe('number'); expect(input.labels?.length).toBe(1); expect(input.labels?.[0].textContent?.trim()).toBeTruthy()
+      expect(input.type).toBe('range'); expect(input.labels?.length).toBe(1); expect(input.labels?.[0].textContent?.trim()).toBeTruthy()
     }
-    const change = (key: string, value: string) => { const input = view.querySelector<HTMLInputElement>(`[data-pocket-sampler="${key}"]`)!; input.value = value; input.dispatchEvent(new dom.window.Event('change')) }
+    const change = (key: string, value: string) => { const input = view.querySelector<HTMLInputElement>(`[data-pocket-sampler="${key}"]`)!; input.value = value; input.dispatchEvent(new dom.window.Event('input')) }
     change('temperature', '0'); change('top_p', '.8'); change('top_k', '25')
     expect(saved.samplerOverrides).toEqual({ temperature: 0, top_p: .8, top_k: 25 })
     view = render(); expect(view.querySelector<HTMLInputElement>('[data-pocket-sampler="temperature"]')!.value).toBe('0')
-    change('top_p', ''); expect(saved.samplerOverrides).toEqual({ temperature: 0, top_k: 25 })
+    ;[...view.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Use default for Top P')!.click(); expect(saved.samplerOverrides).toEqual({ temperature: 0, top_k: 25 })
     ;[...view.querySelectorAll('button')].find(button => button.textContent === 'Use sampler defaults')!.click()
-    expect(saved.samplerOverrides).toEqual({}); expect([...view.querySelectorAll<HTMLInputElement>('[data-pocket-sampler]')].every(input => input.value === '')).toBe(true)
+    expect(saved.samplerOverrides).toEqual({}); expect(view.querySelector<HTMLInputElement>('[data-pocket-sampler="temperature"]')!.value).toBe('1')
   } finally { globalThis.document = previous; dom.window.close() }
 })
 
@@ -56,4 +58,20 @@ test('Add Contact and NPC Bank search aliases, tags, empty results and clear wit
       search.value = ''; search.dispatchEvent(new dom.window.Event('input')); expect(row.hidden).toBe(false); expect(row.querySelector('button')).not.toBeNull()
     }
   } finally { globalThis.document = previous; dom.window.close() }
+})
+
+
+test('search ranks exact names before prefixes, substrings and metadata, and clearing restores order', async () => {
+  const { applyRankedSearch } = await import('../src/frontend/components/ranked-search.js')
+  const dom = new JSDOM('<body><div id="list"></div></body>')
+  const list = dom.window.document.querySelector('#list')!
+  const names = ['Other', 'The Lycaon', 'Lycaon Wolf', 'Lycaon', 'Unrelated']
+  const rows = names.map(name => { const node = dom.window.document.createElement('div'); node.textContent = name; list.append(node); return { node, name, terms: name === 'Other' ? 'Other lycaon tag' : name } })
+  expect(applyRankedSearch(rows, 'LYCAON')).toBe(4)
+  expect([...list.children].filter(node => !(node as HTMLElement).hidden).map(node => node.textContent)).toEqual(['Lycaon', 'Lycaon Wolf', 'The Lycaon', 'Other'])
+  expect(rows[4].node.hidden).toBe(true)
+  expect(applyRankedSearch(rows, '')).toBe(5)
+  expect([...list.children].map(node => node.textContent)).toEqual(names)
+  expect(applyRankedSearch(rows, ' lycaon wolf ')).toBe(1)
+  dom.window.close()
 })

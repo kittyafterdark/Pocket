@@ -393,26 +393,29 @@ function generation(host: SettingsViewHost): HTMLDivElement {
   const diagnostic = el('p', 'lp-copy', 'Not tested yet.'); diagnostic.dataset.pocketGenerationDiagnostic = 'true'
   const run = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test'); if (run) diagnostic.textContent = run.status === 'started' ? '● Testing…' : run.status === 'completed' ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || 'Unknown provider error'}`
   card.append(fieldBlock('Generation mode', mode), fieldBlock('Connection profile', connections), controlRow('Model override', modelMount), el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic)
-  const samplers = el('section', 'lp-card lp-settings-section')
-  samplers.append(el('div', 'lp-title', 'Sampler overrides'), el('p', 'lp-copy', 'Apply to Pocket text generation in either mode. Leave blank to keep existing defaults. Provider support varies.'))
-  const inputs: HTMLInputElement[] = []
+  const samplers = el('div', 'lp-settings-section')
+  samplers.append(el('p', 'lp-copy', 'Overrides apply to Pocket text generation in either mode. Default keeps existing generation settings. Provider support varies.'))
+  const refreshers: Array<() => void> = []
+  const hints: Record<string, number> = { temperature: 1, top_p: 0.95, top_k: 0, min_p: 0, frequency_penalty: 0, presence_penalty: 0, repetition_penalty: 0 }
   for (const [key, label, min, max, step] of SAMPLER_FIELDS) {
-    const input = el('input', 'lp-input'); input.type = 'number'; input.min = String(min); input.max = String(max); input.step = String(step)
-    input.placeholder = 'Use default'; input.value = settings.samplerOverrides?.[key]?.toString() ?? ''; input.dataset.pocketSampler = key
-    input.addEventListener('change', () => {
-      if (!input.checkValidity()) { input.reportValidity(); return }
-      commit(next => {
-        next.samplerOverrides = { ...next.samplerOverrides }
-        if (!input.value.trim()) delete next.samplerOverrides[key]
-        else next.samplerOverrides[key] = Number(input.value)
-      })
-    })
-    inputs.push(input); samplers.append(fieldBlock(label, input))
+    const row = el('div', 'lp-style-control')
+    const input = el('input'); input.type = 'range'; input.min = String(min); input.max = String(max); input.step = String(step); input.dataset.pocketSampler = key
+    const value = el('span', 'lp-copy')
+    const reset = button('Default', 'lp-button lp-button-quiet'); reset.setAttribute('aria-label', `Use default for ${label}`)
+    const refresh = () => {
+      const saved = settings.samplerOverrides?.[key]
+      input.value = String(saved ?? hints[key]); value.textContent = saved === undefined ? 'Default' : String(saved)
+      reset.disabled = saved === undefined
+    }
+    const head = el('div', 'lp-row-between'); head.append(value, reset)
+    input.addEventListener('input', () => { commit(next => { next.samplerOverrides = { ...next.samplerOverrides, [key]: Number(input.value) } }); refresh() })
+    reset.addEventListener('click', () => { commit(next => { next.samplerOverrides = { ...next.samplerOverrides }; delete next.samplerOverrides[key] }); refresh() })
+    row.append(fieldBlock(label, input), head); samplers.append(row); refreshers.push(refresh); refresh()
   }
   const reset = button('Use sampler defaults', 'lp-button lp-button-quiet')
-  reset.addEventListener('click', () => { commit(next => { next.samplerOverrides = {} }); for (const input of inputs) input.value = '' })
+  reset.addEventListener('click', () => { commit(next => { next.samplerOverrides = {} }); for (const refresh of refreshers) refresh() })
   samplers.append(reset)
-  card.appendChild(samplers)
+  card.appendChild(disclosure('Sampler overrides', samplers))
   if (!host.state.setup.initialized && host.resumeSetup) {
     const resume = button('Continue Pocket setup', 'lp-button'); resume.addEventListener('click', host.resumeSetup); card.append(resume)
   }
