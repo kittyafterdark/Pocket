@@ -517,7 +517,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       if (!continuesRun) {
         avatar.dataset.clickable = 'true'; avatar.tabIndex = 0; avatar.setAttribute('role', 'button')
         avatar.addEventListener('click', () => host.openActor(messageActorId))
-        avatar.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') host.openActor(messageActorId) })
+        avatar.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); host.openActor(messageActorId) } })
       }
       row.append(avatar, bubble)
       bubbles.appendChild(row)

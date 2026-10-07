@@ -9,8 +9,12 @@ const HEX = /^#[0-9a-f]{6}$/i
 
 const THEME_COLORS: Record<Exclude<PhoneTheme, 'custom'>, PhonePalette> = {
   midnight: {
-    accent: '#8b7dff', bezel: '#17151d', background: '#0d0c12', surface: '#17131f', text: '#f8f6ff',
-    wallpaperPrimary: '#171327', wallpaperSecondary: '#123a4a', chatPrimary: '#2c2448', chatSecondary: '#13111c',
+    accent: '#8b7dff', bezel: '#0c0c0f', background: '#000000', surface: '#101014', text: '#f8f6ff',
+    wallpaperPrimary: '#171327', wallpaperSecondary: '#123a4a', chatPrimary: '#08080b', chatSecondary: '#000000',
+  },
+  pink: {
+    accent: '#ff69b4', bezel: '#f28ac2', background: '#fff0f8', surface: '#ffe0f0', text: '#38122c',
+    wallpaperPrimary: '#ffabd7', wallpaperSecondary: '#ffd4eb', chatPrimary: '#ffe8f4', chatSecondary: '#fff0f8',
   },
   porcelain: {
     accent: '#6657d9', bezel: '#d6d0cb', background: '#f2f0ed', surface: '#f7f3ef', text: '#201d25',
@@ -21,8 +25,8 @@ const THEME_COLORS: Record<Exclude<PhoneTheme, 'custom'>, PhonePalette> = {
     wallpaperPrimary: '#4a1830', wallpaperSecondary: '#7a294e', chatPrimary: '#4b1d31', chatSecondary: '#1d1117',
   },
   forest: {
-    accent: '#63d8a4', bezel: '#10251d', background: '#0d1713', surface: '#11231c', text: '#f1fff8',
-    wallpaperPrimary: '#14372a', wallpaperSecondary: '#1d5a41', chatPrimary: '#17412f', chatSecondary: '#0f1c17',
+    accent: '#63d8a4', bezel: '#080d0a', background: '#000000', surface: '#0e1712', text: '#f1fff8',
+    wallpaperPrimary: '#14372a', wallpaperSecondary: '#1d5a41', chatPrimary: '#06100a', chatSecondary: '#000000',
   },
 }
 
@@ -139,7 +143,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
   const raw = record(value)
   const version = Number(raw.version ?? 0)
   if (Number.isFinite(version) && version > PREFERENCES_VERSION) return fallback
-  const allowedThemes = new Set<PhoneTheme>(['midnight', 'porcelain', 'rose', 'forest', 'custom'])
+  const allowedThemes = new Set<PhoneTheme>(['midnight', 'porcelain', 'rose', 'forest', 'pink', 'custom'])
   const theme = allowedThemes.has(raw.theme as PhoneTheme) ? raw.theme as PhoneTheme : fallback.theme
   const preset = themePalette(theme)
   const colors = record(raw.colors)

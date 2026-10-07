@@ -50,6 +50,10 @@ export const PHONE_STYLES = `
   .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"] { color:var(--lp-destructive); }
   .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"]::before { content:'×'; color:inherit; }
   .lumiphone-shell .lp-theme-preview::before { content:none; }
+  .lp-theme-preview { position:relative; }
+  .lp-theme-selected { display:none; position:absolute; top:10px; right:10px; width:22px; height:22px; border-radius:50%; background:var(--theme-color); color:#fff; font-size:14px; text-shadow:0 1px 3px #000; align-items:center; justify-content:center; }
+  .lp-theme-preview[aria-pressed="true"] .lp-theme-selected { display:flex; }
+  .lp-theme-custom-label { position:absolute; bottom:40px; left:0; width:100%; color:#fff; font-size:var(--pocket-font-sm); text-shadow:0 1px 4px #000; }
   .lumiphone-shell .lp-theme-miniature { display:flex; flex-direction:column; align-items:center; justify-content:space-between; width:100%; aspect-ratio:9 / 12; padding:14px 6px 6px; border-radius:10px; border:1px solid var(--lp-border); background-color:var(--theme-color); background-size:cover; background-position:center; color:#fff; font-size:17px; font-weight:400; text-shadow:0 1px 5px #0007; }
   .lumiphone-shell .lp-theme-miniature-dock { width:100%; border-radius:6px; padding:3px; background:#0004; font-size:12px; letter-spacing:5px; }
   .lumiphone-shell .lp-theme-preview-incoming { padding:11px 14px; border-radius:14px 14px 14px 4px; background:var(--lp-surface); justify-self:start; font-size:13px; }
@@ -145,7 +149,7 @@ export const PHONE_STYLES = `
   .lp-home-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:10px 3px 20px; text-shadow:0 2px 12px rgba(0,0,0,.35); }
   .lp-home-date { font-size:11px; font-weight:650; opacity:.82; }
   .lp-home-clock { margin-top:1px; font-size:34px; line-height:1; font-weight:310; letter-spacing:-.045em; }
-  .lp-home-weather { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(255,255,255,.18); border-radius:15px; background:rgba(15,13,24,.22); backdrop-filter:blur(18px); font-size:11px; }
+  .lp-home-weather { color:inherit; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(255,255,255,.18); border-radius:15px; background:rgba(15,13,24,.22); backdrop-filter:blur(18px); font-size:11px; }
   .lp-app-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px 10px; align-content:start; }
   .lp-app-icon { appearance:none; min-width:0; padding:0; border:0; background:transparent; color:#fff; cursor:pointer; display:grid; justify-items:center; gap:6px; font:inherit; }
   .lp-app-icon:hover .lp-app-icon-box { transform:translateY(-2px) scale(1.035); }

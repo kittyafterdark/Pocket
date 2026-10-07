@@ -1,8 +1,34 @@
 import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
-import { defaultPreferences } from '../src/domain/preferences.js'
+import { defaultPreferences, normalizePreferences, themePalette } from '../src/domain/preferences.js'
 import { renderSettingsView } from '../src/frontend/apps/settings.js'
 import { showPocketSheet } from '../src/frontend/components/ui.js'
+
+test('appearance changes keep the latest palette and update preview without reopening', () => {
+  const previous = globalThis.document, dom = new JSDOM()
+  try {
+    globalThis.document = dom.window.document
+    let saved = defaultPreferences()
+    const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
+    const view = renderSettingsView({ draft: saved, section: 'appearance', page: () => ({ page, content }), resolvedWallpapers: { deviceHome: {status:'empty',sourceLabel:'Theme background'}, deviceChat: {status:'empty',sourceLabel:'Theme background'} }, chooseImage: () => {}, update: (next: typeof saved) => { saved = structuredClone(next) } } as any)
+    view.querySelector<HTMLButtonElement>('button[title="forest"]')!.click()
+    expect(saved.theme).toBe('forest')
+    expect(view.querySelector<HTMLElement>('.lp-theme-live')!.style.background).toBe('rgb(0, 0, 0)')
+    const inline = view.querySelector<HTMLSelectElement>('select[aria-label="Inline phone appearance"]')!
+    inline.value = 'phone'; inline.dispatchEvent(new dom.window.Event('change'))
+    expect(saved.theme).toBe('forest')
+    expect(saved.inlineAppearance).toBe('phone')
+    expect(view.querySelector('button[title="forest"]')!.getAttribute('aria-pressed')).toBe('true')
+    view.querySelector<HTMLButtonElement>('button[title="pink"]')!.click()
+    expect(normalizePreferences(saved).theme).toBe('pink')
+    expect(saved.homeWallpaper.source).toEqual({ kind: 'builtin', wallpaperId: 'pink-hearts' })
+    expect(saved.inlineAppearance).toBe('phone')
+    view.querySelector<HTMLButtonElement>('button[title="custom"]')!.click()
+    expect(saved.colors).toEqual(themePalette('pink'))
+    expect(view.querySelectorAll('.lp-theme-preview').length).toBe(6)
+    expect(view.querySelector('.lp-theme-custom-label')!.textContent).toBe('Custom')
+  } finally { globalThis.document = previous; dom.window.close() }
+})
 
 test('native sheets convert handset bounds through host zoom and restore focus on close', () => {
   const dom = new JSDOM('<body><div class="lumiphone-shell"><button>Options</button></div></body>')

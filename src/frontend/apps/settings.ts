@@ -4,7 +4,7 @@ import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { builtinWallpaperUrl } from '../../domain/wallpapers.js'
 import { normalizeJevSettings } from '../../domain/jev.js'
-import { disclosure, fieldBlock, outgoingSurface } from '../components/ui.js'
+import { controlRow, disclosure, fieldBlock, outgoingSurface } from '../components/ui.js'
 import { button, el } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
@@ -138,8 +138,8 @@ function categories(host: SettingsViewHost): HTMLDivElement {
 }
 
 function appearance(host: SettingsViewHost): HTMLDivElement {
-  const settings = host.draft
-  const commit = (mutate: (next: DevicePreferences) => void, options?: { persist?: boolean; resize?: boolean }) => { const next = clone(settings); mutate(next); host.update(normalizePreferences(next), options); updatePreview() }
+  let settings = clone(host.draft)
+  const commit = (mutate: (next: DevicePreferences) => void, options?: { persist?: boolean; resize?: boolean }) => { const next = clone(settings); mutate(next); settings = normalizePreferences(next); host.update(settings, options); updatePreview() }
   const { page, content } = host.page('Appearance', 'Device defaults')
   const themes = el('section', 'lp-card lp-settings-section'); themes.append(el('div', 'lp-eyebrow', 'Theme'))
   const inline = el('select', 'lp-select'); inline.setAttribute('aria-label', 'Inline phone appearance')
@@ -149,11 +149,11 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   inline.addEventListener('change', () => commit(next => { next.inlineAppearance = inline.value === 'phone' ? 'phone' : 'cards' }))
   content.append(fieldBlock('Phone events in prose', inline), el('p', 'lp-copy', 'Choose compact scene cards or a miniature phone. This does not change who can write your character.'))
   const themeRow = el('div', 'lp-theme-grid')
-  for (const [name, wallpaper] of [['midnight', 'moonrise'], ['porcelain', 'coastal'], ['rose', 'rose-waves'], ['forest', 'forest'], ['custom', '']] as const) {
-    const dot = button('', 'lp-theme-preview'); dot.title = name; dot.setAttribute('aria-label', name === 'custom' ? 'Custom palette' : 'Apply palette ' + (themeRow.childElementCount + 1) + ' with wallpaper')
+  for (const [name, wallpaper] of [['midnight', 'oled-moon'], ['porcelain', 'coastal'], ['rose', 'rose-waves'], ['forest', 'oled-forest'], ['pink', 'pink-hearts'], ['custom', '']] as const) {
+    const dot = button('', 'lp-theme-preview'); dot.title = name; dot.setAttribute('aria-label', ({ midnight: 'Black and violet palette', porcelain: 'Light neutral palette', rose: 'Dark rose palette', forest: 'Black and mint palette', pink: 'Bubblegum pink palette', custom: 'Custom palette' })[name])
     dot.style.setProperty('--theme-color', name === 'custom' ? settings.colors.accent : themePalette(name).accent)
     const miniature = el('span', 'lp-theme-miniature'); miniature.style.backgroundImage = wallpaper ? 'url(' + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ')' : ''
-    miniature.append(el('span', '', '9:41'), el('span', 'lp-theme-miniature-dock', '● ● ●')); dot.append(miniature)
+    miniature.append(el('span', '', '9:41'), el('span', 'lp-theme-miniature-dock', '● ● ●')); dot.append(miniature); if (name === 'custom') dot.append(el('span', 'lp-theme-custom-label', 'Custom')); const selected = el('span', 'lp-theme-selected', '✓'); selected.setAttribute('aria-hidden', 'true'); dot.append(selected)
     dot.setAttribute('aria-pressed', String(settings.theme === name))
     dot.addEventListener('click', () => commit((next) => { next.theme = name; if (name !== 'custom') { next.colors = themePalette(name); next.homeWallpaper = { ...next.homeWallpaper, source: { kind: 'builtin', wallpaperId: wallpaper }, fit: 'cover', focalX: .5, focalY: .5 } } }))
     themeRow.appendChild(dot)
@@ -182,8 +182,8 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const animation = el('select', 'lp-select')
   for (const value of ['spring', 'slide', 'fade', 'none']) { const option = el('option', '', value[0].toUpperCase() + value.slice(1)); option.value = value; option.selected = settings.animation === value; animation.appendChild(option) }
   animation.addEventListener('change', () => commit((next) => { next.animation = animation.value as PhoneSettings['animation'] }))
-  motion.append(animation, slider('Animation duration', settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => { next.animationDurationMs = value })), toggle('Reduce motion', settings.reducedMotion, (value) => commit((next) => { next.reducedMotion = value })))
-  const custom = el('section', 'lp-card lp-settings-section'); custom.append(el('div', 'lp-eyebrow', 'Advanced custom CSS'), el('p', 'lp-copy', 'Scoped to .lumiphone-shell. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting.'))
+  motion.append(fieldBlock('Animation', animation), slider('Animation duration', settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => { next.animationDurationMs = value })), toggle('Reduce motion', settings.reducedMotion, (value) => commit((next) => { next.reducedMotion = value })))
+  const custom = el('section', 'lp-card lp-settings-section'); custom.append(el('div', 'lp-eyebrow', 'Advanced custom CSS'), el('p', 'lp-copy', 'Scoped separately to this Pocket surface and its inline artifacts. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting.'))
   const css = el('textarea', 'lp-textarea lp-code-input'); css.value = settings.customCss; css.placeholder = '.lp-bubble { border-radius: 12px; }'; css.addEventListener('input', () => commit((next) => { next.customCss = css.value }, { persist: false }))
   const apply = button('Apply custom CSS', 'lp-button'); apply.addEventListener('click', () => commit((next) => { next.customCss = css.value }))
   custom.append(css, apply)
@@ -194,13 +194,13 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   const sample = el('span', 'lp-message-surface', 'See you soon.'); sample.style.background = outgoingSurface(settings.colors.accent); sample.style.color = '#fff'
   preview.append(sample)
   const updatePreview = () => {
-    preview.style.background = host.draft.colors.background
-    preview.style.color = host.draft.colors.text
-    sample.style.background = outgoingSurface(host.draft.colors.accent)
-    incoming.style.background = host.draft.colors.surface
-    paletteControls.sync(host.draft.colors)
-    for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.title === host.draft.theme))
-    themeRow.querySelector<HTMLButtonElement>('button[title="custom"]')?.style.setProperty('--theme-color', host.draft.colors.accent)
+    preview.style.background = settings.colors.background
+    preview.style.color = settings.colors.text
+    sample.style.background = outgoingSurface(settings.colors.accent)
+    incoming.style.background = settings.colors.surface
+    paletteControls.sync(settings.colors)
+    for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.title === settings.theme))
+    themeRow.querySelector<HTMLButtonElement>('button[title="custom"]')?.style.setProperty('--theme-color', settings.colors.accent)
   }
   content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, disclosure('Custom CSS', custom)); return page
 }
@@ -312,7 +312,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const card = el('section', 'lp-card lp-settings-section')
   card.append(el('div', 'lp-eyebrow', 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
   const theme = el('select', 'lp-select')
-  for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'custom'] as const) { const option = el('option', '', themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
+  for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'pink', 'custom'] as const) { const option = el('option', '', themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
   theme.addEventListener('change', () => commit((item) => { item.theme = theme.value as PhoneSettings['theme']; if (item.theme !== 'custom') item.colors = themePalette(item.theme) }))
   const paletteControls = themeColorControls(current.colors, (key, value) => commit(item => { item.theme = 'custom'; item.colors[key] = value }))
   const personaWallpapers = el('section', 'lp-settings-section')
@@ -333,8 +333,8 @@ function messages(host: SettingsViewHost): HTMLDivElement {
   const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); host.update(next) }
   const { page, content } = host.page('Messages', 'Generation and context bridge')
   const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })), el('p', 'lp-copy', 'When someone is on the way, 20 seconds without typing or a new phone message continues the main roleplay. Continue to arrival starts it immediately; idle time does not mark them Here.'))
-  const cadence = el('select', 'lp-select'); for (const [value, label] of [['instant', 'Instant'], ['quick', 'Quick'], ['natural', 'Natural'], ['relaxed', 'Relaxed']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.replyCadence === value; cadence.appendChild(option) }; cadence.addEventListener('change', () => commit((next) => { next.replyCadence = cadence.value as DevicePreferences['replyCadence'] })); replies.append(el('div', 'lp-label', 'Outgoing message grace'), cadence, el('p', 'lp-copy', 'Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision.'))
-  const ambient = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.ambientMessaging === value; ambient.appendChild(option) }; ambient.addEventListener('change', () => commit((next) => { next.ambientMessaging = ambient.value as DevicePreferences['ambientMessaging'] })); replies.append(el('div', 'lp-label', 'Ambient messages'), ambient)
+  const cadence = el('select', 'lp-select'); for (const [value, label] of [['instant', 'Instant'], ['quick', 'Quick'], ['natural', 'Natural'], ['relaxed', 'Relaxed']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.replyCadence === value; cadence.appendChild(option) }; cadence.addEventListener('change', () => commit((next) => { next.replyCadence = cadence.value as DevicePreferences['replyCadence'] })); replies.append(fieldBlock('Outgoing message grace', cadence), el('p', 'lp-copy', 'Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision.'))
+  const ambient = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.ambientMessaging === value; ambient.appendChild(option) }; ambient.addEventListener('change', () => commit((next) => { next.ambientMessaging = ambient.value as DevicePreferences['ambientMessaging'] })); replies.append(fieldBlock('Ambient messages', ambient))
   replies.append(toggle('Show post-turn sync status', settings.showReconciliationStatus, (value) => commit((next) => { next.showReconciliationStatus = value }), 'Cosmetic only. Pocket still reconciles world state after eligible roleplay turns when this is hidden.'))
   const context = el('section', 'lp-card lp-settings-section'); context.append(el('div', 'lp-eyebrow', 'Roleplay context'))
   const mode = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['recent', 'Recent RP'], ['story', 'Story context'], ['smart', 'Smart']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.roleplayContextMode === value; mode.appendChild(option) }; mode.addEventListener('change', () => commit((next) => { next.roleplayContextMode = mode.value as DevicePreferences['roleplayContextMode'] }))
@@ -391,7 +391,7 @@ function generation(host: SettingsViewHost): HTMLDivElement {
   card.append(toggle('Automatic retry', settings.automaticGenerationRetry, value => commit(next => { next.automaticGenerationRetry = value }), 'Retry once when output is cut short. Turn off to retry manually.'))
   const diagnostic = el('p', 'lp-copy', 'Not tested yet.'); diagnostic.dataset.pocketGenerationDiagnostic = 'true'
   const run = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test'); if (run) diagnostic.textContent = run.status === 'started' ? '● Testing…' : run.status === 'completed' ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || 'Unknown provider error'}`
-  card.append(el('div', 'lp-label', 'Generation mode'), mode, el('div', 'lp-label', 'Connection profile'), connections, el('div', 'lp-label', 'Model override'), modelMount, el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic)
+  card.append(fieldBlock('Generation mode', mode), fieldBlock('Connection profile', connections), controlRow('Model override', modelMount), el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic)
   if (!host.state.setup.initialized && host.resumeSetup) {
     const resume = button('Continue Pocket setup', 'lp-button'); resume.addEventListener('click', host.resumeSetup); card.append(resume)
   }
@@ -424,7 +424,7 @@ function camera(host: SettingsViewHost): HTMLDivElement {
   for (const entry of host.imageConnections || []) connection.append(new Option(entry.name, entry.id))
   if (settings.manualVisualProfile.connectionId && !(host.imageConnections || []).some(entry => entry.id === settings.manualVisualProfile.connectionId)) connection.append(new Option('Saved connection', settings.manualVisualProfile.connectionId))
   connection.value = settings.manualVisualProfile.connectionId
-  const modelField = el('div', 'lp-field'); modelField.append(el('div', 'lp-label', 'Checkpoint override'), model)
+  const modelField = el('div', 'lp-field'); modelField.append(controlRow('Checkpoint override', model))
   let stopModel: (() => void) | undefined
   const mountModel = () => { stopModel?.(); stopModel = host.mountModelCombobox(model, { value: modelValue, connection: { kind: 'image', id: connection.value || undefined }, onChange: value => { modelValue = value; commit(next => { next.manualVisualProfile.model = value }, false) } }) }
   mountModel()

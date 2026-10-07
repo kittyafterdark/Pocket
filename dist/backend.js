@@ -379,6 +379,9 @@ var frame = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="600" heigh
 var gradient = (top, bottom) => `<defs><linearGradient id="g" x2=".75" y2="1"><stop stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs><path fill="url(#g)" d="M0 0h600v1067H0z"/>`;
 var pattern = (background, art, size = 60) => frame(`<defs><pattern id="p" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${art}</pattern></defs><path fill="${background}" d="M0 0h600v1067H0z"/><path fill="url(#p)" d="M0 0h600v1067H0z"/>`);
 var BUILTIN_WALLPAPERS = [
+  { id: "pink-hearts", name: "Pink Hearts", collection: "Patterns", scrim: 0.05, svg: pattern("#ffabd7", '<path d="M30 18c-12-13-28 6-14 19l14 13 14-13c14-13-2-32-14-19z" fill="#fff4fa"/><path d="M76 66c-8-9-19 4-9 13l9 9 9-9c10-9-1-22-9-13z" fill="#ff61ad"/>', 100) },
+  { id: "oled-moon", name: "Black Moonrise", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><circle cx="440" cy="280" r="58" fill="#b8adff"/><g fill="#b8adff"><circle cx="95" cy="130" r="3"/><circle cx="260" cy="400" r="2"/><circle cx="500" cy="100" r="2"/></g><path d="M0 920L200 700l210 170 190-250" fill="none" stroke="#8b7dff" stroke-width="3"/>') },
+  { id: "oled-forest", name: "Black Forest", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><g fill="none" stroke="#63d8a4" stroke-width="3"><path d="M0 800Q180 660 600 890M0 950Q350 660 600 950"/><path d="M100 550v170m-55-85 55-100 55 100m190-190v250m-80-110 80-150 80 150"/></g>') },
   { id: "midnight-grid", name: "Midnight Grid", collection: "Patterns", scrim: 0.08, svg: pattern("#151b2c", '<path d="M60 0H0v60" fill="none" stroke="#8d9ab5" stroke-opacity=".18"/>') },
   { id: "linen-dots", name: "Linen Dots", collection: "Patterns", scrim: 0.2, svg: pattern("#e7dfd2", '<circle cx="16" cy="16" r="2" fill="#86796b" opacity=".4"/>', 32) },
   { id: "sage-check", name: "Sage Check", collection: "Patterns", scrim: 0.12, svg: pattern("#a8b6a0", '<path fill="#667b60" opacity=".2" d="M0 0h40v40H0zM40 40h40v40H40z"/><path d="M0 40h80M40 0v80" stroke="#fff" stroke-opacity=".15"/>', 80) },
@@ -409,14 +412,25 @@ var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
   midnight: {
     accent: "#8b7dff",
-    bezel: "#17151d",
-    background: "#0d0c12",
-    surface: "#17131f",
+    bezel: "#0c0c0f",
+    background: "#000000",
+    surface: "#101014",
     text: "#f8f6ff",
     wallpaperPrimary: "#171327",
     wallpaperSecondary: "#123a4a",
-    chatPrimary: "#2c2448",
-    chatSecondary: "#13111c"
+    chatPrimary: "#08080b",
+    chatSecondary: "#000000"
+  },
+  pink: {
+    accent: "#ff69b4",
+    bezel: "#f28ac2",
+    background: "#fff0f8",
+    surface: "#ffe0f0",
+    text: "#38122c",
+    wallpaperPrimary: "#ffabd7",
+    wallpaperSecondary: "#ffd4eb",
+    chatPrimary: "#ffe8f4",
+    chatSecondary: "#fff0f8"
   },
   porcelain: {
     accent: "#6657d9",
@@ -442,14 +456,14 @@ var THEME_COLORS = {
   },
   forest: {
     accent: "#63d8a4",
-    bezel: "#10251d",
-    background: "#0d1713",
-    surface: "#11231c",
+    bezel: "#080d0a",
+    background: "#000000",
+    surface: "#0e1712",
     text: "#f1fff8",
     wallpaperPrimary: "#14372a",
     wallpaperSecondary: "#1d5a41",
-    chatPrimary: "#17412f",
-    chatSecondary: "#0f1c17"
+    chatPrimary: "#06100a",
+    chatSecondary: "#000000"
   }
 };
 function record2(value) {
@@ -552,7 +566,7 @@ function normalizePreferences(value) {
   const version = Number(raw.version ?? 0);
   if (Number.isFinite(version) && version > PREFERENCES_VERSION)
     return fallback;
-  const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "custom"]);
+  const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "pink", "custom"]);
   const theme = allowedThemes.has(raw.theme) ? raw.theme : fallback.theme;
   const preset = themePalette(theme);
   const colors = record2(raw.colors);

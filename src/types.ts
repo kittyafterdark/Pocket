@@ -11,7 +11,7 @@ export type PhoneApp =
   | 'notifications'
   | 'settings'
 
-export type PhoneTheme = 'midnight' | 'porcelain' | 'rose' | 'forest' | 'custom'
+export type PhoneTheme = 'midnight' | 'porcelain' | 'rose' | 'forest' | 'pink' | 'custom'
 export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 
 export type PocketRoute =

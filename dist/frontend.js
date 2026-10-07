@@ -319,6 +319,9 @@ var frame = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="600" heigh
 var gradient = (top, bottom) => `<defs><linearGradient id="g" x2=".75" y2="1"><stop stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs><path fill="url(#g)" d="M0 0h600v1067H0z"/>`;
 var pattern = (background, art, size = 60) => frame(`<defs><pattern id="p" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${art}</pattern></defs><path fill="${background}" d="M0 0h600v1067H0z"/><path fill="url(#p)" d="M0 0h600v1067H0z"/>`);
 var BUILTIN_WALLPAPERS = [
+  { id: "pink-hearts", name: "Pink Hearts", collection: "Patterns", scrim: 0.05, svg: pattern("#ffabd7", '<path d="M30 18c-12-13-28 6-14 19l14 13 14-13c14-13-2-32-14-19z" fill="#fff4fa"/><path d="M76 66c-8-9-19 4-9 13l9 9 9-9c10-9-1-22-9-13z" fill="#ff61ad"/>', 100) },
+  { id: "oled-moon", name: "Black Moonrise", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><circle cx="440" cy="280" r="58" fill="#b8adff"/><g fill="#b8adff"><circle cx="95" cy="130" r="3"/><circle cx="260" cy="400" r="2"/><circle cx="500" cy="100" r="2"/></g><path d="M0 920L200 700l210 170 190-250" fill="none" stroke="#8b7dff" stroke-width="3"/>') },
+  { id: "oled-forest", name: "Black Forest", collection: "Scenes", scrim: 0, svg: frame('<path fill="#000" d="M0 0h600v1067H0z"/><g fill="none" stroke="#63d8a4" stroke-width="3"><path d="M0 800Q180 660 600 890M0 950Q350 660 600 950"/><path d="M100 550v170m-55-85 55-100 55 100m190-190v250m-80-110 80-150 80 150"/></g>') },
   { id: "midnight-grid", name: "Midnight Grid", collection: "Patterns", scrim: 0.08, svg: pattern("#151b2c", '<path d="M60 0H0v60" fill="none" stroke="#8d9ab5" stroke-opacity=".18"/>') },
   { id: "linen-dots", name: "Linen Dots", collection: "Patterns", scrim: 0.2, svg: pattern("#e7dfd2", '<circle cx="16" cy="16" r="2" fill="#86796b" opacity=".4"/>', 32) },
   { id: "sage-check", name: "Sage Check", collection: "Patterns", scrim: 0.12, svg: pattern("#a8b6a0", '<path fill="#667b60" opacity=".2" d="M0 0h40v40H0zM40 40h40v40H40z"/><path d="M0 40h80M40 0v80" stroke="#fff" stroke-opacity=".15"/>', 80) },
@@ -348,14 +351,25 @@ var HEX = /^#[0-9a-f]{6}$/i;
 var THEME_COLORS = {
   midnight: {
     accent: "#8b7dff",
-    bezel: "#17151d",
-    background: "#0d0c12",
-    surface: "#17131f",
+    bezel: "#0c0c0f",
+    background: "#000000",
+    surface: "#101014",
     text: "#f8f6ff",
     wallpaperPrimary: "#171327",
     wallpaperSecondary: "#123a4a",
-    chatPrimary: "#2c2448",
-    chatSecondary: "#13111c"
+    chatPrimary: "#08080b",
+    chatSecondary: "#000000"
+  },
+  pink: {
+    accent: "#ff69b4",
+    bezel: "#f28ac2",
+    background: "#fff0f8",
+    surface: "#ffe0f0",
+    text: "#38122c",
+    wallpaperPrimary: "#ffabd7",
+    wallpaperSecondary: "#ffd4eb",
+    chatPrimary: "#ffe8f4",
+    chatSecondary: "#fff0f8"
   },
   porcelain: {
     accent: "#6657d9",
@@ -381,14 +395,14 @@ var THEME_COLORS = {
   },
   forest: {
     accent: "#63d8a4",
-    bezel: "#10251d",
-    background: "#0d1713",
-    surface: "#11231c",
+    bezel: "#080d0a",
+    background: "#000000",
+    surface: "#0e1712",
     text: "#f1fff8",
     wallpaperPrimary: "#14372a",
     wallpaperSecondary: "#1d5a41",
-    chatPrimary: "#17412f",
-    chatSecondary: "#0f1c17"
+    chatPrimary: "#06100a",
+    chatSecondary: "#000000"
   }
 };
 function record2(value) {
@@ -491,7 +505,7 @@ function normalizePreferences(value) {
   const version = Number(raw.version ?? 0);
   if (Number.isFinite(version) && version > PREFERENCES_VERSION)
     return fallback;
-  const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "custom"]);
+  const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "pink", "custom"]);
   const theme = allowedThemes.has(raw.theme) ? raw.theme : fallback.theme;
   const preset = themePalette(theme);
   const colors = record2(raw.colors);
@@ -1359,11 +1373,12 @@ function categories(host) {
   return page;
 }
 function appearance(host) {
-  const settings = host.draft;
+  let settings = clone(host.draft);
   const commit = (mutate, options) => {
     const next = clone(settings);
     mutate(next);
-    host.update(normalizePreferences(next), options);
+    settings = normalizePreferences(next);
+    host.update(settings, options);
     updatePreview();
   };
   const { page, content } = host.page("Appearance", "Device defaults");
@@ -1382,15 +1397,20 @@ function appearance(host) {
   }));
   content.append(fieldBlock("Phone events in prose", inline), el("p", "lp-copy", "Choose compact scene cards or a miniature phone. This does not change who can write your character."));
   const themeRow = el("div", "lp-theme-grid");
-  for (const [name, wallpaper] of [["midnight", "moonrise"], ["porcelain", "coastal"], ["rose", "rose-waves"], ["forest", "forest"], ["custom", ""]]) {
+  for (const [name, wallpaper] of [["midnight", "oled-moon"], ["porcelain", "coastal"], ["rose", "rose-waves"], ["forest", "oled-forest"], ["pink", "pink-hearts"], ["custom", ""]]) {
     const dot = button("", "lp-theme-preview");
     dot.title = name;
-    dot.setAttribute("aria-label", name === "custom" ? "Custom palette" : "Apply palette " + (themeRow.childElementCount + 1) + " with wallpaper");
+    dot.setAttribute("aria-label", { midnight: "Black and violet palette", porcelain: "Light neutral palette", rose: "Dark rose palette", forest: "Black and mint palette", pink: "Bubblegum pink palette", custom: "Custom palette" }[name]);
     dot.style.setProperty("--theme-color", name === "custom" ? settings.colors.accent : themePalette(name).accent);
     const miniature = el("span", "lp-theme-miniature");
     miniature.style.backgroundImage = wallpaper ? "url(" + JSON.stringify(builtinWallpaperUrl(wallpaper)) + ")" : "";
     miniature.append(el("span", "", "9:41"), el("span", "lp-theme-miniature-dock", "● ● ●"));
     dot.append(miniature);
+    if (name === "custom")
+      dot.append(el("span", "lp-theme-custom-label", "Custom"));
+    const selected = el("span", "lp-theme-selected", "✓");
+    selected.setAttribute("aria-hidden", "true");
+    dot.append(selected);
     dot.setAttribute("aria-pressed", String(settings.theme === name));
     dot.addEventListener("click", () => commit((next) => {
       next.theme = name;
@@ -1446,13 +1466,13 @@ function appearance(host) {
   animation.addEventListener("change", () => commit((next) => {
     next.animation = animation.value;
   }));
-  motion.append(animation, slider("Animation duration", settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => {
+  motion.append(fieldBlock("Animation", animation), slider("Animation duration", settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => {
     next.animationDurationMs = value;
   })), toggle("Reduce motion", settings.reducedMotion, (value) => commit((next) => {
     next.reducedMotion = value;
   })));
   const custom = el("section", "lp-card lp-settings-section");
-  custom.append(el("div", "lp-eyebrow", "Advanced custom CSS"), el("p", "lp-copy", "Scoped to .lumiphone-shell. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting."));
+  custom.append(el("div", "lp-eyebrow", "Advanced custom CSS"), el("p", "lp-copy", "Scoped separately to this Pocket surface and its inline artifacts. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting."));
   const css = el("textarea", "lp-textarea lp-code-input");
   css.value = settings.customCss;
   css.placeholder = ".lp-bubble { border-radius: 12px; }";
@@ -1475,14 +1495,14 @@ function appearance(host) {
   sample.style.color = "#fff";
   preview.append(sample);
   const updatePreview = () => {
-    preview.style.background = host.draft.colors.background;
-    preview.style.color = host.draft.colors.text;
-    sample.style.background = outgoingSurface(host.draft.colors.accent);
-    incoming.style.background = host.draft.colors.surface;
-    paletteControls.sync(host.draft.colors);
+    preview.style.background = settings.colors.background;
+    preview.style.color = settings.colors.text;
+    sample.style.background = outgoingSurface(settings.colors.accent);
+    incoming.style.background = settings.colors.surface;
+    paletteControls.sync(settings.colors);
     for (const choice of themeRow.querySelectorAll("button"))
-      choice.setAttribute("aria-pressed", String(choice.title === host.draft.theme));
-    themeRow.querySelector('button[title="custom"]')?.style.setProperty("--theme-color", host.draft.colors.accent);
+      choice.setAttribute("aria-pressed", String(choice.title === settings.theme));
+    themeRow.querySelector('button[title="custom"]')?.style.setProperty("--theme-color", settings.colors.accent);
   };
   content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, disclosure("Custom CSS", custom));
   return page;
@@ -1629,7 +1649,7 @@ function persona(host) {
     item.enabled = value;
   }), "Appearance only; connections and notifications remain device-wide."));
   const theme = el("select", "lp-select");
-  for (const themeName of ["midnight", "porcelain", "rose", "forest", "custom"]) {
+  for (const themeName of ["midnight", "porcelain", "rose", "forest", "pink", "custom"]) {
     const option = el("option", "", themeName);
     option.value = themeName;
     option.selected = current.theme === themeName;
@@ -1692,7 +1712,7 @@ function messages(host) {
   cadence.addEventListener("change", () => commit((next) => {
     next.replyCadence = cadence.value;
   }));
-  replies.append(el("div", "lp-label", "Outgoing message grace"), cadence, el("p", "lp-copy", "Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision."));
+  replies.append(fieldBlock("Outgoing message grace", cadence), el("p", "lp-copy", "Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision."));
   const ambient = el("select", "lp-select");
   for (const [value, label] of [["off", "Off"], ["sparse", "Sparse"], ["normal", "Normal"]]) {
     const option = el("option", "", label);
@@ -1703,7 +1723,7 @@ function messages(host) {
   ambient.addEventListener("change", () => commit((next) => {
     next.ambientMessaging = ambient.value;
   }));
-  replies.append(el("div", "lp-label", "Ambient messages"), ambient);
+  replies.append(fieldBlock("Ambient messages", ambient));
   replies.append(toggle("Show post-turn sync status", settings.showReconciliationStatus, (value) => commit((next) => {
     next.showReconciliationStatus = value;
   }), "Cosmetic only. Pocket still reconciles world state after eligible roleplay turns when this is hidden."));
@@ -1839,7 +1859,7 @@ function generation(host) {
   const run = [...host.generation?.history || []].reverse().find((entry) => entry.task === "connection-test");
   if (run)
     diagnostic.textContent = run.status === "started" ? "● Testing…" : run.status === "completed" ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || "Unknown provider error"}`;
-  card.append(el("div", "lp-label", "Generation mode"), mode, el("div", "lp-label", "Connection profile"), connections, el("div", "lp-label", "Model override"), modelMount, el("p", "lp-copy", "Leave blank to use the model configured on the selected connection profile."), effectiveCard, test, diagnostic);
+  card.append(fieldBlock("Generation mode", mode), fieldBlock("Connection profile", connections), controlRow("Model override", modelMount), el("p", "lp-copy", "Leave blank to use the model configured on the selected connection profile."), effectiveCard, test, diagnostic);
   if (!host.state.setup.initialized && host.resumeSetup) {
     const resume = button("Continue Pocket setup", "lp-button");
     resume.addEventListener("click", host.resumeSetup);
@@ -1905,7 +1925,7 @@ function camera(host) {
     connection.append(new Option("Saved connection", settings.manualVisualProfile.connectionId));
   connection.value = settings.manualVisualProfile.connectionId;
   const modelField = el("div", "lp-field");
-  modelField.append(el("div", "lp-label", "Checkpoint override"), model);
+  modelField.append(controlRow("Checkpoint override", model));
   let stopModel;
   const mountModel = () => {
     stopModel?.();
@@ -3407,8 +3427,10 @@ function renderMessagesView(host) {
         avatar.setAttribute("role", "button");
         avatar.addEventListener("click", () => host.openActor(messageActorId));
         avatar.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ")
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
             host.openActor(messageActorId);
+          }
         });
       }
       row.append(avatar, bubble);
@@ -10467,6 +10489,10 @@ var PHONE_STYLES = `
   .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"] { color:var(--lp-destructive); }
   .lumiphone-shell .lp-sheet .lp-bubble-action[data-destructive="true"]::before { content:'×'; color:inherit; }
   .lumiphone-shell .lp-theme-preview::before { content:none; }
+  .lp-theme-preview { position:relative; }
+  .lp-theme-selected { display:none; position:absolute; top:10px; right:10px; width:22px; height:22px; border-radius:50%; background:var(--theme-color); color:#fff; font-size:14px; text-shadow:0 1px 3px #000; align-items:center; justify-content:center; }
+  .lp-theme-preview[aria-pressed="true"] .lp-theme-selected { display:flex; }
+  .lp-theme-custom-label { position:absolute; bottom:40px; left:0; width:100%; color:#fff; font-size:var(--pocket-font-sm); text-shadow:0 1px 4px #000; }
   .lumiphone-shell .lp-theme-miniature { display:flex; flex-direction:column; align-items:center; justify-content:space-between; width:100%; aspect-ratio:9 / 12; padding:14px 6px 6px; border-radius:10px; border:1px solid var(--lp-border); background-color:var(--theme-color); background-size:cover; background-position:center; color:#fff; font-size:17px; font-weight:400; text-shadow:0 1px 5px #0007; }
   .lumiphone-shell .lp-theme-miniature-dock { width:100%; border-radius:6px; padding:3px; background:#0004; font-size:12px; letter-spacing:5px; }
   .lumiphone-shell .lp-theme-preview-incoming { padding:11px 14px; border-radius:14px 14px 14px 4px; background:var(--lp-surface); justify-self:start; font-size:13px; }
@@ -10562,7 +10588,7 @@ var PHONE_STYLES = `
   .lp-home-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:10px 3px 20px; text-shadow:0 2px 12px rgba(0,0,0,.35); }
   .lp-home-date { font-size:11px; font-weight:650; opacity:.82; }
   .lp-home-clock { margin-top:1px; font-size:34px; line-height:1; font-weight:310; letter-spacing:-.045em; }
-  .lp-home-weather { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(255,255,255,.18); border-radius:15px; background:rgba(15,13,24,.22); backdrop-filter:blur(18px); font-size:11px; }
+  .lp-home-weather { color:inherit; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(255,255,255,.18); border-radius:15px; background:rgba(15,13,24,.22); backdrop-filter:blur(18px); font-size:11px; }
   .lp-app-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px 10px; align-content:start; }
   .lp-app-icon { appearance:none; min-width:0; padding:0; border:0; background:transparent; color:#fff; cursor:pointer; display:grid; justify-items:center; gap:6px; font:inherit; }
   .lp-app-icon:hover .lp-app-icon-box { transform:translateY(-2px) scale(1.035); }
