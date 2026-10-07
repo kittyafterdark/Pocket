@@ -36,7 +36,8 @@ export interface ContactsViewHost {
   select(contactId: string, view?: ContactView, replace?: boolean): void
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
-  choosePhoto(contactId: string): void
+  choosePhoto(contactId?: string): void
+  uploadPhoto(contactId?: string): void
   generatePhoto(contactId: string): void
   generateDraftPhoto(): void
   useSourcePhoto(contactId: string): void
@@ -120,6 +121,8 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     const choosePhoto = button('Choose from Gallery', 'lp-button lp-button-quiet')
     choosePhoto.addEventListener('click', () => host.choosePhoto(contact.id))
     actions.appendChild(choosePhoto)
+    const uploadPhoto = button('Upload avatar', 'lp-button lp-button-quiet'); uploadPhoto.disabled = !host.capabilities?.images
+    uploadPhoto.addEventListener('click', () => host.uploadPhoto(contact.id)); actions.append(uploadPhoto)
     const generatePhoto = button('Quick Generate', 'lp-button')
     generatePhoto.addEventListener('click', () => host.generatePhoto(contact.id))
     actions.appendChild(generatePhoto)
@@ -369,7 +372,11 @@ function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
     const actions = actionGroup('lp-draft-actions')
     const use = button(`Use ${draft.name}`, 'lp-button lp-button-primary'); use.disabled = Boolean(active); use.addEventListener('click', () => { use.disabled = true; host.send('lumiphone:save_contact', { contact: draftPayload(draft) }) })
     actions.append(use)
-    const photo = button(draft.avatarUrl ? 'Retake portrait' : 'Generate portrait', 'lp-button lp-button-quiet'); photo.addEventListener('click', () => host.generateDraftPhoto()); actions.append(photo)
+    const portraits = el('div', 'lp-npc-portrait-actions'); portraits.setAttribute('role', 'group'); portraits.setAttribute('aria-label', 'NPC portrait source')
+    const gallery = button('Gallery', 'lp-button lp-button-quiet'); gallery.disabled = !host.capabilities?.images; gallery.addEventListener('click', () => host.choosePhoto())
+    const upload = button('Upload avatar', 'lp-button lp-button-quiet'); upload.disabled = !host.capabilities?.images; upload.addEventListener('click', () => host.uploadPhoto())
+    const photo = button(draft.avatarUrl ? 'Retake portrait' : 'Generate portrait', 'lp-button lp-button-quiet'); photo.disabled = !host.capabilities?.imageGen; photo.addEventListener('click', () => host.generateDraftPhoto())
+    portraits.append(gallery, upload, photo); footer.append(portraits)
     if (draft.avatarUrl) { const image = el('img', 'lp-draft-portrait'); image.src = draft.avatarUrl; image.alt = `${draft.name} portrait`; finder.prepend(image) }
     if (host.previousNpcDraft) { const undo = button('Previous', 'lp-button lp-button-quiet'); undo.addEventListener('click', () => host.restorePreviousNpcDraft()); actions.append(undo) }
     footer.append(actions)

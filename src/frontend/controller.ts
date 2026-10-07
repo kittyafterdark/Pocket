@@ -1,3 +1,4 @@
+import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
 import type {
   CalendarEvent,
   DevicePreferences,
@@ -154,9 +155,12 @@ class PocketController {
   private router = new PocketRouteHistory()
   private gallery: GalleryResult = { data: [], total: 0 }
   private galleryScope = 'chat'
+  private galleryRequestId = ''
+  private galleryLoading = false
   private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string }>()
   private pendingWallpaperTarget: PocketImageTarget | null = null
   private pendingContactPhotoId = ''
+  private pendingContactPhotoDraft: PocketContactDraft | null = null
   private selectedContactId = ''
   private selectedContactView: ContactView = 'list'
   private selectedContactGroupId = ''
@@ -1175,7 +1179,10 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:gallery') {
-      this.gallery = { data: payload.data || [], total: Number(payload.total) || 0 }
+      if (payload.scope && payload.scope !== this.galleryScope) return
+      if (payload.requestId && payload.requestId !== this.galleryRequestId) return
+      this.galleryLoading = false
+      this.gallery = { data: payload.data || [], total: Number(payload.total) || 0, offset: Number(payload.offset) || 0, limit: Number(payload.limit) || GALLERY_PAGE_SIZE }
       if (this.currentApp === 'gallery') this.render(false)
       return
     }
@@ -1309,6 +1316,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      if (payload.requestId === this.galleryRequestId) this.galleryLoading = false
       if (payload.requestId === this.trackerMutationRequest) this.trackerMutationRequest = ''
       if (payload.requestId === this.trackerJevRequest) { this.trackerJevRequest = ''; this.jevWorking = false }
       if (payload.requestId === this.collectionRequest) this.collectionRequest = ''
@@ -2328,6 +2336,7 @@ class PocketController {
       },
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
+      uploadPhoto: (contactId) => { void this.uploadAvatarPhoto(contactId) },
       generatePhoto: (contactId) => this.openPocket({ app: 'camera', contactId }),
       generateDraftPhoto: () => this.openPocket({ app: 'camera', draft: true }),
       useSourcePhoto: (contactId) => this.send('lumiphone:set_contact_photo', { contactId, useSource: true }),
@@ -2340,20 +2349,48 @@ class PocketController {
     })
   }
 
-  private chooseContactPhoto(contactId: string): void {
-    if (!contactId) return
+  private async uploadAvatarPhoto(contactId = '__draft__'): Promise<void> {
+    const context = this.activeContext(), draft = this.npcDraft
+    if (this.cameraBusy) { this.showFeedback('Stop the current photo generation before uploading an avatar.'); return }
+    if (contactId === '__draft__' && !draft) return
+    try {
+      const files = await this.ctx.uploads.pickFile({ accept: ['image/*', '.png', '.jpg', '.jpeg', '.webp', '.gif'], multiple: false, maxSizeBytes: 8 * 1024 * 1024 })
+      const file = files[0]; if (!file) return
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.addEventListener('load', () => resolve(String(reader.result || '')), { once: true })
+        reader.addEventListener('error', () => reject(reader.error || new Error('Could not read the image.')), { once: true })
+        reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }))
+      })
+      const current = this.activeContext()
+      if (this.destroyed || current.chatId !== context.chatId || current.characterId !== context.characterId || (contactId === '__draft__' && draft !== this.npcDraft)) return
+      if (contactId !== '__draft__' && !this.state?.contacts.some(contact => contact.id === contactId)) return
+      this.openPocket(contactId === '__draft__' ? { app: 'camera', draft: true } : { app: 'camera', contactId })
+      this.cameraPreview = dataUrl; this.cameraImageId = ''; this.cameraReady = true; this.cameraFocus = { x: 50, y: 50 }
+      this.cameraProgress = 'Uploaded photo ready. Frame it, then choose Use photo.'
+      this.render(false)
+    } catch (error) { this.showError(error instanceof Error ? error.message : 'Could not upload this avatar.') }
+  }
+
+  private chooseContactPhoto(contactId = '__draft__'): void {
+    if (contactId === '__draft__' && !this.npcDraft) return
+    this.pendingContactPhotoDraft = contactId === '__draft__' ? this.npcDraft : null
     this.pendingWallpaperTarget = 'contact-avatar'
     this.pendingContactPhotoId = contactId
     this.requestGallery('all')
     this.openPocket({ app: 'gallery' })
   }
-  private requestGallery(scope: string): void {
+  private requestGallery(scope: string, offset = 0): void {
+    if (scope !== this.galleryScope) this.gallery = { data: [], total: 0 }
     this.galleryScope = scope
-    this.send('lumiphone:gallery_list', { scope })
+    this.galleryLoading = true
+    this.galleryRequestId = requestId('gallery-list')
+    this.send('lumiphone:gallery_list', { scope, offset, requestId: this.galleryRequestId })
+    if (this.currentApp === 'gallery') this.render(false)
   }
 
   private renderGallery(): HTMLDivElement {
-    const { page, content } = this.page('Gallery', `${this.gallery.total} assets`, { label: 'Refresh', callback: () => this.requestGallery(this.galleryScope) })
+    const { page, content } = this.page('Gallery', `${this.gallery.total} assets`, { label: 'Refresh', callback: () => this.requestGallery(this.galleryScope, this.gallery.offset || 0) })
     const chips = el('div', 'lp-chipbar')
     for (const [scope, label] of [['chat', 'This chat'], ['character', 'Character'], ['phone', 'Pocket'], ['all', 'All']] as const) {
       const chip = button(label, 'lp-chip')
@@ -2385,7 +2422,17 @@ class PocketController {
       grid.appendChild(tile)
     }
     content.appendChild(grid)
-    if (!this.gallery.data.length) content.appendChild(this.empty('gallery', 'Nothing here yet', 'Take a photo with Camera or switch the gallery filter.'))
+    const offset = this.gallery.offset || 0, limit = this.gallery.limit || GALLERY_PAGE_SIZE
+    const pagination = el('nav', 'lp-gallery-pagination lp-actions'); pagination.setAttribute('aria-label', 'Gallery pages')
+    const previous = button('Previous', 'lp-button lp-button-quiet'), next = button('Next', 'lp-button lp-button-quiet')
+    previous.disabled = this.galleryLoading || offset === 0
+    next.disabled = this.galleryLoading || offset + limit >= this.gallery.total
+    previous.addEventListener('click', () => this.requestGallery(this.galleryScope, Math.max(0, offset - limit)))
+    next.addEventListener('click', () => this.requestGallery(this.galleryScope, offset + limit))
+    const range = el('span', 'lp-copy', this.galleryLoading ? 'Loading images…' : this.gallery.total ? `${offset + 1}–${offset + this.gallery.data.length} of ${this.gallery.total}` : '0 images')
+    range.setAttribute('role', 'status')
+    pagination.append(previous, range, next); content.insertBefore(pagination, grid)
+    if (!this.gallery.data.length && !this.galleryLoading) content.appendChild(this.empty('gallery', 'Nothing here yet', 'Take a photo with Camera or switch the gallery filter.'))
     return page
   }
 
@@ -2405,7 +2452,7 @@ class PocketController {
         const confirm = button('Permanently delete', 'lp-button')
         const sheet = showPocketSheet(remove, 'Delete photo?', confirmation)
         cancel.addEventListener('click', () => sheet?.dismiss())
-        confirm.addEventListener('click', () => { this.runGalleryAction(confirm, 'Deleting…', 'lumiphone:gallery_delete', { imageId: item.id, scope: this.galleryScope, confirmed: true }); sheet?.dismiss(); modal.dismiss() })
+        confirm.addEventListener('click', () => { this.runGalleryAction(confirm, 'Deleting…', 'lumiphone:gallery_delete', { imageId: item.id, scope: this.galleryScope, offset: this.gallery.offset || 0, confirmed: true }); sheet?.dismiss(); modal.dismiss() })
         confirmation.append(cancel, confirm)
       })
       actions.append(remove)
@@ -2413,9 +2460,15 @@ class PocketController {
     if (this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId) {
       const contactId = this.pendingContactPhotoId
       const targetContact = this.state?.contacts.find((entry) => entry.id === contactId)
-      const use = button(`Use for ${targetContact?.name || 'contact'}`, 'lp-button lp-button-primary')
+      const draft = contactId === '__draft__' ? this.pendingContactPhotoDraft : null
+      const use = button(`Use for ${draft?.name || targetContact?.name || 'contact'}`, 'lp-button lp-button-primary')
       use.addEventListener('click', () => {
-        this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url })
+        if (draft) {
+          if (draft !== this.npcDraft) { this.showFeedback('That NPC preview has changed. Choose its portrait again.'); return }
+          draft.avatarUrl = item.fullUrl || item.url; draft.avatarSource = { kind: 'gallery', imageId: item.id }; draft.avatarFocus = { x: 50, y: 50 }
+          modal.dismiss(); this.openPocket({ app: 'contacts', view: 'quick-gen' })
+        } else this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url })
+        this.pendingContactPhotoDraft = null
         this.pendingWallpaperTarget = null
         this.pendingContactPhotoId = ''
       })

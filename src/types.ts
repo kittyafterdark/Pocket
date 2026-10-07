@@ -982,6 +982,8 @@ export interface PhoneCapabilities {
 }
 
 export interface GalleryResult {
+  offset?: number
+  limit?: number
   data: Array<{
     id: string
     thumbnailUrl: string

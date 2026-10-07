@@ -1,3 +1,6 @@
+// src/domain/gallery-page.ts
+var GALLERY_PAGE_SIZE = 48;
+
 // src/domain/clock-label.ts
 var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
 function clockDayPart(value) {
@@ -3934,6 +3937,10 @@ function contactEditor(host, contact, draft = null) {
     const choosePhoto = button("Choose from Gallery", "lp-button lp-button-quiet");
     choosePhoto.addEventListener("click", () => host.choosePhoto(contact.id));
     actions.appendChild(choosePhoto);
+    const uploadPhoto = button("Upload avatar", "lp-button lp-button-quiet");
+    uploadPhoto.disabled = !host.capabilities?.images;
+    uploadPhoto.addEventListener("click", () => host.uploadPhoto(contact.id));
+    actions.append(uploadPhoto);
     const generatePhoto = button("Quick Generate", "lp-button");
     generatePhoto.addEventListener("click", () => host.generatePhoto(contact.id));
     actions.appendChild(generatePhoto);
@@ -4206,9 +4213,20 @@ function quickGenerateView(host) {
       host.send("lumiphone:save_contact", { contact: draftPayload(draft) });
     });
     actions.append(use);
+    const portraits = el("div", "lp-npc-portrait-actions");
+    portraits.setAttribute("role", "group");
+    portraits.setAttribute("aria-label", "NPC portrait source");
+    const gallery = button("Gallery", "lp-button lp-button-quiet");
+    gallery.disabled = !host.capabilities?.images;
+    gallery.addEventListener("click", () => host.choosePhoto());
+    const upload = button("Upload avatar", "lp-button lp-button-quiet");
+    upload.disabled = !host.capabilities?.images;
+    upload.addEventListener("click", () => host.uploadPhoto());
     const photo = button(draft.avatarUrl ? "Retake portrait" : "Generate portrait", "lp-button lp-button-quiet");
+    photo.disabled = !host.capabilities?.imageGen;
     photo.addEventListener("click", () => host.generateDraftPhoto());
-    actions.append(photo);
+    portraits.append(gallery, upload, photo);
+    footer.append(portraits);
     if (draft.avatarUrl) {
       const image = el("img", "lp-draft-portrait");
       image.src = draft.avatarUrl;
@@ -6599,9 +6617,12 @@ class PocketController {
   router = new PocketRouteHistory;
   gallery = { data: [], total: 0 };
   galleryScope = "chat";
+  galleryRequestId = "";
+  galleryLoading = false;
   galleryActionButtons = new Map;
   pendingWallpaperTarget = null;
   pendingContactPhotoId = "";
+  pendingContactPhotoDraft = null;
   selectedContactId = "";
   selectedContactView = "list";
   selectedContactGroupId = "";
@@ -7717,7 +7738,12 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:gallery") {
-      this.gallery = { data: payload.data || [], total: Number(payload.total) || 0 };
+      if (payload.scope && payload.scope !== this.galleryScope)
+        return;
+      if (payload.requestId && payload.requestId !== this.galleryRequestId)
+        return;
+      this.galleryLoading = false;
+      this.gallery = { data: payload.data || [], total: Number(payload.total) || 0, offset: Number(payload.offset) || 0, limit: Number(payload.limit) || GALLERY_PAGE_SIZE };
       if (this.currentApp === "gallery")
         this.render(false);
       return;
@@ -7896,6 +7922,8 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      if (payload.requestId === this.galleryRequestId)
+        this.galleryLoading = false;
       if (payload.requestId === this.trackerMutationRequest)
         this.trackerMutationRequest = "";
       if (payload.requestId === this.trackerJevRequest) {
@@ -9044,6 +9072,9 @@ ${body}`;
       },
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
+      uploadPhoto: (contactId) => {
+        this.uploadAvatarPhoto(contactId);
+      },
       generatePhoto: (contactId) => this.openPocket({ app: "camera", contactId }),
       generateDraftPhoto: () => this.openPocket({ app: "camera", draft: true }),
       useSourcePhoto: (contactId) => this.send("lumiphone:set_contact_photo", { contactId, useSource: true }),
@@ -9059,20 +9090,62 @@ ${body}`;
       showError: (message) => this.showError(message)
     });
   }
-  chooseContactPhoto(contactId) {
-    if (!contactId)
+  async uploadAvatarPhoto(contactId = "__draft__") {
+    const context = this.activeContext(), draft = this.npcDraft;
+    if (this.cameraBusy) {
+      this.showFeedback("Stop the current photo generation before uploading an avatar.");
       return;
+    }
+    if (contactId === "__draft__" && !draft)
+      return;
+    try {
+      const files = await this.ctx.uploads.pickFile({ accept: ["image/*", ".png", ".jpg", ".jpeg", ".webp", ".gif"], multiple: false, maxSizeBytes: 8 * 1024 * 1024 });
+      const file = files[0];
+      if (!file)
+        return;
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader;
+        reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+        reader.addEventListener("error", () => reject(reader.error || new Error("Could not read the image.")), { once: true });
+        reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }));
+      });
+      const current = this.activeContext();
+      if (this.destroyed || current.chatId !== context.chatId || current.characterId !== context.characterId || contactId === "__draft__" && draft !== this.npcDraft)
+        return;
+      if (contactId !== "__draft__" && !this.state?.contacts.some((contact) => contact.id === contactId))
+        return;
+      this.openPocket(contactId === "__draft__" ? { app: "camera", draft: true } : { app: "camera", contactId });
+      this.cameraPreview = dataUrl;
+      this.cameraImageId = "";
+      this.cameraReady = true;
+      this.cameraFocus = { x: 50, y: 50 };
+      this.cameraProgress = "Uploaded photo ready. Frame it, then choose Use photo.";
+      this.render(false);
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : "Could not upload this avatar.");
+    }
+  }
+  chooseContactPhoto(contactId = "__draft__") {
+    if (contactId === "__draft__" && !this.npcDraft)
+      return;
+    this.pendingContactPhotoDraft = contactId === "__draft__" ? this.npcDraft : null;
     this.pendingWallpaperTarget = "contact-avatar";
     this.pendingContactPhotoId = contactId;
     this.requestGallery("all");
     this.openPocket({ app: "gallery" });
   }
-  requestGallery(scope) {
+  requestGallery(scope, offset = 0) {
+    if (scope !== this.galleryScope)
+      this.gallery = { data: [], total: 0 };
     this.galleryScope = scope;
-    this.send("lumiphone:gallery_list", { scope });
+    this.galleryLoading = true;
+    this.galleryRequestId = requestId("gallery-list");
+    this.send("lumiphone:gallery_list", { scope, offset, requestId: this.galleryRequestId });
+    if (this.currentApp === "gallery")
+      this.render(false);
   }
   renderGallery() {
-    const { page, content } = this.page("Gallery", `${this.gallery.total} assets`, { label: "Refresh", callback: () => this.requestGallery(this.galleryScope) });
+    const { page, content } = this.page("Gallery", `${this.gallery.total} assets`, { label: "Refresh", callback: () => this.requestGallery(this.galleryScope, this.gallery.offset || 0) });
     const chips = el("div", "lp-chipbar");
     for (const [scope, label] of [["chat", "This chat"], ["character", "Character"], ["phone", "Pocket"], ["all", "All"]]) {
       const chip = button(label, "lp-chip");
@@ -9105,7 +9178,19 @@ ${body}`;
       grid.appendChild(tile);
     }
     content.appendChild(grid);
-    if (!this.gallery.data.length)
+    const offset = this.gallery.offset || 0, limit = this.gallery.limit || GALLERY_PAGE_SIZE;
+    const pagination = el("nav", "lp-gallery-pagination lp-actions");
+    pagination.setAttribute("aria-label", "Gallery pages");
+    const previous = button("Previous", "lp-button lp-button-quiet"), next = button("Next", "lp-button lp-button-quiet");
+    previous.disabled = this.galleryLoading || offset === 0;
+    next.disabled = this.galleryLoading || offset + limit >= this.gallery.total;
+    previous.addEventListener("click", () => this.requestGallery(this.galleryScope, Math.max(0, offset - limit)));
+    next.addEventListener("click", () => this.requestGallery(this.galleryScope, offset + limit));
+    const range = el("span", "lp-copy", this.galleryLoading ? "Loading images…" : this.gallery.total ? `${offset + 1}–${offset + this.gallery.data.length} of ${this.gallery.total}` : "0 images");
+    range.setAttribute("role", "status");
+    pagination.append(previous, range, next);
+    content.insertBefore(pagination, grid);
+    if (!this.gallery.data.length && !this.galleryLoading)
       content.appendChild(this.empty("gallery", "Nothing here yet", "Take a photo with Camera or switch the gallery filter."));
     return page;
   }
@@ -9126,7 +9211,7 @@ ${body}`;
         const sheet = showPocketSheet(remove, "Delete photo?", confirmation);
         cancel.addEventListener("click", () => sheet?.dismiss());
         confirm.addEventListener("click", () => {
-          this.runGalleryAction(confirm, "Deleting…", "lumiphone:gallery_delete", { imageId: item.id, scope: this.galleryScope, confirmed: true });
+          this.runGalleryAction(confirm, "Deleting…", "lumiphone:gallery_delete", { imageId: item.id, scope: this.galleryScope, offset: this.gallery.offset || 0, confirmed: true });
           sheet?.dismiss();
           modal.dismiss();
         });
@@ -9137,9 +9222,22 @@ ${body}`;
     if (this.pendingWallpaperTarget === "contact-avatar" && this.pendingContactPhotoId) {
       const contactId = this.pendingContactPhotoId;
       const targetContact = this.state?.contacts.find((entry) => entry.id === contactId);
-      const use = button(`Use for ${targetContact?.name || "contact"}`, "lp-button lp-button-primary");
+      const draft = contactId === "__draft__" ? this.pendingContactPhotoDraft : null;
+      const use = button(`Use for ${draft?.name || targetContact?.name || "contact"}`, "lp-button lp-button-primary");
       use.addEventListener("click", () => {
-        this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url });
+        if (draft) {
+          if (draft !== this.npcDraft) {
+            this.showFeedback("That NPC preview has changed. Choose its portrait again.");
+            return;
+          }
+          draft.avatarUrl = item.fullUrl || item.url;
+          draft.avatarSource = { kind: "gallery", imageId: item.id };
+          draft.avatarFocus = { x: 50, y: 50 };
+          modal.dismiss();
+          this.openPocket({ app: "contacts", view: "quick-gen" });
+        } else
+          this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url });
+        this.pendingContactPhotoDraft = null;
         this.pendingWallpaperTarget = null;
         this.pendingContactPhotoId = "";
       });
@@ -10375,7 +10473,7 @@ ${SURFACE_TOKENS}
   .lp-home-activity-item > span:not(.lp-home-activity-arrow) { grid-row:2; grid-column:1; font-size:11px; }
   .lp-home-activity-arrow { grid-column:2; grid-row:1 / 3; }
   .lumiphone-shell .lp-conversation-row { width:100%; min-height:80px; background:transparent; color:var(--lp-text); border:0; border-bottom:1px solid var(--lp-border); text-align:left; padding:12px 0; }
-  .lumiphone-shell .lp-avatar { width:44px; height:44px; flex-shrink:0; font-size:17px; }
+  .lumiphone-shell .lp-avatar { width:calc(44px * var(--pocket-ui-scale,1)); height:calc(44px * var(--pocket-ui-scale,1)); flex:0 0 calc(44px * var(--pocket-ui-scale,1)); aspect-ratio:1; font-size:calc(17px * var(--pocket-ui-scale,1)); }
   .lumiphone-shell .lp-identity-line { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
   .lumiphone-shell .lp-identity-name { font-size:14px; line-height:1.35; }
   .lumiphone-shell .lp-identity-meta { font-size:10px; }
@@ -10846,6 +10944,9 @@ var PHONE_STYLES = `
   .lp-contact-detail .lp-avatar { width:72px; height:72px; font-size:24px; }
   .lp-contact-checklist .lp-card span { display:grid; gap:2px; }
 
+  .lp-gallery-pagination { justify-content:space-between; gap:8px; margin:10px 0; }
+  .lp-npc-portrait-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:12px 0; }
+  .lp-npc-portrait-actions .lp-button { min-width:0; white-space:normal; }
   .lp-gallery-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; }
   .lp-gallery-item { appearance:none; aspect-ratio:1; padding:0; border:0; background:var(--lp-surface); cursor:pointer; overflow:hidden; position:relative; }
   .lp-gallery-item img { width:100%; height:100%; object-fit:cover; transition:transform .25s ease; }

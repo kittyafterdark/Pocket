@@ -33,7 +33,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 31, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 33, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
@@ -58,6 +58,21 @@ try {
       await page.goto(`http://127.0.0.1:${server.address().port}/${file}`)
       await page.evaluate(() => document.fonts.ready)
       if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
+      if (file === 'contacts.html') {
+        for (const scale of [.7, 1, 1.3]) {
+          await page.locator('.lumiphone-shell').evaluate((node, scale) => node.style.setProperty('--pocket-ui-scale', String(scale)), scale)
+          const bounds = await page.locator('.lp-contact-row .lp-avatar').evaluateAll(nodes => nodes.map(node => { const b = node.getBoundingClientRect(); return [b.width, b.height] }))
+          assert.ok(bounds.length && bounds.every(([w, h]) => Math.abs(w - h) < .1), 'Contact avatars must remain circular at every UI scale')
+        }
+        await page.locator('.lumiphone-shell').evaluate(node => node.style.removeProperty('--pocket-ui-scale'))
+        await page.reload()
+        await page.evaluate(() => document.fonts.ready)
+      }
+      if (file === 'npc-draft-portrait.html') {
+        await page.locator('.lp-npc-camera .lp-content').evaluate(node => { node.scrollTop = node.scrollHeight })
+        assert.equal(await page.locator('.lp-npc-portrait-actions button').count(), 3)
+        assert.ok(await page.locator('.lp-npc-portrait-actions').evaluate(node => { const row = node.getBoundingClientRect(); const screen = node.closest('.lumiphone-screen').getBoundingClientRect(); return row.width <= screen.width && row.top >= screen.top && row.bottom <= screen.bottom }), 'NPC portrait row must fit and remain reachable in the handset')
+      }
       if (file === 'chat-invite.html') await page.locator('.lp-event-invite').scrollIntoViewIfNeeded()
       if (file.startsWith('sheet-')) {
         // Recreate the native top-layer mount after JSDOM's layout-free export.

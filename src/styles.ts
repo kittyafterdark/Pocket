@@ -405,6 +405,9 @@ export const PHONE_STYLES = `
   .lp-contact-detail .lp-avatar { width:72px; height:72px; font-size:24px; }
   .lp-contact-checklist .lp-card span { display:grid; gap:2px; }
 
+  .lp-gallery-pagination { justify-content:space-between; gap:8px; margin:10px 0; }
+  .lp-npc-portrait-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:12px 0; }
+  .lp-npc-portrait-actions .lp-button { min-width:0; white-space:normal; }
   .lp-gallery-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; }
   .lp-gallery-item { appearance:none; aspect-ratio:1; padding:0; border:0; background:var(--lp-surface); cursor:pointer; overflow:hidden; position:relative; }
   .lp-gallery-item img { width:100%; height:100%; object-fit:cover; transition:transform .25s ease; }

@@ -1,3 +1,4 @@
+import { GALLERY_PAGE_SIZE, galleryOffset } from './domain/gallery-page.js'
 import type {
   CalendarEvent,
   GalleryResult,
@@ -2026,12 +2027,17 @@ async function listGallery(input: AnyRecord, userId?: string): Promise<GalleryRe
   if (!spindle.permissions.has('images')) throw new Error('Enable the Images permission to use Gallery.')
   const context = await resolveContext(input, userId)
   const scope = text(input.scope, 30) || 'chat'
-  const options: AnyRecord = { limit: 120, offset: 0, specificity: 'full', userId }
+  const options: AnyRecord & { limit: number; offset: number } = { limit: GALLERY_PAGE_SIZE, offset: galleryOffset(input.offset), specificity: 'full', userId }
   if (scope === 'chat') options.chatId = context.chatId
   if (scope === 'character') options.characterId = context.characterId
   if (scope === 'phone') options.onlyOwned = true
-  const result = await spindle.images.list(options as any)
+  let result = await spindle.images.list(options as any)
+  if (options.offset >= result.total && options.offset > 0) {
+    options.offset = Math.max(0, Math.ceil(result.total / GALLERY_PAGE_SIZE) - 1) * GALLERY_PAGE_SIZE
+    result = await spindle.images.list(options as any)
+  }
   return {
+    offset: options.offset, limit: GALLERY_PAGE_SIZE,
     total: result.total,
     data: result.data.map((item) => ({
       id: item.id, url: item.url, fullUrl: item.url, thumbnailUrl: `${item.url}${String(item.url).includes('?') ? '&' : '?'}size=sm`, filename: item.original_filename, mimeType: item.mime_type,

@@ -1,4 +1,11 @@
 // @bun
+// src/domain/gallery-page.ts
+var GALLERY_PAGE_SIZE = 48;
+function galleryOffset(value) {
+  const offset = Number(value);
+  return Number.isFinite(offset) ? Math.max(0, Math.min(1e6, Math.floor(offset))) : 0;
+}
+
 // src/domain/trackers.ts
 var TRACKER_HISTORY_LIMIT = 40;
 var KINDS = new Set(["meter", "counter", "state", "timer"]);
@@ -5442,15 +5449,21 @@ async function listGallery(input, userId) {
     throw new Error("Enable the Images permission to use Gallery.");
   const context = await resolveContext(input, userId);
   const scope = text2(input.scope, 30) || "chat";
-  const options = { limit: 120, offset: 0, specificity: "full", userId };
+  const options = { limit: GALLERY_PAGE_SIZE, offset: galleryOffset(input.offset), specificity: "full", userId };
   if (scope === "chat")
     options.chatId = context.chatId;
   if (scope === "character")
     options.characterId = context.characterId;
   if (scope === "phone")
     options.onlyOwned = true;
-  const result = await spindle.images.list(options);
+  let result = await spindle.images.list(options);
+  if (options.offset >= result.total && options.offset > 0) {
+    options.offset = Math.max(0, Math.ceil(result.total / GALLERY_PAGE_SIZE) - 1) * GALLERY_PAGE_SIZE;
+    result = await spindle.images.list(options);
+  }
   return {
+    offset: options.offset,
+    limit: GALLERY_PAGE_SIZE,
     total: result.total,
     data: result.data.map((item) => ({
       id: item.id,

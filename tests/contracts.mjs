@@ -1602,6 +1602,20 @@ storage.set('device/preferences.json', { version: 999, handsetScale: 42, futureT
 await frontendHandler({ type: 'lumiphone:get_state', requestId: 'future-preferences', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
 assert.deepEqual(storage.get('device/preferences.json'), { version: 999, handsetScale: 42, futureToken: 'preserve-me' })
 
+const originalImageList = spindle.images.list
+const pagedImages = Array.from({ length: 719 }, (_, i) => ({ id: 'paged-' + i, url: '/api/v1/images/paged-' + i, original_filename: 'Photo ' + i, mime_type: 'image/png', created_at: 1 }))
+const imageListCalls = []
+spindle.images.list = async options => { imageListCalls.push(options); return { data: pagedImages.slice(options.offset, options.offset + options.limit), total: pagedImages.length } }
+for (const offset of [0, 120, 672, 9999, -5]) {
+  await frontendHandler({ type: 'lumiphone:gallery_list', requestId: 'page-' + offset, scope: 'character', offset, chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+  const result = frontendMessages.findLast(entry => entry.requestId === 'page-' + offset && entry.type === 'lumiphone:gallery')
+  assert.ok(result); assert.equal(result.limit, 48); assert.equal(result.total, 719)
+  assert.equal(result.offset, offset < 0 ? 0 : offset > 719 ? 672 : offset)
+  assert.equal(result.data[0].id, 'paged-' + result.offset); assert.ok(result.data.length <= 48)
+  assert.equal(imageListCalls.at(-1).characterId, 'char-a'); assert.equal(imageListCalls.at(-1).userId, 'user-a')
+}
+spindle.images.list = originalImageList
+
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
 dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
 dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')) }
@@ -1613,6 +1627,8 @@ dom.window.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,
 globalThis.Image = dom.window.Image
 Object.assign(globalThis, {
   window: dom.window,
+  FileReader: dom.window.FileReader,
+  Blob: dom.window.Blob,
   document: dom.window.document,
   HTMLElement: dom.window.HTMLElement,
   HTMLButtonElement: dom.window.HTMLButtonElement,
@@ -1652,7 +1668,7 @@ async function exportVisual(name, source) {
   for (const image of preview.querySelectorAll('img')) image.removeAttribute('src')
   // JSDOM has no layout: native sheet bounds are supplied by the controlled browser fixture.
   if (name.startsWith('sheet-')) preview.querySelector('dialog').removeAttribute('style')
-  await writeFile(new URL(name + '.html', 'file://' + process.env.POCKET_VISUAL_DIR.replaceAll('\\', '/') + '/'), '<!doctype html><meta charset="utf-8"><style>' + frontendStyles.join('\n') + '\nbody{margin:0;padding:24px;background:#151318;color:#eee;font-family:system-ui;--lumiverse-primary:#d7a978}main{max-width:560px;margin:auto}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style><main>' + preview.outerHTML + '</main>')
+  await writeFile(new URL(name + '.html', 'file://' + process.env.POCKET_VISUAL_DIR.replaceAll('\\', '/') + '/'), '<!doctype html><meta charset="utf-8"><style>' + frontendStyles.join('\n') + '\nbody{margin:0;padding:24px;background:#151318;color:#eee;font-family:system-ui;--lumiverse-primary:#d7a978}' + (name === 'npc-draft-portrait' ? 'body>main' : 'main') + '{max-width:560px;margin:auto}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style><main>' + preview.outerHTML + '</main>')
 }
 
 const drawerRoot = document.createElement('div')
@@ -1685,7 +1701,9 @@ const dockHandle = {
 let dockRequestCount = 0
 let dockDestroyCount = 0
 const injected = []
+let uploadFiles = []
 const frontendContext = {
+  uploads: { pickFile: async () => uploadFiles },
   components: { mountModelCombobox: (target, options) => { assert.equal(target.isConnected, true, 'host model controls must mount only on connected targets'); target.dataset.modelPickerMounted = 'true'; if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
   dom: {
     addStyle: css => { frontendStyles.push(css); return () => {} },
@@ -2556,6 +2574,51 @@ backendReceiver(uiBank)
 assert.deepEqual([...dockRoot.querySelectorAll('.lp-contact-filters button')].map(node => node.textContent), ['All', 'Here', 'Recent'], 'Only contact filters belong in the chip bar')
 assert.deepEqual([...dockRoot.querySelectorAll('.lp-contact-library button')].map(node => node.textContent), ['Groups', 'NPC Bank'], 'Groups and the reusable bank share a separate library area')
 await exportVisual('contacts', dockRoot)
+dockRoot.querySelector('.lp-contact-row').click()
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Edit').click()
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Upload avatar').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.ok(dockRoot.querySelector('.lp-contact-photo-editor'), 'cancelled upload must keep contact editing open')
+uploadFiles = [{ bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png', name: 'portrait.png' }]
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Upload avatar').click()
+await new Promise(resolve => setTimeout(resolve, 20))
+assert.match(dockRoot.textContent, /Uploaded photo ready/)
+assert.ok(dockRoot.querySelector('.lp-camera-accept'), 'uploaded contact photos reuse the framing/accept flow')
+dockRoot.querySelector('.lp-camera-accept').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const uploadedAvatar = frontendSends.findLast(entry => entry.type === 'lumiphone:set_contact_photo')
+assert.ok(uploadedAvatar.croppedDataUrl.startsWith('data:image/png;base64,')); assert.ok(uploadedAvatar.contactId)
+uploadFiles = []
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Gallery').click()
+let requestedPage = frontendSends.findLast(entry => entry.type === 'lumiphone:gallery_list')
+const showGalleryPage = request => backendReceiver({ type: 'lumiphone:gallery', requestId: request.requestId, scope: request.scope, offset: request.offset, limit: 48, total: 719, data: pagedImages.slice(request.offset, request.offset + 48).map(item => ({ ...item, filename: item.original_filename, createdAt: 1 })) })
+showGalleryPage(requestedPage)
+assert.equal(dockRoot.querySelectorAll('.lp-gallery-item').length, 48)
+assert.equal(dockRoot.querySelector('.lp-gallery-pagination button').disabled, true)
+for (let offset = 48; offset <= 672; offset += 48) {
+  const previousRequest = requestedPage
+  ;[...dockRoot.querySelectorAll('.lp-gallery-pagination button')].find(node => node.textContent === 'Next').click()
+  requestedPage = frontendSends.findLast(entry => entry.type === 'lumiphone:gallery_list'); assert.equal(requestedPage.offset, offset)
+  showGalleryPage(previousRequest)
+  assert.match(dockRoot.querySelector('.lp-gallery-pagination').textContent, /Loading images/)
+  showGalleryPage(requestedPage)
+}
+assert.equal(dockRoot.querySelectorAll('.lp-gallery-item').length, 47)
+assert.match(dockRoot.querySelector('.lp-gallery-pagination').textContent, /673–719 of 719/)
+assert.equal([...dockRoot.querySelectorAll('.lp-gallery-pagination button')].find(node => node.textContent === 'Next').disabled, true)
+await exportVisual('gallery-paged', dockRoot)
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Refresh').click()
+requestedPage = frontendSends.findLast(entry => entry.type === 'lumiphone:gallery_list')
+assert.equal(requestedPage.offset, 672)
+backendReceiver({ type: 'lumiphone:error', requestId: requestedPage.requestId, error: 'Fixture page failed' })
+assert.equal(dockRoot.querySelector('.lp-gallery-pagination button').disabled, false, 'failed page must unlock navigation')
+;[...dockRoot.querySelectorAll('.lp-chip')].find(node => node.textContent === 'Character').click()
+requestedPage = frontendSends.findLast(entry => entry.type === 'lumiphone:gallery_list'); assert.equal(requestedPage.offset, 0); assert.equal(requestedPage.scope, 'character')
+showGalleryPage(requestedPage)
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
+backendReceiver(uiBank)
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'NPC Bank').click()
 assert.ok(dockRoot.querySelector('.lp-bank-casts'), 'portable casts have their own section')
 assert.ok(dockRoot.querySelector('.lp-bank-individuals'), 'individual profiles have their own section')
@@ -2592,6 +2655,28 @@ assert.ok(dockRoot.querySelector('.lp-draft-portrait'))
 const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:save_contact').at(-1).contact
 assert.deepEqual(withPhoto.avatarSource, { kind: 'asset', assetId: 'framed-draft' })
 assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/framed-draft')
+assert.deepEqual([...dockRoot.querySelectorAll('.lp-npc-portrait-actions button')].map(node => node.textContent), ['Gallery', 'Upload avatar', 'Retake portrait'])
+uploadFiles = [{ bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png', name: 'npc.png' }]
+;[...dockRoot.querySelectorAll('.lp-npc-portrait-actions button')].find(node => node.textContent === 'Upload avatar').click()
+await new Promise(resolve => setTimeout(resolve, 20))
+assert.match(dockRoot.textContent, /Uploaded photo ready/)
+dockRoot.querySelector('.lp-camera-accept').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const draftFileUpload = frontendSends.findLast(message => message.type === 'lumiphone:upload_avatar')
+assert.notEqual(draftFileUpload.requestId, avatarUpload.requestId)
+backendReceiver({ type: 'lumiphone:avatar_uploaded', requestId: draftFileUpload.requestId, imageId: 'uploaded-draft', imageUrl: '/api/v1/images/uploaded-draft' })
+uploadFiles = []
+;[...dockRoot.querySelectorAll('.lp-npc-portrait-actions button')].find(node => node.textContent === 'Gallery').click()
+requestedPage = frontendSends.findLast(entry => entry.type === 'lumiphone:gallery_list'); showGalleryPage(requestedPage)
+dockRoot.querySelector('.lp-gallery-item').click()
+const draftGalleryModal = shownModals.at(-1)
+;[...draftGalleryModal.root.querySelectorAll('button')].find(node => node.textContent === 'Use for Portrait Draft').click()
+assert.equal(draftGalleryModal.dismissed, true)
+assert.ok(dockRoot.querySelector('.lp-npc-portrait-actions'), 'Gallery selection returns to the unsaved NPC preview')
+dockRoot.querySelector('.lp-alert').hidden = true
+await exportVisual('npc-draft-portrait', dockRoot)
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use Portrait Draft').click()
+assert.deepEqual(frontendSends.findLast(entry => entry.type === 'lumiphone:save_contact').contact.avatarSource, { kind: 'gallery', imageId: 'paged-0' })
 
 frontendContext.components.mountSelect = (target, options) => {
   assert.equal(target.isConnected, true)

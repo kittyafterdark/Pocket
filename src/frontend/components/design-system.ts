@@ -71,7 +71,7 @@ ${SURFACE_TOKENS}
   .lp-home-activity-item > span:not(.lp-home-activity-arrow) { grid-row:2; grid-column:1; font-size:11px; }
   .lp-home-activity-arrow { grid-column:2; grid-row:1 / 3; }
   .lumiphone-shell .lp-conversation-row { width:100%; min-height:80px; background:transparent; color:var(--lp-text); border:0; border-bottom:1px solid var(--lp-border); text-align:left; padding:12px 0; }
-  .lumiphone-shell .lp-avatar { width:44px; height:44px; flex-shrink:0; font-size:17px; }
+  .lumiphone-shell .lp-avatar { width:calc(44px * var(--pocket-ui-scale,1)); height:calc(44px * var(--pocket-ui-scale,1)); flex:0 0 calc(44px * var(--pocket-ui-scale,1)); aspect-ratio:1; font-size:calc(17px * var(--pocket-ui-scale,1)); }
   .lumiphone-shell .lp-identity-line { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
   .lumiphone-shell .lp-identity-name { font-size:14px; line-height:1.35; }
   .lumiphone-shell .lp-identity-meta { font-size:10px; }
