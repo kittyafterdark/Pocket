@@ -2847,6 +2847,43 @@ function renderTrackersView(host) {
   return dashboard(host);
 }
 
+// src/frontend/components/event-invite.ts
+function eventInvite(message, conversationId, host) {
+  const invite = message.eventSuggestion;
+  const card = el("section", "lp-event-invite");
+  card.dataset.suggestionId = invite.id;
+  card.dataset.status = invite.status;
+  card.setAttribute("aria-label", `Event invitation: ${invite.title}`);
+  const icon = el("span", "lp-event-invite-icon");
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="4"/><path d="M7 3v4m10-4v4M3 11h18m-13 5h2m4 0h2"/></svg>';
+  const heading = el("div", "lp-event-invite-heading");
+  heading.append(el("span", "lp-event-invite-eyebrow", invite.status === "pending" ? "You’re invited" : invite.status === "scheduled" ? "On your timeline" : "Invitation declined"), el("h3", "", invite.title));
+  const top = el("div", "lp-event-invite-top");
+  top.append(icon, heading);
+  card.append(top);
+  if (invite.whenText)
+    card.append(el("p", "lp-event-invite-when", invite.whenText));
+  if (invite.description)
+    card.append(el("p", "lp-event-invite-description", invite.description));
+  if (invite.participantNames.length)
+    card.append(el("p", "lp-event-invite-people", invite.participantNames.join(" · ")));
+  const actions = el("div", "lp-event-invite-actions");
+  if (invite.status === "pending") {
+    const accept = button("Schedule event", "lp-button");
+    accept.addEventListener("click", () => host.scheduleEventSuggestion(conversationId, message.id));
+    const decline = button("Decline", "lp-button lp-button-quiet");
+    decline.addEventListener("click", () => host.declineEventSuggestion(conversationId, message.id));
+    actions.append(accept, decline);
+  } else if (invite.status === "scheduled" && invite.scheduledEventId) {
+    const open = button("Open event", "lp-button lp-button-quiet");
+    open.addEventListener("click", () => host.openTimeline(invite.scheduledEventId));
+    actions.append(open);
+  }
+  if (actions.childElementCount)
+    card.append(actions);
+  return card;
+}
+
 // src/frontend/apps/messages.ts
 var PAUSE_COPY = {
   ended: "stopped responding.",
@@ -3335,31 +3372,6 @@ function renderMessagesView(host) {
       more.addEventListener("click", () => showPocketSheet(more, "Message actions", tools));
       bubble.appendChild(more);
     }
-    if (message.eventSuggestion && !host.readOnlyDevice) {
-      const suggestion = message.eventSuggestion;
-      const suggestionBox = el("div", "lp-event-suggestion-actions");
-      suggestionBox.style.display = "flex";
-      suggestionBox.style.gap = "6px";
-      suggestionBox.style.flexWrap = "wrap";
-      suggestionBox.style.marginTop = "7px";
-      suggestionBox.style.width = "100%";
-      if (suggestion.status === "pending") {
-        const schedule = button("! Schedule event", "lp-button lp-button-quiet");
-        schedule.addEventListener("click", () => host.scheduleEventSuggestion(conversation.id, message.id));
-        const decline = button("× Decline", "lp-button lp-button-quiet");
-        decline.addEventListener("click", () => host.declineEventSuggestion(conversation.id, message.id));
-        suggestionBox.append(schedule, decline);
-      } else if (suggestion.status === "scheduled" && suggestion.scheduledEventId) {
-        const scheduled = button("✓ Scheduled · open", "lp-button lp-button-quiet");
-        scheduled.addEventListener("click", () => host.openTimeline(suggestion.scheduledEventId));
-        suggestionBox.appendChild(scheduled);
-      } else {
-        const declined = button("× Declined", "lp-button lp-button-quiet");
-        declined.disabled = true;
-        suggestionBox.appendChild(declined);
-      }
-      bubble.appendChild(suggestionBox);
-    }
     if (conversation.kind === "group" && direction !== "outbound" && senderActor) {
       const row = el("div", "lp-group-message");
       row.style.setProperty("--message-accent", resolvedAccent);
@@ -3390,6 +3402,15 @@ function renderMessagesView(host) {
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id)))
     bubbles.appendChild(handoffActivity(host, conversation, relay));
+  if (!host.readOnlyDevice) {
+    const seenInvites = new Set;
+    for (const message of conversation.messages) {
+      if (!message.eventSuggestion || seenInvites.has(message.eventSuggestion.id))
+        continue;
+      seenInvites.add(message.eventSuggestion.id);
+      bubbles.append(eventInvite(message, conversation.id, host));
+    }
+  }
   if (busy?.phase === "checking") {
     const checking = el("div", conversation.kind === "group" ? "lp-group-typing" : "lp-conversation-status");
     checking.appendChild(el("span", "", conversation.kind === "group" ? titleText : "Checking for reply…"));
@@ -10606,6 +10627,19 @@ var PHONE_STYLES = `
   .lp-reference-message-list { max-height:260px; padding:7px; overflow:auto; display:grid; gap:5px; border:1px solid var(--lp-border); border-radius:12px; background:var(--lp-surface-2); }
   .lp-reference-message-choice:has(input:disabled) { opacity:.48; cursor:default; }
   @keyframes lp-reference-pulse { 50% { transform:translateY(-1px); box-shadow:0 0 0 5px color-mix(in srgb,var(--lp-accent) 10%,transparent); } }
+  .lumiphone-shell .lp-event-invite { align-self:stretch; min-width:0; margin:12px 0 4px; padding:16px; border:1px solid color-mix(in srgb,var(--lp-accent) 24%,var(--lp-border)); border-radius:18px; background:var(--lp-surface); box-shadow:0 5px 16px #0002; }
+  .lp-event-invite-top { display:flex; align-items:center; gap:12px; }
+  .lp-event-invite-icon { width:42px; height:42px; display:grid; place-items:center; flex:none; border-radius:12px; color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
+  .lp-event-invite-icon svg { width:24px; height:24px; }
+  .lp-event-invite-heading { min-width:0; }
+  .lp-event-invite-eyebrow { font-size:9px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; color:var(--lp-muted); }
+  .lp-event-invite-heading h3 { margin:4px 0 0; font-size:15px; line-height:1.3; overflow-wrap:anywhere; }
+  .lp-event-invite-when { margin:14px 0 0; font-size:12px; font-weight:650; }
+  .lp-event-invite-description { margin:6px 0 0; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+  .lp-event-invite-people { margin:10px 0 0; font-size:10px; line-height:1.4; color:var(--lp-muted); }
+  .lp-event-invite-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .lp-event-invite-actions .lp-button { min-height:36px; padding:8px 14px; border-radius:10px; }
+  .lp-event-invite[data-status="declined"] { opacity:.65; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
   .lp-bubble[data-sender="persona"] { align-self:flex-end; border-bottom-right-radius:5px; background:var(--lp-accent); color:#fff; }

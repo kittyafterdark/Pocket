@@ -241,6 +241,19 @@ export const PHONE_STYLES = `
   .lp-reference-message-list { max-height:260px; padding:7px; overflow:auto; display:grid; gap:5px; border:1px solid var(--lp-border); border-radius:12px; background:var(--lp-surface-2); }
   .lp-reference-message-choice:has(input:disabled) { opacity:.48; cursor:default; }
   @keyframes lp-reference-pulse { 50% { transform:translateY(-1px); box-shadow:0 0 0 5px color-mix(in srgb,var(--lp-accent) 10%,transparent); } }
+  .lumiphone-shell .lp-event-invite { align-self:stretch; min-width:0; margin:12px 0 4px; padding:16px; border:1px solid color-mix(in srgb,var(--lp-accent) 24%,var(--lp-border)); border-radius:18px; background:var(--lp-surface); box-shadow:0 5px 16px #0002; }
+  .lp-event-invite-top { display:flex; align-items:center; gap:12px; }
+  .lp-event-invite-icon { width:42px; height:42px; display:grid; place-items:center; flex:none; border-radius:12px; color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
+  .lp-event-invite-icon svg { width:24px; height:24px; }
+  .lp-event-invite-heading { min-width:0; }
+  .lp-event-invite-eyebrow { font-size:9px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; color:var(--lp-muted); }
+  .lp-event-invite-heading h3 { margin:4px 0 0; font-size:15px; line-height:1.3; overflow-wrap:anywhere; }
+  .lp-event-invite-when { margin:14px 0 0; font-size:12px; font-weight:650; }
+  .lp-event-invite-description { margin:6px 0 0; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+  .lp-event-invite-people { margin:10px 0 0; font-size:10px; line-height:1.4; color:var(--lp-muted); }
+  .lp-event-invite-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .lp-event-invite-actions .lp-button { min-height:36px; padding:8px 14px; border-radius:10px; }
+  .lp-event-invite[data-status="declined"] { opacity:.65; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
   .lp-bubble[data-sender="persona"] { align-self:flex-end; border-bottom-right-radius:5px; background:var(--lp-accent); color:#fff; }

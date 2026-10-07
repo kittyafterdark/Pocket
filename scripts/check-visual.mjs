@@ -33,7 +33,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 21, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 22, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
@@ -58,6 +58,7 @@ try {
       await page.goto(`http://127.0.0.1:${server.address().port}/${file}`)
       await page.evaluate(() => document.fonts.ready)
       if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
+      if (file === 'chat-invite.html') await page.locator('.lp-event-invite').scrollIntoViewIfNeeded()
       const name = file.replace('.html', `-${width}.png`)
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide' })
       if (update || updateCases.includes(file.replace('.html', ''))) await writeFile(join(baseline, name), actual)

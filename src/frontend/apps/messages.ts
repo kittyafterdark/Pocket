@@ -2,6 +2,7 @@ import type { PhoneMessage, PhoneState, PocketContextReference, PocketConversati
 import { conversationActorIds, listPocketActors, resolvePocketActor } from '../../domain/actors.js'
 import { counterpartActorIds, conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../../domain/device.js'
 import { avatarColor, showPocketSheet } from '../components/ui.js'
+import { eventInvite } from '../components/event-invite.js'
 import { button, el, formatTime, inputValue } from '../shared.js'
 import type { PageAction } from '../shared.js'
 import { fieldBlock, identityBlock, sectionBlock } from '../components/ui.js'
@@ -508,33 +509,6 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       more.addEventListener('click', () => showPocketSheet(more, 'Message actions', tools))
       bubble.appendChild(more)
     }
-    if (message.eventSuggestion && !host.readOnlyDevice) {
-      const suggestion = message.eventSuggestion
-      const suggestionBox = el('div', 'lp-event-suggestion-actions')
-      suggestionBox.style.display = 'flex'
-      suggestionBox.style.gap = '6px'
-      suggestionBox.style.flexWrap = 'wrap'
-      suggestionBox.style.marginTop = '7px'
-      suggestionBox.style.width = '100%'
-
-      if (suggestion.status === 'pending') {
-        const schedule = button('! Schedule event', 'lp-button lp-button-quiet')
-        schedule.addEventListener('click', () => host.scheduleEventSuggestion(conversation.id, message.id))
-        const decline = button('× Decline', 'lp-button lp-button-quiet')
-        decline.addEventListener('click', () => host.declineEventSuggestion(conversation.id, message.id))
-        suggestionBox.append(schedule, decline)
-      } else if (suggestion.status === 'scheduled' && suggestion.scheduledEventId) {
-        const scheduled = button('✓ Scheduled · open', 'lp-button lp-button-quiet')
-        scheduled.addEventListener('click', () => host.openTimeline(suggestion.scheduledEventId!))
-        suggestionBox.appendChild(scheduled)
-      } else {
-        const declined = button('× Declined', 'lp-button lp-button-quiet')
-        declined.disabled = true
-        suggestionBox.appendChild(declined)
-      }
-
-      bubble.appendChild(suggestionBox)
-    }
     if (conversation.kind === 'group' && direction !== 'outbound' && senderActor) {
       const row = el('div', 'lp-group-message')
       row.style.setProperty('--message-accent', resolvedAccent)
@@ -559,6 +533,14 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id))) bubbles.appendChild(handoffActivity(host, conversation, relay))
+  if (!host.readOnlyDevice) {
+    const seenInvites = new Set<string>()
+    for (const message of conversation.messages) {
+      if (!message.eventSuggestion || seenInvites.has(message.eventSuggestion.id)) continue
+      seenInvites.add(message.eventSuggestion.id)
+      bubbles.append(eventInvite(message, conversation.id, host))
+    }
+  }
   if (busy?.phase === 'checking') {
     const checking = el('div', conversation.kind === 'group' ? 'lp-group-typing' : 'lp-conversation-status')
     checking.appendChild(el('span', '', conversation.kind === 'group' ? titleText : 'Checking for reply…'))

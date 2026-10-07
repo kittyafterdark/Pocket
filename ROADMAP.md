@@ -38,7 +38,7 @@ Preserve messaging/candidate commit behavior; changes below are targeted fixes a
 
 ## Protection and maintenance (after visible UI settles)
 
-- [x] Controlled visual regression matrix: 42 mobile/desktop baselines for home/settings/chat/camera/sidebar/tracker widgets/weather/cards/full phone/connectors and clock precision.
+- [x] Controlled visual regression matrix: 44 mobile/desktop baselines for home/settings/chat/camera/sidebar/tracker widgets/weather/cards/full phone/connectors and clock precision.
 - [ ] Expand controlled coverage for handset-scale extremes and especially long notifications.
 - [x] Hostile global-theme fixture verifies Shadow DOM isolation and visual stability.
 - [x] Separate inline styling from handset/app styling; activity ShadowRoots only receive inline styles.

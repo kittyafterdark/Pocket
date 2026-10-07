@@ -1976,6 +1976,21 @@ backendReceiver(groupUiState)
 backendReceiver({ type: 'lumiphone:conversation_opened', conversationId: groupId })
 assert.equal(dockRoot.querySelector('.lp-speaker-select'), null, 'the permanent speaker dropdown must not occupy the composer row')
 assert.match(dockRoot.querySelector('.lp-speaker-menu summary').textContent, /participants · Auto speaker/)
+const inviteUiState = structuredClone(groupUiState)
+const inviteConversation = inviteUiState.state.conversations.find((entry) => entry.id === groupId)
+inviteConversation.messages = inviteConversation.messages.slice(-1)
+inviteConversation.messages.at(-1).eventSuggestion = {
+  id: 'invite-ui', kind: 'event', status: 'pending', title: 'Movie night', description: 'Bring takeout and pick a film together.',
+  whenKind: 'relative', whenText: 'Tonight', participantNames: ['Alex', 'Sam'],
+}
+backendReceiver(inviteUiState)
+const inviteCard = dockRoot.querySelector('.lp-event-invite')
+assert.ok(inviteCard, 'conversation suggestions render as separate invite cards')
+assert.equal(inviteCard.closest('.lp-bubble, .lp-group-message'), null, 'invites must not live inside messages')
+assert.equal(inviteCard.parentElement, dockRoot.querySelector('.lp-bubbles'))
+assert.equal(inviteCard.previousElementSibling.querySelector('.lp-bubble')?.dataset.messageId || inviteCard.previousElementSibling.dataset.messageId, inviteConversation.messages.at(-1).id)
+await exportVisual('chat-invite', dockRoot)
+backendReceiver(groupUiState)
 const conversationMenu = dockRoot.querySelector('.lp-conversation-menu')
 conversationMenu.open = true
 assert.ok([...conversationMenu.querySelectorAll('button')].some((node) => node.textContent === 'Participants'))
