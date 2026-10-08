@@ -124,6 +124,12 @@ This carries the current character/persona positives, negative prompt, preset di
 
 Settings → Personalization → Device appearance (or Persona appearance) includes **Pocket Wallpapers** on both Home and Chat controls. Browse 14 bundled SVG patterns, gradients, and scenes, preview a selection, then apply it. These wallpapers work offline and persist as catalog IDs, so exports stay small and portable. Existing fit, focal-position, scrim, Gallery, Upload, and URL controls remain available.
 
+## iPhone touch scrolling
+
+Native touch scrolling defaults on for iPhone and iPod in Pocket's mobile widget. Settings > Appearance > Native touch scrolling remains available even before the widget opens. Turning it off saves an explicit override and restores the widget's scroll guard; turning it on enables native scrolling. Other devices keep the guard by default.
+
+The old default-off preference migrates to automatic device selection; an old enabled preference stays enabled. New explicit choices survive reloads. The widget requests its scroll mode at creation and updates it through Spindle's setter when available. Older hosts need the new Spindle touch scroll API for the override to take effect. This does not change host handlers or other extensions' widgets.
+
 ## Tracker judge
 
 Settings → Tracker judge supports two providers:

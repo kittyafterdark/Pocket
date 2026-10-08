@@ -32,7 +32,7 @@ import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
 import { activityDeviceOwner, conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
 import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize, PHONE_ASPECT } from './surface.js'
-import { applyPocketTouchScroll, supportsPocketTouchScroll } from './touch-scroll.js'
+import { applyPocketTouchScroll, resolvePocketTouchScrollMode } from './touch-scroll.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
@@ -586,8 +586,9 @@ class PocketController {
       this.mobileWidget = this.ctx.ui.createFloatWidget({
         width: viewport.width, height: viewport.height, initialPosition: { x: 0, y: 0 },
         fullscreen: true, chromeless: true, snapToEdge: false, persistGeometry: false,
+        touchScrollMode: resolvePocketTouchScrollMode(this.preferences.nativeTouchScrollMode),
       } as any)
-      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrolling)
+      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
       this.mobileWidget.setVisible(false)
       return this.mobileWidget
     } catch {
@@ -987,7 +988,7 @@ class PocketController {
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
-      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrolling)
+      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
       if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences') this.settingsDraft = structuredClone(this.preferences)
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile
@@ -1446,7 +1447,7 @@ class PocketController {
     if (this.settingsDraft) Object.assign(this.settingsDraft, structuredClone(normalized))
     else this.settingsDraft = structuredClone(normalized)
     this.preferences = normalized
-    applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrolling)
+    applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrollMode)
     this.applyAppearance()
     if (options.resize) this.resizeExpanded()
     this.mountInlineArtifacts()
@@ -3039,7 +3040,6 @@ class PocketController {
     return renderSettingsView({
       identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
-      nativeTouchScrollAvailable: supportsPocketTouchScroll(this.mobileWidget),
       jevKeyConfigured: this.jevKeyConfigured,
       state: this.state!,
       section: this.selectedSettingsSection,

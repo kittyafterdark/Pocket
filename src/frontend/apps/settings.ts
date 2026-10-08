@@ -7,6 +7,7 @@ import { builtinWallpaperUrl } from '../../domain/wallpapers.js'
 import { normalizeJevSettings } from '../../domain/jev.js'
 import { controlRow, disclosure, fieldBlock, outgoingSurface } from '../components/ui.js'
 import { button, el } from '../shared.js'
+import { resolvePocketTouchScrollMode } from '../touch-scroll.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
 import type { PocketImageTarget } from '../components/image-picker.js'
@@ -17,7 +18,6 @@ type ActivePersona = { id: string; name: string } | null
 export interface SettingsViewHost {
   identityProfiles?: IdentityProfile[]
   draft: DevicePreferences
-  nativeTouchScrollAvailable?: boolean
   jevKeyConfigured?: boolean
   state: PhoneState
   section: string
@@ -186,10 +186,7 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   for (const value of ['spring', 'slide', 'fade', 'none']) { const option = el('option', '', value[0].toUpperCase() + value.slice(1)); option.value = value; option.selected = settings.animation === value; animation.appendChild(option) }
   animation.addEventListener('change', () => commit((next) => { next.animation = animation.value as PhoneSettings['animation'] }))
   motion.append(fieldBlock('Animation', animation), slider('Animation duration', settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => { next.animationDurationMs = value })), toggle('Reduce motion', settings.reducedMotion, (value) => commit((next) => { next.reducedMotion = value })))
-  const scrolling = toggle('Native touch scrolling', settings.nativeTouchScrolling, (value) => commit((next) => { next.nativeTouchScrolling = value }), host.nativeTouchScrollAvailable
-    ? 'Experimental iPhone homescreen scroll override for Pocket. Turn off to restore standard scrolling.'
-    : 'Requires a Lumiverse host with the Spindle touch scroll override and Pocket open on mobile.')
-  scrolling.querySelector('button')!.disabled = !host.nativeTouchScrollAvailable
+  const scrolling = toggle('Native touch scrolling', resolvePocketTouchScrollMode(settings.nativeTouchScrollMode) === 'native', (value) => commit((next) => { next.nativeTouchScrollMode = value ? 'native' : 'guarded' }), 'On by default on iPhone. Turn off to restore the scroll guard. Requires the Lumiverse Spindle touch scroll API; this choice can be saved before the mobile widget opens.')
   const custom = el('section', 'lp-card lp-settings-section'); custom.append(el('div', 'lp-eyebrow', 'Advanced custom CSS'), el('p', 'lp-copy', 'Scoped separately to this Pocket surface and its inline artifacts. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting.'))
   const css = el('textarea', 'lp-textarea lp-code-input'); css.value = settings.customCss; css.placeholder = '.lp-bubble { border-radius: 12px; }'; css.addEventListener('input', () => commit((next) => { next.customCss = css.value }, { persist: false }))
   const apply = button('Apply custom CSS', 'lp-button'); apply.addEventListener('click', () => commit((next) => { next.customCss = css.value }))

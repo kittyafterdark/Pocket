@@ -107,7 +107,7 @@ export function defaultPreferences(): DevicePreferences {
     animation: 'spring',
     animationDurationMs: 280,
     reducedMotion: false,
-    nativeTouchScrolling: false,
+    nativeTouchScrollMode: 'auto',
     autoOpenOnModelAction: false,
     inlineAppearance: 'cards',
     pushNotifications: false,
@@ -226,7 +226,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation as DevicePreferences['animation'] : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
-    nativeTouchScrolling: bool(raw.nativeTouchScrolling, fallback.nativeTouchScrolling),
+    // The old false value was the default, not a durable opt-out. New choices are explicit.
+    nativeTouchScrollMode: raw.nativeTouchScrollMode === 'native' || raw.nativeTouchScrollMode === 'guarded' || raw.nativeTouchScrollMode === 'auto' ? raw.nativeTouchScrollMode : raw.nativeTouchScrolling === true ? 'native' : 'auto',
     autoOpenOnModelAction: bool(raw.autoOpenOnModelAction, fallback.autoOpenOnModelAction),
     inlineAppearance: raw.inlineAppearance === 'phone' ? 'phone' : 'cards',
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),

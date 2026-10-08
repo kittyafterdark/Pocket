@@ -493,7 +493,7 @@ function defaultPreferences() {
     animation: "spring",
     animationDurationMs: 280,
     reducedMotion: false,
-    nativeTouchScrolling: false,
+    nativeTouchScrollMode: "auto",
     autoOpenOnModelAction: false,
     inlineAppearance: "cards",
     pushNotifications: false,
@@ -610,7 +610,7 @@ function normalizePreferences(value) {
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),
-    nativeTouchScrolling: bool(raw.nativeTouchScrolling, fallback.nativeTouchScrolling),
+    nativeTouchScrollMode: raw.nativeTouchScrollMode === "native" || raw.nativeTouchScrollMode === "guarded" || raw.nativeTouchScrollMode === "auto" ? raw.nativeTouchScrollMode : raw.nativeTouchScrolling === true ? "native" : "auto",
     autoOpenOnModelAction: bool(raw.autoOpenOnModelAction, fallback.autoOpenOnModelAction),
     inlineAppearance: raw.inlineAppearance === "phone" ? "phone" : "cards",
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
@@ -981,12 +981,17 @@ function desktopDockSize(scale, viewport = currentViewport()) {
 }
 
 // src/frontend/touch-scroll.ts
+function resolvePocketTouchScrollMode(preference, userAgent = globalThis.navigator?.userAgent || "") {
+  if (preference !== "auto")
+    return preference;
+  return /iPhone|iPod/i.test(userAgent) ? "native" : "guarded";
+}
 function supportsPocketTouchScroll(widget) {
   return typeof widget?.setTouchScrollMode === "function";
 }
-function applyPocketTouchScroll(widget, enabled) {
+function applyPocketTouchScroll(widget, preference) {
   if (supportsPocketTouchScroll(widget))
-    widget.setTouchScrollMode(enabled ? "native" : "guarded");
+    widget.setTouchScrollMode(resolvePocketTouchScrollMode(preference));
 }
 
 // src/frontend/shared.ts
@@ -1522,10 +1527,9 @@ function appearance(host) {
   })), toggle("Reduce motion", settings.reducedMotion, (value) => commit((next) => {
     next.reducedMotion = value;
   })));
-  const scrolling = toggle("Native touch scrolling", settings.nativeTouchScrolling, (value) => commit((next) => {
-    next.nativeTouchScrolling = value;
-  }), host.nativeTouchScrollAvailable ? "Experimental iPhone homescreen scroll override for Pocket. Turn off to restore standard scrolling." : "Requires a Lumiverse host with the Spindle touch scroll override and Pocket open on mobile.");
-  scrolling.querySelector("button").disabled = !host.nativeTouchScrollAvailable;
+  const scrolling = toggle("Native touch scrolling", resolvePocketTouchScrollMode(settings.nativeTouchScrollMode) === "native", (value) => commit((next) => {
+    next.nativeTouchScrollMode = value ? "native" : "guarded";
+  }), "On by default on iPhone. Turn off to restore the scroll guard. Requires the Lumiverse Spindle touch scroll API; this choice can be saved before the mobile widget opens.");
   const custom = el("section", "lp-card lp-settings-section");
   custom.append(el("div", "lp-eyebrow", "Advanced custom CSS"), el("p", "lp-copy", "Scoped separately to this Pocket surface and its inline artifacts. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting."));
   const css = el("textarea", "lp-textarea lp-code-input");
@@ -7244,9 +7248,10 @@ class PocketController {
         fullscreen: true,
         chromeless: true,
         snapToEdge: false,
-        persistGeometry: false
+        persistGeometry: false,
+        touchScrollMode: resolvePocketTouchScrollMode(this.preferences.nativeTouchScrollMode)
       });
-      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrolling);
+      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode);
       this.mobileWidget.setVisible(false);
       return this.mobileWidget;
     } catch {
@@ -7653,7 +7658,7 @@ class PocketController {
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true;
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
-      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrolling);
+      applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode);
       if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences")
         this.settingsDraft = structuredClone(this.preferences);
       this.caps = payload.capabilities || this.caps;
@@ -8232,7 +8237,7 @@ class PocketController {
     else
       this.settingsDraft = structuredClone(normalized);
     this.preferences = normalized;
-    applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrolling);
+    applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrollMode);
     this.applyAppearance();
     if (options.resize)
       this.resizeExpanded();
@@ -10067,7 +10072,6 @@ ${body}`;
     return renderSettingsView({
       identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
-      nativeTouchScrollAvailable: supportsPocketTouchScroll(this.mobileWidget),
       jevKeyConfigured: this.jevKeyConfigured,
       state: this.state,
       section: this.selectedSettingsSection,

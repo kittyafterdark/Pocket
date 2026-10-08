@@ -1726,6 +1726,7 @@ const drawerHandle = {
 const inputHandle = {
   onClick: () => () => {}, destroy: () => {}, setLabel: () => {}, setSubtitle: () => {}, setEnabled: () => {},
 }
+const floatWidgetOptions = []
 const widgetHandle = {
   root: widgetRoot, widgetId: 'widget-a', moveTo: () => {}, getPosition: () => ({ x: 0, y: 0 }),
   setSize: (width, height) => { widgetHandle.width = width; widgetHandle.height = height }, setVisible: () => {}, isVisible: () => true,
@@ -1753,7 +1754,7 @@ const frontendContext = {
   ui: {
     registerDrawerTab: () => drawerHandle,
     registerInputBarAction: () => inputHandle,
-    createFloatWidget: () => widgetHandle,
+    createFloatWidget: options => { floatWidgetOptions.push(options); return widgetHandle },
     requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
     showModal: (options) => {
       const record = { options, root: document.createElement('div'), dismissed: false }
@@ -1914,6 +1915,8 @@ assert.equal(delayedSettingsPicker.dataset.imagePickerMounted, undefined, 'setti
 document.body.append(dockRoot)
 await new Promise(resolve => setTimeout(resolve, 0))
 assert.equal(delayedSettingsPicker.dataset.imagePickerMounted, 'true', 'settings picker must mount when the host attaches its dock later')
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: 'iPhone' } })
 const originalViewportWidth = window.innerWidth
 Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
 window.dispatchEvent(new Event('resize'))
@@ -1921,6 +1924,9 @@ await new Promise(resolve => setTimeout(resolve, 0))
 const mobileSettingsPicker = widgetRoot.querySelector('.lp-model-combobox')
 assert.ok(mobileSettingsPicker && mobileSettingsPicker !== delayedSettingsPicker, 'moving to mobile must recreate placement-bound settings controls')
 assert.equal(mobileSettingsPicker.dataset.imagePickerMounted, 'true')
+assert.equal(floatWidgetOptions.at(-1).touchScrollMode, 'native', 'iPhone widget creation must opt into native scrolling even without a handle setter')
+if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator)
+else delete globalThis.navigator
 Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalViewportWidth })
 window.dispatchEvent(new Event('resize'))
 await new Promise(resolve => setTimeout(resolve, 0))
