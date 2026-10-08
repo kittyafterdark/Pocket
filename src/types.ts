@@ -114,7 +114,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -736,7 +736,7 @@ export interface TrackerJevResult {
   evaluatedAt: string
   message: string
 }
-export interface PocketJevSettings { enabled: boolean; endpoint: string; autoAfterTurn: boolean }
+export interface PocketJevSettings { enabled: boolean; provider: 'llm' | 'typesafe'; model: string; autoAfterTurn: boolean }
 export type TrackerOperation = 'set' | 'add' | 'subtract' | 'reset' | 'set_state'
 export type TrackerPresentation = 'relationship' | 'meter' | 'vitals' | 'segmented' | 'counter' | 'timer' | 'state' | 'compact'
 

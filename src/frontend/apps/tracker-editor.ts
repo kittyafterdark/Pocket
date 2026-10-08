@@ -53,18 +53,18 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const value = el('input', 'lp-input'); value.type = 'number'; value.step = 'any'; value.value = String(source.value)
   const states = el('textarea', 'lp-textarea'); states.value = source.kind === 'state' ? source.states.join('\n') : 'Stable\nWounded\nRecovering'
   const state = choice('Current state', [], source.kind === 'state' ? source.state : '')
-  const mode = choice('Updates', [['manual', 'By hand'], ['model', 'Story events'], ['automatic', 'Elapsed time'], ['jev', 'Open JEV']], source.updateMode)
+  const mode = choice('Updates', [['manual', 'By hand'], ['model', 'Story events'], ['automatic', 'Elapsed time'], ['jev', 'Tracker judge']], source.updateMode)
   const modeHelp = el('p', 'lp-copy lp-tracker-mode-help')
   modeHelp.setAttribute('aria-live', 'polite')
   mode.field.append(modeHelp)
   const modelPrompt = el('textarea', 'lp-textarea'); modelPrompt.maxLength = 2000; modelPrompt.value = source.modelPrompt || ''; modelPrompt.placeholder = 'Increase by 1 when a clue is discovered. Reset when the mystery is solved.'
   const promptField = fieldBlock('Tool-calling prompt', modelPrompt, 'Tell the model when and how to update this tracker. Leave blank to use the default story rules.')
-  const jev = sectionBlock('Open JEV', 'Estimates this value from recent story messages. Uncertain answers keep the current value.')
+  const jev = sectionBlock('Tracker judge', 'Estimates this value from recent story messages. Uncertain answers keep the current value.')
   const question = el('textarea', 'lp-textarea'); question.maxLength = 240; question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`; question.placeholder = 'Ask one specific question about this target.'
   const confidence = el('input', 'lp-input'); confidence.type = 'number'; confidence.min = '0'; confidence.max = '1'; confidence.step = '.05'; confidence.value = String(source.jev?.minConfidence ?? .65)
   const levels = el('textarea', 'lp-textarea'); levels.value = (source.jev?.levels.length ? source.jev.levels : [{ value: source.min, label: source.bands[0]?.label || 'Low' }, { value: (source.min + source.max) / 2, label: source.bands[Math.floor(source.bands.length / 2)]?.label || 'Moderate' }, { value: source.max, label: source.bands.at(-1)?.label || 'High' }]).map(level => `${level.value} | ${level.label}`).join('\n')
   const levelField = fieldBlock('Rubric', levels, '2–10 levels, low to high: value | description. Describe what each level looks like in the story.')
-  jev.body.append(fieldBlock('Question', question), levelField, fieldBlock('Minimum confidence', confidence, '0–1. Open JEV uses the strongest option probability.'))
+  jev.body.append(fieldBlock('Question', question), levelField, fieldBlock('Minimum confidence', confidence, '0–1. TypeSafe uses provider confidence; LLM confidence is an estimate.'))
   const visible = el('input'); visible.type = 'checkbox'; visible.checked = source.visibleToModel
   const visibleField = controlRow('Include in model context', visible, 'Story updates allow the model to change this tracker. Other modes keep it read-only.')
   const valueField = fieldBlock('Starting value', value)

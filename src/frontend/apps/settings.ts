@@ -18,6 +18,7 @@ export interface SettingsViewHost {
   identityProfiles?: IdentityProfile[]
   draft: DevicePreferences
   nativeTouchScrollAvailable?: boolean
+  jevKeyConfigured?: boolean
   state: PhoneState
   section: string
   activePersona: ActivePersona
@@ -125,7 +126,7 @@ function categories(host: SettingsViewHost): HTMLDivElement {
     ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
     ['generation', 'Pocket Generation', 'Model source and connection diagnostics'],
-    ['jev', 'Open JEV', 'Hugging Face decisions for trackers'],
+    ['jev', 'Tracker judge', 'LLM or TypeSafe Jev decisions'],
     ['camera', 'Camera & Swarm Studio', 'Visual profile and macro diagnostics'],
     ['notifications', 'Notifications', 'Kinds, previews, push, and sound'],
     ['permissions', 'Permissions', 'Lumiverse capability access'],
@@ -472,20 +473,36 @@ function camera(host: SettingsViewHost): HTMLDivElement {
 
 function jevSettings(host: SettingsViewHost): HTMLDivElement {
   const settings = normalizeJevSettings(host.draft.jev)
-  const { page, content } = host.page('Open JEV', 'Hugging Face tracker decisions')
+  const { page, content } = host.page('Tracker judge', 'LLM connections or TypeSafe Jev')
   const card = el('section', 'lp-card lp-settings-section')
-  const endpoint = el('input', 'lp-input'); endpoint.value = settings.endpoint; endpoint.type = 'url'
+  const provider = el('select', 'lp-select')
+  for (const [value, label] of [['llm', 'Lumiverse LLM connection'], ['typesafe', 'TypeSafe Jev API']]) {
+    const option = el('option', '', label); option.value = value; provider.append(option)
+  }
+  provider.value = settings.provider
+  const model = el('input', 'lp-input'); model.value = settings.model
   const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = settings.enabled
   const automatic = el('input'); automatic.type = 'checkbox'; automatic.checked = settings.autoAfterTurn
-  const enabledField = fieldBlock('Enable Open JEV', enabled)
-  const autoField = fieldBlock('Evaluate after story turns', automatic)
-  card.append(el('p', 'lp-copy', 'Choose Open JEV updates on each tracker and describe its rubric. Evaluation sends the last six story messages and selected tracker targets to this endpoint. The public Space may queue or time out; a failed request keeps your values.'), enabledField, autoField, fieldBlock('Space URL', endpoint, 'Default: pngwn/open-jev. Use a compatible duplicate or local deployment.'))
-  const apply = button('Save JEV settings')
-  apply.addEventListener('click', () => {
-    try { const url = new URL(endpoint.value.trim()); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error() } catch { host.showError('Enter a Space base URL without credentials or query parameters.'); return }
-    const next = clone(host.draft); next.jev = normalizeJevSettings({ enabled: enabled.checked, autoAfterTurn: automatic.checked, endpoint: endpoint.value }); host.update(next)
+  const native = el('div', 'lp-settings-section')
+  const key = el('input', 'lp-input'); key.type = 'password'; key.autocomplete = 'new-password'
+  key.placeholder = host.jevKeyConfigured ? 'A key is saved; enter a replacement' : 'Enter your TypeSafe API key'
+  const keyStatus = el('p', 'lp-copy', host.jevKeyConfigured ? 'API key saved on the host.' : 'No TypeSafe API key saved.')
+  keyStatus.dataset.pocketJevKeyStatus = 'true'; keyStatus.setAttribute('role', 'status')
+  const saveKey = button('Save API key'); saveKey.addEventListener('click', () => {
+    if (!key.value.trim()) { host.showError('Enter your TypeSafe API key.'); return }
+    host.send('lumiphone:jev_save_key', { apiKey: key.value.trim() }); key.value = ''
   })
-  const evaluate = button('Evaluate JEV trackers', 'lp-button lp-button-quiet'); evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate'))
+  const clearKey = button('Remove API key', 'lp-button lp-button-quiet'); clearKey.addEventListener('click', () => host.send('lumiphone:jev_save_key', { apiKey: '' }))
+  native.append(fieldBlock('TypeSafe model', model, 'Default: jev-latest.'), fieldBlock('TypeSafe API key', key, 'Stored per user on the host, excluded from Pocket exports.'), keyStatus, saveKey, clearKey)
+  const llm = el('p', 'lp-copy', 'Uses the connection and model selected in Pocket’s Connection tab, including sidecar models such as nano or OpenRouter. LLM confidence is an estimate; TypeSafe supplies its own confidence.')
+  const sync = () => { native.hidden = provider.value !== 'typesafe'; llm.hidden = provider.value !== 'llm'; native.style.display = native.hidden ? 'none' : ''; llm.style.display = llm.hidden ? 'none' : '' }
+  provider.addEventListener('change', sync); sync()
+  card.append(el('p', 'lp-copy', 'Judging sends the last six story messages and selected tracker targets to your chosen provider. Low-confidence or failed results keep current values.'), fieldBlock('Provider', provider), controlRow('Enable tracker judge', enabled), controlRow('Evaluate after story turns', automatic), llm, native)
+  const apply = button('Save judge settings'); apply.addEventListener('click', () => {
+    if (provider.value === 'typesafe' && !/^jev-[a-zA-Z0-9._-]+$/.test(model.value.trim())) { host.showError('Enter a TypeSafe Jev model ID, such as jev-latest.'); return }
+    const next = clone(host.draft); next.jev = normalizeJevSettings({ provider: provider.value, enabled: enabled.checked, autoAfterTurn: automatic.checked, model: model.value }); host.update(next)
+  })
+  const evaluate = button('Evaluate trackers', 'lp-button lp-button-quiet'); evaluate.addEventListener('click', () => host.send('lumiphone:jev_evaluate'))
   card.append(apply, evaluate); content.append(card)
   return page
 }

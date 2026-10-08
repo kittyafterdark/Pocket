@@ -124,15 +124,20 @@ This carries the current character/persona positives, negative prompt, preset di
 
 Settings → Personalization → Device appearance (or Persona appearance) includes **Pocket Wallpapers** on both Home and Chat controls. Browse 14 bundled SVG patterns, gradients, and scenes, preview a selection, then apply it. These wallpapers work offline and persist as catalog IDs, so exports stay small and portable. Existing fit, focal-position, scrim, Gallery, Upload, and URL controls remain available.
 
-## Open JEV trackers
+## Tracker judge
 
-Pocket supports the [pngwn/open-jev Hugging Face Space](https://huggingface.co/spaces/pngwn/open-jev/tree/main) through its published Gradio API. Enable it in Settings → Open JEV and optionally turn on evaluation after normal story turns. The Space URL can point to a compatible duplicate or local deployment. Defaults are disabled; evaluation sends the last six story messages and selected tracker targets to the configured endpoint.
+Settings → Tracker judge supports two providers:
 
-In a meter or state tracker's settings, choose **Open JEV** updates, ask one short question, and set a confidence threshold. Meters use 2–10 numeric anchors with descriptions; state trackers use their allowed states as choices. Scores are interpolated across the anchors, respecting Open JEV's one-based score format. Confidence is the strongest option probability. Counters and timers keep exact operations instead of inferred quantities. JEV-owned trackers are read-only for model tools, while manual edits remain available.
+- **LLM connection** uses the connection and model selected in Pocket’s Connection tab, including nano or OpenRouter models. Its confidence is an estimate from that model.
+- **TypeSafe Jev** uses the native [TypeSafe System One API](https://docs.typesafe.ai/api), a TypeSafe API key, and `jev-latest` by default. Save or remove the key in this page; it is stored per user on the host and excluded from Pocket exports. Only a saved-key indicator returns to the frontend.
 
-Use **Evaluate with JEV** on a tracker or **Evaluate JEV trackers** in Settings. Accepted changes enter tracker history with JEV provenance. Uncertain, malformed, or failed results keep the current value. Automatic runs deduplicate unchanged story and rubric inputs; in-flight results preserve intervening tracker edits and reject changed story context. Lumi's HTTP proxy has a 30-second request timeout, so public Space queuing may require a retry.
+Judging is disabled by default. Older Open JEV Space settings migrate disabled; choose a provider and enable judging again. Evaluation sends the last six story messages and selected tracker targets to the chosen provider. You can evaluate manually or opt into evaluation after story turns.
 
-`bun scripts/check-open-jev.ts` checks the live adapter with synthetic context only. Pass a compatible Space base URL as the first argument to test another deployment. The adapter disables Open JEV's comparison and verification workloads.
+In a meter or state tracker’s settings, choose **Tracker judge** updates, ask one short question, and set a confidence threshold. Meters use 2–10 numeric anchors with descriptions; states use their allowed states as choices. Zero-based scores interpolate across the numeric anchors. TypeSafe’s reported confidence controls the threshold separately from option probabilities. Counters and timers keep exact updates. Judge-owned trackers remain read-only for model tools; manual edits remain available.
+
+Accepted changes enter tracker history with the provider named in the reason. Uncertain, malformed, or failed answers preserve current values. Automatic evaluations deduplicate unchanged inputs. In-flight results reject changed story context, tracker edits, provider settings, credentials, or the selected LLM connection/model.
+
+`bun scripts/check-typesafe-jev.ts` checks the native adapter using synthetic context only. Set `TYPESAFE_API_KEY` in the environment first; an optional first argument selects a Jev model. This makes an authenticated API request. It never reads Pocket or Lumiverse chat data.
 
 ## Storage
 

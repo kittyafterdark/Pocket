@@ -934,24 +934,23 @@ assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => en
 await frontendHandler({ type: 'lumiphone:notifications_clear', requestId: 'clear-notifications', chatId: 'chat-a', characterId: 'char-a', mode: 'all' }, 'user-a')
 assert.equal(storage.get('phones/chat-a__char-a.json').trackers.length, trackerCountBeforeClear + 1, 'clear all must not delete trackers')
 
-// Open JEV updates have their own writer policy and preserve intervening edits.
+// Tracker judge updates have their own writer policy and preserve intervening edits.
 const jevContractPreferences = structuredClone(storage.get('device/preferences.json'))
-await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: { ...jevContractPreferences, jev: { enabled: true, endpoint: 'https://jev.example', autoAfterTurn: false } } }, 'user-a')
+await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: { ...jevContractPreferences, jev: { provider: 'typesafe', enabled: true, model: 'jev-latest', autoAfterTurn: false } } }, 'user-a')
 await frontendHandler({ type: 'lumiphone:action', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { ...templateConfig, command: 'create', label: 'JEV trust', updateMode: 'jev', value: 50, initialValue: 50, jev: { question: 'How much does Alice trust you?', minConfidence: .6, levels: [{ value: 0, label: 'Low' }, { value: 100, label: 'High' }] } } }, 'user-a')
 const jevTrackerId = storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.label === 'JEV trust').id
+await frontendHandler({ type: 'lumiphone:jev_save_key', chatId: 'chat-a', characterId: 'char-a', apiKey: 'synthetic-test-key' }, 'user-a')
 const originalCors = globalThis.spindle.cors
 let jevIntervene = null
 let jevAnswerProbabilities = [.1, .9]
-globalThis.spindle.cors = async (_url, options) => {
-  if (options) {
-    const body = JSON.parse(options.body)
-    assert.equal(body.compare, false); assert.equal(body.verify, false)
-    assert.equal(body.questions[0].question, 'For subject1: How much does Alice trust you?')
-    return { status: 200, body: '{"event_id":"contract-job"}' }
-  }
+globalThis.spindle.cors = async (url, options) => {
+  assert.equal(url, 'https://api.typesafe.ai/v1/systemone')
+  assert.equal(options.headers.Authorization, 'Bearer synthetic-test-key')
+  const body = JSON.parse(options.body)
+  assert.equal(body.questions.q1.instructions, 'For subject1: How much does Alice trust you?')
+  assert.equal(body.model, 'jev-latest')
   if (jevIntervene) await jevIntervene()
-  const snapshot = { scorer: { questions: [{ id: 'q1', type: 'score', options: ['Low', 'High'], probs: jevAnswerProbabilities, expected: 1 + jevAnswerProbabilities[1] }] }, done: true }
-  return { status: 200, body: `event: complete\ndata: ${JSON.stringify([snapshot])}\n\n` }
+  return { status: 200, body: JSON.stringify({ answers: { q1: { type: 'score', legend: { '0': 'Low', '1': 'High' }, probabilities: { '0': jevAnswerProbabilities[0], '1': jevAnswerProbabilities[1] }, score: jevAnswerProbabilities[1], confidence: jevAnswerProbabilities[0] === .5 ? .1 : .8 } } }) }
 }
 const evaluateJev = () => frontendHandler({ type: 'lumiphone:jev_evaluate', requestId: 'jev-contract', chatId: 'chat-a', characterId: 'char-a', trackerId: jevTrackerId }, 'user-a')
 await evaluateJev()
@@ -968,6 +967,35 @@ jevAnswerProbabilities = [.9, .1]
 jevIntervene = async () => frontendHandler({ type: 'lumiphone:action', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { trackerId: jevTrackerId, operation: 'set', amount: 33 } }, 'user-a')
 await evaluateJev()
 assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId).value, 33, 'a running JEV request must not overwrite manual edits')
+// LLM judging follows the selected connection/model and never calls the native API.
+const originalJudgeQuiet = globalThis.spindle.generate.quiet
+const llmJudgePreferences = { ...storage.get('device/preferences.json'), generationMode: 'sidecar', sidecarConnectionId: 'pocket-sidecar', sidecarModelOverride: 'nano', jev: { provider: 'llm', enabled: true, model: 'jev-latest', autoAfterTurn: false } }
+await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: llmJudgePreferences }, 'user-a')
+globalThis.spindle.cors = async () => { throw new Error('LLM judging must not call TypeSafe') }
+let judgeConnectionIntervene = false
+globalThis.spindle.generate.quiet = async request => {
+  assert.equal(request.connection_id, 'pocket-sidecar')
+  assert.equal(request.parameters.model, 'nano')
+  assert.ok(request.messages[1].content.includes('How much does Alice trust you?'))
+  if (judgeConnectionIntervene) await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: { ...storage.get('device/preferences.json'), sidecarModelOverride: 'another-model' } }, 'user-a')
+  return { content: JSON.stringify({ answers: { q1: { type: 'score', legend: { '0': 'Low', '1': 'High' }, probabilities: { '0': .3, '1': .7 }, score: .7, confidence: .8 } } }) }
+}
+await evaluateJev()
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId).value, 70)
+assert.ok(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId).history.at(-1).reason.includes('LLM judge'))
+assert.equal(storage.get('device/preferences.json').generationHistory.at(-1).task, 'tracker-judge')
+await frontendHandler({ type: 'lumiphone:action', chatId: 'chat-a', characterId: 'char-a', action: 'tracker', payload: { trackerId: jevTrackerId, operation: 'set', amount: 42 } }, 'user-a')
+judgeConnectionIntervene = true
+await evaluateJev()
+assert.equal(storage.get('phones/chat-a__char-a.json').trackers.find(entry => entry.id === jevTrackerId).value, 42, 'changed connection settings must discard in-flight judge results')
+globalThis.spindle.generate.quiet = originalJudgeQuiet
+await frontendHandler({ type: 'lumiphone:export_data', requestId: 'judge-export', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+const judgeExport = frontendMessages.findLast(message => message.type === 'lumiphone:export_data' && message.requestId === 'judge-export')
+assert.ok(judgeExport)
+assert.ok(!JSON.stringify(judgeExport).includes('synthetic-test-key'), 'credentials must be excluded from exports')
+assert.ok(!JSON.stringify(frontendMessages).includes('synthetic-test-key'), 'saved credentials must never return to the frontend')
+await frontendHandler({ type: 'lumiphone:jev_save_key', chatId: 'chat-a', characterId: 'char-a', apiKey: '' }, 'user-a')
+assert.equal(storage.get('private/typesafe-jev.json').apiKey, '', 'removing the key must clear the stored credential')
 globalThis.spindle.cors = originalCors
 await frontendHandler({ type: 'lumiphone:save_preferences', chatId: 'chat-a', characterId: 'char-a', preferences: jevContractPreferences }, 'user-a')
 
@@ -1658,6 +1686,17 @@ const frontendStyles = []
 async function exportVisual(name, source) {
   if (!process.env.POCKET_VISUAL_DIR) return
   const preview = source.cloneNode(true)
+  if (name.startsWith('judge-')) {
+    for (const input of preview.querySelectorAll('input')) {
+      if (input.type !== 'password') input.setAttribute('value', input.value)
+      if (input.type === 'checkbox') input.toggleAttribute('checked', input.checked)
+    }
+    const originalSelects = [...source.querySelectorAll('select')]
+    for (const [index, select] of [...preview.querySelectorAll('select')].entries()) {
+      select.value = originalSelects[index].value
+      for (const option of select.options) option.toggleAttribute('selected', option.selected)
+    }
+  }
   const originals = [...source.querySelectorAll('pocket-inline-ui')]
   for (const [index, island] of [...preview.querySelectorAll('pocket-inline-ui')].entries()) {
     const template = document.createElement('template')
@@ -1845,6 +1884,16 @@ const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) 
 settingsIcon.click()
 assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
 await exportVisual('settings', dockRoot)
+dockRoot.querySelector('[data-settings-category="jev"]').click()
+await exportVisual('judge-llm', dockRoot)
+const judgeProvider = [...dockRoot.querySelectorAll('label')].find(node => node.querySelector('.lp-field-label')?.textContent === 'Provider').querySelector('select')
+judgeProvider.value = 'typesafe'; judgeProvider.dispatchEvent(new Event('change'))
+await exportVisual('judge-typesafe', dockRoot)
+backendReceiver({ ...identityUiState, jevKeyConfigured: true, reason: 'jev_key' })
+assert.equal(dockRoot.querySelector('[data-pocket-jev-key-status]').textContent, 'API key saved on the host.')
+assert.equal(judgeProvider.value, 'typesafe', 'key acknowledgement must preserve the provider draft')
+dockRoot.querySelector('.lumiphone-homebar button').click()
+;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Settings').click()
 const appearanceFixture = structuredClone(identityUiState)
 appearanceFixture.preferences.personaAppearance['persona-test'].enabled = false
 backendReceiver({ ...appearanceFixture, reason: 'preferences' })

@@ -64,7 +64,7 @@ import { conversationTailSnapshot, normalizeReplyDecision, pendingRelayContext, 
 import { assertPocketImageResolved, resolvePocketImageSource } from './backend/image-sources.js'
 import { effectiveImageRequest, runImageJob } from './backend/image-jobs.js'
 import type { ImagePurpose } from './backend/image-jobs.js'
-import { runOpenJev, jevSourceKey } from './backend/jev.js'
+import { runTypeSafeJev, jevSourceKey, readJevAnswers, jevLlmRequest } from './backend/jev.js'
 import { applyJevAnswer, jevQuestion, normalizeJevSettings } from './domain/jev.js'
 import { normalizeContactGroups, saveContactGroup } from './domain/contact-groups.js'
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
@@ -887,54 +887,75 @@ async function savePreferences(value: unknown, userId?: string): Promise<DeviceP
   return preferences
 }
 
+const JEV_CREDENTIALS_PATH = 'private/typesafe-jev.json'
+async function getJevApiKey(userId?: string): Promise<string> {
+  const credentials = await spindle.userStorage.getJson<unknown>(JEV_CREDENTIALS_PATH, { fallback: null, userId })
+  return isRecord(credentials) ? text(credentials.apiKey, 500) : ''
+}
+
 async function evaluateJevTrackers(chatId: string, characterId: string, userId?: string, trackerId = '', force = false): Promise<void> {
-  const settings = normalizeJevSettings((await loadPreferences(userId)).jev)
-  if (!settings.enabled) { if (force) throw new Error('Enable Open JEV in Settings first.'); return }
-  if (!spindle.permissions.has('cors_proxy') || !spindle.permissions.has('chats')) throw new Error('Open JEV needs remote requests and chat access.')
+  const judgePreferences = await loadPreferences(userId)
+  const settings = normalizeJevSettings(judgePreferences.jev)
+  if (!settings.enabled) { if (force) throw new Error('Enable the tracker judge in Settings first.'); return }
+  if (!spindle.permissions.has('chats')) throw new Error('Tracker judging needs chat access.')
+  if (!spindle.permissions.has(settings.provider === 'typesafe' ? 'cors_proxy' : 'generation')) throw new Error('The selected judge provider is missing its request permission.')
+  const apiKey = settings.provider === 'typesafe' ? await getJevApiKey(userId) : ''
+  if (settings.provider === 'typesafe' && !apiKey) { if (force) throw new Error('Save your TypeSafe API key in Tracker judge settings first.'); return }
+  const connectionSignature = async (preferences: DevicePreferences) => {
+    const info = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
+    return JSON.stringify([preferences.generationMode, preferences.sidecarConnectionId, preferences.sidecarModelOverride, info.effective?.id, info.effective?.provider, info.effective?.model])
+  }
+  const generationSignature = settings.provider === 'llm' ? await connectionSignature(judgePreferences) : ''
   const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:jev`
-  if (jevFlights.has(flightKey)) { if (force) throw new Error('JEV is already evaluating this chat.'); return }
+  if (jevFlights.has(flightKey)) { if (force) throw new Error('The tracker judge is already evaluating this chat.'); return }
   jevFlights.add(flightKey)
   try {
     const messages = await spindle.chat.getMessages(chatId)
     const narrative = (messages as any[]).filter(entry => ['user', 'assistant'].includes(entry?.role) && sanitizeNarrativeContent(entry.content, 1)).slice(-6)
       .map(entry => ({ id: entry.id, role: entry.role, content: sanitizeNarrativeContent(entry.content, 1_500) }))
-    if (!narrative.length) throw new Error('JEV needs a story message to evaluate.')
+    if (!narrative.length) throw new Error('The tracker judge needs a story message to evaluate.')
     const state = await loadState(chatId, characterId, userId)
     const selected = state.trackers.filter(entry => entry.updateMode === 'jev' && (!trackerId || entry.id === trackerId))
-    if (!selected.length) { if (force) throw new Error('Choose a tracker with JEV updates.'); return }
+    if (!selected.length) { if (force) throw new Error('Choose a tracker with Tracker judge updates.'); return }
     const eligible = selected.map(tracker => {
-      const sourceKey = jevSourceKey({ narrative, target: tracker.target, config: tracker.jev, kind: tracker.kind, states: tracker.kind === 'state' ? tracker.states : [], endpoint: settings.endpoint })
+      const sourceKey = jevSourceKey({ narrative, target: tracker.target, config: tracker.jev, kind: tracker.kind, states: tracker.kind === 'state' ? tracker.states : [], provider: settings.provider, model: settings.model, generationSignature: settings.provider === 'llm' ? generationSignature : undefined })
       return { tracker, sourceKey, baseline: JSON.stringify(tracker) }
     }).filter(entry => force || entry.tracker.jevResult?.sourceKey !== entry.sourceKey)
     if (!eligible.length) return
-    send({ type: 'lumiphone:jev_status', chatId, characterId, status: 'working', message: 'Reading the story with Open JEV…' }, userId)
-    // Open JEV caps a batch at 24 questions. Each question carries its own target.
-    for (let offset = 0; offset < eligible.length; offset += 24) {
-      const batch = eligible.slice(offset, offset + 24)
+    send({ type: 'lumiphone:jev_status', chatId, characterId, status: 'working', message: `Reading the story with ${settings.provider === 'typesafe' ? 'TypeSafe Jev' : 'the LLM judge'}…` }, userId)
+    // Bound batches for LLM response size. Each question carries its own target.
+    const batchSize = settings.provider === 'llm' ? 8 : 24
+    for (let offset = 0; offset < eligible.length; offset += batchSize) {
+      const batch = eligible.slice(offset, offset + batchSize)
       const context = JSON.stringify({ story: narrative, subjects: batch.map((entry, index) => ({ id: `subject${index + 1}`, tracker: entry.tracker.label, target: entry.tracker.target, current: entry.tracker.kind === 'state' ? entry.tracker.state : entry.tracker.value })) })
       const questions = batch.map((entry, index) => ({ ...jevQuestion(entry.tracker), question: `For subject${index + 1}: ${entry.tracker.jev!.question}` }))
-      const answers = await runOpenJev((url, options) => spindle.cors(url, options), settings.endpoint, context, questions)
+      const answers = settings.provider === 'typesafe'
+        ? await runTypeSafeJev((url, options) => spindle.cors(url, options), apiKey, settings.model, context, questions)
+        : readJevAnswers(await runStructuredGeneration('tracker-judge', id('tracker_judge'), jevLlmRequest(context, questions), userId), questions)
       const currentMessages = await spindle.chat.getMessages(chatId)
       const currentNarrative = (currentMessages as any[]).filter(entry => ['user', 'assistant'].includes(entry?.role) && sanitizeNarrativeContent(entry.content, 1)).slice(-6).map(entry => ({ id: entry.id, role: entry.role, content: sanitizeNarrativeContent(entry.content, 1_500) }))
-      if (JSON.stringify(currentNarrative) !== JSON.stringify(narrative)) throw new Error('The story changed while JEV was evaluating. Evaluate again.')
+      if (JSON.stringify(currentNarrative) !== JSON.stringify(narrative)) throw new Error('The story changed while the judge was evaluating. Evaluate again.')
       await withStateLock(stateKey(chatId, characterId), async () => {
-        const currentSettings = normalizeJevSettings((await loadPreferences(userId)).jev)
-        if (!currentSettings.enabled || currentSettings.endpoint !== settings.endpoint) return
+        const currentPreferences = await loadPreferences(userId)
+        const currentSettings = normalizeJevSettings(currentPreferences.jev)
+        if (settings.provider === 'llm' && await connectionSignature(currentPreferences) !== generationSignature) return
+        if (!currentSettings.enabled || currentSettings.provider !== settings.provider || currentSettings.model !== settings.model) return
+        if (settings.provider === 'typesafe' && await getJevApiKey(userId) !== apiKey) return
         const latest = await loadState(chatId, characterId, userId)
         let changed = false
         batch.forEach((entry, index) => {
           const at = latest.trackers.findIndex(tracker => tracker.id === entry.tracker.id)
           if (at < 0 || JSON.stringify(latest.trackers[at]) !== entry.baseline) return
           if ((answers[index] as any)?.id !== `q${index + 1}`) return
-          latest.trackers[at] = applyJevAnswer(latest.trackers[at], answers[index], entry.sourceKey, nowIso(), latest.roleplayNow)
+          latest.trackers[at] = applyJevAnswer(latest.trackers[at], answers[index], entry.sourceKey, nowIso(), latest.roleplayNow, settings.provider)
           changed = true
         })
         if (changed) { await saveState(latest, userId); await sendState(latest, userId, 'jev') }
       })
     }
-    send({ type: 'lumiphone:jev_status', chatId, characterId, status: 'complete', message: 'JEV evaluation complete. Results are in each tracker.' }, userId)
+    send({ type: 'lumiphone:jev_status', chatId, characterId, status: 'complete', message: 'Tracker evaluation complete. Results are in each tracker.' }, userId)
   } catch (error) {
-    send({ type: 'lumiphone:jev_status', chatId, characterId, status: 'error', message: error instanceof Error ? error.message : 'Open JEV evaluation failed.' }, userId)
+    send({ type: 'lumiphone:jev_status', chatId, characterId, status: 'error', message: error instanceof Error ? error.message : 'Tracker judge evaluation failed.' }, userId)
     throw error
   } finally { jevFlights.delete(flightKey) }
 }
@@ -1256,7 +1277,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
     if ('avatarOverrideUrl' in contact) contact.avatarOverrideUrl = image.url
     else contact.avatarUrl = image.url
   }))
-  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -4749,6 +4770,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:get_state': {
         const state = await loadState(context.chatId, context.characterId, userId)
         await sendState(state, userId, 'load')
+        break
+      }
+      case 'lumiphone:jev_save_key': {
+        const apiKey = typeof payload.apiKey === 'string' ? payload.apiKey.trim() : ''
+        if (apiKey.length > 500 || /\s/.test(apiKey)) throw new Error('Enter a valid TypeSafe API key without whitespace.')
+        await spindle.userStorage.setJson(JEV_CREDENTIALS_PATH, { apiKey }, { userId })
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'jev_key')
         break
       }
       case 'lumiphone:jev_evaluate': {

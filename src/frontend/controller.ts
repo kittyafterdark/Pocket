@@ -186,6 +186,7 @@ class PocketController {
   private trackerMutationRequest = ''
   private trackerJevRequest = ''
   private jevWorking = false
+  private jevKeyConfigured = false
   private trackerSaveDraftKey = ''
   private cameraDraft = { scene: '', enhance: undefined as boolean | undefined }
   private selectedMessageId = ''
@@ -984,6 +985,7 @@ class PocketController {
         const conversation = this.state.conversations.find((entry) => entry.id === conversationId)
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
       }
+      this.jevKeyConfigured = payload.jevKeyConfigured === true
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrolling)
       if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences') this.settingsDraft = structuredClone(this.preferences)
@@ -1026,7 +1028,7 @@ class PocketController {
       this.jevWorking = payload.status === 'working'
       if (!this.jevWorking) this.trackerJevRequest = ''
       if (this.currentApp === 'trackers') this.render(false)
-      this.showFeedback(String(payload.message || 'JEV evaluation updated.'), payload.status === 'error')
+      this.showFeedback(String(payload.message || 'Tracker evaluation updated.'), payload.status === 'error')
       return
     }
     if (payload.type === 'lumiphone:reconciliation_status') {
@@ -1402,6 +1404,8 @@ class PocketController {
   }
 
   private updateSettingsDiagnostics(): void {
+    const keyStatus = this.screen.querySelector<HTMLElement>('[data-pocket-jev-key-status]')
+    if (keyStatus) keyStatus.textContent = this.jevKeyConfigured ? 'API key saved on the host.' : 'No TypeSafe API key saved.'
     const generationNode = this.screen.querySelector<HTMLElement>('[data-pocket-generation-diagnostic]')
     if (generationNode) {
       const run = [...(this.generation?.history || this.preferences.generationHistory || [])].reverse().find((entry) => entry.task === 'connection-test')
@@ -3036,6 +3040,7 @@ class PocketController {
       identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
       nativeTouchScrollAvailable: supportsPocketTouchScroll(this.mobileWidget),
+      jevKeyConfigured: this.jevKeyConfigured,
       state: this.state!,
       section: this.selectedSettingsSection,
       activePersona: this.activePersona,

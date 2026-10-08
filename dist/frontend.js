@@ -269,21 +269,13 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
 }
 
 // src/domain/jev.ts
-var OPEN_JEV_ENDPOINT = "https://pngwn-open-jev.hf.space";
 var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
 var clean2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
 function normalizeJevSettings(value) {
   const raw = object(value) ? value : {};
-  let endpoint = clean2(raw.endpoint, 500) || OPEN_JEV_ENDPOINT;
-  try {
-    const url = new URL(endpoint);
-    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
-      throw new Error;
-    endpoint = url.href.replace(/\/$/, "");
-  } catch {
-    endpoint = OPEN_JEV_ENDPOINT;
-  }
-  return { enabled: raw.enabled === true, endpoint, autoAfterTurn: raw.autoAfterTurn === true };
+  const knownProvider = raw.provider === "llm" || raw.provider === "typesafe";
+  const model = clean2(raw.model, 100);
+  return { enabled: knownProvider && raw.enabled === true, provider: raw.provider === "typesafe" ? "typesafe" : "llm", model: /^jev-[a-zA-Z0-9._-]+$/.test(model) ? model : "jev-latest", autoAfterTurn: knownProvider && raw.autoAfterTurn === true };
 }
 function normalizeJevConfig(value) {
   const raw = object(value) ? value : {};
@@ -294,21 +286,21 @@ function validateJevTracker(tracker) {
   const raw = object(tracker.jev) ? tracker.jev : {};
   const config = normalizeJevConfig(raw);
   if (!config.question || String(raw.question).trim().length > 240)
-    throw new Error("Give JEV a short question (up to 240 characters).");
+    throw new Error("Give the judge a short question (up to 240 characters).");
   if (tracker.kind === "timer" || tracker.kind === "counter")
-    throw new Error("JEV estimates values and states. Quantities and timers use exact updates.");
+    throw new Error("The judge estimates values and states. Quantities and timers use exact updates.");
   if (typeof raw.minConfidence !== "number" || raw.minConfidence < 0 || raw.minConfidence > 1 || !Number.isFinite(raw.minConfidence))
-    throw new Error("JEV confidence must be between 0 and 1.");
+    throw new Error("Judge confidence must be between 0 and 1.");
   if (tracker.kind === "state") {
     if (!Array.isArray(tracker.states) || tracker.states.length < 2 || tracker.states.length > 16)
-      throw new Error("JEV needs between 2 and 16 allowed states.");
+      throw new Error("The judge needs between 2 and 16 allowed states.");
   } else {
     if (!Array.isArray(raw.levels) || raw.levels.length < 2 || raw.levels.length > 10 || config.levels.length !== raw.levels.length)
-      throw new Error("JEV needs 2–10 described numeric levels.");
+      throw new Error("The judge needs 2–10 described numeric levels.");
     if (config.levels.some((level, index) => level.value < Number(tracker.min) || level.value > Number(tracker.max) || index > 0 && level.value <= config.levels[index - 1].value))
-      throw new Error("JEV levels must increase and fit the tracker range.");
+      throw new Error("Judge levels must increase and fit the tracker range.");
     if (new Set(config.levels.map((level) => level.label)).size !== config.levels.length)
-      throw new Error("Give each JEV level a different description.");
+      throw new Error("Give each judge level a different description.");
   }
 }
 function normalizeJevResult(value) {
@@ -559,7 +551,7 @@ function normalizePreferences(value) {
     const item = record2(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -1413,7 +1405,7 @@ function categories(host) {
     ["personalization", "Personalization", "Theme, wallpapers, and your Persona"],
     ["messages", "Messages", "Replies, ambient texts, roleplay context"],
     ["generation", "Pocket Generation", "Model source and connection diagnostics"],
-    ["jev", "Open JEV", "Hugging Face decisions for trackers"],
+    ["jev", "Tracker judge", "LLM or TypeSafe Jev decisions"],
     ["camera", "Camera & Swarm Studio", "Visual profile and macro diagnostics"],
     ["notifications", "Notifications", "Kinds, previews, push, and sound"],
     ["permissions", "Permissions", "Lumiverse capability access"],
@@ -2120,35 +2112,64 @@ function camera(host) {
 }
 function jevSettings(host) {
   const settings = normalizeJevSettings(host.draft.jev);
-  const { page, content } = host.page("Open JEV", "Hugging Face tracker decisions");
+  const { page, content } = host.page("Tracker judge", "LLM connections or TypeSafe Jev");
   const card = el("section", "lp-card lp-settings-section");
-  const endpoint = el("input", "lp-input");
-  endpoint.value = settings.endpoint;
-  endpoint.type = "url";
+  const provider = el("select", "lp-select");
+  for (const [value, label] of [["llm", "Lumiverse LLM connection"], ["typesafe", "TypeSafe Jev API"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    provider.append(option);
+  }
+  provider.value = settings.provider;
+  const model = el("input", "lp-input");
+  model.value = settings.model;
   const enabled = el("input");
   enabled.type = "checkbox";
   enabled.checked = settings.enabled;
   const automatic = el("input");
   automatic.type = "checkbox";
   automatic.checked = settings.autoAfterTurn;
-  const enabledField = fieldBlock("Enable Open JEV", enabled);
-  const autoField = fieldBlock("Evaluate after story turns", automatic);
-  card.append(el("p", "lp-copy", "Choose Open JEV updates on each tracker and describe its rubric. Evaluation sends the last six story messages and selected tracker targets to this endpoint. The public Space may queue or time out; a failed request keeps your values."), enabledField, autoField, fieldBlock("Space URL", endpoint, "Default: pngwn/open-jev. Use a compatible duplicate or local deployment."));
-  const apply = button("Save JEV settings");
+  const native = el("div", "lp-settings-section");
+  const key = el("input", "lp-input");
+  key.type = "password";
+  key.autocomplete = "new-password";
+  key.placeholder = host.jevKeyConfigured ? "A key is saved; enter a replacement" : "Enter your TypeSafe API key";
+  const keyStatus = el("p", "lp-copy", host.jevKeyConfigured ? "API key saved on the host." : "No TypeSafe API key saved.");
+  keyStatus.dataset.pocketJevKeyStatus = "true";
+  keyStatus.setAttribute("role", "status");
+  const saveKey = button("Save API key");
+  saveKey.addEventListener("click", () => {
+    if (!key.value.trim()) {
+      host.showError("Enter your TypeSafe API key.");
+      return;
+    }
+    host.send("lumiphone:jev_save_key", { apiKey: key.value.trim() });
+    key.value = "";
+  });
+  const clearKey = button("Remove API key", "lp-button lp-button-quiet");
+  clearKey.addEventListener("click", () => host.send("lumiphone:jev_save_key", { apiKey: "" }));
+  native.append(fieldBlock("TypeSafe model", model, "Default: jev-latest."), fieldBlock("TypeSafe API key", key, "Stored per user on the host, excluded from Pocket exports."), keyStatus, saveKey, clearKey);
+  const llm = el("p", "lp-copy", "Uses the connection and model selected in Pocket’s Connection tab, including sidecar models such as nano or OpenRouter. LLM confidence is an estimate; TypeSafe supplies its own confidence.");
+  const sync = () => {
+    native.hidden = provider.value !== "typesafe";
+    llm.hidden = provider.value !== "llm";
+    native.style.display = native.hidden ? "none" : "";
+    llm.style.display = llm.hidden ? "none" : "";
+  };
+  provider.addEventListener("change", sync);
+  sync();
+  card.append(el("p", "lp-copy", "Judging sends the last six story messages and selected tracker targets to your chosen provider. Low-confidence or failed results keep current values."), fieldBlock("Provider", provider), controlRow("Enable tracker judge", enabled), controlRow("Evaluate after story turns", automatic), llm, native);
+  const apply = button("Save judge settings");
   apply.addEventListener("click", () => {
-    try {
-      const url = new URL(endpoint.value.trim());
-      if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
-        throw new Error;
-    } catch {
-      host.showError("Enter a Space base URL without credentials or query parameters.");
+    if (provider.value === "typesafe" && !/^jev-[a-zA-Z0-9._-]+$/.test(model.value.trim())) {
+      host.showError("Enter a TypeSafe Jev model ID, such as jev-latest.");
       return;
     }
     const next = clone(host.draft);
-    next.jev = normalizeJevSettings({ enabled: enabled.checked, autoAfterTurn: automatic.checked, endpoint: endpoint.value });
+    next.jev = normalizeJevSettings({ provider: provider.value, enabled: enabled.checked, autoAfterTurn: automatic.checked, model: model.value });
     host.update(next);
   });
-  const evaluate = button("Evaluate JEV trackers", "lp-button lp-button-quiet");
+  const evaluate = button("Evaluate trackers", "lp-button lp-button-quiet");
   evaluate.addEventListener("click", () => host.send("lumiphone:jev_evaluate"));
   card.append(apply, evaluate);
   content.append(card);
@@ -2294,7 +2315,7 @@ function trackerUpdateDescription(mode) {
     manual: "Only changes when you adjust it by hand.",
     model: "The story model can update it through Pocket tools or tags when something happens. No elapsed-time drift.",
     automatic: "Changes at a fixed rate as the selected clock advances. No model judgment is involved.",
-    jev: "Open JEV estimates it from recent story messages; uncertain answers keep the current value."
+    jev: "Tracker judge estimates it from recent story messages; uncertain answers keep the current value."
   }[mode];
 }
 function trackerFlavor(tracker) {
@@ -2390,7 +2411,7 @@ function trackerDisplay(tracker, state) {
   const heading = el("div", "lp-tracker-heading");
   heading.append(el("span", "lp-eyebrow", current.target.label || current.target.type), el("h3", "lp-title", current.label));
   const top = el("div", "lp-tracker-top");
-  const mode = el("span", "lp-tracker-update", { manual: "Manual", model: "Story", automatic: "Clock", jev: "Open JEV" }[current.updateMode]);
+  const mode = el("span", "lp-tracker-update", { manual: "Manual", model: "Story", automatic: "Clock", jev: "Tracker judge" }[current.updateMode]);
   mode.title = trackerUpdateDescription(current.updateMode);
   top.append(heading, mode);
   card.append(top);
@@ -2527,7 +2548,7 @@ function trackerDisplay(tracker, state) {
   const latest = current.history.at(-1);
   if (latest && current.presentation !== "compact") {
     const delta = typeof latest.next === "number" && typeof latest.previous === "number" ? latest.next - latest.previous : null;
-    const source = { jev: "Open JEV", model: "Story", tag: "Story", automatic: "Time", migration: "Imported", user: "You" }[latest.source];
+    const source = { jev: "Tracker judge", model: "Story", tag: "Story", automatic: "Time", migration: "Imported", user: "You" }[latest.source];
     const change = delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? "+" : ""}${Number(delta.toFixed(2))}${current.unit}`;
     const history = el("div", "lp-tracker-last-change", `${change} · ${source}`);
     if (latest.reason)
@@ -2610,7 +2631,7 @@ function trackerEditor(host, current, templateIndex = 9) {
 Wounded
 Recovering`;
   const state = choice("Current state", [], source.kind === "state" ? source.state : "");
-  const mode = choice("Updates", [["manual", "By hand"], ["model", "Story events"], ["automatic", "Elapsed time"], ["jev", "Open JEV"]], source.updateMode);
+  const mode = choice("Updates", [["manual", "By hand"], ["model", "Story events"], ["automatic", "Elapsed time"], ["jev", "Tracker judge"]], source.updateMode);
   const modeHelp = el("p", "lp-copy lp-tracker-mode-help");
   modeHelp.setAttribute("aria-live", "polite");
   mode.field.append(modeHelp);
@@ -2619,7 +2640,7 @@ Recovering`;
   modelPrompt.value = source.modelPrompt || "";
   modelPrompt.placeholder = "Increase by 1 when a clue is discovered. Reset when the mystery is solved.";
   const promptField = fieldBlock("Tool-calling prompt", modelPrompt, "Tell the model when and how to update this tracker. Leave blank to use the default story rules.");
-  const jev = sectionBlock("Open JEV", "Estimates this value from recent story messages. Uncertain answers keep the current value.");
+  const jev = sectionBlock("Tracker judge", "Estimates this value from recent story messages. Uncertain answers keep the current value.");
   const question = el("textarea", "lp-textarea");
   question.maxLength = 240;
   question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`;
@@ -2634,7 +2655,7 @@ Recovering`;
   levels.value = ((source.jev?.levels.length) ? source.jev.levels : [{ value: source.min, label: source.bands[0]?.label || "Low" }, { value: (source.min + source.max) / 2, label: source.bands[Math.floor(source.bands.length / 2)]?.label || "Moderate" }, { value: source.max, label: source.bands.at(-1)?.label || "High" }]).map((level) => `${level.value} | ${level.label}`).join(`
 `);
   const levelField = fieldBlock("Rubric", levels, "2–10 levels, low to high: value | description. Describe what each level looks like in the story.");
-  jev.body.append(fieldBlock("Question", question), levelField, fieldBlock("Minimum confidence", confidence, "0–1. Open JEV uses the strongest option probability."));
+  jev.body.append(fieldBlock("Question", question), levelField, fieldBlock("Minimum confidence", confidence, "0–1. TypeSafe uses provider confidence; LLM confidence is an estimate."));
   const visible = el("input");
   visible.type = "checkbox";
   visible.checked = source.visibleToModel;
@@ -2913,7 +2934,7 @@ function detail(host, tracker) {
   if (tracker.pausedReason)
     policy.appendChild(el("p", "lp-warning", tracker.pausedReason));
   if (tracker.updateMode === "jev") {
-    const evaluate = button(host.pending ? "Reading the story…" : "Evaluate with JEV", "lp-button lp-button-quiet");
+    const evaluate = button(host.pending ? "Reading the story…" : "Evaluate with judge", "lp-button lp-button-quiet");
     evaluate.disabled = host.pending;
     evaluate.addEventListener("click", () => host.send("lumiphone:jev_evaluate", { trackerId: tracker.id }));
     policy.append(evaluate);
@@ -6776,6 +6797,7 @@ class PocketController {
   trackerMutationRequest = "";
   trackerJevRequest = "";
   jevWorking = false;
+  jevKeyConfigured = false;
   trackerSaveDraftKey = "";
   cameraDraft = { scene: "", enhance: undefined };
   selectedMessageId = "";
@@ -7629,6 +7651,7 @@ class PocketController {
         if (!conversation || conversation.availability.state !== "local")
           this.manualMessageOverrides.delete(conversationId);
       }
+      this.jevKeyConfigured = payload.jevKeyConfigured === true;
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrolling);
       if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences")
@@ -7687,7 +7710,7 @@ class PocketController {
         this.trackerJevRequest = "";
       if (this.currentApp === "trackers")
         this.render(false);
-      this.showFeedback(String(payload.message || "JEV evaluation updated."), payload.status === "error");
+      this.showFeedback(String(payload.message || "Tracker evaluation updated."), payload.status === "error");
       return;
     }
     if (payload.type === "lumiphone:reconciliation_status") {
@@ -8168,6 +8191,9 @@ class PocketController {
     return true;
   }
   updateSettingsDiagnostics() {
+    const keyStatus = this.screen.querySelector("[data-pocket-jev-key-status]");
+    if (keyStatus)
+      keyStatus.textContent = this.jevKeyConfigured ? "API key saved on the host." : "No TypeSafe API key saved.";
     const generationNode = this.screen.querySelector("[data-pocket-generation-diagnostic]");
     if (generationNode) {
       const run = [...this.generation?.history || this.preferences.generationHistory || []].reverse().find((entry) => entry.task === "connection-test");
@@ -10042,6 +10068,7 @@ ${body}`;
       identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
       nativeTouchScrollAvailable: supportsPocketTouchScroll(this.mobileWidget),
+      jevKeyConfigured: this.jevKeyConfigured,
       state: this.state,
       section: this.selectedSettingsSection,
       activePersona: this.activePersona,

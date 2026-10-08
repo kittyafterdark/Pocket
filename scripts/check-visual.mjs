@@ -33,7 +33,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 33, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 35, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
@@ -57,6 +57,20 @@ try {
     for (const file of files) {
       await page.goto(`http://127.0.0.1:${server.address().port}/${file}`)
       await page.evaluate(() => document.fonts.ready)
+      if (file.startsWith('judge-')) {
+        assert.equal(await page.getByRole('combobox', { name: 'Provider', exact: true }).count(), 1)
+        assert.equal(await page.getByRole('checkbox', { name: 'Enable tracker judge', exact: true }).count(), 1)
+        assert.equal(await page.getByRole('button', { name: 'Save judge settings', exact: true }).count(), 1)
+        const native = file === 'judge-typesafe.html'
+        assert.equal(await page.getByRole('combobox', { name: 'Provider', exact: true }).inputValue(), native ? 'typesafe' : 'llm')
+        assert.equal(await page.getByLabel('TypeSafe API key', { exact: false }).isVisible(), native)
+        if (native) {
+          await page.getByRole('button', { name: 'Remove API key', exact: true }).scrollIntoViewIfNeeded()
+          assert.ok(await page.getByRole('button', { name: 'Remove API key', exact: true }).evaluate(node => { const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight }), 'Credential actions must remain reachable')
+        }
+        await page.locator('.lumiphone-app-view, .lp-content').evaluateAll(nodes => nodes.forEach(node => { node.scrollTop = 0 }))
+        await page.evaluate(() => window.scrollTo(0, 0))
+      }
       if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
       if (file === 'contacts.html') {
         for (const scale of [.7, 1, 1.3]) {

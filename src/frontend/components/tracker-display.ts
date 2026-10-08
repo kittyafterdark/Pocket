@@ -25,7 +25,7 @@ export function trackerUpdateDescription(mode: PhoneTracker['updateMode']): stri
     manual: 'Only changes when you adjust it by hand.',
     model: 'The story model can update it through Pocket tools or tags when something happens. No elapsed-time drift.',
     automatic: 'Changes at a fixed rate as the selected clock advances. No model judgment is involved.',
-    jev: 'Open JEV estimates it from recent story messages; uncertain answers keep the current value.',
+    jev: 'Tracker judge estimates it from recent story messages; uncertain answers keep the current value.',
   }[mode]
 }
 
@@ -106,7 +106,7 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
   const heading = el('div', 'lp-tracker-heading')
   heading.append(el('span', 'lp-eyebrow', current.target.label || current.target.type), el('h3', 'lp-title', current.label))
   const top = el('div', 'lp-tracker-top')
-  const mode = el('span', 'lp-tracker-update', { manual: 'Manual', model: 'Story', automatic: 'Clock', jev: 'Open JEV' }[current.updateMode])
+  const mode = el('span', 'lp-tracker-update', { manual: 'Manual', model: 'Story', automatic: 'Clock', jev: 'Tracker judge' }[current.updateMode])
   mode.title = trackerUpdateDescription(current.updateMode)
   top.append(heading, mode); card.append(top)
 
@@ -202,7 +202,7 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
   const latest = current.history.at(-1)
   if (latest && current.presentation !== 'compact') {
     const delta = typeof latest.next === 'number' && typeof latest.previous === 'number' ? latest.next - latest.previous : null
-    const source = { jev: 'Open JEV', model: 'Story', tag: 'Story', automatic: 'Time', migration: 'Imported', user: 'You' }[latest.source]
+    const source = { jev: 'Tracker judge', model: 'Story', tag: 'Story', automatic: 'Time', migration: 'Imported', user: 'You' }[latest.source]
     const change = delta === null ? `${latest.previous} → ${latest.next}` : `${delta > 0 ? '+' : ''}${Number(delta.toFixed(2))}${current.unit}`
     const history = el('div', 'lp-tracker-last-change', `${change} · ${source}`)
     if (latest.reason) history.title = latest.reason
