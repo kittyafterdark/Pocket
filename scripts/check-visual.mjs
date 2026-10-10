@@ -16,6 +16,7 @@ catch { throw new Error('Set POCKET_PLAYWRIGHT_ROOT to an existing Playwright in
 const update = process.argv.includes('--update')
 const add = process.argv.includes('--add')
 const updateCases = process.argv.filter(argument => argument.startsWith('--update-case=')).map(argument => argument.split('=')[1])
+const selectedCases = process.argv.filter(argument => argument.startsWith('--case=')).map(argument => argument.split('=')[1])
 const output = join(root, 'tmp/visual')
 const baseline = join(root, 'tests/visual/baselines')
 await mkdir(output, { recursive: true })
@@ -33,8 +34,10 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 35, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 36, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
+for (const name of selectedCases) assert.ok(files.includes(name + '.html'), 'Unknown visual case')
+const captureFiles = selectedCases.length ? files.filter(file => selectedCases.includes(file.replace('.html', ''))) : files
 const server = createServer(async (request, response) => {
   const name = request.url.slice(1)
   if (!files.includes(name)) { response.writeHead(404).end(); return }
@@ -54,7 +57,7 @@ try {
   for (const width of [390, 900]) {
     const page = await browser.newPage({ viewport: { width, height: 930 }, deviceScaleFactor: 1, reducedMotion: 'reduce', locale: 'en-US', timezoneId: 'UTC' })
     await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:') ? route.continue() : route.abort())
-    for (const file of files) {
+    for (const file of captureFiles) {
       await page.goto(`http://127.0.0.1:${server.address().port}/${file}`)
       await page.evaluate(() => document.fonts.ready)
       if (file.startsWith('judge-')) {
@@ -72,6 +75,11 @@ try {
         await page.evaluate(() => window.scrollTo(0, 0))
       }
       if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
+      if (file === 'chat-voice.html') {
+        assert.equal(await page.locator('.lp-voice-play').count(), 1)
+        await page.locator('.lp-voice-transcript summary').click()
+        assert.ok(await page.locator('.lp-voice-transcript p').isVisible(), 'Voice transcript must remain accessible without playback')
+      }
       if (file === 'contacts.html') {
         for (const scale of [.7, 1, 1.3]) {
           await page.locator('.lumiphone-shell').evaluate((node, scale) => node.style.setProperty('--pocket-ui-scale', String(scale)), scale)

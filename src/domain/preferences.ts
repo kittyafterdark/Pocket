@@ -98,6 +98,10 @@ export function themePalette(theme: PhoneTheme): PhonePalette {
 export function defaultPreferences(): DevicePreferences {
   return {
     version: PREFERENCES_VERSION,
+    voiceMessages: true,
+    ttsVoiceURI: '',
+    ttsConnectionId: '',
+    ttsConnectionOptions: {},
     theme: 'midnight',
     colors: themePalette('midnight'),
     homeWallpaper: defaultWallpaper(),
@@ -218,6 +222,12 @@ export function normalizePreferences(value: unknown): DevicePreferences {
   return {
     version: PREFERENCES_VERSION,
     theme,
+    voiceMessages: bool(raw.voiceMessages, true),
+    ttsVoiceURI: text(raw.ttsVoiceURI, '', 500),
+    ttsConnectionId: text(raw.ttsConnectionId, '', 180),
+    ttsConnectionOptions: Object.fromEntries(Object.entries(record(raw.ttsConnectionOptions)).slice(0, 100)
+      .filter(([id]) => id.length <= 180 && !['__proto__', 'constructor', 'prototype'].includes(id))
+      .map(([id, value]) => [id, { voice: text(record(value).voice, '', 500), model: text(record(value).model, '', 500) }])),
     colors: palette,
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, '', 2_000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, '', 2_000)),

@@ -1,5 +1,6 @@
 import { INLINE_BASE_STYLES, INLINE_FINISH_STYLES } from './frontend/components/inline-styles.js'
 import { POCKET_DESIGN_SYSTEM } from './frontend/components/design-system.js'
+import { VOICE_MESSAGE_STYLES } from './frontend/components/voice-message-styles.js'
 export const PHONE_STYLES = `
   .lumiphone-widget-root, .lumiphone-widget-root *, .lumiphone-drawer, .lumiphone-drawer * { box-sizing: border-box; }
   .lumiphone-widget-root {
@@ -1247,4 +1248,5 @@ ${INLINE_FINISH_STYLES}
   .lp-wallpaper-library-card:focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; }
   .lp-wallpaper-library-art { display:block; width:100%; aspect-ratio:3/4; border-radius:9px; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px #ffffff16; }
   .lp-wallpaper-library-card[hidden] { display:none; }
+${VOICE_MESSAGE_STYLES}
 `

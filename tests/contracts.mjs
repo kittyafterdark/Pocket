@@ -281,12 +281,13 @@ await frontendHandler({ type: 'lumiphone:view_state', requestId: 'view-thread', 
 const visibleNotificationsBefore = storage.get('phones/chat-a__char-a.json').notifications.length
 await backendEvents.get('TOOL_INVOCATION')({
   toolName: 'phone_action', requestId: 'visible-incoming', args: {
-    action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { conversationId: firstConversationId, text: 'Visible incoming', senderContactId: 'char-a' },
+    action: 'message', chat_id: 'chat-a', character_id: 'char-a', payload: { conversationId: firstConversationId, text: 'Visible incoming', format: 'voice', senderContactId: 'char-a' },
   },
 }, 'user-a')
 let notificationState = storage.get('phones/chat-a__char-a.json')
 assert.equal(notificationState.notifications.length, visibleNotificationsBefore, 'exact visible destination must suppress notification')
 assert.equal(notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.at(-1).status, 'read')
+assert.equal(notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.at(-1).format, 'voice', 'model actions must persist voice format')
 
 await frontendHandler({ type: 'lumiphone:view_state', requestId: 'view-home', chatId: 'chat-a', characterId: 'char-a', open: true, route: { app: 'home' } }, 'user-a')
 await backendEvents.get('TOOL_INVOCATION')({
@@ -296,6 +297,7 @@ await backendEvents.get('TOOL_INVOCATION')({
 }, 'user-a')
 notificationState = storage.get('phones/chat-a__char-a.json')
 const elsewhereNotification = notificationState.notifications.find((entry) => entry.body === 'Elsewhere incoming')
+assert.equal(notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.find(entry => entry.text === 'Visible incoming').format, 'voice', 'voice format must survive a subsequent state load')
 assert.equal(elsewhereNotification.route.conversationId, firstConversationId, 'notification must retain a typed deep link')
 const messageCountBeforeDismiss = notificationState.conversations.find((entry) => entry.id === firstConversationId).messages.length
 await frontendHandler({ type: 'lumiphone:notification_dismiss', requestId: 'dismiss-incoming', chatId: 'chat-a', characterId: 'char-a', notificationId: elsewhereNotification.id }, 'user-a')
@@ -1041,7 +1043,7 @@ spindle.chat.getMessages = messagesBeforeLegacyFallback
 // batch creates/ensures the group, materializes named participants, persists
 // every message individually, and compiles to one coherent inline artifact.
 const legacyBatchRows = [
-  { speaker: 'Mina Ashido', text: 'YOU COUNTED THE SECONDS????' },
+  { speaker: 'Mina Ashido', text: 'YOU COUNTED THE SECONDS????', format: 'voice' },
   { speaker: 'Denki Kaminari', text: 'BROOOOOOOOO' },
   { speaker: 'Eijiro Kirishima', text: 'WAIT LET HIM EXPLAIN' },
   { speaker: 'Izuku Midoriya', text: 'Technically the timestamps do support—' },
@@ -1069,12 +1071,14 @@ const classChat = legacyBatchState.conversations.find((conversation) => conversa
 assert.ok(classChat, 'message_batch must implicitly ensure a missing named group when participants are supplied')
 assert.equal(classChat.messages.length, legacyBatchRows.length, 'message_batch must persist every authored GC message instead of summarizing the riot')
 assert.deepEqual(classChat.messages.map((message) => message.text), legacyBatchRows.map((row) => row.text))
+assert.equal(classChat.messages[0].format, 'voice', 'fallback batches must retain the voice-message format')
 assert.ok(classChat.messages.every((message) => message.origin?.hostMessageId === 'legacy-batch-host' && message.origin?.swipeId === 0), 'batched messages must retain host-candidate provenance')
 const shotoActors = legacyBatchState.discoveredActors.filter((actor) => actor.normalizedName === 'shoto todoroki')
 assert.equal(shotoActors.length, 1, 'diacritic variants Shoto/Shōto must resolve to one lightweight actor identity')
 const legacyBatchActivity = legacyBatchState.activities.find((activity) => activity.presentation?.kind === 'batch' && activity.presentation?.conversationTitle === 'Class 3-A')
 assert.ok(legacyBatchActivity, 'message_batch must create one coherent batch activity')
 assert.equal(legacyBatchActivity.presentation.batchMessages.length, legacyBatchRows.length)
+assert.equal(legacyBatchActivity.presentation.batchMessages[0].format, 'voice', 'inline batch presentation must retain voice format')
 assert.equal(legacyBatchActivity.source.messageIds.length, legacyBatchRows.length)
 const legacyBatchUpdate = updatedChatMessages.slice(legacyBatchUpdatesBefore).find((entry) => entry.messageId === 'legacy-batch-host')
 assert.ok(legacyBatchUpdate, 'message_batch fallback compiler did not rewrite the host candidate')
@@ -1157,7 +1161,7 @@ spindle.generate.quiet = async (request) => {
   if (!isGroupReplyRequest) return { content: 'continuity seed intentionally omitted in this scoped group-generation contract' }
   groupBatchCalls += 1
   return { content: JSON.stringify({ messages: [
-    { speakerId: 'char-a', text: 'The first group reaction.' },
+    { speakerId: 'char-a', text: 'The first group reaction.', format: 'voice' },
     { speakerId: luna.id, text: 'I am reacting to that first message.' },
     { speakerId: luna.id, text: 'Wait—one more thing.' },
   ] }) }
@@ -1168,6 +1172,7 @@ const groupBatchResult = storage.get('phones/chat-a__char-a.json')
 const groupAfterBatch = groupBatchResult.conversations.find((entry) => entry.id === groupId)
 assert.equal(groupBatchCalls, 1, 'one Auto trigger must use one structured group generation call')
 assert.equal(groupAfterBatch.messages.length, beforeBatch + 3, 'one Auto trigger must reveal the bounded ordered batch')
+assert.equal(groupAfterBatch.messages.at(-3).format, 'voice', 'generated group voice messages must survive queue normalization and delivery')
 assert.deepEqual(groupAfterBatch.messages.slice(-3).map((entry) => entry.senderContactId), ['char-a', luna.id, luna.id])
 assert.equal(groupAfterBatch.messages.at(-1).generation.info.groupBatch.position, 3)
 assert.equal(groupAfterBatch.messages.at(-1).generation.info.groupBatch.size, 3)
@@ -1707,7 +1712,7 @@ async function exportVisual(name, source) {
   for (const image of preview.querySelectorAll('img')) image.removeAttribute('src')
   // JSDOM has no layout: native sheet bounds are supplied by the controlled browser fixture.
   if (name.startsWith('sheet-')) preview.querySelector('dialog').removeAttribute('style')
-  await writeFile(new URL(name + '.html', 'file://' + process.env.POCKET_VISUAL_DIR.replaceAll('\\', '/') + '/'), '<!doctype html><meta charset="utf-8"><style>' + frontendStyles.join('\n') + '\nbody{margin:0;padding:24px;background:#151318;color:#eee;font-family:system-ui;--lumiverse-primary:#d7a978}' + (name === 'npc-draft-portrait' ? 'body>main' : 'main') + '{max-width:560px;margin:auto}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style><main>' + preview.outerHTML + '</main>')
+  await writeFile(new URL(name + '.html', 'file://' + process.env.POCKET_VISUAL_DIR.replaceAll('\\', '/') + '/'), '<!doctype html><meta charset="utf-8"><style>' + frontendStyles.join('\n') + '\nbody{margin:0;padding:24px;background:#151318;color:#eee;font-family:system-ui;--lumiverse-primary:#d7a978}' + (name === 'npc-draft-portrait' || name === 'chat-voice' ? 'body>main' : 'main') + '{max-width:560px;margin:auto}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style><main>' + preview.outerHTML + '</main>')
 }
 
 const drawerRoot = document.createElement('div')
@@ -1863,6 +1868,20 @@ stopReplyButton.click()
 assert.ok(frontendSends.some(entry => entry.type === 'lumiphone:cancel_message_generation' && entry.conversationId === 'picker-latest'), 'stop button must cancel the current conversation')
 assert.equal(dockRoot.querySelector('[aria-label="Stop generating reply"]'), null, 'stop must clear the local busy state')
 backendReceiver({ type: 'lumiphone:message_progress', requestId: 'ui-slow-reply', chatId: 'chat-a', characterId: 'char-a', conversationId: 'picker-latest', phase: 'done' })
+
+const voiceUiState = structuredClone(identityUiState)
+const speechBeforeVoiceFixture = { synthesis: dom.window.speechSynthesis, utterance: dom.window.SpeechSynthesisUtterance }
+dom.window.speechSynthesis = { getVoices: () => [], speak: () => {}, cancel: () => {} }
+dom.window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text } }
+voiceUiState.state.conversations.find(entry => entry.id === 'picker-latest').messages[0].format = 'voice'
+backendReceiver({ ...voiceUiState, reason: 'refresh' })
+assert.ok(dockRoot.querySelector('.lp-voice-message'), 'canonical voice messages must render a playback control and transcript')
+await exportVisual('chat-voice', dockRoot)
+backendReceiver({ ...identityUiState, reason: 'refresh' })
+if (speechBeforeVoiceFixture.synthesis === undefined) delete dom.window.speechSynthesis
+else dom.window.speechSynthesis = speechBeforeVoiceFixture.synthesis
+if (speechBeforeVoiceFixture.utterance === undefined) delete dom.window.SpeechSynthesisUtterance
+else dom.window.SpeechSynthesisUtterance = speechBeforeVoiceFixture.utterance
 dockRoot.querySelector('[aria-label="Home or dismiss phone"]').click()
 const dismissPhone = dockRoot.querySelector('.lumiphone-dismiss')
 dismissPhone.click()
@@ -2895,5 +2914,24 @@ try {
   releaseWeek(); await pendingWeek
   assert.equal(frontendMessages.some(event => event.type === 'lumiphone:operation_progress' && event.requestId === 'cancel-week-test' && event.phase === 'complete'), false, 'cancelled forecast never completes')
 } finally { spindle.generate.quiet = appQuiet; spindle.chat.getMessages = appMessages }
+
+// Direct reply generation must preserve voice format and respect the opt-out.
+const voicePreferencesBefore = structuredClone(storage.get('device/preferences.json'))
+const quietBeforeVoice = spindle.generate.quiet
+try {
+  await frontendHandler({ type: 'lumiphone:get_state', chatId: 'voice-contract', characterId: 'char-a' }, 'user-a')
+  await frontendHandler({ type: 'lumiphone:save_preferences', preferences: { ...voicePreferencesBefore, voiceMessages: true, generationMode: 'roleplay', autoReplyAfterSend: false } }, 'user-a')
+  await backendEvents.get('TOOL_INVOCATION')({ toolName: 'phone_action', requestId: 'voice-dm-seed', args: { action: 'message', chat_id: 'voice-contract', character_id: 'char-a', payload: { senderContactId: 'char-a', text: 'An opening voice message', format: 'voice' } } }, 'user-a')
+  const voiceConversationId = storage.get('phones/voice-contract__char-a.json').conversations[0].id
+  spindle.generate.quiet = async () => ({ content: JSON.stringify({ message: 'Here is my spoken reply.', format: 'voice', after: { state: 'remote' } }) })
+  await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'voice-dm-reply', chatId: 'voice-contract', characterId: 'char-a', conversationId: voiceConversationId }, 'user-a')
+  assert.equal(storage.get('phones/voice-contract__char-a.json').conversations[0].messages.at(-1).format, 'voice', 'generated direct replies must retain voice format')
+  await frontendHandler({ type: 'lumiphone:save_preferences', preferences: { ...voicePreferencesBefore, voiceMessages: false, generationMode: 'roleplay', autoReplyAfterSend: false } }, 'user-a')
+  await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'voice-dm-disabled', chatId: 'voice-contract', characterId: 'char-a', conversationId: voiceConversationId }, 'user-a')
+  assert.equal(storage.get('phones/voice-contract__char-a.json').conversations[0].messages.at(-1).format, undefined, 'disabled voice generation must normalize model voice output to text')
+} finally {
+  spindle.generate.quiet = quietBeforeVoice
+  await frontendHandler({ type: 'lumiphone:save_preferences', preferences: voicePreferencesBefore }, 'user-a')
+}
 
 console.log('Pocket contracts passed.')

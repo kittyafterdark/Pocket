@@ -140,7 +140,7 @@ function buildBatchArtifact(
 
     const bubble = document.createElement('span')
     bubble.className = 'pocket-inline-transcript-bubble'
-    bubble.textContent = item.text
+    bubble.textContent = `${item.format === 'voice' ? '▶ Voice message · ' : ''}${item.text}`
 
     content.append(sender, bubble)
     row.append(avatar(item.senderName, options.avatars?.[item.senderActorId || '']), content)
@@ -176,7 +176,7 @@ function buildMessageArtifact(
 
   const copy = document.createElement('span')
   copy.className = 'pocket-inline-artifact-copy'
-  copy.textContent = activity.summary || ''
+  copy.textContent = `${activity.presentation?.format === 'voice' ? '▶ Voice message · ' : ''}${activity.summary || ''}`
 
   if (presentation.call) {
     primary.classList.add('pocket-inline-call'); primary.dataset.callStatus = presentation.call.status

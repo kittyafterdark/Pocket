@@ -28,6 +28,18 @@ Each visible phone now has two explicit frontend identities. Its logical device 
 
 ## Model integration
 
+### Character voice messages
+
+Characters can send voice messages through `message` and individual `message_batch` rows by adding `"format":"voice"`; `text` contains the spoken transcript. Generated direct and group replies can choose the same format. For example:
+
+```xml
+<lumi-phone action="message">{"speaker":"Alice","text":"I'll meet you at the station.","format":"voice"}</lumi-phone>
+```
+
+Open the message in Pocket and tap **Play voice message**, or expand **Voice message transcript** to read it. Playback never starts automatically. Settings → Messages → **Playback TTS** lets you choose a saved Lumiverse TTS connection or installed browser voices. Choose a **TTS model** and **TTS voice** from that provider's lists, or keep the connection defaults. Pocket remembers these choices separately for each connection and does not modify the host connection profile. On Play, Pocket sends the transcript and chosen overrides through Lumiverse's signed-in TTS API while provider credentials stay in the host. Generated audio is held only for playback and released on completion, Stop, or closing Pocket. Hosts without that API can still use browser voices.
+
+Settings can disable new character voice messages and playback or choose a browser voice. Browser automatic selection follows the app language and assigns a consistent voice by character identity on the current device; available languages depend on the browser/OS. Choose a Lumiverse TTS connection when the needed language is not installed. Transcripts remain readable when speech is unsupported or fails, without silently switching a failed connection to a browser voice. Voice messages persist as transcripts and format markers, with no API keys, audio URLs, or generated audio files saved in Pocket. Browser voices may use the platform's speech service.
+
 With `tools` permission, Pocket registers `phone_action` with these actions:
 
 ```text
