@@ -53,6 +53,7 @@ export interface MessagesViewHost {
   showOutgoingPrompt(conversationId: string): void
   shouldFocusHandoff(relayId: string): boolean
   showGenerationInfo(message: PhoneMessage): void
+  renderVoiceMessage?(message: PhoneMessage): HTMLElement
   back(): void
 }
 
@@ -480,7 +481,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       sender.addEventListener('click', () => { if (messageActorId) host.openActor(messageActorId) })
       bubble.appendChild(sender)
     }
-    bubble.append(document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
+    bubble.append(message.format === 'voice' && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
     if (message.generation || message.origin || !host.readOnlyDevice) {
       const tools = el('div', 'lp-bubble-tools')
       if (message.generation && !host.readOnlyDevice) {

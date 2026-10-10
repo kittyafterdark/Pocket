@@ -209,6 +209,10 @@ export interface PocketOperationProgress {
 
 export interface DevicePreferences {
   version: 5
+  voiceMessages?: boolean
+  ttsVoiceURI?: string
+  ttsConnectionId?: string
+  ttsConnectionOptions?: Record<string, { voice?: string; model?: string }>
   theme: PhoneTheme
   colors: PhonePalette
   homeWallpaper: PocketWallpaper
@@ -299,6 +303,7 @@ export interface PocketCandidateClockSnapshot extends PocketRoleplayClockSnapsho
 }
 
 export interface PhoneMessage {
+  format?: 'voice'
   call?: PocketCallMarker
   id: string
   sender: 'persona' | 'contact' | 'system'
@@ -512,6 +517,7 @@ export interface PocketContact {
 }
 
 export interface PendingGroupBatchMessage {
+  format?: 'voice'
   id: string
   speakerId: string
   text: string
@@ -823,6 +829,7 @@ export interface PhoneNotification {
 
 export type PocketActivityPresentationKind = 'sent' | 'received' | 'observed' | 'referenced' | 'generic' | 'batch'
 export interface PocketActivityBatchMessage {
+  format?: 'voice'
   messageId: string
   senderActorId?: string
   senderName: string
@@ -830,6 +837,7 @@ export interface PocketActivityBatchMessage {
   direction: 'sent' | 'received' | 'observed'
 }
 export interface PocketActivityPresentation {
+  format?: 'voice'
   kind: PocketActivityPresentationKind
   senderActorId?: string
   recipientActorIds?: string[]

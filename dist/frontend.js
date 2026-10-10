@@ -1,6 +1,191 @@
 // src/domain/gallery-page.ts
 var GALLERY_PAGE_SIZE = 48;
 
+// src/frontend/components/tts-connection.ts
+async function listTtsConnections(signal) {
+  const response = await fetch("/api/v1/tts-connections?limit=100", { credentials: "same-origin", signal });
+  if (!response.ok)
+    throw new Error("Could not load Lumiverse TTS connections.");
+  const payload = await response.json();
+  return (Array.isArray(payload.data) ? payload.data : []).flatMap((item) => {
+    if (!item || typeof item !== "object")
+      return [];
+    const value = item;
+    return typeof value.id === "string" && typeof value.name === "string" ? [{
+      id: value.id,
+      name: value.name,
+      model: typeof value.model === "string" ? value.model : undefined,
+      voice: typeof value.voice === "string" ? value.voice : undefined
+    }] : [];
+  });
+}
+async function listTtsChoices(connectionId, kind, signal) {
+  const response = await fetch(`/api/v1/tts-connections/${encodeURIComponent(connectionId)}/${kind}`, { credentials: "same-origin", signal });
+  if (!response.ok)
+    throw new Error("Could not load TTS choices.");
+  const payload = await response.json();
+  if (payload.error)
+    throw new Error("Could not load TTS choices.");
+  return (Array.isArray(payload[kind]) ? payload[kind] : []).flatMap((item) => {
+    if (!item || typeof item !== "object")
+      return [];
+    const value = item;
+    if (typeof value.id !== "string" || !value.id)
+      return [];
+    const name = typeof value.label === "string" ? value.label : typeof value.name === "string" ? value.name : value.id;
+    return [{ id: value.id, label: `${name}${typeof value.language === "string" && value.language ? ` (${value.language})` : ""}` }];
+  });
+}
+async function synthesizeVoiceMessage(connectionId, text, signal, options) {
+  const response = await fetch("/api/v1/tts/synthesize", {
+    method: "POST",
+    credentials: "same-origin",
+    signal,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionId, text, voice: options?.voice || undefined, model: options?.model || undefined })
+  });
+  if (!response.ok)
+    throw new Error("The selected TTS connection could not generate audio. Check it in Lumiverse Connections.");
+  const blob = await response.blob();
+  if (!blob.size || !/^audio\//i.test(blob.type))
+    throw new Error("The TTS connection did not return playable audio.");
+  return blob;
+}
+
+// src/frontend/components/voice-message.ts
+class VoiceMessagePlayer {
+  active;
+  stop() {
+    if (!this.active)
+      return;
+    const { button, status, utterance, abort, audio, url, timer } = this.active;
+    this.active = undefined;
+    if (utterance) {
+      utterance.onend = utterance.onerror = null;
+      window.speechSynthesis.cancel();
+    }
+    abort?.abort();
+    clearTimeout(timer);
+    if (audio) {
+      audio.onended = audio.onerror = null;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    if (url)
+      URL.revokeObjectURL(url);
+    if (status)
+      status.textContent = "";
+    button.textContent = "▶ Play voice message";
+    button.setAttribute("aria-pressed", "false");
+  }
+  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions) {
+    const container = document.createElement("div");
+    container.className = "lp-voice-message";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lp-voice-play";
+    button.textContent = "▶ Play voice message";
+    button.setAttribute("aria-label", `Play voice message from ${message.senderName}`);
+    button.setAttribute("aria-pressed", "false");
+    const status = document.createElement("span");
+    status.className = "lp-voice-status";
+    status.setAttribute("role", "status");
+    const supported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+    button.disabled = !enabled || !supported && !connectionId;
+    if (button.disabled)
+      status.textContent = enabled ? "Speech playback unavailable in this browser." : "Voice playback is disabled in Settings.";
+    button.addEventListener("click", () => {
+      const same = this.active?.button === button;
+      this.stop();
+      if (same)
+        return;
+      if (connectionId) {
+        const active = { button, status, abort: new AbortController };
+        this.active = active;
+        button.textContent = "■ Stop voice message";
+        button.setAttribute("aria-pressed", "true");
+        status.textContent = "Preparing voice message…";
+        active.timer = setTimeout(() => {
+          if (this.active === active) {
+            this.stop();
+            status.textContent = "TTS generation timed out. Try again.";
+          }
+        }, 90000);
+        synthesizeVoiceMessage(connectionId, message.text, active.abort.signal, connectionOptions).then(async (blob) => {
+          if (this.active !== active)
+            return;
+          clearTimeout(active.timer);
+          active.url = URL.createObjectURL(blob);
+          active.audio = new window.Audio(active.url);
+          active.audio.onended = () => {
+            if (this.active === active)
+              this.stop();
+          };
+          active.audio.onerror = () => {
+            if (this.active === active) {
+              this.stop();
+              status.textContent = "Could not play the generated audio. The transcript is available below.";
+            }
+          };
+          await active.audio.play();
+          if (this.active === active)
+            status.textContent = "";
+        }).catch((error) => {
+          if (this.active !== active)
+            return;
+          this.stop();
+          status.textContent = error instanceof Error ? error.message : "TTS playback failed. The transcript is available below.";
+        });
+        return;
+      }
+      const utterance = new window.SpeechSynthesisUtterance(message.text);
+      const voices = window.speechSynthesis.getVoices();
+      let hash = 0;
+      for (const char of message.senderActorId || message.senderName)
+        hash = hash * 31 + char.charCodeAt(0) >>> 0;
+      const defaults = voices.filter((voice) => voice.lang.split("-")[0] === (document.documentElement.lang || navigator.language || "en").split("-")[0]);
+      const pool = defaults.length ? defaults : voices;
+      const voice = voices.find((voice) => voice.voiceURI === voiceURI) || pool[hash % (pool.length || 1)];
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      }
+      this.active = { button, utterance };
+      status.textContent = "";
+      button.textContent = "■ Stop voice message";
+      button.setAttribute("aria-pressed", "true");
+      const finish = () => {
+        if (this.active?.utterance === utterance) {
+          this.active = undefined;
+          button.textContent = "▶ Play voice message";
+          button.setAttribute("aria-pressed", "false");
+        }
+      };
+      utterance.onend = finish;
+      utterance.onerror = () => {
+        finish();
+        status.textContent = "Could not play this voice message. The transcript is available below.";
+      };
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        finish();
+        status.textContent = "Speech playback failed. Try again.";
+      }
+    });
+    const transcript = document.createElement("details");
+    transcript.className = "lp-voice-transcript";
+    const title = document.createElement("summary");
+    title.textContent = "Voice message transcript";
+    const text = document.createElement("p");
+    text.textContent = message.text;
+    transcript.append(title, text);
+    container.append(button, status, transcript);
+    return container;
+  }
+}
+
 // src/domain/clock-label.ts
 var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
 function clockDayPart(value) {
@@ -484,6 +669,10 @@ function themePalette(theme) {
 function defaultPreferences() {
   return {
     version: PREFERENCES_VERSION,
+    voiceMessages: true,
+    ttsVoiceURI: "",
+    ttsConnectionId: "",
+    ttsConnectionOptions: {},
     theme: "midnight",
     colors: themePalette("midnight"),
     homeWallpaper: defaultWallpaper(),
@@ -602,6 +791,10 @@ function normalizePreferences(value) {
   return {
     version: PREFERENCES_VERSION,
     theme,
+    voiceMessages: bool(raw.voiceMessages, true),
+    ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
+    ttsConnectionId: text(raw.ttsConnectionId, "", 180),
+    ttsConnectionOptions: Object.fromEntries(Object.entries(record2(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record2(value).voice, "", 500), model: text(record2(value).model, "", 500) }])),
     colors: palette,
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
@@ -1302,6 +1495,133 @@ function wallpaperImageControl(label, target, wallpaper, resolved, host) {
   return card;
 }
 
+// src/frontend/components/tts-settings.ts
+function ttsSettings(getSettings, commit, onCleanup) {
+  const panel = el("div");
+  const connection = el("select", "lp-select");
+  connection.setAttribute("aria-label", "Voice message TTS connection");
+  const status = el("p", "lp-copy", "Loading Lumiverse TTS connections…");
+  const provider = el("div"), browser = el("div");
+  const models = el("select", "lp-select");
+  models.setAttribute("aria-label", "Voice message TTS model");
+  const voices = el("select", "lp-select");
+  voices.setAttribute("aria-label", "Voice message provider voice");
+  const browserVoices = el("select", "lp-select");
+  browserVoices.setAttribute("aria-label", "Voice message TTS voice");
+  let connections = [], disposed = false, request;
+  const abort = new AbortController;
+  onCleanup?.(() => {
+    disposed = true;
+    abort.abort();
+    request?.abort();
+  });
+  const option = (value, label) => {
+    const item = el("option", "", label);
+    item.value = value;
+    return item;
+  };
+  const populate = (select, choices, value, label) => {
+    select.replaceChildren(option("", label));
+    for (const choice of choices)
+      select.append(option(choice.id, choice.label));
+    if (value && !choices.some((choice) => choice.id === value))
+      select.append(option(value, `Saved choice · ${value}`));
+    select.value = value;
+  };
+  const populateConnections = () => {
+    const id = getSettings().ttsConnectionId || "";
+    connection.replaceChildren(option("", "Browser voices · installed on this device"));
+    for (const item of connections)
+      connection.append(option(item.id, item.name));
+    if (id && !connections.some((item) => item.id === id))
+      connection.append(option(id, "Saved connection · currently unavailable"));
+    connection.value = id;
+  };
+  const populateProvider = () => {
+    request?.abort();
+    const id = getSettings().ttsConnectionId || "";
+    provider.hidden = !id;
+    browser.hidden = Boolean(id);
+    if (!id)
+      return;
+    const current = connections.find((item) => item.id === id);
+    const defaults = { models: `Connection default${current?.model ? ` · ${current.model}` : ""}`, voices: `Connection default${current?.voice ? ` · ${current.voice}` : ""}` };
+    const saved = getSettings().ttsConnectionOptions?.[id];
+    populate(models, [], saved?.model || "", defaults.models);
+    populate(voices, [], saved?.voice || "", defaults.voices);
+    models.disabled = voices.disabled = true;
+    status.textContent = "Loading models and voices…";
+    const pending = new AbortController;
+    request = pending;
+    const load = async (kind, select) => {
+      try {
+        const choices = await listTtsChoices(id, kind, pending.signal);
+        if (disposed || request !== pending || getSettings().ttsConnectionId !== id)
+          return false;
+        populate(select, choices, getSettings().ttsConnectionOptions?.[id]?.[kind === "models" ? "model" : "voice"] || "", defaults[kind]);
+        select.disabled = false;
+        return true;
+      } catch {
+        if (!disposed && request === pending)
+          select.disabled = false;
+        return false;
+      }
+    };
+    Promise.all([load("models", models), load("voices", voices)]).then((results) => {
+      if (disposed || request !== pending || getSettings().ttsConnectionId !== id)
+        return;
+      status.textContent = results.every(Boolean) ? "Your choices apply only to Pocket. On Play, the transcript is sent to this TTS provider." : "Some choices could not be loaded. Connection defaults and saved choices remain available; check the connection in Lumiverse.";
+    });
+  };
+  populateConnections();
+  populateProvider();
+  listTtsConnections(abort.signal).then((items) => {
+    if (disposed)
+      return;
+    connections = items;
+    populateConnections();
+    populateProvider();
+    if (!getSettings().ttsConnectionId)
+      status.textContent = items.length ? "Choose a TTS connection, then its model and voice. On Play, the transcript is sent to that provider." : "Add a TTS connection in Lumiverse Connections, or use installed browser voices.";
+  }).catch(() => {
+    if (!disposed)
+      status.textContent = "Lumiverse TTS connections are unavailable on this host. Browser voices are still available.";
+  });
+  connection.addEventListener("change", () => {
+    commit((next) => {
+      next.ttsConnectionId = connection.value;
+    });
+    populateProvider();
+    if (!connection.value)
+      status.textContent = "Browser voices use the languages installed on this device.";
+  });
+  for (const [select, key] of [[models, "model"], [voices, "voice"]])
+    select.addEventListener("change", () => {
+      const id = getSettings().ttsConnectionId;
+      if (id)
+        commit((next) => {
+          next.ttsConnectionOptions = { ...next.ttsConnectionOptions, [id]: { ...next.ttsConnectionOptions?.[id], [key]: select.value } };
+        });
+    });
+  const synthesis = typeof window !== "undefined" && "speechSynthesis" in window ? window.speechSynthesis : undefined;
+  const populateBrowser = () => {
+    const available = synthesis?.getVoices() || [];
+    populate(browserVoices, available.map((item) => ({ id: item.voiceURI, label: `${item.name} (${item.lang})` })), getSettings().ttsVoiceURI || "", "Automatic · consistent voice per character");
+  };
+  populateBrowser();
+  if (synthesis && onCleanup) {
+    synthesis.addEventListener("voiceschanged", populateBrowser);
+    onCleanup(() => synthesis.removeEventListener("voiceschanged", populateBrowser));
+  }
+  browserVoices.addEventListener("change", () => commit((next) => {
+    next.ttsVoiceURI = browserVoices.value;
+  }));
+  provider.append(fieldBlock("TTS model", models), fieldBlock("TTS voice", voices));
+  browser.append(fieldBlock("Browser voice", browserVoices), el("p", "lp-copy", "Automatic selection follows the app language and keeps a stable voice per character. Languages depend on installed voices; use a TTS connection if the needed language is unavailable."));
+  panel.append(fieldBlock("Playback TTS", connection), provider, browser, status, el("p", "lp-copy", "No audio plays automatically. Stop or close Pocket to cancel playback."));
+  return panel;
+}
+
 // src/frontend/apps/settings.ts
 function clone(value) {
   return structuredClone(value);
@@ -1750,13 +2070,20 @@ function persona(host) {
   return page;
 }
 function messages(host) {
-  const settings = host.draft;
+  let settings = clone(host.draft);
   const commit = (mutate) => {
     const next = clone(settings);
     mutate(next);
-    host.update(next);
+    settings = normalizePreferences(next);
+    host.update(settings);
   };
   const { page, content } = host.page("Messages", "Generation and context bridge");
+  const voice = el("section", "lp-card lp-settings-section");
+  voice.append(el("div", "lp-eyebrow", "Voice messages"), toggle("Allow character voice messages", settings.voiceMessages !== false, (value) => commit((next) => {
+    next.voiceMessages = value;
+  }), "Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS."));
+  voice.append(ttsSettings(() => settings, commit, host.onCleanup));
+  content.append(voice);
   const replies = el("section", "lp-card lp-settings-section");
   replies.append(el("div", "lp-eyebrow", "Reply behavior"), toggle("Decide on a reply after user DMs", settings.autoReplyAfterSend, (value) => commit((next) => {
     next.autoReplyAfterSend = value;
@@ -3519,7 +3846,7 @@ function renderMessagesView(host) {
       });
       bubble.appendChild(sender);
     }
-    bubble.append(document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
+    bubble.append(message.format === "voice" && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
     if (message.generation || message.origin || !host.readOnlyDevice) {
       const tools = el("div", "lp-bubble-tools");
       if (message.generation && !host.readOnlyDevice) {
@@ -4985,7 +5312,7 @@ function buildPhoneScreen(activity, openRoute, options) {
     const body = node("span", "pocket-phone-notification-body");
     body.append(portrait(presentation.senderName || "?", options.avatarUrl));
     const copy = node("span", "pocket-phone-notification-content");
-    copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", activity.summary || ""));
+    copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", `${presentation.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`));
     body.append(copy);
     notification.append(app, body);
     screen.append(lockHero, notification, node("span", "pocket-phone-home-indicator"));
@@ -5016,7 +5343,7 @@ function buildPhoneScreen(activity, openRoute, options) {
     thread.tabIndex = 0;
     thread.setAttribute("role", "region");
     thread.setAttribute("aria-label", `${title} conversation`);
-    const messages = type === "group" ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, text: activity.summary || "", direction: "sent" }];
+    const messages = type === "group" ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || "", direction: "sent" }];
     for (const [index, message] of messages.entries()) {
       const row = node("div", "pocket-phone-message");
       row.dataset.direction = message.direction;
@@ -5027,11 +5354,11 @@ function buildPhoneScreen(activity, openRoute, options) {
         const content = node("span", "pocket-phone-message-content");
         if (row.dataset.continuation !== "true")
           content.append(node("strong", "pocket-phone-sender", message.senderName));
-        content.append(node("span", "pocket-phone-bubble", message.text));
+        content.append(node("span", "pocket-phone-bubble", `${message.format === "voice" ? "▶ Voice message · " : ""}${message.text}`));
         row.append(content);
       } else {
         const content = node("span", "pocket-phone-message-content");
-        content.append(node("span", "pocket-phone-bubble", message.text));
+        content.append(node("span", "pocket-phone-bubble", `${message.format === "voice" ? "▶ Voice message · " : ""}${message.text}`));
         row.append(content);
       }
       thread.append(row);
@@ -6322,7 +6649,7 @@ function buildBatchArtifact(activity, openRoute, options) {
     sender.textContent = item.senderName;
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-transcript-bubble";
-    bubble.textContent = item.text;
+    bubble.textContent = `${item.format === "voice" ? "▶ Voice message · " : ""}${item.text}`;
     content.append(sender, bubble);
     row.append(avatar2(item.senderName, options.avatars?.[item.senderActorId || ""]), content);
     transcript.appendChild(row);
@@ -6361,7 +6688,7 @@ function buildMessageArtifact(activity, openRoute, options) {
   primary.dataset.kind = presentation.kind;
   const copy = document.createElement("span");
   copy.className = "pocket-inline-artifact-copy";
-  copy.textContent = activity.summary || "";
+  copy.textContent = `${activity.presentation?.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`;
   if (presentation.call) {
     primary.classList.add("pocket-inline-call");
     primary.dataset.callStatus = presentation.call.status;
@@ -6733,6 +7060,7 @@ function iconButton(name, label) {
 }
 
 class PocketController {
+  voicePlayer = new VoiceMessagePlayer;
   ctx;
   surfaceId = pocketSurfaceId();
   cleanups = [];
@@ -6958,6 +7286,7 @@ class PocketController {
     this.refresh();
   }
   destroy() {
+    this.voicePlayer.stop();
     this.setupModalDismiss?.();
     this.destroyed = true;
     window.clearTimeout(this.collapseTimer);
@@ -8332,6 +8661,7 @@ class PocketController {
     });
   }
   close() {
+    this.voicePlayer.stop();
     if (!this.widget && !this.dockPanel && !this.mobileWidget)
       return;
     this.expanded = false;
@@ -8802,10 +9132,12 @@ class PocketController {
     return node;
   }
   renderMessages() {
+    this.viewCleanups.push(() => this.voicePlayer.stop());
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
     return renderMessagesView({
       state: this.state,
       selectedConversationId: this.selectedConversationId,
+      renderVoiceMessage: (message) => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]),
       deviceOwnerActorId: owner,
       readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
@@ -10097,6 +10429,7 @@ ${body}`;
       },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
       resumeSetup: () => this.showFirstChatSetup(true),
       chooseImage: (target, mode) => {
         this.chooseImage(target, mode);
@@ -10701,6 +11034,19 @@ ${SURFACE_TOKENS}
     .lumiphone-shell .lp-row { flex-wrap:wrap; }
   }
   @media (prefers-reduced-motion:reduce) { .lumiphone-shell * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+`;
+
+// src/frontend/components/voice-message-styles.ts
+var VOICE_MESSAGE_STYLES = `
+.lp-voice-message { display:grid; gap:8px; min-width:0; }
+.lp-voice-play { padding:9px 12px; border:1px solid currentColor; border-radius:10px; color:inherit; background:transparent; font:inherit; cursor:pointer; text-align:left; }
+.lp-voice-play:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
+.lp-voice-play:disabled { opacity:.6; cursor:default; }
+.lp-voice-status { font-size:11px; }
+.lp-voice-status:empty { display:none; }
+.lp-voice-transcript { font-size:12px; }
+.lp-voice-transcript summary { cursor:pointer; }
+.lp-voice-transcript p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
 `;
 
 // src/styles.ts
@@ -11951,6 +12297,7 @@ ${INLINE_FINISH_STYLES}
   .lp-wallpaper-library-card:focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; }
   .lp-wallpaper-library-art { display:block; width:100%; aspect-ratio:3/4; border-radius:9px; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px #ffffff16; }
   .lp-wallpaper-library-card[hidden] { display:none; }
+${VOICE_MESSAGE_STYLES}
 `;
 
 // src/frontend.ts

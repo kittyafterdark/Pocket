@@ -6,6 +6,11 @@ function galleryOffset(value) {
   return Number.isFinite(offset) ? Math.max(0, Math.min(1e6, Math.floor(offset))) : 0;
 }
 
+// src/domain/voice.ts
+function voiceMessage(value) {
+  return value === "voice";
+}
+
 // src/domain/trackers.ts
 var TRACKER_HISTORY_LIMIT = 40;
 var KINDS = new Set(["meter", "counter", "state", "timer"]);
@@ -552,6 +557,10 @@ function themePalette(theme) {
 function defaultPreferences() {
   return {
     version: PREFERENCES_VERSION,
+    voiceMessages: true,
+    ttsVoiceURI: "",
+    ttsConnectionId: "",
+    ttsConnectionOptions: {},
     theme: "midnight",
     colors: themePalette("midnight"),
     homeWallpaper: defaultWallpaper(),
@@ -670,6 +679,10 @@ function normalizePreferences(value) {
   return {
     version: PREFERENCES_VERSION,
     theme,
+    voiceMessages: bool(raw.voiceMessages, true),
+    ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
+    ttsConnectionId: text(raw.ttsConnectionId, "", 180),
+    ttsConnectionOptions: Object.fromEntries(Object.entries(record2(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record2(value).voice, "", 500), model: text(record2(value).model, "", 500) }])),
     colors: palette,
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
@@ -1150,6 +1163,7 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
     senderName: clean4(value.senderName, 120) || (sender === "persona" ? "You" : sender === "system" ? "Pocket" : fallbackContact?.name || "Unknown contact"),
     senderAccent: clean4(value.senderAccent, 40) || (sender === "contact" ? fallbackContact?.accent || stableContactAccent(senderContactId || "unknown") : ""),
     text: messageText,
+    format: value.format === "voice" ? "voice" : undefined,
     createdAt: timestamp(value.createdAt, now),
     read,
     status,
@@ -3388,6 +3402,7 @@ var frontendViews = new Map;
 var activePocketCandidates = new Map;
 var PHONE_GUIDANCE = `Pocket is the authoritative persistence layer for in-world phone state.
 The per-chat ROLEPLAY/IMPERSONATION authorship rule below is authoritative. Persona-authored messages are available only in Impersonation; never bypass this through tags, aliases, or batches.
+For a character voice message, use action="message" with format="voice" and text containing only the spoken transcript. Each message_batch row also accepts format="voice". Playback uses the user's selected TTS on request; do not invent audio URLs.
 For an established voice call use action="call", with speaker, target or conversationId, status="connected"|"ended"|"missed", and optional speakerphone. A connected call returns callId; ending it must supply that same callId and conversation. Use durationSeconds only when the story explicitly establishes elapsed time. Put the returned artifactTag or commitTag exactly once in the final scene, as with messages. Spoken dialogue stays in ordinary prose; never create text messages for every spoken line. These are story events, not real voice/video calls.
 
 Pocket reference blocks are read-only history. Their messages already happened. Never recreate, resend, or restyle a referenced message merely because it appears in the prompt. Pocket automatically renders successfully persisted phone actions in the roleplay UI. Do not repeat or shim a phone message in prose merely to make it visible. Normal prose may naturally describe using, reading, showing, or reacting to a phone when that action matters to the scene.
@@ -3655,6 +3670,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         recipientNames: (Array.isArray(presentation?.recipientNames) ? presentation.recipientNames : []).map((entry) => text2(entry, 120)).filter(Boolean).slice(0, 16),
         conversationTitle: text2(presentation?.conversationTitle, 120) || undefined,
         call: normalizeCallMarker(presentation?.call),
+        format: voiceMessage(presentation?.format) ? "voice" : undefined,
         storyAt: text2(presentation?.storyAt, 80) || undefined,
         storyTimeLabel: text2(presentation?.storyTimeLabel, 160) || undefined,
         storyTimezoneOffsetMinutes: typeof presentation?.storyTimezoneOffsetMinutes === "number" && Number.isFinite(presentation.storyTimezoneOffsetMinutes) && Math.abs(presentation.storyTimezoneOffsetMinutes) <= 840 ? presentation.storyTimezoneOffsetMinutes : undefined,
@@ -3670,6 +3686,7 @@ function normalizeState(value, chatId, characterId, characterName) {
             senderActorId: text2(entry.senderActorId, 180) || undefined,
             senderName,
             text: messageText,
+            format: voiceMessage(entry.format) ? "voice" : undefined,
             direction: entry.direction === "sent" || entry.direction === "observed" ? entry.direction : "received"
           }];
         })
@@ -3871,6 +3888,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         id,
         speakerId,
         text: body,
+        format: voiceMessage(message.format) ? "voice" : undefined,
         eventSuggestion: normalizeEventSuggestion(message.eventSuggestion, (prefix) => `${prefix}_${id}`),
         state: messageState,
         deliveredMessageId: text2(message.deliveredMessageId, 180) || undefined,
@@ -6633,6 +6651,7 @@ DM ROLE BINDING \u2014 AUTHORITATIVE:
 Return strict JSON only:
 {"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""},"suggestion":null}
 
+${preferences.voiceMessages !== false ? 'You may add "format":"voice" when the character naturally sends a spoken voice message; message must contain only its spoken transcript. Omit format for ordinary text.' : "Send ordinary text only; voice messages are disabled."}
 The recipient field MUST be exactly "${personaName}".
 after describes the channel immediately after this message.
 suggestion is null unless THIS message proposes, confirms, changes, or meaningfully references a concrete future plan that would make sense on Timeline.
@@ -6717,6 +6736,7 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
       senderName: actor.name,
       senderAccent: actor.accent,
       text: reply,
+      format: preferences.voiceMessages !== false && voiceMessage(generated.format) ? "voice" : undefined,
       createdAt: phoneMessageTimestamp(state),
       read: visible,
       status: visible ? "read" : "delivered",
@@ -6900,6 +6920,7 @@ ${pocketContactPhoneBrief(contact, profile) || "No profile; infer only from the 
       type: "quiet",
       messages: [
         { role: "system", content: `Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text","suggestion":null}]}. Return 0\u20133 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble.
+${preferences.voiceMessages !== false ? 'Each row may add "format":"voice" for a natural character voice message; text is its spoken transcript. Omit format for ordinary text.' : "Send ordinary text only; voice messages are disabled."}
 Each row may include suggestion only when THAT speaker's message itself proposes, confirms, changes, or meaningfully references a concrete future plan. suggestion is null otherwise. When present use {"kind":"event","title":"short event title","description":"why/what","whenKind":"exact|approximate|relative|unscheduled","whenText":"human story-time label","start":"optional ISO only when exact and grounded","end":"optional ISO only when exact and grounded","participants":["exact character names"]}. Name-only participants are valid. Do not manufacture events from casual chatter.
 No narration, markdown, delay values, or hidden reasoning.` },
         { role: "user", content: `${assembled.text || "(no context)"}${groupContinuityText ? `
@@ -6930,7 +6951,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
       const body = text2(row.text, 8000);
       if (!body || !eligible.some((actor) => actor.actorId === speakerId))
         return [];
-      return [{ id: id("group_slot"), speakerId, text: body, eventSuggestion: generatedEventSuggestion(row.suggestion, id), state: "queued" }];
+      return [{ id: id("group_slot"), speakerId, text: body, format: preferences.voiceMessages !== false && voiceMessage(row.format) ? "voice" : undefined, eventSuggestion: generatedEventSuggestion(row.suggestion, id), state: "queued" }];
     });
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId);
     const batchId = id("group_batch");
@@ -7009,6 +7030,7 @@ Only the Pocket Persona and CURRENT GROUP ACTORS above can read this channel. An
           senderName: speaker.name,
           senderAccent: speaker.accent,
           text: latestSlot.text,
+          format: latestSlot.format,
           createdAt: phoneMessageTimestamp(latest),
           read: visible,
           status: visible ? "read" : "delivered",
@@ -7896,6 +7918,7 @@ async function applyAction(input, userId, source = "model") {
           senderName: sender === "persona" ? state.pocketPersona.displayName || "You" : sender === "system" ? "Pocket" : senderActor.name,
           senderAccent: sender === "contact" ? senderActor.accent : state.pocketPersona.accent,
           text: row.messageText,
+          format: preferences.voiceMessages !== false && voiceMessage(row.raw.format) ? "voice" : undefined,
           createdAt: phoneMessageTimestamp(state),
           read: personaRead,
           status: sender === "persona" ? "sent" : sender === "system" ? "read" : personaRead ? "read" : "delivered",
@@ -7910,7 +7933,8 @@ async function applyAction(input, userId, source = "model") {
           senderActorId,
           senderName: message.senderName,
           text: row.messageText,
-          direction: direction === "outbound" ? "sent" : direction === "inbound" ? "received" : "observed"
+          direction: direction === "outbound" ? "sent" : direction === "inbound" ? "received" : "observed",
+          format: message.format
         });
         if (sender !== "system" && preferences.notifyMessages) {
           const route = { app: "messages", conversationId: conversation.id, messageId: message.id };
@@ -8075,6 +8099,7 @@ async function applyAction(input, userId, source = "model") {
         senderName: sender === "persona" ? state.pocketPersona.displayName || "You" : sender === "system" ? "Pocket" : senderActor.name,
         senderAccent: sender === "contact" ? senderActor.accent : state.pocketPersona.accent,
         text: messageText,
+        format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? "voice" : undefined,
         createdAt: phoneMessageTimestamp(state),
         read: personaRead,
         call,
@@ -8142,6 +8167,7 @@ async function applyAction(input, userId, source = "model") {
             senderName: message.senderName,
             recipientNames,
             conversationTitle: conversation.title,
+            format: message.format,
             call,
             ...snapshotActivityClock(state)
           },
@@ -9666,7 +9692,7 @@ function registerTool() {
         character_id: { type: "string", description: "Current character id when known." },
         payload: {
           type: "object",
-          description: "Action data. Respect the chat authorship mode: persona-authored actions are forbidden in Roleplay and allowed in Impersonation. call accepts speaker, target/conversationId, status connected|ended|missed, optional speakerphone and explicit durationSeconds (ended only); reuse the returned callId to end a connected call. Spoken dialogue remains prose. message accepts channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or a conversation id/exact group title. GC messages may include participants to ensure/create the group and establish membership. message_batch is GC-only and accepts conversation/title, optional participants, and messages:[{speaker,text}, ...] (max 24); Pocket persists each row as an individual canonical message while returning one batch artifact. Named actors can become lightweight discovered actors. conversation uses kind=group, title, and participants as names or actor/contact refs for explicit membership edits/renames. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.",
+          description: 'Action data. Respect the chat authorship mode: persona-authored actions are forbidden in Roleplay and allowed in Impersonation. call accepts speaker, target/conversationId, status connected|ended|missed, optional speakerphone and explicit durationSeconds (ended only); reuse the returned callId to end a connected call. Spoken dialogue remains prose. message and each message_batch row may include format="voice" with text containing the spoken transcript to send a playable TTS voice message. Omit format for ordinary text. message accepts channel dm|gc, speaker as a name or {contactId|name}, text/content, and target or a conversation id/exact group title. GC messages may include participants to ensure/create the group and establish membership. message_batch is GC-only and accepts conversation/title, optional participants, and messages:[{speaker,text}, ...] (max 24); Pocket persists each row as an individual canonical message while returning one batch artifact. Named actors can become lightweight discovered actors. conversation uses kind=group, title, and participants as names or actor/contact refs for explicit membership edits/renames. tracker operations target trackerId or stable key and use operation set/add/subtract/reset/set_state.',
           additionalProperties: true
         }
       },

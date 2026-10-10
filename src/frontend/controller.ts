@@ -1,4 +1,5 @@
 import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
+import { VoiceMessagePlayer } from './components/voice-message.js'
 import type {
   CalendarEvent,
   DevicePreferences,
@@ -120,6 +121,7 @@ function iconButton(name: string, label: string): HTMLButtonElement {
 }
 
 class PocketController {
+  private voicePlayer = new VoiceMessagePlayer()
   private ctx: SpindleFrontendContext
   private readonly surfaceId = pocketSurfaceId()
   private cleanups: Cleanup[] = []
@@ -328,6 +330,7 @@ class PocketController {
   }
 
   destroy(): void {
+    this.voicePlayer.stop()
     this.setupModalDismiss?.()
     this.destroyed = true
     window.clearTimeout(this.collapseTimer)
@@ -1549,6 +1552,7 @@ class PocketController {
   }
 
   private close(): void {
+    this.voicePlayer.stop()
     if (!this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
     this.shell.hidden = true
@@ -1988,9 +1992,11 @@ class PocketController {
   }
 
   private renderMessages(): HTMLDivElement {
+    this.viewCleanups.push(() => this.voicePlayer.stop())
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     return renderMessagesView({
       state: this.state!, selectedConversationId: this.selectedConversationId,
+      renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
@@ -3059,6 +3065,7 @@ class PocketController {
       requestPermissions: () => { void this.requestPermissions() },
       showError: (message) => this.showError(message),
       rerender: () => this.render(false),
+      onCleanup: cleanup => this.viewCleanups.push(cleanup),
       resumeSetup: () => this.showFirstChatSetup(true),
       chooseImage: (target, mode) => { void this.chooseImage(target, mode) },
       mountModelCombobox: (target, options) => {

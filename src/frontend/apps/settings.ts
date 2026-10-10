@@ -11,6 +11,7 @@ import { resolvePocketTouchScrollMode } from '../touch-scroll.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
 import type { PocketImageTarget } from '../components/image-picker.js'
+import { ttsSettings } from '../components/tts-settings.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
 type ActivePersona = { id: string; name: string } | null
@@ -37,6 +38,7 @@ export interface SettingsViewHost {
   requestPermissions(): void
   showError(message: string): void
   rerender(): void
+  onCleanup?(cleanup: () => void): void
   resumeSetup?(): void
   chooseImage(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void
   mountModelCombobox(target: HTMLElement, options: { value: string; connection: { kind: 'llm' | 'image'; id?: string }; disabled?: boolean; onChange(value: string): void }): () => void
@@ -334,8 +336,12 @@ function persona(host: SettingsViewHost): HTMLDivElement {
 }
 
 function messages(host: SettingsViewHost): HTMLDivElement {
-  const settings = host.draft; const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); host.update(next) }
+  let settings = clone(host.draft); const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); settings = normalizePreferences(next); host.update(settings) }
   const { page, content } = host.page('Messages', 'Generation and context bridge')
+  const voice = el('section', 'lp-card lp-settings-section')
+  voice.append(el('div', 'lp-eyebrow', 'Voice messages'), toggle('Allow character voice messages', settings.voiceMessages !== false, value => commit(next => { next.voiceMessages = value }), 'Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS.'))
+  voice.append(ttsSettings(() => settings, commit, host.onCleanup))
+  content.append(voice)
   const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })), el('p', 'lp-copy', 'When someone is on the way, 20 seconds without typing or a new phone message continues the main roleplay. Continue to arrival starts it immediately; idle time does not mark them Here.'))
   const cadence = el('select', 'lp-select'); for (const [value, label] of [['instant', 'Instant'], ['quick', 'Quick'], ['natural', 'Natural'], ['relaxed', 'Relaxed']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.replyCadence === value; cadence.appendChild(option) }; cadence.addEventListener('change', () => commit((next) => { next.replyCadence = cadence.value as DevicePreferences['replyCadence'] })); replies.append(fieldBlock('Outgoing message grace', cadence), el('p', 'lp-copy', 'Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision.'))
   const ambient = el('select', 'lp-select'); for (const [value, label] of [['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.ambientMessaging === value; ambient.appendChild(option) }; ambient.addEventListener('change', () => commit((next) => { next.ambientMessaging = ambient.value as DevicePreferences['ambientMessaging'] })); replies.append(fieldBlock('Ambient messages', ambient))

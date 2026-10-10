@@ -179,6 +179,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     senderName: clean(value.senderName, 120) || (sender === 'persona' ? 'You' : sender === 'system' ? 'Pocket' : fallbackContact?.name || 'Unknown contact'),
     senderAccent: clean(value.senderAccent, 40) || (sender === 'contact' ? fallbackContact?.accent || stableContactAccent(senderContactId || 'unknown') : ''),
     text: messageText,
+    format: value.format === 'voice' ? 'voice' : undefined,
     createdAt: timestamp(value.createdAt, now),
     read,
     status,
