@@ -20,12 +20,12 @@ The extension identifier and storage namespace intentionally remain `lumiphone` 
 
 <img width="409" height="853" alt="image" src="https://github.com/user-attachments/assets/883405f1-5382-410a-9d5f-b16387102b52" />
 
-> Special Thanks to our contributors!
-- Lunch: Characters can send voice messages in direct and group conversations by returning format: "voice" with a spoken transcript. Pocket preserves the format through model actions, fallback tags, generated replies, queued group delivery, reloads, and inline presentation. Messages provide Play/Stop and an expandable transcript; playback starts only when requested.
-
 On desktop, the 58px draggable launcher opens a centered strict 9:18.4 phone in an opt-in transparent/chromeless host dock. Closing Pocket destroys that dock, and reopening creates a fresh one. `handsetScale` (`0.80`–`1.25`) controls only the physical desktop handset; pixel dimensions are derived again from the current viewport on every mount, open, resize, keyboard viewport change, and scale edit. `uiScale` (`0.70`–`1.30`) controls Pocket's primitive sizes and density on desktop and mobile. Narrow/mobile viewports always use the host's full available viewport and safe-area/visual-viewport handling rather than shrinking the surface. Use the visible top-left dismiss button or a deliberate up/left status-area gesture; the home indicator returns to Home first, then closes the phone.
 
 Each visible phone now has two explicit frontend identities. Its logical device key is derived from `chatId + characterId + deviceOwnerActorId`, so the Persona phone and every inspected NPC phone are distinct devices even inside the same roleplay. Each mounted controller also owns a unique `surfaceId`; all dynamic CSS is scoped to that surface rather than the generic `.lumiphone-shell`. Persona appearance overrides, Persona wallpapers, and Persona custom CSS apply only when the current device owner is the Pocket Persona. NPC inspection falls back to device-wide appearance and cannot inherit the active Persona skin.
+
+> Contributions!
+> - Lunch: Characters can send voice messages in direct and group conversations by returning format: "voice" with a spoken transcript. Pocket preserves the format through model actions, fallback tags, generated replies, queued group delivery, reloads, and inline presentation. Messages provide Play/Stop and an expandable transcript; playback starts only when requested.
 
 ## Model integration
 
