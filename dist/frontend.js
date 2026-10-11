@@ -6334,6 +6334,47 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notifications {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 0 12px;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 14px 26px;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback button {
+  color: #ded9ef;
+  background: #27232f;
+  border: 1px solid #51495f;
+  border-radius: 12px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step {
+  animation: pocket-phone-arrival .35s ease-out var(--pocket-step-delay, 0s) both;
+}
+@keyframes pocket-phone-arrival {
+  from { opacity: 0; visibility: hidden; transform: translateY(-8px); }
+  to { opacity: 1; visibility: visible; transform: translateY(0); }
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] .pocket-phone-step { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step { animation: none; }
+}
 `;
 
 // src/frontend/components/inline-styles.ts
@@ -6816,6 +6857,126 @@ function activityReceipt(ctx, activity, openRoute, options = {}) {
     return wrapper;
   }
   return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: false, includeReceipt: true });
+}
+
+// src/frontend/components/phone-sequence.ts
+function key(entry) {
+  const { activity, options, owner } = entry;
+  const kind = activity.presentation?.kind;
+  if (options.appearance !== "phone" || activity.kind !== "message" || activity.presentation?.call || !owner || !kind || !["received", "observed", "sent", "batch"].includes(kind) || activity.route.app !== "messages" || !activity.route.conversationId)
+    return "";
+  return JSON.stringify([
+    activity.scope,
+    activity.source?.messageId,
+    owner,
+    activity.route.conversationId,
+    kind === "received" || kind === "observed" ? kind : "chat"
+  ]);
+}
+function container(host) {
+  const parent = host.parentElement;
+  return parent?.tagName === "P" && [...parent.childNodes].every((node) => node === host || node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim()) ? parent : host;
+}
+function next(host, entries) {
+  let sibling = container(host).nextSibling;
+  while (sibling && (sibling.nodeType === 8 || sibling.nodeType === 3 && !sibling.textContent?.trim()))
+    sibling = sibling.nextSibling;
+  return sibling ? entries.get(sibling) : undefined;
+}
+function refreshPhoneSequences(entries, open) {
+  const byContainer = new Map(entries.map((entry) => [container(entry.host), entry]));
+  const followers = new Set;
+  for (const entry of entries) {
+    const following = next(entry.host, byContainer);
+    if (key(entry) && following && key(entry) === key(following))
+      followers.add(following);
+  }
+  for (const entry of entries) {
+    if (followers.has(entry))
+      continue;
+    const group = [entry];
+    let following = next(entry.host, byContainer);
+    while (key(entry) && following && key(entry) === key(following)) {
+      group.push(following);
+      following = next(following.host, byContainer);
+    }
+    const cache = JSON.stringify(group.map((item) => [item.activity, item.options, item.owner]));
+    entry.host.hidden = false;
+    if (entry.host.dataset.pocketSequence !== cache || !entry.host.childElementCount) {
+      if (entry.options.appearance === "phone") {
+        const phone = sequence(group, open);
+        if (phone) {
+          const stack = document.createElement("span");
+          stack.className = "pocket-artifact-stack";
+          stack.dataset.pocketUi = "true";
+          stack.append(phone);
+          entry.host.setAttribute("data-pocket-host", "true");
+          entry.host.replaceChildren(isolatedActivity(stack));
+        } else
+          renderActivityHost(entry.host, entry.activity, (route) => open(entry.activity, route), { ...entry.options, includeArtifact: true, includeReceipt: false });
+      } else
+        renderActivityHost(entry.host, entry.activity, (route) => open(entry.activity, route), { ...entry.options, includeArtifact: true, includeReceipt: false });
+      entry.host.dataset.pocketSequence = cache;
+    }
+    for (const item of group.slice(1)) {
+      item.host.hidden = true;
+      item.host.replaceChildren();
+      delete item.host.dataset.pocketSequence;
+    }
+  }
+}
+function sequence(group, open) {
+  const first = group[0];
+  const phone = buildPhoneScreen(first.activity, (route) => open(first.activity, route), first.options);
+  if (!phone || first.activity.presentation?.call)
+    return phone;
+  const lock = phone.dataset.screen === "lock";
+  const target = lock ? phone.querySelector(".pocket-phone-lock") : phone.querySelector(".pocket-phone-thread");
+  if (lock) {
+    const notifications = document.createElement("div");
+    notifications.className = "pocket-phone-notifications";
+    const notification = phone.querySelector(".pocket-phone-notification");
+    notification.replaceWith(notifications);
+    notifications.append(notification);
+  }
+  const destination = lock ? phone.querySelector(".pocket-phone-notifications") : target;
+  const selector = lock ? ".pocket-phone-notification" : ".pocket-phone-message";
+  for (const entry of group.slice(1)) {
+    const extra = buildPhoneScreen(entry.activity, (route) => open(entry.activity, route), entry.options);
+    for (const row of extra?.querySelectorAll(selector) || [])
+      destination.append(row);
+  }
+  const steps = [...phone.querySelectorAll(selector)];
+  if (!steps.length)
+    return phone;
+  const interval = Math.min(0.9, 12 / Math.max(steps.length - 1, 1));
+  for (const [index, step] of steps.entries()) {
+    step.classList.add("pocket-phone-step");
+    step.style.setProperty("--pocket-step-delay", `${index * interval}s`);
+  }
+  phone.dataset.playback = "playing";
+  phone.dataset.reducedMotion = String(Boolean(first.options.reducedMotion));
+  const controls = document.createElement("div");
+  controls.className = "pocket-phone-playback";
+  for (const label of ["Replay", "Show all"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.setAttribute("aria-label", `${label} phone messages`);
+    button.addEventListener("click", () => {
+      phone.dataset.playback = "complete";
+      if (label === "Replay") {
+        phone.offsetWidth;
+        phone.dataset.playback = "playing";
+      }
+    });
+    controls.append(button);
+  }
+  if (lock)
+    target.append(controls);
+  else
+    target.after(controls);
+  return phone;
 }
 
 // src/frontend/components/avatar-crop.ts
@@ -8702,6 +8863,7 @@ class PocketController {
     const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient;
     return {
       appearance: this.preferences.inlineAppearance || "cards",
+      reducedMotion: this.preferences.reducedMotion || this.preferences.animation === "none",
       clock: activityClock(activity, this.state),
       accent: appearance.colors.accent,
       background,
@@ -8859,6 +9021,7 @@ class PocketController {
   }
   mountInlineArtifacts() {
     const active = this.activeContext();
+    const entries = [];
     for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
       const activityId = host.dataset.pocketInlineAnchor || "";
       const activity = this.inlineActivity(activityId);
@@ -8867,18 +9030,15 @@ class PocketController {
           host.replaceChildren();
         host.hidden = true;
         delete host.dataset.pocketMounted;
+        delete host.dataset.pocketSequence;
         continue;
       }
       host.hidden = false;
       host.classList.add("pocket-inline-anchor");
       host.dataset.pocketActivityId = activity.id;
       const options = this.inlineOptions(activity);
-      const appearanceKey = JSON.stringify(options);
-      if (host.dataset.pocketMounted !== "true" || host.dataset.pocketAppearance !== appearanceKey) {
-        host.dataset.pocketMounted = "true";
-        host.dataset.pocketAppearance = appearanceKey;
-        renderActivityHost(host, activity, () => this.openActivity(activity), { ...options, includeArtifact: true, includeReceipt: false });
-      }
+      host.dataset.pocketMounted = "true";
+      entries.push({ host, activity, options, owner: this.state ? activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId()) || "" : "" });
       const fallback = this.injectedActivities.get(activity.id);
       if (fallback) {
         this.ctx.dom.uninject(fallback);
@@ -8886,6 +9046,7 @@ class PocketController {
       }
       this.pendingActivities.delete(activity.id);
     }
+    refreshPhoneSequences(entries, (activity, route) => this.openActivity({ ...activity, route }));
     this.refreshActivityConnectors();
   }
   refreshActivityConnectors() {
@@ -8925,11 +9086,12 @@ class PocketController {
       host.hidden = true;
       delete host.dataset.pocketMounted;
       delete host.dataset.pocketActivityId;
+      delete host.dataset.pocketSequence;
     }
   }
   tryRenderInlineArtifact(activity) {
     this.mountInlineArtifacts();
-    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === "true" && !host.hidden);
+    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === "true");
     if (!hosts.length)
       return false;
     const fallback = this.injectedActivities.get(activity.id);
