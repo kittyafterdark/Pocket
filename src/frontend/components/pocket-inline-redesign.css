@@ -961,3 +961,44 @@
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notifications {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 0 12px;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 14px 26px;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback button {
+  color: #ded9ef;
+  background: #27232f;
+  border: 1px solid #51495f;
+  border-radius: 12px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step {
+  animation: pocket-phone-arrival .35s ease-out var(--pocket-step-delay, 0s) both;
+}
+@keyframes pocket-phone-arrival {
+  from { opacity: 0; visibility: hidden; transform: translateY(-8px); }
+  to { opacity: 1; visibility: visible; transform: translateY(0); }
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] .pocket-phone-step { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step { animation: none; }
+}

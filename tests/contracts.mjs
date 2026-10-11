@@ -2532,6 +2532,19 @@ assert.equal(inlineOne(sentArtifactHost, '.pocket-phone-bubble').textContent, 'B
 assert.ok(inlineOne(sentArtifactHost, '.pocket-phone-composer-send svg'), 'mock composer should render a proper SVG send affordance')
 await exportVisual('phone-group', batchArtifactHost)
 await exportVisual('phone-lock', exactArtifactHost)
+const sequenceFollower = document.createElement('div')
+sequenceFollower.className = 'pocket-inline-anchor'; sequenceFollower.dataset.pocketInlineAnchor = 'sequence-reply'
+exactArtifactHost.after(sequenceFollower)
+const sequenceLeader = { ...inlineMessageActivity, route: { ...inlineMessageActivity.route, conversationId: inlineAppearanceState.state.conversations[0].id } }
+backendReceiver({ type: 'lumiphone:activity', activity: sequenceLeader })
+const sequenceReply = { ...sequenceLeader, id: 'sequence-reply', summary: 'And bring the tickets.' }
+backendReceiver({ type: 'lumiphone:activity', activity: sequenceReply })
+assert.equal(sequenceFollower.hidden, true, 'adjacent notifications should share one phone')
+assert.equal(inlineAll(exactArtifactHost, '.pocket-phone-notification').length, 2)
+assert.equal(inlineAll(messageBubble, '.pocket-connector-copy').filter(node => node.textContent.includes('bring the tickets')).length, 0, 'hidden sequence followers must never receive a duplicate fallback connector')
+sequenceFollower.remove()
+backendReceiver({ type: 'lumiphone:activity', activity: inlineMessageActivity })
+assert.equal(inlineAll(exactArtifactHost, '.pocket-phone-notification').length, 1)
 await exportVisual('phone-chat', sentArtifactHost)
 const callUiActivity = { ...inlineMessageActivity, id: 'call-ui', kind: 'call', presentation: { kind: 'received', senderName: 'Alice', recipientNames: ['Kai'], call: { callId: 'call-ui-id', status: 'ended', speakerphone: true, durationSeconds: 240 } } }
 const callUiAnchor = document.createElement('div'); callUiAnchor.dataset.pocketInlineAnchor = callUiActivity.id; messageBubble.prepend(callUiAnchor)

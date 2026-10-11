@@ -41,6 +41,12 @@ Open the message in Pocket and tap **Play voice message**, or expand **Voice mes
 
 Settings can disable new character voice messages and playback or choose a browser voice. Browser automatic selection follows the app language and assigns a consistent voice by character identity on the current device; available languages depend on the browser/OS. Choose a Lumiverse TTS connection when the needed language is not installed. Transcripts remain readable when speech is unsupported or fails, without silently switching a failed connection to a browser voice. Voice messages persist as transcripts and format markers, with no API keys, audio URLs, or generated audio files saved in Pocket. Browser voices may use the platform's speech service.
 
+### Animated phone inserts
+
+With **Settings → Appearance → Phone events in prose → Full phone**, phone inserts animate directly inside the roleplay chat. Adjacent message inserts from the same turn, conversation, and device share one phone; notifications or chat bubbles appear in sequence and remain readable. Story prose between inserts keeps them separate.
+
+Use **Replay** to watch the arrivals again or **Show all** to reveal every message immediately. Notifications still open their original Pocket message. Long notification stacks scroll inside the phone. Pocket's **Reduce motion** setting, disabled animations, and the device's reduced-motion preference show all messages without animation.
+
 With `tools` permission, Pocket registers `phone_action` with these actions:
 
 ```text
