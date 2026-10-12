@@ -44,7 +44,8 @@ import { weatherConditionKind, weatherGlyph, weatherOutlook } from './components
 import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
-import { activityReceipt, renderActivityHost, type ActivityRenderOptions } from './activity.js'
+import { activityReceipt, type ActivityRenderOptions } from './activity.js'
+import { refreshPhoneSequences, type PhoneSequenceEntry } from './components/phone-sequence.js'
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { cropAvatarPhoto } from './components/avatar-crop.js'
@@ -1591,7 +1592,7 @@ class PocketController {
     const wallpaper = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : this.preferences.chatWallpaper
     const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
     const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
-    return { appearance: this.preferences.inlineAppearance || 'cards', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
+    return { appearance: this.preferences.inlineAppearance || 'cards', reducedMotion: this.preferences.reducedMotion || this.preferences.animation === 'none', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
       backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
@@ -1731,6 +1732,7 @@ class PocketController {
 
   private mountInlineArtifacts(): void {
     const active = this.activeContext()
+    const entries: PhoneSequenceEntry[] = []
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
       const activityId = host.dataset.pocketInlineAnchor || ''
       const activity = this.inlineActivity(activityId)
@@ -1738,18 +1740,15 @@ class PocketController {
         if (host.dataset.pocketMounted === 'true') host.replaceChildren()
         host.hidden = true
         delete host.dataset.pocketMounted
+        delete host.dataset.pocketSequence
         continue
       }
       host.hidden = false
       host.classList.add('pocket-inline-anchor')
       host.dataset.pocketActivityId = activity.id
       const options = this.inlineOptions(activity)
-      const appearanceKey = JSON.stringify(options)
-      if (host.dataset.pocketMounted !== 'true' || host.dataset.pocketAppearance !== appearanceKey) {
-        host.dataset.pocketMounted = 'true'
-        host.dataset.pocketAppearance = appearanceKey
-        renderActivityHost(host, activity, () => this.openActivity(activity), { ...options, includeArtifact: true, includeReceipt: false })
-      }
+      host.dataset.pocketMounted = 'true'
+      entries.push({ host, activity, options, owner: this.state ? activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId()) || '' : '' })
       const fallback = this.injectedActivities.get(activity.id)
       if (fallback) {
         this.ctx.dom.uninject(fallback)
@@ -1757,6 +1756,7 @@ class PocketController {
       }
       this.pendingActivities.delete(activity.id)
     }
+    refreshPhoneSequences(entries, (activity, route) => this.openActivity({ ...activity, route }))
     this.refreshActivityConnectors()
   }
 
@@ -1793,12 +1793,14 @@ class PocketController {
       host.hidden = true
       delete host.dataset.pocketMounted
       delete host.dataset.pocketActivityId
+      delete host.dataset.pocketSequence
     }
   }
 
   private tryRenderInlineArtifact(activity: PocketActivity): boolean {
     this.mountInlineArtifacts()
-    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === 'true' && !host.hidden)
+    // A hidden follower is already represented inside its sequence's visible phone.
+    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === 'true')
     if (!hosts.length) return false
     const fallback = this.injectedActivities.get(activity.id)
     if (fallback) {

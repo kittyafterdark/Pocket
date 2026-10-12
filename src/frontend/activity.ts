@@ -18,6 +18,7 @@ export interface ActivityRenderOptions {
   avatars?: Record<string, string>
   textColor?: string
   surfaceColor?: string
+  reducedMotion?: boolean
 }
 
 function frameArtifact(artifact: HTMLElement, activity: PocketActivity, options: ActivityRenderOptions): HTMLElement {
