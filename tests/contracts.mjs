@@ -1760,7 +1760,7 @@ const frontendContext = {
     registerDrawerTab: () => drawerHandle,
     registerInputBarAction: () => inputHandle,
     createFloatWidget: options => { floatWidgetOptions.push(options); return widgetHandle },
-    requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
+    requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.edge, 'left'); assert.equal(options.respectRequestedEdge, true); assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
     showModal: (options) => {
       const record = { options, root: document.createElement('div'), dismissed: false }
       shownModals.push(record)

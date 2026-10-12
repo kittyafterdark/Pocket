@@ -557,11 +557,12 @@ class PocketController {
   private ensureDockPanel(): SpindleDockPanelHandle | null {
     if (this.dockPanel) return this.dockPanel
     try {
-      this.dockPanel = this.ctx.ui.requestDockPanel({
-        edge: 'right', title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
+      const dockOptions = {
+        edge: 'left' as const, title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292, maxSize: 620, resizable: false, startCollapsed: true,
-        chromeless: true, centerContent: true,
-      })
+        chromeless: true, centerContent: true, respectRequestedEdge: true,
+      }
+      this.dockPanel = this.ctx.ui.requestDockPanel(dockOptions)
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false

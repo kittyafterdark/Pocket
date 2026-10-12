@@ -7695,8 +7695,8 @@ class PocketController {
     if (this.dockPanel)
       return this.dockPanel;
     try {
-      this.dockPanel = this.ctx.ui.requestDockPanel({
-        edge: "right",
+      const dockOptions = {
+        edge: "left",
         title: "Pocket",
         size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292,
@@ -7704,8 +7704,10 @@ class PocketController {
         resizable: false,
         startCollapsed: true,
         chromeless: true,
-        centerContent: true
-      });
+        centerContent: true,
+        respectRequestedEdge: true
+      };
+      this.dockPanel = this.ctx.ui.requestDockPanel(dockOptions);
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false;
