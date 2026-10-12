@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { defaultPreferences, normalizePreferences, normalizeWallpaper } from '../src/domain/preferences.js'
+import { defaultPreferences, normalizeLauncherPosition, normalizePreferences, normalizeWallpaper } from '../src/domain/preferences.js'
 import { MODEL_CONTEXT_BUDGET, projectPhoneContext } from '../src/domain/projection.js'
-import { calculatePhoneSurface } from '../src/frontend/surface.js'
+import { calculatePhoneSurface, clampLauncherPosition, defaultLauncherPosition, resolveLauncherPosition } from '../src/frontend/surface.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, setTrackerClockPaused, trackerBand, uniqueTrackerKey, validateTrackerConfig } from '../src/domain/trackers.js'
 import { normalizePocketRoute } from '../src/domain/navigation.js'
 import { ensureDirectConversation, normalizeContactCollections } from '../src/domain/contacts.js'
@@ -182,6 +182,15 @@ describe('device preference schema', () => {
     const preferences = normalizePreferences({ version: 3, handsetScale: 1.2, uiScale: 0.7 })
     expect(preferences.handsetScale).toBe(1.2)
     expect(preferences.uiScale).toBe(0.7)
+  })
+
+  test('round-trips launcher position and rejects invalid values', () => {
+    expect(defaultPreferences().launcherPosition).toBeNull()
+    expect(normalizePreferences({ version: 5, launcherPosition: { x: 24, y: 120 } }).launcherPosition).toEqual({ x: 24, y: 120 })
+    expect(normalizePreferences({ version: 5, launcherPosition: { x: 'nope', y: 1 } }).launcherPosition).toBeNull()
+    expect(normalizePreferences({ version: 5, launcherPosition: null }).launcherPosition).toBeNull()
+    expect(normalizeLauncherPosition({ x: 10, y: 20 })).toEqual({ x: 10, y: 20 })
+    expect(normalizeLauncherPosition({ x: Number.NaN, y: 0 })).toBeNull()
   })
 
   test('migrates wallpaper URLs into stable typed references without storing blobs', () => {
@@ -480,6 +489,14 @@ describe('phone surface', () => {
     expect(short.width / short.height).toBeCloseTo(9 / 18.4, 2)
     expect(mobile.fullscreen).toBe(true)
     expect(calculatePhoneSurface(.7, { width: 390, height: 844 })).toEqual(calculatePhoneSurface(1.3, { width: 390, height: 844 }))
+  })
+
+  test('clamps and resolves launcher position with Pocket defaults', () => {
+    const viewport = { width: 400, height: 800 }
+    expect(clampLauncherPosition(-40, 9999, viewport)).toEqual({ x: 12, y: 730 })
+    expect(resolveLauncherPosition(null, viewport)).toEqual(clampLauncherPosition(defaultLauncherPosition(viewport).x, defaultLauncherPosition(viewport).y, viewport))
+    expect(resolveLauncherPosition({ x: 200, y: 300 }, viewport)).toEqual({ x: 200, y: 300 })
+    expect(resolveLauncherPosition({ x: 10_000, y: -5 }, viewport)).toEqual({ x: 330, y: 12 })
   })
 })
 

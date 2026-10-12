@@ -221,6 +221,8 @@ export interface DevicePreferences {
   handsetScale: number
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
   uiScale: number
+  /** Launcher float origin in CSS pixels; null means use default placement. */
+  launcherPosition: { x: number; y: number } | null
   animation: OpenAnimation
   animationDurationMs: number
   reducedMotion: boolean
