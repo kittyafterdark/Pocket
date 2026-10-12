@@ -1,4 +1,9 @@
+import { POCKET_ICONS as ICONS } from './components/icons.js'
 import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
+import { MochiView } from '../mochi/view.js'
+import { PocketPortal } from './components/portal.js'
+import { showMochiNotification, reconcileMochiNotifications } from '../mochi/notifications.js'
+import type { MochiNotification } from '../mochi/types.js'
 import { VoiceMessagePlayer } from './components/voice-message.js'
 import type {
   CalendarEvent,
@@ -66,6 +71,8 @@ type BackendPayload = Record<string, any>
 
 const PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>'
 
+const POCKET_PERMISSIONS = ['ui_panels', 'chats', 'chat_mutation', 'characters', 'personas', 'generation', 'tools', 'interceptor', 'images', 'image_gen', 'push_notification'] as const
+
 const EMPTY_RESOLVED_IMAGE: PocketResolvedImage = { url: '', status: 'empty', sourceKind: 'none', sourceLabel: 'Theme gradient' }
 
 function pocketDeviceKey(chatId: string, characterId: string, deviceOwnerActorId: string): string {
@@ -76,24 +83,6 @@ function pocketSurfaceId(): string {
   return requestId('pocket_surface').replace(/[^a-zA-Z0-9_-]/g, '_')
 }
 
-const ICONS: Record<string, string> = {
-  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
-  messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
-  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>',
-  camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h3l1.5-2h7l1.5 2h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
-  gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m4.5 18 4.7-4.7 3.1 3.1 2.2-2.2 5 5"/></svg>',
-  notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg>',
-  weather: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18.5h9a4 4 0 0 0 .4-8A6 6 0 0 0 6 12.5a3 3 0 0 0 2 6Z"/><path d="M8 5V3M4.5 7 3 5.5M11.5 7 13 5.5"/></svg>',
-  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg>',
-  trackers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2.8 2.8-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.6v.2H10V21a1.8 1.8 0 0 0-1.1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1L4 17.1l.1-.1a1.8 1.8 0 0 0 .4-2A1.8 1.8 0 0 0 3 13.9h-.2V10H3a1.8 1.8 0 0 0 1.6-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1L6.9 4l.1.1a1.8 1.8 0 0 0 2 .4A1.8 1.8 0 0 0 10 3V2.8h4V3a1.8 1.8 0 0 0 1.1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1L20 6.9l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1.1h.2V14h-.2a1.8 1.8 0 0 0-1.7 1Z"/></svg>',
-  notifications: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
-  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
-  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.2 18-3.2-7.6L3 10zM10.6 13.4 21 3"/></svg>',
-  sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5c.5 4.2 2.8 6.5 7 7-4.2.5-6.5 2.8-7 7-.5-4.2-2.8-6.5-7-7 4.2-.5 6.5-2.8 7-7Z"/><path d="M19 16.5c.2 2 1.3 3.1 3 3.3-1.7.2-2.8 1.3-3 3.2-.2-1.9-1.3-3-3-3.2 1.7-.2 2.8-1.3 3-3.3Z"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>',
-}
 
 const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boolean }> = [
   { app: 'messages', label: 'Messages', icon: 'messages', dock: true },
@@ -140,6 +129,11 @@ class PocketController {
   private clock: HTMLSpanElement
   private expanded = false
   private currentApp: PhoneApp = 'home'
+  private portal?: PocketPortal
+  private mochiStarted = false
+  private dismissMochiNotification: (() => void) | undefined
+  private mochi = new MochiView(payload => this.ctx.sendToBackend(payload), () => { this.portal?.refresh(true); if (this.currentApp === 'mochi') this.render(false) }, roomId => { if (roomId) this.openPocket({ app: 'mochi', roomId }); else this.openMochiPortal() },
+    () => ({ enabled: this.preferences.notifyMessages, previews: this.preferences.notificationPreviews, visible: this.expanded && this.currentApp === 'mochi' && !document.hidden }), n => this.showMochiNotification(n), (notices, rooms) => reconcileMochiNotifications(this.shell, notices, rooms))
   private state: PhoneState | null = null
   private preferences: DevicePreferences = defaultPreferences()
   private settingsDraft: DevicePreferences | null = null
@@ -276,6 +270,7 @@ class PocketController {
     this.launcher.appendChild(this.launcherBadge)
     this.handsetHost = el('div', 'lumiphone-widget-root lumiphone-handset-host')
     this.shell = el('div', 'lumiphone-shell')
+    this.shell.dataset.pocketUiRevision = 'portal-2'
     this.shell.hidden = true
     const status = el('div', 'lumiphone-statusbar')
     const dismiss = iconButton('back', 'Dismiss phone')
@@ -330,6 +325,8 @@ class PocketController {
   }
 
   destroy(): void {
+    this.dismissMochiNotification?.()
+    this.mochi.destroy()
     this.voicePlayer.stop()
     this.setupModalDismiss?.()
     this.destroyed = true
@@ -496,7 +493,20 @@ class PocketController {
   }
 
   private renderDrawerLanding(): void {
-    this.drawer.root.replaceChildren()
+    if (!this.portal) this.portal = new PocketPortal(() => this.renderPhoneChoices(), () => this.mochi.render('choices'), () => {
+      if (!this.mochiStarted) { this.mochiStarted = true; this.mochi.open() }
+    }, {back:(exit,anchor)=>this.mochi.back(exit,anchor),home:(exit,anchor)=>this.mochi.exitPortal(exit,anchor)})
+    if (!this.drawer.root.contains(this.portal.root)) this.drawer.root.replaceChildren(this.portal.root)
+    this.portal.refresh()
+  }
+
+  private openMochiPortal(): void {
+    this.renderDrawerLanding()
+    this.drawer.activate()
+    this.portal!.show('mochi')
+  }
+
+  private renderPhoneChoices(): HTMLElement {
     const outer = el('div', 'lumiphone-drawer lumiphone-device-drawer')
     const card = el('div', 'lumiphone-device-switcher')
     const logo = el('div', 'lumiphone-device-mark')
@@ -519,6 +529,7 @@ class PocketController {
           this.selectedConversationId = ''
           this.selectedMessageId = ''
           this.currentApp = 'home'
+          this.mochi.leave()
           this.router.reset({ app: 'home' })
           this.updateBadge()
           this.renderDrawerLanding()
@@ -533,8 +544,23 @@ class PocketController {
     }
 
     const actions = el('div', 'lumiphone-device-footer')
-    const permission = button('Manage access', 'lumiphone-device-access')
-    permission.addEventListener('click', () => this.requestPermissions())
+    const permission = button('Permissions', 'lumiphone-device-access')
+    permission.title = 'Request permissions for Pocket features'
+    const updatePermissionState = async () => {
+      try {
+        const granted = await this.ctx.permissions.getGranted()
+        if (this.destroyed) return
+        const complete = POCKET_PERMISSIONS.every(scope => granted.includes(scope))
+        permission.textContent = complete ? 'Permissions granted' : 'Permissions'
+        permission.disabled = complete
+        permission.title = complete ? 'All requested permissions are enabled' : 'Request permissions for Pocket features'
+      } catch { /* Keep the request available when permission status is unavailable. */ }
+    }
+    void updatePermissionState()
+    permission.addEventListener('click', async () => {
+      await this.requestPermissions()
+      await updatePermissionState()
+    })
     actions.append(permission)
     const restore = button('Show launcher', 'lumiphone-device-access')
     restore.addEventListener('click', async () => {
@@ -550,17 +576,18 @@ class PocketController {
     }
     card.appendChild(actions)
     outer.appendChild(card)
-    this.drawer.root.appendChild(outer)
+    return outer
   }
 
   private ensureDockPanel(): SpindleDockPanelHandle | null {
     if (this.dockPanel) return this.dockPanel
     try {
-      this.dockPanel = this.ctx.ui.requestDockPanel({
-        edge: 'right', title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
+      const dockOptions = {
+        edge: 'left' as const, title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292, maxSize: 620, resizable: false, startCollapsed: true,
-        chromeless: true, centerContent: true,
-      })
+        chromeless: true, centerContent: true, respectRequestedEdge: true,
+      }
+      this.dockPanel = this.ctx.ui.requestDockPanel(dockOptions)
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false
@@ -658,9 +685,7 @@ class PocketController {
 
   private async requestPermissions(): Promise<void> {
     try {
-      await this.ctx.permissions.request([
-        'ui_panels', 'chats', 'chat_mutation', 'characters', 'personas', 'generation', 'tools', 'interceptor', 'images', 'image_gen', 'push_notification',
-      ], { reason: 'Pocket uses these permissions for its launcher and handset, per-chat character state, generated text messages, user-requested scene contact sync, model actions, gallery, camera, and optional push notifications.' })
+      await this.ctx.permissions.request([...POCKET_PERMISSIONS], { reason: 'Pocket uses these permissions for its launcher and handset, per-chat character state, generated text messages, user-requested scene contact sync, model actions, gallery, camera, and optional push notifications.' })
       await this.ensureWidget()
       this.refresh()
     } catch (error) {
@@ -772,7 +797,8 @@ class PocketController {
   }
 
   private announceView(): void {
-    this.send('lumiphone:view_state', { open: this.expanded, route: this.router.current })
+    // The shared handset is not evidence of a narrative phone interaction.
+    this.send('lumiphone:view_state', { open: this.expanded && this.currentApp !== 'mochi', route: this.currentApp === 'mochi' ? { app: 'home' } : this.router.current })
   }
 
   /**
@@ -962,6 +988,7 @@ class PocketController {
   }
 
   private onBackend(payload: BackendPayload): void {
+    if (this.mochi.receive(payload)) return
     if (!payload || typeof payload !== 'object' || typeof payload.type !== 'string') return
     if (payload.type === 'lumiphone:state' && payload.state) {
       const active = this.ctx.getActiveChat()
@@ -990,7 +1017,9 @@ class PocketController {
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true
-      this.preferences = normalizePreferences(payload.preferences || this.preferences)
+      const nextPreferences = normalizePreferences(payload.preferences || this.preferences)
+      if (nextPreferences.notifyMessages !== this.preferences.notifyMessages || nextPreferences.notificationPreviews !== this.preferences.notificationPreviews) this.dismissMochiNotification?.()
+      this.preferences = nextPreferences
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
       if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences') this.settingsDraft = structuredClone(this.preferences)
       this.caps = payload.capabilities || this.caps
@@ -1449,6 +1478,7 @@ class PocketController {
     const normalized = normalizePreferences(next)
     if (this.settingsDraft) Object.assign(this.settingsDraft, structuredClone(normalized))
     else this.settingsDraft = structuredClone(normalized)
+    if (normalized.notifyMessages !== this.preferences.notifyMessages || normalized.notificationPreviews !== this.preferences.notificationPreviews) this.dismissMochiNotification?.()
     this.preferences = normalized
     applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrollMode)
     this.applyAppearance()
@@ -1460,6 +1490,13 @@ class PocketController {
     this.settingsSaveTimer = window.setTimeout(() => {
       this.send('lumiphone:save_preferences', { preferences: this.settingsDraft || this.preferences })
     }, 240)
+  }
+
+  private showMochiNotification(notification: MochiNotification): void {
+    if (!this.preferences.notifyMessages || !this.expanded || document.hidden) return
+    if (this.shell.querySelector('.lp-floating-notification:not(.mochi-notification-toast)')) return
+    this.dismissMochiNotification?.()
+    this.dismissMochiNotification = showMochiNotification(this.shell, notification, this.preferences.notificationPreviews, () => this.mochi.openRoom(notification.roomId))
   }
 
   private showIncomingNotification(notification: PhoneNotification): void {
@@ -1543,7 +1580,7 @@ class PocketController {
     this.shell.hidden = false
     this.resizeExpanded()
     this.render(true)
-    this.refresh()
+    if (this.currentApp !== 'mochi') this.refresh()
     this.announceView()
     requestAnimationFrame(() => {
       this.shell.tabIndex = -1
@@ -1552,6 +1589,8 @@ class PocketController {
   }
 
   private close(): void {
+    this.dismissMochiNotification?.()
+    this.mochi.leave()
     this.voicePlayer.stop()
     if (!this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
@@ -1624,15 +1663,29 @@ class PocketController {
   private openPocket(routeInput: PocketRoute, pushHistory = true): void {
     const normalized = normalizePocketRoute(routeInput)
     const route = this.router.navigate(normalized, !pushHistory)
-    if (!this.state) {
+    if (this.currentApp === 'mochi' && route.app !== 'mochi') this.mochi.leave()
+    if (!this.state && route.app !== 'mochi') {
       this.pendingRoute = route
       this.open()
       this.refresh()
       return
     }
-    if (!this.expanded) this.open()
+    if (route.app === 'mochi') {
+      this.currentApp = 'mochi'
+      if (!this.expanded) this.open()
+    } else if (!this.expanded) this.open()
     if (this.currentApp === 'settings' && route.app !== 'settings') this.settingsDraft = null
     this.currentApp = route.app
+    if (route.app === 'mochi') {
+      if (!this.mochiStarted || !route.roomId) { this.openMochiPortal(); return }
+      this.mochi.select(route.roomId)
+      this.render(true)
+      const viewport = currentViewport()
+      if (this.mobileWidget && (viewport.width <= 720 || viewport.height <= 540)) this.ctx.sendToBackend({ type: 'mochi:open_shell' })
+      this.announceView()
+      return
+    }
+    if (!this.state) return
     if (route.app === 'messages') {
       const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state)
       const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId && conversationVisibleOnDevice(this.state!, entry, owner)) : null)
@@ -1852,12 +1905,13 @@ class PocketController {
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : ''
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
     for (const cleanup of this.viewCleanups.splice(0)) cleanup()
-    if (!this.state) {
+    if (!this.state && this.currentApp !== 'mochi') {
       this.screen.replaceChildren(this.loadingView())
       return
     }
     this.applyAppearance()
-    const view = this.currentApp === 'home' ? this.renderHome()
+    const view = this.currentApp === 'mochi' ? this.mochi.render('chat', () => this.openMochiPortal())
+      : this.currentApp === 'home' ? this.renderHome()
       : this.currentApp === 'messages' ? this.renderMessages()
       : this.currentApp === 'contacts' ? this.renderContacts()
       : this.currentApp === 'gallery' ? this.renderGallery()
@@ -1869,7 +1923,7 @@ class PocketController {
       : this.currentApp === 'notifications' ? this.renderNotifications()
       : this.renderSettings()
     view.classList.add('lumiphone-app-view')
-    if (this.currentApp === 'contacts' && ['config', 'new', 'draft'].includes(this.selectedContactView)) {
+    if (this.state && this.currentApp === 'contacts' && ['config', 'new', 'draft'].includes(this.selectedContactView)) {
       const key = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactId}:${this.selectedContactView}`
       const fields = [...view.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')]
       const draft = this.contactFormDrafts.get(key)

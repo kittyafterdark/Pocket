@@ -1747,6 +1747,8 @@ let dockRequestCount = 0
 let dockDestroyCount = 0
 const injected = []
 let uploadFiles = []
+let frontendGrantedPermissions = [...manifest.permissions]
+let frontendPermissionRequests = 0
 const frontendContext = {
   uploads: { pickFile: async () => uploadFiles },
   components: { mountModelCombobox: (target, options) => { assert.equal(target.isConnected, true, 'host model controls must mount only on connected targets'); target.dataset.modelPickerMounted = 'true'; if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
@@ -1760,7 +1762,7 @@ const frontendContext = {
     registerDrawerTab: () => drawerHandle,
     registerInputBarAction: () => inputHandle,
     createFloatWidget: options => { floatWidgetOptions.push(options); return widgetHandle },
-    requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
+    requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.edge, 'left', 'Pocket desktop handset opens on the left'); assert.equal(options.respectRequestedEdge, true, 'Global extension side preference must not override the handset edge'); assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
     showModal: (options) => {
       const record = { options, root: document.createElement('div'), dismissed: false }
       shownModals.push(record)
@@ -1769,7 +1771,7 @@ const frontendContext = {
   },
   messages: { getLatestMessageId: () => 'host-message-a', registerTagInterceptor: (options, handler) => { tagReceivers.set(options.tagName, handler); return () => { if (tagReceivers.get(options.tagName) === handler) tagReceivers.delete(options.tagName) } } },
   events: { on: () => () => {} },
-  permissions: { getGranted: async () => manifest.permissions, request: async () => manifest.permissions },
+  permissions: { getGranted: async () => frontendGrantedPermissions, request: async () => { frontendPermissionRequests++; frontendGrantedPermissions = [...manifest.permissions]; return frontendGrantedPermissions } },
   getActiveChat: () => ({ chatId: 'chat-a', characterId: 'char-a' }),
   sendToBackend: (payload) => frontendSends.push(payload),
   onBackendMessage: (handler) => { backendReceiver = handler; return () => {} },
@@ -1829,6 +1831,27 @@ assert.match(identityStyle.textContent, /device-css-marker/)
 assert.match(identityStyle.textContent, /persona-css-marker/)
 assert.doesNotMatch(identityStyle.textContent, /@scope \(\.lumiphone-shell\)/, 'dynamic CSS must never scope against every Pocket shell in the document')
 
+assert.ok(drawerRoot.querySelector('[aria-label="Open Mochi"]'), 'portal exposes independent chat destination')
+assert.equal(drawerRoot.querySelector('.mochi-view'), null, 'portal does not start Mochi before entry')
+drawerRoot.querySelector('[aria-label="Connect to your phone"]').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const grantedPermissionButton = drawerRoot.querySelector('.lumiphone-device-access')
+assert.equal(grantedPermissionButton.textContent, 'Permissions granted')
+assert.equal(grantedPermissionButton.disabled, true)
+grantedPermissionButton.click()
+assert.equal(frontendPermissionRequests, 0, 'All-granted state must not launch a no-op request')
+frontendGrantedPermissions = manifest.permissions.filter(scope => scope !== 'images')
+drawerRoot.querySelector('.pocket-portal-home').click()
+drawerRoot.querySelector('[aria-label="Connect to your phone"]').click()
+await new Promise(resolve => setTimeout(resolve, 0))
+const missingPermissionButton = drawerRoot.querySelector('.lumiphone-device-access')
+assert.equal(missingPermissionButton.textContent, 'Permissions')
+assert.equal(missingPermissionButton.disabled, false)
+missingPermissionButton.click()
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.equal(frontendPermissionRequests, 1)
+assert.equal(missingPermissionButton.textContent, 'Permissions granted')
+assert.equal(missingPermissionButton.disabled, true)
 const npcDeviceRow = [...drawerRoot.querySelectorAll('.lumiphone-device-row')].find((node) => node.textContent.includes('Alice') && !node.textContent.includes('Roleplay Persona'))
 assert.ok(npcDeviceRow, 'device selector must expose a non-Persona phone for isolation QA')
 assert.ok(drawerRoot.querySelector('[data-section="persona"] .lumiphone-device-rp'), 'your phone must have a dedicated section')
@@ -1892,6 +1915,86 @@ assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'))
 const handsetHost = dockRoot.querySelector('.lumiphone-handset-host')
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 18.4)) < 0.01, 'desktop phone bounds are not 9:18.4')
 assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
+assert.equal(dockRoot.querySelector('.lp-app-icon[aria-label="Mochi"]'), null, 'Mochi never gets a phone app icon')
+assert.ok(dockRoot.querySelector('.lp-app-icon[aria-label="Messages"]'), 'original Messages stays registered')
+const mochiStorage = spindle.userStorage, mochiActive = spindle.chats.getActive
+const mochiPersonasList = spindle.personas.list
+const mochiFiles = new Map()
+const beforeMochiPhones = structuredClone([...storage.entries()])
+try {
+  spindle.personas.list = async () => ({ data: [] })
+  spindle.userStorage = {
+    exists: async (path, user) => mochiFiles.has(user + ':' + path),
+    getJson: async (path, options) => structuredClone(mochiFiles.get(options.userId + ':' + path) ?? options.fallback),
+    setJson: async (path, value, options) => { mochiFiles.set(options.userId + ':' + path, structuredClone(value)) },
+    move: async (from, to, user) => { mochiFiles.set(user + ':' + to, mochiFiles.get(user + ':' + from)); mochiFiles.delete(user + ':' + from) },
+    list: async (prefix, user) => [...mochiFiles.keys()].filter(path => path.startsWith(user + ':' + prefix)).map(path => path.slice((user + ':' + prefix).length)),
+  }
+  spindle.chats.getActive = async () => { throw new Error('Mochi must not resolve native RP context') }
+  const closedDrawers = []; const originalUI = spindle.ui
+  spindle.ui = { closeDrawer: async options => { closedDrawers.push(options) } }
+  try {
+    await frontendHandler({ type: 'mochi:open_shell', userId: 'forged-user' })
+    assert.deepEqual(closedDrawers, [], 'Unauthenticated handoff is ignored')
+    await frontendHandler({ type: 'mochi:open_shell', userId: 'forged-user' }, 'user-a')
+    assert.deepEqual(closedDrawers, [{ userId: 'user-a' }], 'Mobile handoff targets the authenticated user without reading RP state')
+  } finally { spindle.ui = originalUI }
+  drawerRoot.querySelector('.pocket-portal-home').click()
+  drawerRoot.querySelector('[aria-label="Open Mochi"]').click()
+  const request = frontendSends.at(-1)
+  assert.equal(request.type, 'mochi:accounts')
+  assert.equal(request.chatId, undefined, 'Mochi transport does not attach active RP context')
+  await frontendHandler(request, 'user-a')
+  backendReceiver(frontendMessages.at(-1))
+  assert.match(drawerRoot.querySelector('.mochi-view').textContent, /Choose your Mochi account/)
+  ;[...drawerRoot.querySelectorAll('.mochi-view button')].find(node => node.textContent === 'Unassigned legacy chats').click()
+  assert.equal(frontendSends.at(-1).type,'mochi:list')
+  await frontendHandler(frontendSends.at(-1),'user-a')
+  backendReceiver(frontendMessages.at(-1))
+  assert.match(drawerRoot.querySelector('.mochi-view').textContent, /No rooms yet/)
+  ;[...drawerRoot.querySelectorAll('.mochi-view button')].find(node => node.textContent === 'New room').click()
+  const form = drawerRoot.querySelector('.mochi-view form')
+  const fields = form.querySelectorAll('input')
+  fields[0].value = 'Independent room'; fields[0].dispatchEvent(new dom.window.Event('input'))
+  fields[1].value = 'Stable room persona'; fields[1].dispatchEvent(new dom.window.Event('input'))
+  form.querySelector('.mochi-choice').click()
+  form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await frontendHandler(frontendSends.at(-1), 'user-a')
+  const response = frontendMessages.at(-1)
+  assert.equal(response.type, 'mochi:state')
+  backendReceiver(response)
+  assert.equal(drawerRoot.querySelector('textarea[aria-label="Message"]'), null, 'sidebar contains choices, never the conversation composer')
+  assert.equal(dockRoot.querySelector('.mochi-mascot'), null, 'mascot is removed')
+  assert.match(dockRoot.querySelector('.mochi-view textarea[aria-label="Message"]').getAttribute('aria-description'), /Stable room persona/)
+  backendReceiver({ ...firstState, reason: 'chat_switched' })
+  backendReceiver({ ...firstState, reason: 'persona_changed' })
+  assert.match(dockRoot.querySelector('.mochi-view textarea[aria-label="Message"]').getAttribute('aria-description'), /Stable room persona/, 'RP refresh must retain the independent view and snapshot')
+  assert.ok(dockRoot.querySelector('.mochi-view textarea[aria-label="Message"]'), 'Mochi has an independent message composer')
+  dockRoot.querySelector('.lumiphone-homebar button').click()
+  Object.defineProperty(dom.window.document, 'hidden', { configurable: true, value: false })
+  backendReceiver({ ...firstState, preferences: { ...firstState.preferences, notifyMessages: true, notificationPreviews: false } })
+  const notice = { id: 'synthetic_notice', messageId: 'synthetic_notice', roomId: response.selectedRoomId, roomTitle: 'Independent room', title: 'Actual character', body: 'Hidden private preview', avatarUrl: '', createdAt: new Date().toISOString(), read: false }
+  backendReceiver({ type: 'mochi:notification', notification: notice })
+  backendReceiver({ type: 'mochi:notification', notification: notice })
+  const toast = dockRoot.querySelector('.mochi-notification-toast')
+  assert.ok(toast, 'Mochi can notify while Pocket home is visible')
+  assert.match(toast.textContent, /Actual character/)
+  assert.doesNotMatch(toast.textContent, /Hidden private preview/)
+  assert.equal(dockRoot.querySelectorAll('.mochi-notification-toast').length, 1, 'Notification events deduplicate')
+  toast.click()
+  assert.ok(dockRoot.querySelector('.mochi-view textarea[aria-label="Message"]'), 'Mochi notification opens its independent room')
+  assert.equal(dockRoot.querySelector('select[aria-label="Select room"]').value, response.selectedRoomId)
+  assert.equal(frontendSends.at(-1).type, 'mochi:list', 'Notification route refreshes Mochi without native RP requests')
+  await frontendHandler(frontendSends.at(-1), 'user-a')
+  backendReceiver(frontendMessages.at(-1))
+  assert.deepEqual([...storage.entries()], beforeMochiPhones, 'Mochi must not write existing phones or preferences')
+} finally {
+  spindle.userStorage = mochiStorage; spindle.chats.getActive = mochiActive
+  spindle.personas.list = mochiPersonasList
+  delete dom.window.document.hidden
+  backendReceiver(firstState)
+  dockRoot.querySelector('.lumiphone-homebar button').click()
+}
 await exportVisual('home', dockRoot)
 for (const [name, width, scale] of [['min', 288, .7], ['max', 443, 1.3]]) {
   const scaledHome = dockRoot.cloneNode(true)

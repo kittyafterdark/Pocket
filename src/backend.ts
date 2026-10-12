@@ -1,4 +1,6 @@
 import { GALLERY_PAGE_SIZE, galleryOffset } from './domain/gallery-page.js'
+import { MochiService } from './mochi/service.js'
+import { MochiScheduler } from './mochi/scheduler.js'
 import { voiceMessage } from './domain/voice.js'
 import type {
   CalendarEvent,
@@ -58,6 +60,7 @@ import { ArrivalIdle } from './backend/arrival-idle.js'
 import { applyTimelineReview, normalizeWeatherOutlook } from './domain/app-review.js'
 import { snapshotActivityClock } from './domain/activity-clock.js'
 import { AppReviews } from './backend/app-reviews.js'
+import { storedPhoneKey } from './mochi/phone-selection.js'
 import { IDENTITY_PROFILES_PATH, normalizeIdentityProfiles, saveIdentityProfile, applyIdentityProfile } from './domain/identity-profiles.js'
 import { assemblePocketContext } from './backend/roleplay-context.js'
 import { narrativeExcerpt, sanitizeNarrativeContent, stripPocketPresentationMarkup } from './backend/narrative-content.js'
@@ -71,6 +74,10 @@ import { normalizeContactGroups, saveContactGroup } from './domain/contact-group
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
 
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
+const mochi = new MochiService(spindle)
+mochi.resolvePhone = async(user,phone)=>storedPhoneKey(phone,await spindle.userStorage.getJson(statePath(phone.chatId,phone.characterId),{userId:user,fallback:null}))
+const mochiScheduler = new MochiScheduler(spindle, mochi, Date.now, message => spindle.log.warn(message))
+mochiScheduler.start()
 
 type AnyRecord = Record<string, unknown>
 function stringArray(value: unknown, limit: number, maxLength: number): string[] {
@@ -4752,6 +4759,22 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
 }
 
 async function handleFrontend(payload: unknown, userId?: string): Promise<void> {
+  if (isRecord(payload) && typeof payload.type === 'string' && payload.type.startsWith('mochi:')) {
+    if (payload.type === 'mochi:open_shell') {
+      if (userId) await spindle.ui.closeDrawer({ userId })
+      return
+    }
+    if (['mochi:background_account', 'mochi:background_room', 'mochi:schedule', 'mochi:schedule_cancel', 'mochi:presence', 'mochi:idle'].includes(payload.type)) {
+      if (!userId) return
+      try {
+        await mochiScheduler.handle(payload, userId)
+        spindle.sendToFrontend({ type: 'mochi:state', requestId: payload.requestId, state: await mochi.state(userId, payload.accountId) }, userId)
+      } catch { spindle.sendToFrontend({ type: 'mochi:error', requestId: payload.requestId, message: 'Unable to update background messaging. Check account opt-in, room sources, due time and storage.' }, userId) }
+      return
+    }
+    await mochi.handle(payload, userId)
+    return
+  }
   if (!isRecord(payload) || !text(payload.type, 120).startsWith('lumiphone:')) return
   const requestId = text(payload.requestId, 180)
   try {

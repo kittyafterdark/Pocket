@@ -1,5 +1,2213 @@
+// src/frontend/components/icons.ts
+var POCKET_ICONS = {
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
+  messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
+  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>',
+  camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h3l1.5-2h7l1.5 2h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m4.5 18 4.7-4.7 3.1 3.1 2.2-2.2 5 5"/></svg>',
+  notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg>',
+  weather: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18.5h9a4 4 0 0 0 .4-8A6 6 0 0 0 6 12.5a3 3 0 0 0 2 6Z"/><path d="M8 5V3M4.5 7 3 5.5M11.5 7 13 5.5"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg>',
+  trackers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2.8 2.8-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.6v.2H10V21a1.8 1.8 0 0 0-1.1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1L4 17.1l.1-.1a1.8 1.8 0 0 0 .4-2A1.8 1.8 0 0 0 3 13.9h-.2V10H3a1.8 1.8 0 0 0 1.6-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1L6.9 4l.1.1a1.8 1.8 0 0 0 2 .4A1.8 1.8 0 0 0 10 3V2.8h4V3a1.8 1.8 0 0 0 1.1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1L20 6.9l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1.1h.2V14h-.2a1.8 1.8 0 0 0-1.7 1Z"/></svg>',
+  notifications: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.2 18-3.2-7.6L3 10zM10.6 13.4 21 3"/></svg>',
+  sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5c.5 4.2 2.8 6.5 7 7-4.2.5-6.5 2.8-7 7-.5-4.2-2.8-6.5-7-7 4.2-.5 6.5-2.8 7-7Z"/><path d="M19 16.5c.2 2 1.3 3.1 3 3.3-1.7.2-2.8 1.3-3 3.2-.2-1.9-1.3-3-3-3.2 1.7-.2 2.8-1.3 3-3.3Z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>'
+};
+
 // src/domain/gallery-page.ts
 var GALLERY_PAGE_SIZE = 48;
+
+// src/frontend/shared.ts
+function el(tag, className = "", content = "") {
+  const node = document.createElement(tag);
+  if (className)
+    node.className = className;
+  if (content)
+    node.textContent = content;
+  return node;
+}
+function button(label, className = "lp-button") {
+  const node = el("button", className, label);
+  node.type = "button";
+  return node;
+}
+function formatTime(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return "";
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+function formatDate(value, detail = false) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return String(value || "");
+  return new Intl.DateTimeFormat(undefined, detail ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" }).format(date);
+}
+function dateTimeLocal(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+function inputValue(input) {
+  return input.value.trim();
+}
+function requestId(prefix = "req") {
+  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
+}
+
+// src/mochi/styles.ts
+var MOCHI_STYLES = `
+.mochi-presence-dot[data-status=away],.mochi-room-meta[data-status=away]::before{background:#e7b95e}.mochi-presence-dot[data-status=dnd],.mochi-room-meta[data-status=dnd]::before{background:#d77991}.mochi-presence-dot[data-status=offline],.mochi-room-meta[data-status=offline]::before{background:#85818d}
+.mochi-message-meta{display:flex;gap:8px;align-items:center;max-width:100%;min-height:44px}.mochi-message[data-grouped=true]{margin-top:-8px}.mochi-view .mochi-room-header{grid-template-columns:minmax(0,1fr) 96px}
+.mochi-standalone{font-size:10px;font-weight:600;border:1px solid color-mix(in srgb,var(--mochi-accent) 45%,transparent);border-radius:99px;padding:4px 8px;color:var(--mochi-accent);letter-spacing:0}.mochi-view .mochi-room-selector{font-weight:650;border-radius:99px;color:inherit;background:color-mix(in srgb,var(--mochi-accent) 7%,var(--mochi-surface));padding:9px 10px;font-size:14px}.mochi-brand{gap:6px!important}.mochi-view .mochi-message-actions{width:44px;height:44px;min-height:44px;margin-top:-3px;background:transparent;border-color:transparent}.mochi-action-panel,.mochi-participants,.mochi-notification-list{display:grid;gap:12px}.mochi-action-panel :is(button,textarea){width:100%}.mochi-action-panel textarea{min-height:110px;border:1px solid var(--lp-border);border-radius:12px;padding:12px;background:var(--lp-bg);color:var(--lp-text);font:inherit;resize:vertical}.mochi-action-panel .lp-button{display:flex;align-items:center;gap:10px;justify-content:center;min-height:44px}.mochi-action-panel svg{width:20px;height:20px}.mochi-view [data-unread=true]{box-shadow:inset 0 0 0 2px var(--mochi-accent)}.mochi-notification-toast .mochi-notification-avatar{width:32px;height:32px;border-radius:50%;overflow:hidden;flex:none;display:grid;place-items:center;background:var(--lp-surface-2)}.mochi-notification-avatar img{width:100%;height:100%;object-fit:cover}.mochi-notification-toast strong,.mochi-notification-toast span{overflow-wrap:anywhere}.mochi-notification-toast{max-width:calc(100% - 24px)}.mochi-message[data-grouped=true] .mochi-message-avatar{visibility:hidden}
+.mochi-view [hidden]{display:none!important}
+.mochi-view{width:100%;flex:1}
+.mochi-view{--mochi-accent:color-mix(in srgb,var(--lp-accent,#a99bff) 35%,#b7a0e8);--mochi-surface:var(--lp-bg,var(--lumiverse-bg,#17151d));--mochi-border:var(--lp-border,#ffffff18);color:var(--lp-text,var(--lumiverse-text,#f7f5ff));background:var(--mochi-surface);font:inherit;line-height:1.45;padding:16px;display:flex;flex-direction:column;gap:14px;overflow:auto;height:100%;min-width:0;box-sizing:border-box;container-type:inline-size}
+.mochi-view *{box-sizing:border-box}.mochi-view h2,.mochi-view h3,.mochi-view p{margin:0}.mochi-view h2{font-size:23px;letter-spacing:-.04em}.mochi-view h3{font-size:17px;overflow-wrap:anywhere}.mochi-view header,.mochi-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}.mochi-brand{display:flex;align-items:center;gap:8px}.mochi-brand>span{color:var(--mochi-accent)}.mochi-view svg{width:20px;height:20px;display:block;flex:none}
+.mochi-view button{font:inherit;color:inherit;cursor:pointer}.mochi-view .lp-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 14px;border:1px solid var(--mochi-border);border-radius:12px;background:color-mix(in srgb,var(--lp-text,#fff) 4%,var(--mochi-surface));font-size:13px;font-weight:600}.mochi-view .mochi-icon-button{width:44px;padding:10px;flex:none;border-radius:50%}.mochi-view .mochi-primary{background:var(--mochi-accent);color:#21182e;border-color:transparent}.mochi-view button:disabled{opacity:.45;cursor:default}.mochi-view button:not(:disabled):hover{border-color:var(--mochi-accent)}.mochi-view :is(button,input,textarea,select):focus-visible{outline:2px solid var(--mochi-accent);outline-offset:3px}
+.mochi-muted{color:var(--lp-muted,var(--lumiverse-text-muted,#a9a3b5));font-size:12px}.mochi-error{color:var(--lp-destructive,#ed7c8c);font-size:13px;overflow-wrap:anywhere}.mochi-room-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--mochi-border)}.mochi-room-header .mochi-actions{justify-content:end}.mochi-room-info{display:grid;gap:3px;min-width:0}.mochi-member-strip{display:flex;gap:8px;flex-wrap:wrap}.mochi-member{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;max-width:100%}.mochi-member>span:last-child{overflow-wrap:anywhere}.mochi-member .mochi-avatar{width:26px;height:26px;font-size:11px;flex:none}
+.mochi-card{width:100%;padding:14px;border:1px solid var(--mochi-border);border-radius:16px;background:color-mix(in srgb,var(--mochi-accent) 4%,var(--mochi-surface));display:flex;gap:12px;text-align:left;align-items:center}.mochi-card-copy{min-width:0;display:grid;gap:4px;flex:1}.mochi-card-copy strong{overflow-wrap:anywhere;font-size:14px}.mochi-preview{font-size:12px;color:var(--lp-muted,#a9a3b5);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}.mochi-room-avatars{width:48px;flex:none;display:flex;flex-wrap:wrap;gap:2px}.mochi-room-avatars .mochi-avatar{width:23px;height:23px;font-size:10px}.mochi-room-avatars[data-single=true] .mochi-avatar{width:44px;height:44px;font-size:18px}
+.mochi-form{display:flex;flex-direction:column;gap:18px;min-width:0}.mochi-view label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:600;min-width:0}.mochi-view :is(input,textarea,select){box-sizing:border-box;width:100%;min-width:0;min-height:44px;padding:11px 12px;border-radius:12px;border:1px solid var(--mochi-border);background:color-mix(in srgb,var(--lp-text,#fff) 3%,var(--mochi-surface));color:inherit;font:inherit;font-size:14px;line-height:1.4}.mochi-view textarea{resize:vertical}.mochi-view option{background:var(--mochi-surface);color:var(--lp-text,#f7f5ff)}.mochi-view .mochi-toggle{flex-direction:row;align-items:center;justify-content:space-between;gap:12px;padding:12px;background:color-mix(in srgb,var(--mochi-accent) 5%,var(--mochi-surface));border:1px solid var(--mochi-border);border-radius:12px}.mochi-view input[type=checkbox]{appearance:auto;min-height:24px;width:24px;height:24px;flex:none;accent-color:var(--mochi-accent);margin:0}
+.mochi-picker{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.mochi-choice{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;min-width:0;padding:12px 6px;border:1px solid transparent;border-radius:14px;background:transparent;font-size:12px!important;line-height:1.35;overflow-wrap:anywhere;text-align:center}.mochi-choice>span:last-child{width:100%;min-width:0}.mochi-choice[aria-pressed=true]{border-color:var(--mochi-accent);background:color-mix(in srgb,var(--mochi-accent) 12%,var(--mochi-surface))}.mochi-choice[aria-pressed=true]::after{content:'✓';position:absolute;right:5px;top:5px;border-radius:50%;width:18px;height:18px;background:var(--mochi-accent);color:#21182e;font-size:12px}.mochi-avatar,.mochi-message-avatar{display:flex;align-items:center;justify-content:center;width:48px;height:48px;flex:none;border-radius:50%;background:color-mix(in srgb,var(--mochi-accent) 18%,var(--mochi-surface));border:1px solid color-mix(in srgb,var(--mochi-accent) 35%,var(--mochi-border));overflow:hidden;color:var(--mochi-accent);font-weight:650}.mochi-avatar img,.mochi-message-avatar img{width:100%;height:100%;object-fit:cover}
+.mochi-thread{display:flex;flex-direction:column;gap:18px;flex:1;min-height:160px;overflow-y:auto;overscroll-behavior:contain;padding:4px 0 10px}.mochi-message{display:flex;gap:8px;align-items:flex-start;min-width:0}.mochi-message[data-role=user]{flex-direction:row-reverse}.mochi-message-avatar{width:32px;height:32px;font-size:12px;margin-top:2px}.mochi-message-body{max-width:min(86%,calc(100% - 40px));min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:5px}.mochi-message[data-role=user] .mochi-message-body{align-items:flex-end}.mochi-message-name{font-size:12px;font-weight:650;overflow-wrap:anywhere}.mochi-bubble{width:fit-content;max-width:100%;background:color-mix(in srgb,var(--lp-text,#fff) 7%,var(--mochi-surface));border:1px solid var(--mochi-border);border-radius:12px;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.5}.mochi-message[data-role=user] .mochi-bubble{background:color-mix(in srgb,var(--mochi-accent) 24%,var(--mochi-surface));border-color:color-mix(in srgb,var(--mochi-accent) 28%,var(--mochi-border))}.mochi-message time{font-size:10px;color:var(--lp-muted,#a9a3b5)}
+.mochi-composer{position:sticky;bottom:0;flex-shrink:0;background:var(--mochi-surface);padding:10px 0 max(4px,env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--mochi-border)}.mochi-composer-row{display:flex;gap:8px;align-items:flex-end}.mochi-composer textarea{flex:1;min-height:44px;max-height:112px;resize:none;border-radius:18px;padding:11px 13px}.mochi-composer select{font-size:12px;min-height:36px;padding:7px 10px}.mochi-composer-hint{font-size:10px;color:var(--lp-muted,#a9a3b5)}.mochi-view>header,.mochi-room-header,.mochi-member-strip{flex-shrink:0}
+@container (max-width:320px){.mochi-picker{grid-template-columns:repeat(2,minmax(0,1fr))}.mochi-room-header{gap:6px}.mochi-member-strip{gap:6px}.mochi-standalone{display:none}.mochi-view header .mochi-actions{gap:4px}}
+/* Mochi 03.5: keep all refinements inside the independent app surface. */
+.mochi-view{padding:14px;gap:12px}.mochi-view>header{padding:2px 0 10px;border-bottom:1px solid var(--mochi-border)}.mochi-view h2{font-size:28px;font-weight:800;letter-spacing:-.045em}.mochi-brand{min-width:0;gap:7px!important}.mochi-view .mochi-mascot svg{width:38px;height:32px}.mochi-view header .mochi-icon-button{position:relative;background:transparent;border-color:transparent}.mochi-unread-count{position:absolute;right:1px;top:0;min-width:17px;padding:1px 4px;border-radius:99px;background:var(--mochi-accent);color:#21182e;font-size:10px;line-height:15px}.mochi-view .mochi-room-selector{min-height:46px;padding:10px 14px;border-color:color-mix(in srgb,var(--mochi-accent) 30%,var(--mochi-border));background:color-mix(in srgb,var(--mochi-accent) 9%,var(--mochi-surface));font-size:15px}.mochi-room-header{border:0;padding-bottom:0;gap:8px}.mochi-room-info{gap:5px}.mochi-member-strip{gap:6px;padding-bottom:10px;border-bottom:1px solid var(--mochi-border)}.mochi-member-strip .mochi-member{padding:3px 7px 3px 3px;border-radius:99px;background:color-mix(in srgb,var(--mochi-accent) 5%,var(--mochi-surface));max-width:100%}.mochi-member-strip .mochi-avatar{width:30px;height:30px}.mochi-member-strip .mochi-member>span:last-child{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3}
+.mochi-thread{gap:14px;padding-top:0}.mochi-message{gap:9px}.mochi-message-avatar{width:36px;height:36px;margin-top:4px}.mochi-message-body{max-width:min(86%,calc(100% - 45px));gap:2px}.mochi-message-meta{width:100%;min-height:36px;gap:6px;position:relative;padding-right:34px}.mochi-message-name{font-size:13px}.mochi-message time{white-space:nowrap;font-size:10px;flex:none}.mochi-message[data-role=user] .mochi-message-meta{justify-content:flex-end}.mochi-view .mochi-message-actions{position:absolute;right:-7px;top:-4px;width:44px;height:44px;margin:0;border:0!important;background:transparent!important;opacity:0}.mochi-view .mochi-message-actions svg{width:15px;height:15px}.mochi-message:hover .mochi-message-actions,.mochi-message:focus-within .mochi-message-actions{opacity:1}.mochi-bubble{padding:12px 14px;border-radius:17px;line-height:1.55}.mochi-message[data-role=assistant] .mochi-bubble{border-top-left-radius:6px}.mochi-message[data-role=user] .mochi-bubble{background:var(--mochi-accent);color:#21182e;border-color:transparent;border-top-right-radius:6px}.mochi-message[data-grouped=true]{margin-top:-6px}.mochi-message[data-grouped=true] .mochi-message-meta{min-height:28px}
+.mochi-composer{gap:7px;padding-top:10px}.mochi-composer-row{gap:6px;align-items:center;padding:4px;border:1px solid var(--mochi-border);border-radius:26px;background:color-mix(in srgb,var(--lp-text,#fff) 4%,var(--mochi-surface))}.mochi-composer textarea{background:transparent;border:0;border-radius:20px;padding:10px 9px}.mochi-composer .mochi-icon-button{height:44px}.mochi-composer select{max-width:100%;border-radius:99px;background:transparent;border-color:transparent}.mochi-composer-hint{text-align:center}.mochi-notification-entry{display:flex;align-items:center;gap:4px;min-width:0}.mochi-notification-entry .mochi-card{flex:1;min-width:0}.mochi-notification-entry>.mochi-icon-button{background:transparent;border-color:transparent}.mochi-notification-list>.mochi-actions{justify-content:flex-start;flex-wrap:wrap}
+@media (hover:none){.mochi-view .mochi-message-actions{opacity:.7}}
+@container (max-width:360px){.mochi-standalone{display:none}}
+/* Layout correction: compact identities, separate author/time hierarchy. */
+.mochi-view .mochi-room-header{grid-template-columns:minmax(0,1fr) 44px}.mochi-view .mochi-member-strip{align-self:flex-start;width:auto;display:flex;align-items:center;gap:10px;flex-wrap:nowrap;padding:0;min-height:44px;border:0;background:transparent;text-align:left}.mochi-portrait-stack{display:flex;align-items:center;padding-left:0;flex:none}.mochi-portrait-stack .mochi-avatar{width:32px;height:32px;border:2px solid var(--mochi-surface)}.mochi-portrait-stack .mochi-avatar+.mochi-avatar{margin-left:-10px}.mochi-participant-count{font-size:12px;color:var(--lp-muted,#a9a3b5)}.mochi-thread{border-top:1px solid var(--mochi-border);padding-top:16px;gap:20px}.mochi-message-avatar{width:38px;height:38px;margin-top:0}.mochi-message-body{max-width:min(86%,calc(100% - 47px));gap:6px}.mochi-message-name{display:block;width:100%;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;line-height:20px;overflow-wrap:normal}.mochi-message[data-role=user] .mochi-message-name{text-align:right}.mochi-message-meta{width:auto;max-width:100%;min-height:24px;padding-right:38px;gap:8px}.mochi-message[data-role=user] .mochi-message-meta{justify-content:flex-end}.mochi-message-meta small{white-space:nowrap;font-size:10px}.mochi-view .mochi-message-actions{top:-10px;right:-6px}.mochi-message[data-grouped=true]{margin-top:-16px}.mochi-message[data-grouped=true] .mochi-message-name{display:none}.mochi-message[data-grouped=true] .mochi-message-meta{min-height:24px}.mochi-bubble{padding:11px 14px}.mochi-composer{margin:0 -14px -14px;padding:10px 14px max(14px,env(safe-area-inset-bottom,0px));gap:6px;background:color-mix(in srgb,var(--mochi-accent) 3%,var(--mochi-surface))}.mochi-responder{position:relative;max-width:70%;width:fit-content;min-width:100px;min-height:44px;border-radius:99px;padding:8px 28px 8px 8px;background:color-mix(in srgb,var(--mochi-accent) 6%,var(--mochi-surface));border:1px solid var(--mochi-border)}.mochi-responder::after{content:'⌄';position:absolute;right:10px;top:10px;color:var(--lp-muted,#a9a3b5);pointer-events:none}.mochi-responder-identity{display:flex;align-items:center;gap:7px;min-width:0}.mochi-responder .mochi-avatar{width:26px;height:26px;border:0;flex:none}.mochi-responder .mochi-avatar svg{width:16px;height:16px}.mochi-responder-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.mochi-composer .mochi-responder select{position:absolute;inset:0;height:100%;width:100%;opacity:0;cursor:pointer;min-height:44px}.mochi-responder:focus-within{outline:2px solid var(--mochi-accent);outline-offset:2px}
+/* Review correction: corner mascot, heart wordmark, attached metadata. */
+.mochi-view>header{display:grid;grid-template-columns:minmax(0,1fr) auto 52px;gap:8px;align-items:center;min-height:60px}.mochi-view .mochi-mascot svg{width:52px;height:42px}.mochi-mascot{justify-self:end;pointer-events:none}.mochi-wordmark-i{position:relative;display:inline-block}.mochi-wordmark-i::before{content:'♥';position:absolute;top:-2px;left:50%;transform:translateX(-50%) rotate(-12deg);font-size:10px;line-height:1;color:#e89dbd;letter-spacing:0}.mochi-message-heading{display:flex;align-items:baseline;width:100%;min-width:0;gap:8px;padding-top:5px}.mochi-message-name{flex:1;width:auto;font-size:12px;line-height:18px}.mochi-message-heading time{flex:none;font-size:10px;line-height:18px}.mochi-message-avatar{margin-top:8px}.mochi-message-body{gap:4px}.mochi-thread{gap:16px;padding-top:12px}.mochi-message-meta,.mochi-message[data-grouped=true] .mochi-message-meta{width:100%;min-height:16px;gap:4px;padding-right:38px;justify-content:flex-start}.mochi-message[data-role=user] .mochi-message-meta{justify-content:flex-start}.mochi-message-meta small{font-size:10px;line-height:16px}.mochi-view .mochi-message-actions{top:-14px;right:-6px}.mochi-message[data-grouped=true]{margin-top:-12px}.mochi-message[data-grouped=true] .mochi-message-heading{padding-top:0;justify-content:flex-end}.mochi-message[data-grouped=true] .mochi-message-avatar{visibility:hidden}
+/* Final messenger composition; temporary presence visuals carry no state. */
+.mochi-wordmark-i::before{font-size:14px;top:-5px}.mochi-view .mochi-room-header{grid-template-columns:minmax(0,1fr) 96px;align-items:start}.mochi-room-header>.mochi-actions{padding-top:2px}.mochi-room-select{position:relative;min-width:0}.mochi-room-select-icon{position:absolute;left:12px;top:13px;pointer-events:none;color:var(--mochi-accent)}.mochi-room-select-icon svg{width:20px;height:20px}.mochi-view .mochi-room-selector{font-size:14px;font-weight:500;padding-left:40px;padding-right:24px;border-radius:24px}.mochi-room-info{gap:8px}.mochi-room-meta{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--lp-muted,#a9a3b5);min-height:18px;white-space:nowrap}.mochi-room-meta::before{content:'';width:8px;height:8px;flex:none;border-radius:50%;background:#58d998}.mochi-avatar-frame{position:relative;flex:none;width:40px;height:40px;margin-top:5px}.mochi-avatar-frame .mochi-message-avatar{width:40px;height:40px;margin-top:0}.mochi-presence-dot{position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;border:2px solid var(--mochi-surface);border-radius:50%;background:#58d998}.mochi-message-body{max-width:min(86%,calc(100% - 49px));gap:4px}.mochi-message-name{font-size:11px;font-weight:600}.mochi-message-heading{gap:7px;padding-top:6px}.mochi-thread{gap:20px;padding-top:14px;border-top:0}.mochi-message-meta,.mochi-message[data-grouped=true] .mochi-message-meta{height:0;min-height:0;padding:0}.mochi-view .mochi-message-actions{top:-21px;right:-5px}.mochi-message[data-grouped=true]{margin-top:-17px}.mochi-message[data-grouped=true] .mochi-avatar-frame{visibility:hidden}.mochi-message[data-grouped=true] .mochi-message-heading{display:none}.mochi-bubble{border-radius:18px;padding:12px 14px}.mochi-message[data-role=assistant] .mochi-bubble{border-top-left-radius:8px}.mochi-message[data-role=user] .mochi-bubble{border-top-right-radius:8px}
+.mochi-sheet .lp-sheet-panel{border-radius:22px;border:1px solid var(--lp-border);background:var(--lp-bg);box-shadow:0 14px 42px #0003;padding:18px}.mochi-sheet .mochi-action-panel{gap:5px}.mochi-action-context{font-size:11px;line-height:1.5;color:var(--lp-muted);overflow-wrap:anywhere;margin:0 0 8px}.mochi-sheet .mochi-action-panel>.lp-button{justify-content:flex-start;min-height:48px;padding:12px 14px;border:0;border-radius:12px;background:color-mix(in srgb,var(--lp-text) 4%,var(--lp-bg));font-size:13px}.mochi-sheet .mochi-action-panel>.lp-button:hover{background:color-mix(in srgb,var(--lp-accent) 12%,var(--lp-bg))}.mochi-sheet .mochi-action-panel>[aria-label="Delete message"],.mochi-sheet .mochi-action-panel>[aria-label="Confirm delete"]{color:var(--lp-destructive,#d9677d)}.mochi-sheet .lp-sheet-close{border-radius:99px;min-height:44px}.mochi-sheet :is(button,textarea):focus-visible{outline:2px solid var(--lp-accent);outline-offset:2px}
+.mochi-action-context{display:grid;gap:3px;min-width:0}.mochi-action-author{color:var(--lp-text);font-size:12px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mochi-action-context small{font-size:11px;font-weight:400}
+
+.mochi-account-list{display:grid;gap:10px;min-width:0}.mochi-account-list .mochi-card{width:100%;text-align:left}.mochi-account-actions,.mochi-inbox-actions,.mochi-profile-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.mochi-account-actions>.lp-button,.mochi-profile-actions>.lp-button{flex:1 1 140px}.mochi-view .mochi-secondary-action{align-self:flex-start;width:auto;min-height:44px;padding:8px 0;border:0;background:transparent;color:var(--lp-muted);font-size:11px;font-weight:500}.mochi-view .mochi-legacy-action{margin-top:0;padding-top:12px;border-top:1px solid var(--mochi-border);border-radius:0}.mochi-inbox-actions>.lp-button{font-size:11px;padding:8px 10px}.mochi-profile-preview{overflow:hidden;border:1px solid var(--mochi-border);border-radius:14px;background:color-mix(in srgb,var(--mochi-accent) 8%,var(--mochi-surface))}.mochi-profile-banner{height:72px;background:linear-gradient(120deg,color-mix(in srgb,var(--mochi-accent) 35%,var(--mochi-surface)),color-mix(in srgb,var(--mochi-accent) 10%,var(--mochi-surface)))}.mochi-profile-preview-body{position:relative;display:grid;gap:5px;padding:42px 16px 18px;min-width:0}.mochi-profile-preview .mochi-profile-portrait{position:absolute;top:-32px;left:12px;width:64px;height:64px;border:4px solid var(--mochi-surface);font-size:24px}.mochi-profile-preview-name{font-size:20px;line-height:1.3;overflow-wrap:anywhere}.mochi-profile-fields{margin:0;padding:16px;min-width:0;border:1px solid var(--mochi-border);border-radius:12px;display:grid;gap:14px}.mochi-profile-fields legend{padding:0 6px;font-size:11px;font-weight:650;color:var(--lp-muted);letter-spacing:.04em}.mochi-profile-fields input[type=file]{font-size:11px}.mochi-room-connection{color:var(--lp-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mochi-view .mochi-connection-indicator{display:block;min-height:32px;padding:4px 0;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;color:var(--mochi-accent);font-size:10px;text-align:left}.mochi-connection-indicator:hover{text-decoration:underline}.mochi-sheet .mochi-action-panel>[aria-label="Discard changes"]{color:var(--lp-destructive,#d9677d)}
+
+/* Compact room chrome and grouped settings. */
+.mochi-view[data-surface=chat] .mochi-room-info{gap:0}.mochi-view[data-surface=chat] .mochi-room-selector{min-height:28px;padding-block:2px;font-size:14px}.mochi-view[data-surface=chat] .mochi-room-meta{margin:1px 0;font-size:10px;line-height:16px;min-height:16px}.mochi-room-meta::before{width:6px;height:6px}.mochi-connection-status{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--lp-muted);font-size:10px;line-height:16px}.mochi-view[data-surface=chat] .mochi-room-header{align-items:start;padding-bottom:10px;gap:8px}.mochi-view[data-surface=chat] .mochi-room-header>.mochi-actions{padding:0}.mochi-view[data-surface=chat] .mochi-room-header .mochi-icon-button{width:40px;min-width:40px;height:40px;min-height:40px;background:transparent;border:0}.mochi-settings-section{display:grid;gap:12px;min-width:0;margin:0;padding:14px;border:1px solid var(--mochi-border);border-radius:12px}.mochi-settings-section>legend{font-size:11px;font-weight:650;color:var(--lp-muted);padding:0 5px}.mochi-settings-section>p{margin:0;font-weight:400;line-height:1.5}.mochi-view details.mochi-settings-section{display:block;padding:0;overflow:hidden}.mochi-settings-section>summary{padding:14px;cursor:pointer;font-size:12px;font-weight:600;min-height:44px;box-sizing:border-box}.mochi-settings-section>summary:focus-visible{outline:2px solid var(--mochi-accent);outline-offset:-3px}.mochi-settings-section[open]>summary{border-bottom:1px solid var(--mochi-border);margin-bottom:14px}.mochi-settings-section[open]>:not(summary){margin-left:14px;margin-right:14px;margin-bottom:14px}.mochi-view .mochi-settings-section .mochi-toggle{background:transparent;border:0;border-radius:0;padding:4px 0;min-height:36px;font-size:11px;font-weight:500}.mochi-settings-section .mochi-picker{grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:8px}.mochi-settings-section .mochi-choice{font-size:11px;padding:8px 4px}.mochi-settings-section .mochi-assignment{gap:12px}.mochi-settings-section .mochi-assignment h4{display:none}
+.mochi-room-header .lp-conversation-menu>summary{display:grid;place-items:center;width:36px;min-width:36px;min-height:36px;padding:0;background:transparent;border:0;border-radius:50%;font-size:22px}.mochi-room-header .lp-conversation-menu-action{min-height:40px;font-size:12px}.mochi-room-header .lp-conversation-menu>summary:focus-visible{outline:2px solid var(--mochi-accent);outline-offset:2px}
+.mochi-model-picker{min-width:0}.mochi-model-picker-row{display:flex;align-items:end;flex-wrap:wrap;gap:8px}.mochi-model-picker-row>label{flex:1 1 180px}.mochi-model-picker-row>button{min-height:44px;font-size:11px;padding:8px 10px}.mochi-model-picker>p{margin:6px 0 0;font-size:11px;font-weight:400}
+`;
+
+// src/mochi/models.ts
+async function fetchMochiModels(connectionId, signal) {
+  const response = await fetch(`/api/v1/connections/${encodeURIComponent(connectionId)}/models`, { credentials: "same-origin", cache: "no-store", signal });
+  if (!response.ok)
+    throw new Error("Could not load models. Check this connection in Lumiverse and retry.");
+  const payload = await response.json();
+  if (payload.error || !Array.isArray(payload.models))
+    throw new Error("Could not load models. Check this connection in Lumiverse and retry.");
+  return { models: [...new Set(payload.models.filter((id) => typeof id === "string" && id.length > 0))], labels: payload.model_labels && typeof payload.model_labels === "object" ? payload.model_labels : {} };
+}
+function mochiModelPicker(connectionId, defaultModel, value, change, cache, controllers) {
+  const root = el("div", "mochi-model-picker"), label = el("label", "", "Model"), row = el("div", "mochi-model-picker-row"), select = el("select"), refresh = button("Refresh models", "lp-button"), status = el("p", "mochi-muted");
+  select.setAttribute("aria-label", "Generation model");
+  refresh.setAttribute("aria-label", "Refresh models");
+  status.setAttribute("role", "status");
+  let current = value, controller;
+  const populate = (choices) => {
+    const fallback = el("option", "", defaultModel ? `Connection default · ${defaultModel}` : "Use connection default");
+    fallback.value = "";
+    select.replaceChildren(fallback);
+    const ids = [...choices?.models || []];
+    if (current && !ids.includes(current))
+      ids.unshift(current);
+    for (const id of ids) {
+      const option = el("option", "", choices?.labels[id] || id);
+      option.value = id;
+      select.append(option);
+    }
+    select.value = current;
+    select.disabled = !connectionId;
+  };
+  const load = async () => {
+    controller?.abort();
+    controller = new AbortController;
+    const request = controller;
+    controllers.add(request);
+    const timeout = setTimeout(() => request.abort(), 30000);
+    refresh.disabled = true;
+    status.textContent = "Loading models…";
+    try {
+      const choices = await fetchMochiModels(connectionId, request.signal);
+      if (request.signal.aborted)
+        return;
+      cache.set(connectionId, choices);
+      if (root.isConnected && !request.signal.aborted) {
+        populate(choices);
+        status.textContent = choices.models.length ? "" : "No models returned. You can still use the connection default.";
+      }
+    } catch {
+      if (root.isConnected)
+        status.textContent = "Could not load models. Check this connection in Lumiverse and retry.";
+    } finally {
+      clearTimeout(timeout);
+      controllers.delete(request);
+      if (root.isConnected)
+        refresh.disabled = !connectionId;
+    }
+  };
+  select.onchange = () => {
+    current = select.value;
+    change(current);
+  };
+  refresh.onclick = () => {
+    load();
+  };
+  label.append(select);
+  row.append(label, refresh);
+  root.append(row, status);
+  populate(cache.get(connectionId));
+  refresh.disabled = !connectionId;
+  if (connectionId && !cache.has(connectionId))
+    load();
+  return root;
+}
+
+// src/frontend/components/ui.ts
+function classes(...values) {
+  return values.filter(Boolean).join(" ");
+}
+function identityBlock(options) {
+  const root = el("div", classes("lp-identity", options.prominent && "lp-identity-prominent", options.centered && "lp-identity-centered", options.className));
+  const line = el("div", "lp-identity-line");
+  line.appendChild(el("strong", "lp-identity-name", options.name));
+  if (options.meta)
+    line.appendChild(el("span", "lp-identity-meta", options.meta));
+  root.appendChild(line);
+  if (options.description)
+    root.appendChild(el("p", "lp-identity-description", options.description));
+  return root;
+}
+function statusBadge(label, tone = "neutral") {
+  const node = el("span", "lp-status-badge", label);
+  node.dataset.tone = tone;
+  return node;
+}
+function actionGroup(className = "") {
+  return el("div", classes("lp-actions", className));
+}
+function sectionBlock(label, help = "", className = "") {
+  const section = el("section", classes("lp-section", className));
+  const head = el("header", "lp-section-head");
+  head.appendChild(el("div", "lp-section-label", label));
+  if (help)
+    head.appendChild(el("p", "lp-section-help", help));
+  const body = el("div", "lp-section-body");
+  section.append(head, body);
+  return { section, body };
+}
+function fieldBlock(label, control, help = "") {
+  const field = el("label", "lp-field");
+  field.appendChild(el("span", "lp-field-label", label));
+  field.appendChild(control);
+  if (help)
+    field.appendChild(el("span", "lp-field-help", help));
+  return field;
+}
+function controlRow(label, control, help = "") {
+  const row = el("label", "lp-card lp-control-row");
+  const copy = el("span", "lp-control-copy");
+  copy.appendChild(el("span", "lp-control-label", label));
+  if (help)
+    copy.appendChild(el("span", "lp-control-help", help));
+  row.append(copy, control);
+  return row;
+}
+function disclosure(label, ...children) {
+  const root = el("details", "lp-disclosure");
+  root.append(el("summary", "", label), ...children);
+  return root;
+}
+function showPocketSheet(anchor, title, content) {
+  const parent = anchor.closest(".lumiphone-shell") || anchor.closest('[role="dialog"]') || anchor.parentElement;
+  if (!parent)
+    return;
+  const dialog = el("dialog", "lp-sheet");
+  const panel = el("div", "lp-sheet-panel");
+  const heading = el("h2", "lp-title", title);
+  dialog.setAttribute("aria-label", title);
+  const close = el("button", "lp-button lp-sheet-close", "Done");
+  close.type = "button";
+  const home = content.parentNode;
+  const marker = document.createComment("sheet content");
+  home?.insertBefore(marker, content);
+  const dismiss = () => dialog.close();
+  close.addEventListener("click", dismiss);
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog)
+      dismiss();
+  });
+  dialog.addEventListener("close", () => {
+    if (home)
+      marker.replaceWith(content);
+    dialog.remove();
+    if (anchor.isConnected)
+      anchor.focus();
+  }, { once: true });
+  panel.append(heading, content, close);
+  dialog.append(panel);
+  parent.append(dialog);
+  const bounds = parent.getBoundingClientRect();
+  if (parent.matches(".lumiphone-shell")) {
+    const layoutWidth = parent.offsetWidth;
+    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1;
+    const layoutPx = (pixels) => pixels / zoom;
+    dialog.style.position = "fixed";
+    dialog.style.margin = "0";
+    dialog.style.left = `${layoutPx(bounds.left + 12)}px`;
+    dialog.style.top = "auto";
+    dialog.style.bottom = `${layoutPx(Math.max(12, window.innerHeight - bounds.bottom + 24))}px`;
+    dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`;
+    dialog.style.maxHeight = `${layoutPx(Math.max(120, bounds.height - 70))}px`;
+  }
+  dialog.showModal();
+  return { dismiss };
+}
+function outgoingSurface(accent) {
+  const hex = /^#([0-9a-f]{6})$/i.exec(accent)?.[1] || "8b7dff";
+  let rgb = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const luminance = () => rgb.map((v) => v / 255).map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  while (luminance() > 0.16)
+    rgb = rgb.map((v) => Math.floor(v * 0.95));
+  return "#" + rgb.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+function avatarColor(identity) {
+  const hash = Array.from(identity).reduce((n, c) => n * 31 + c.charCodeAt(0) >>> 0, 0);
+  return `hsl(${hash % 360} 27% 34%)`;
+}
+
+// src/mochi/notifications.ts
+function notificationBody(n, previews) {
+  return previews ? n.body : "New character message";
+}
+var activeNotices = new WeakMap;
+function reconcileMochiNotifications(shell, notices, rooms) {
+  for (const toast of shell.querySelectorAll(".mochi-notification-toast")) {
+    const previous = activeNotices.get(toast);
+    if (!previous || !rooms.has(previous.roomId))
+      continue;
+    const current = notices.find((n) => n.id === previous.id && n.roomId === previous.roomId);
+    if (!current || current.read || current.body !== previous.body || current.title !== previous.title || current.roomTitle !== previous.roomTitle || current.avatarUrl !== previous.avatarUrl)
+      toast.remove();
+  }
+}
+function showMochiNotification(shell, n, previews, open) {
+  const toast = button("", "lp-floating-notification mochi-notification-toast");
+  toast.setAttribute("role", "status");
+  activeNotices.set(toast, { ...n });
+  const portrait = el("span", "mochi-notification-avatar", n.title.slice(0, 1));
+  portrait.style.cssText = "width:32px;height:32px;border-radius:50%;overflow:hidden;flex:none;display:grid;place-items:center;background:var(--lp-surface-2)";
+  if (n.avatarUrl) {
+    const image = el("img");
+    image.src = n.avatarUrl;
+    image.alt = "";
+    image.style.cssText = "width:100%;height:100%;object-fit:cover";
+    portrait.replaceChildren(image);
+  }
+  const copy = el("span", "lp-grow");
+  copy.append(el("strong", "", `${n.title} · ${n.roomTitle}`), el("span", "", notificationBody(n, previews)));
+  toast.append(portrait, copy);
+  toast.onclick = () => {
+    open();
+    dismiss();
+  };
+  shell.append(toast);
+  toast.style.maxWidth = "calc(100% - 24px)";
+  toast.style.gridTemplateColumns = "32px minmax(0,1fr)";
+  copy.style.minWidth = "0";
+  copy.firstElementChild.style.overflowWrap = "anywhere";
+  const timer = setTimeout(() => toast.remove(), 6000);
+  const dismiss = () => {
+    clearTimeout(timer);
+    toast.remove();
+  };
+  return dismiss;
+}
+
+// src/mochi/presence.ts
+var STATUSES = ["online", "away", "dnd", "offline"];
+function defaultPresence() {
+  return { automatic: "online", manual: null, awayMs: 300000, dndMs: 900000, transitions: [] };
+}
+function statusFor(room, id, now = Date.now()) {
+  const p = room.runtime?.presence?.[id] || room.background?.presence?.[id] || defaultPresence();
+  if (p.manual)
+    return p.manual;
+  return p.transitions.filter((t) => t.at <= now).sort((a, b) => a.at - b.at).at(-1)?.status || p.automatic;
+}
+
+// src/mochi/profile-screen.ts
+class MochiProfiles {
+  baseline = "";
+  hasUnsavedChanges() {
+    return !!this.draft && JSON.stringify(this.draft) !== this.baseline;
+  }
+  confirmation;
+  state = null;
+  draft = null;
+  start(account) {
+    this.confirmation = undefined;
+    this.draft = { id: account?.id || "", revision: account?.revision || 0, displayName: account?.displayName || "", username: account?.username || "", persona: account ? "keep" : "manual", description: account?.persona.description || "", avatarId: account ? account.avatarUrl.split("/api/v1/images/")[1] || "" : "persona" };
+    this.baseline = JSON.stringify(this.draft);
+  }
+  render(busy, send, redraw, exit, confirmDiscard = (next) => next(), refreshSources = () => send("mochi:choices")) {
+    const form = el("form", "mochi-form mochi-profile-screen");
+    if (!this.state) {
+      form.append(el("p", "", "Loading profiles…"));
+      return form;
+    }
+    if (this.confirmation) {
+      const { kind, account } = this.confirmation;
+      form.append(el("h3", "", kind === "archive" ? "Archive profile?" : "Restore profile?"), el("p", "mochi-muted", kind === "archive" ? `Archive ${account.displayName} and preserve every chat and schedule? Autonomous work will stop while archived.` : `Restore ${account.displayName}? Preserved schedules may resume subject to their expiry and limits.`));
+      const confirm = button(kind === "archive" ? "Confirm archive and preserve chats" : "Confirm restore profile", "lp-button mochi-primary");
+      confirm.disabled = busy;
+      confirm.onclick = () => {
+        send("mochi:account_" + kind, { accountId: account.id, revision: account.revision, confirmed: true, ...kind === "archive" ? { roomPolicy: "preserve" } : {} });
+        this.confirmation = undefined;
+      };
+      const cancel = button("Cancel", "lp-button");
+      cancel.disabled = busy;
+      cancel.onclick = () => {
+        this.confirmation = undefined;
+        redraw();
+      };
+      form.append(confirm, cancel);
+      return form;
+    }
+    if (!this.draft) {
+      form.append(el("h3", "", "Mochi profiles"), el("p", "mochi-muted", "Fictional identities owned by your Lumiverse account."));
+      const create = button("New profile", "lp-button mochi-primary");
+      create.disabled = busy;
+      create.onclick = () => {
+        this.start();
+        refreshSources();
+        redraw();
+      };
+      form.append(create);
+      for (const account of this.state.accounts.filter((a) => !a.archived)) {
+        const edit = button("", "mochi-card");
+        edit.disabled = busy;
+        const avatar = el("span", "mochi-avatar", account.displayName.slice(0, 1));
+        if (account.avatarUrl) {
+          const img = el("img");
+          img.src = account.avatarUrl;
+          img.alt = "";
+          avatar.replaceChildren(img);
+        }
+        const copy = el("span", "mochi-card-copy");
+        copy.append(el("strong", "", account.displayName), el("small", "mochi-muted", account.username ? "@" + account.username : "No username"));
+        edit.append(avatar, copy);
+        edit.setAttribute("aria-label", "Edit profile " + account.displayName);
+        edit.onclick = () => {
+          this.start(account);
+          refreshSources();
+          redraw();
+        };
+        form.append(edit);
+      }
+      for (const account of this.state.accounts.filter((a) => a.archived)) {
+        const restore = button("Restore " + account.displayName, "lp-button");
+        restore.disabled = busy;
+        restore.onclick = () => {
+          this.confirmation = { kind: "restore", account };
+          redraw();
+        };
+        form.append(restore);
+      }
+      const back = button("Back", "lp-button");
+      back.onclick = exit;
+      form.append(back);
+      return form;
+    }
+    const draft = this.draft;
+    form.append(el("h3", "", draft.id ? "Edit Mochi profile" : "New Mochi profile"));
+    const saved = this.state.accounts.find((a) => a.id === draft.id), chosen = this.state.personas.find((p) => p.source + ":" + p.sourceId === draft.persona);
+    const url = draft.avatarId === "persona" ? chosen?.avatarUrl || saved?.persona.avatarUrl || "" : draft.avatarId ? "/api/v1/images/" + draft.avatarId : "";
+    const preview = el("section", "mochi-profile-preview");
+    preview.setAttribute("aria-label", "Profile preview");
+    const banner = el("div", "mochi-profile-banner");
+    banner.setAttribute("aria-hidden", "true");
+    const portrait = el("span", "mochi-avatar mochi-profile-portrait", draft.displayName.slice(0, 1) || "?");
+    portrait.setAttribute("aria-hidden", "true");
+    if (url) {
+      const img = el("img");
+      img.src = url;
+      img.alt = "";
+      portrait.replaceChildren(img);
+    }
+    const previewName = el("strong", "mochi-profile-preview-name", draft.displayName || "Your display name");
+    const previewUsername = el("span", "mochi-muted", draft.username ? "@" + draft.username.replace(/^@/, "") : "@username");
+    const previewBody = el("div", "mochi-profile-preview-body");
+    previewBody.append(portrait, previewName, previewUsername);
+    preview.append(banner, previewBody);
+    form.append(preview);
+    const identity = el("fieldset", "mochi-profile-fields");
+    identity.append(el("legend", "", "Identity"));
+    form.append(identity);
+    let fields = identity;
+    const field = (label, node) => {
+      node.setAttribute("aria-label", label);
+      const wrap = el("label", "", label);
+      wrap.append(node);
+      fields.append(wrap);
+    };
+    const name = el("input");
+    name.maxLength = 120;
+    name.required = true;
+    name.value = draft.displayName;
+    name.oninput = () => {
+      draft.displayName = name.value;
+      previewName.textContent = name.value || "Your display name";
+      if (!url)
+        portrait.textContent = name.value.slice(0, 1) || "?";
+    };
+    field("Profile display name", name);
+    const username = el("input");
+    username.maxLength = 33;
+    username.value = draft.username;
+    username.placeholder = "@username (optional)";
+    username.oninput = () => {
+      draft.username = username.value;
+      previewUsername.textContent = username.value ? "@" + username.value.replace(/^@/, "") : "@username";
+    };
+    field("Profile username", username);
+    const persona = el("select");
+    const option = (value, label) => {
+      const o = el("option", "", label);
+      o.value = value;
+      persona.append(o);
+    };
+    if (draft.id)
+      option("keep", "Keep saved persona snapshot");
+    option("manual", "Custom fictional identity");
+    for (const p of this.state.personas)
+      option(p.source + ":" + p.sourceId, p.name + " · " + p.source);
+    persona.value = draft.persona;
+    persona.onchange = () => {
+      draft.persona = persona.value;
+      const p = this.state.personas.find((p) => p.source + ":" + p.sourceId === persona.value);
+      if (p && !draft.displayName)
+        draft.displayName = p.name;
+      redraw();
+    };
+    field("Profile persona", persona);
+    const refresh = button("Refresh personas", "lp-button mochi-secondary-action");
+    refresh.onclick = refreshSources;
+    identity.append(refresh);
+    if (draft.persona === "manual") {
+      const description = el("textarea");
+      description.maxLength = 12000;
+      description.rows = 3;
+      description.value = draft.description;
+      description.oninput = () => {
+        draft.description = description.value;
+      };
+      field("Profile identity description", description);
+    }
+    const appearance = el("fieldset", "mochi-profile-fields");
+    appearance.append(el("legend", "", "Appearance"));
+    form.append(appearance);
+    fields = appearance;
+    const avatar = el("select");
+    for (const [value, label] of [["persona", "Use selected persona portrait"], ["", "No portrait"], ...this.state.avatars.map((a) => [a.id, a.name])]) {
+      const o = el("option", "", label);
+      o.value = value;
+      avatar.append(o);
+    }
+    if (draft.avatarId && !["persona", ...this.state.avatars.map((a) => a.id)].includes(draft.avatarId)) {
+      const o = el("option", "", "Keep saved portrait");
+      o.value = draft.avatarId;
+      avatar.append(o);
+    }
+    avatar.value = draft.avatarId;
+    avatar.onchange = () => {
+      draft.avatarId = avatar.value;
+      redraw();
+    };
+    field("Profile portrait", avatar);
+    if (this.state.canUploadAvatar) {
+      const upload = el("input");
+      upload.type = "file";
+      upload.accept = "image/png,image/jpeg,image/webp";
+      upload.disabled = busy;
+      upload.onchange = () => {
+        const file = upload.files?.[0];
+        if (!file)
+          return;
+        if (file.size > 2097152) {
+          upload.setCustomValidity("Choose a portrait up to 2 MB.");
+          upload.reportValidity();
+          return;
+        }
+        const reader = new FileReader;
+        reader.onload = () => {
+          if (this.draft === draft && form.isConnected)
+            send("mochi:account_avatar_upload", { dataUrl: reader.result });
+        };
+        reader.readAsDataURL(file);
+      };
+      field("Upload profile portrait", upload);
+    }
+    form.append(el("p", "mochi-muted", "Profile changes apply to new chats. Existing chats keep their saved identity and authorship."));
+    if (saved) {
+      const archive = button("Archive profile", "lp-button mochi-secondary-action");
+      archive.disabled = busy;
+      archive.onclick = () => {
+        this.confirmation = { kind: "archive", account: saved };
+        redraw();
+      };
+      form.append(archive);
+    }
+    const save = button(busy ? "Saving…" : "Save profile", "lp-button mochi-primary");
+    save.type = "submit";
+    save.disabled = busy;
+    const cancel = button("Cancel profile changes", "lp-button");
+    cancel.disabled = busy;
+    cancel.onclick = () => confirmDiscard(() => {
+      this.draft = null;
+      redraw();
+    }, cancel);
+    const actions = el("div", "mochi-profile-actions");
+    actions.append(save, cancel);
+    form.append(actions);
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const p = draft.persona === "keep" ? undefined : draft.persona === "manual" ? { source: "manual", name: draft.displayName, description: draft.description } : this.state.personas.find((p) => p.source + ":" + p.sourceId === draft.persona);
+      const unchangedPortrait = !p && saved && draft.avatarId === (saved.avatarUrl.split("/api/v1/images/")[1] || "");
+      send(draft.id ? "mochi:account_update" : "mochi:account_create", { accountId: draft.id || undefined, revision: draft.revision, displayName: draft.displayName, username: draft.username, persona: p, ...unchangedPortrait ? {} : draft.avatarId === "persona" ? p ? {} : { avatarId: saved?.persona.avatarUrl.split("/api/v1/images/")[1] || "" } : { avatarId: draft.avatarId } });
+    };
+    return form;
+  }
+}
+
+// src/mochi/account-picker.ts
+function accountPicker(state, busy, choose, create, legacy, startup, manage, refresh) {
+  const page = el("section", "mochi-form mochi-account-picker");
+  page.append(el("h3", "", "Choose your Mochi account"), el("p", "mochi-muted", "Keep each fictional identity and its conversations separate."));
+  if (!state) {
+    page.append(el("p", "", "Loading accounts…"));
+    return page;
+  }
+  const accounts = el("div", "mochi-account-list");
+  page.append(accounts);
+  for (const a of state.accounts.filter((a) => !a.archived)) {
+    const card = button("", "mochi-card");
+    card.disabled = busy;
+    card.setAttribute("aria-label", "Use Mochi account " + a.displayName);
+    const avatar = el("span", "mochi-avatar", a.displayName.slice(0, 1));
+    if (a.avatarUrl) {
+      const img = el("img");
+      img.src = a.avatarUrl;
+      img.alt = "";
+      avatar.replaceChildren(img);
+    }
+    const copy = el("span", "mochi-card-copy");
+    copy.append(el("strong", "", a.displayName), el("small", "mochi-muted", (a.username ? "@" + a.username + " · " : "") + a.roomIds.length + " chats"));
+    card.append(avatar, copy);
+    card.onclick = () => choose(a.id);
+    accounts.append(card);
+  }
+  const preference = el("select");
+  preference.setAttribute("aria-label", "Mochi startup preference");
+  for (const [value, label] of [["last-used", "Open last-used account"], ["picker", "Always show account picker"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    preference.append(option);
+  }
+  preference.value = state.phone?.preference || "last-used";
+  preference.disabled = busy;
+  preference.onchange = () => startup(preference.value);
+  const label = el("label", "", state.phone?.supported ? "On this Pocket phone" : "Shared startup preference");
+  label.append(preference);
+  page.append(label);
+  const actions = el("div", "mochi-account-actions");
+  page.append(actions);
+  const add = button("Create Mochi account", "lp-button mochi-primary");
+  add.disabled = busy;
+  add.onclick = create;
+  actions.append(add);
+  const settings = button("Manage Mochi profiles", "lp-button");
+  settings.disabled = busy;
+  settings.onclick = manage;
+  actions.append(settings);
+  const reload = button("Refresh accounts", "lp-button mochi-secondary-action");
+  reload.disabled = busy;
+  reload.onclick = refresh;
+  page.append(reload);
+  const old = button("Unassigned legacy chats", "lp-button mochi-secondary-action mochi-legacy-action");
+  old.disabled = busy;
+  old.onclick = legacy;
+  page.append(old);
+  for (const warning of state.warnings)
+    page.append(el("p", "mochi-error", warning));
+  return page;
+}
+
+// src/mochi/types.ts
+var defaultMochiSettings = () => ({ autoReply: true, connectionId: "", contextTokens: 8192, outputTokens: 1200, instructions: "", characterNames: {} });
+var MOCHI_ROOM_ID = /^room_[a-f0-9]{32}$/;
+
+// src/mochi/scheduling.ts
+var SCHEDULE_LABELS = { queued: "Scheduled", generating: "Generating", generated: "Waiting to deliver", delivered: "Delivered", cancelled: "Canceled", paused: "Needs attention", failed: "Failed", missed: "Expired" };
+var TERMINAL = new Set(["delivered", "cancelled", "failed", "missed"]);
+
+// src/mochi/view.ts
+function action(label, icon, compact = false) {
+  const node = button("", `lp-button${compact ? " mochi-icon-button" : ""}`);
+  node.setAttribute("aria-label", label);
+  node.title = label;
+  const glyph = el("span");
+  glyph.setAttribute("aria-hidden", "true");
+  const extra = { stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>', copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>', edit: '<path d="m15 4 5 5-11 11H4v-5L15 4Z M12 7l5 5"/>', more: '<path d="M5 12h.01M12 12h.01M19 12h.01"/>', people: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 5"/>' };
+  extra.close = '<path d="m6 6 12 12M18 6 6 18"/>';
+  glyph.innerHTML = POCKET_ICONS[icon] || `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${extra[icon] || '<path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 2M4 17l2 2a7 7 0 0 0 12-2"/>'}</svg>`;
+  node.append(glyph);
+  if (!compact)
+    node.append(el("span", "", label));
+  return node;
+}
+function portrait(name, url = "") {
+  const node = el("span", "mochi-avatar", name.slice(0, 1).toUpperCase() || "?");
+  node.setAttribute("aria-hidden", "true");
+  if (url) {
+    const img = el("img");
+    img.src = url;
+    img.alt = "";
+    node.replaceChildren(img);
+  }
+  return node;
+}
+var stateAccountLabel = (id) => id ? "Account settings" : "Profiles and account settings";
+
+class MochiView {
+  send;
+  redraw;
+  navigate;
+  notificationPolicy;
+  notify;
+  notificationsChanged;
+  profiles = new MochiProfiles;
+  profilesOpen = false;
+  pickerOpen = false;
+  startupOpen = false;
+  activeAccountId;
+  phone;
+  associations = new Map;
+  retiredSchedulingSessions = new Map;
+  schedulingRoot;
+  schedulingTime = new Map;
+  mergeScheduling(room, incoming, revision) {
+    const current = room.background, next = incoming?.snapshot, prior = current?.snapshot;
+    if (revision < room.revision)
+      return current;
+    if (prior && !next)
+      return current;
+    if (next && prior) {
+      if (next.session === prior.session && next.sequence < prior.sequence)
+        return current;
+      const retired = this.retiredSchedulingSessions.get(room.id) || new Set;
+      if (retired.has(next.session))
+        return current;
+      if (next.session !== prior.session) {
+        retired.add(prior.session);
+        this.retiredSchedulingSessions.set(room.id, retired);
+      }
+    }
+    return incoming;
+  }
+  canOpenRoom(id, phone) {
+    return !!id && !!this.state?.rooms.some((r) => r.id === id) && this.phone?.chatId === phone?.chatId && this.phone?.characterId === phone?.characterId && this.phone?.deviceOwnerActorId === phone?.deviceOwnerActorId;
+  }
+  open(phone) {
+    this.leave();
+    this.resetScope();
+    this.phone = phone;
+    this.pickerOpen = true;
+    this.startupOpen = true;
+    this.profilesOpen = false;
+    this.profiles.state = null;
+    this.dispatch("mochi:accounts");
+  }
+  resetScope() {
+    this.retiredSchedulingSessions.clear();
+    this.schedulingTime.clear();
+    this.schedulingRoot = undefined;
+    this.notificationsChanged([], new Set(this.state?.rooms.map((r) => r.id) || []));
+    this.state = null;
+    this.activeAccountId = undefined;
+    this.roomId = "";
+    this.creating = false;
+    this.editing = false;
+    this.draft = null;
+    this.settingsDraft = null;
+    this.notificationsOpen = false;
+    this.busy = false;
+    clearTimeout(this.timeout);
+    this.request = "";
+    this.selectionVersion++;
+    this.notificationRevisions.clear();
+    this.seenNotifications.clear();
+    this.acknowledged.clear();
+    this.acknowledgementRequests.clear();
+    this.ownGenerations.clear();
+  }
+  chooseAccount(id, persist = true) {
+    this.leave();
+    this.resetScope();
+    this.activeAccountId = id;
+    this.profilesOpen = false;
+    if (persist) {
+      this.pickerOpen = true;
+      this.dispatch("mochi:account_select", { accountId: id, revision: this.profiles.state?.revision });
+    } else {
+      this.pickerOpen = false;
+      this.load();
+    }
+  }
+  showPicker() {
+    this.leave();
+    this.resetScope();
+    this.pickerOpen = true;
+    this.startupOpen = false;
+    this.profilesOpen = false;
+    this.dispatch("mochi:accounts");
+  }
+  state = null;
+  roomId = "";
+  creating = false;
+  editing = false;
+  busy = false;
+  error = "";
+  feedback = "";
+  notificationsOpen = false;
+  seenNotifications = new Set;
+  notificationRevisions = new Map;
+  acknowledged = new Set;
+  acknowledgementRequests = new Map;
+  sheets = new Set;
+  operation = "";
+  request = "";
+  drafts = new Map;
+  responders = new Map;
+  ownGenerations = new Map;
+  pendingSends = new Map;
+  selectionVersion = 0;
+  requestVersion = 0;
+  modelControllers = new Set;
+  modelChoices = new Map;
+  choicesRequest = "";
+  choicesVersion = 0;
+  choicesTimeout;
+  refreshChoices() {
+    this.choicesRequest = requestId("mochi_choices");
+    this.choicesVersion = this.selectionVersion;
+    clearTimeout(this.choicesTimeout);
+    this.choicesTimeout = setTimeout(() => {
+      this.choicesRequest = "";
+    }, 30000);
+    this.send({ type: "mochi:choices", requestId: this.choicesRequest, accountId: this.state?.accountId || this.activeAccountId });
+  }
+  settingsSections = new Set;
+  formBaseline = "";
+  settingsDraft = null;
+  draftRevision = 0;
+  timeout;
+  presenceTimer;
+  presenceRoot;
+  draft = null;
+  constructor(send, redraw, navigate, notificationPolicy = () => ({ enabled: true, previews: true, visible: true }), notify = () => {}, notificationsChanged = () => {}) {
+    this.send = send;
+    this.redraw = redraw;
+    this.navigate = navigate;
+    this.notificationPolicy = notificationPolicy;
+    this.notify = notify;
+    this.notificationsChanged = notificationsChanged;
+  }
+  hasUnsavedChanges() {
+    if (this.profilesOpen)
+      return this.profiles.hasUnsavedChanges();
+    return !!(this.creating || this.editing) && !!this.draft && JSON.stringify([this.draft, this.settingsDraft]) !== this.formBaseline;
+  }
+  confirmNavigation(next, anchor) {
+    if (!this.hasUnsavedChanges()) {
+      next();
+      return;
+    }
+    const content = el("div", "mochi-action-panel");
+    content.append(el("p", "", "You have unsaved changes. Discard them and leave this screen?"));
+    const keep = action("Keep editing", "edit"), discard = action("Discard changes", "back");
+    content.append(keep, discard);
+    const sheet = this.sheet(anchor, "Unsaved changes", content);
+    content.closest("dialog")?.classList.add("mochi-unsaved-sheet");
+    keep.onclick = () => sheet?.dismiss();
+    discard.onclick = () => {
+      sheet?.dismiss();
+      next();
+    };
+  }
+  exitPortal(next, anchor) {
+    this.confirmNavigation(() => {
+      this.creating = false;
+      this.editing = false;
+      this.draft = null;
+      this.settingsDraft = null;
+      this.profiles.draft = null;
+      this.profilesOpen = false;
+      next();
+    }, anchor);
+  }
+  back(exit, anchor) {
+    if (this.busy)
+      return;
+    const next = () => {
+      if (this.profilesOpen) {
+        if (this.profiles.draft)
+          this.profiles.draft = null;
+        else
+          this.profilesOpen = false;
+      } else if (this.creating || this.editing) {
+        this.creating = false;
+        this.editing = false;
+        this.draft = null;
+        this.settingsDraft = null;
+      } else if (this.notificationsOpen)
+        this.notificationsOpen = false;
+      else if (this.pickerOpen) {
+        exit();
+        return;
+      } else if (this.roomId)
+        this.select("");
+      else {
+        this.showPicker();
+        return;
+      }
+      this.redraw();
+    };
+    this.confirmNavigation(next, anchor);
+  }
+  load() {
+    if (!this.presenceTimer) {
+      this.presenceTimer = setInterval(() => this.refreshPresence(), 30000);
+      this.presenceTimer.unref?.();
+    }
+    this.dispatch("mochi:list");
+  }
+  refreshPresence() {
+    const room = this.state?.rooms.find((r) => r.id === this.roomId), root = this.presenceRoot;
+    if (!room || !root?.isConnected)
+      return;
+    for (const dot of root.querySelectorAll(".mochi-presence-dot")) {
+      dot.dataset.status = statusFor(room, dot.dataset.characterId || "");
+      dot.title = `Character status: ${dot.dataset.status}`;
+    }
+    const meta = root.querySelector(".mochi-room-meta"), statuses = room.characterIds.map((id) => statusFor(room, id));
+    if (meta) {
+      const online = statuses.includes("online");
+      meta.dataset.status = online ? "online" : statuses.includes("away") ? "away" : statuses.includes("dnd") ? "dnd" : "offline";
+      meta.textContent = `${room.characterIds.length} ${room.characterIds.length === 1 ? "participant" : "participants"} · ${online ? "active now" : statuses.every((s) => s === "offline") ? "offline" : "replies delayed"}`;
+      meta.title = room.characterIds.map((id, i) => `${room.settings?.characterNames[id] || this.state?.characters.find((c) => c.id === id)?.name || id}: ${statuses[i]}`).join(`
+`);
+    }
+  }
+  select(id) {
+    if (this.roomId !== id) {
+      this.leave();
+      this.selectionVersion++;
+      this.roomId = id;
+      this.creating = false;
+      this.editing = false;
+      this.draft = null;
+      this.settingsDraft = null;
+    }
+  }
+  leave() {
+    for (const dismiss of this.sheets)
+      dismiss();
+    this.sheets.clear();
+    const generationRequestId = this.ownGenerations.get(this.roomId);
+    if (generationRequestId)
+      this.send({ type: "mochi:cancel", accountId: this.state?.accountId, roomId: this.roomId, generationRequestId });
+  }
+  destroy() {
+    try {
+      this.leave();
+    } finally {
+      clearTimeout(this.timeout);
+      clearTimeout(this.choicesTimeout);
+      clearInterval(this.presenceTimer);
+      for (const controller of this.modelControllers)
+        controller.abort();
+      this.modelControllers.clear();
+    }
+  }
+  dispatch(type, values = {}) {
+    if (this.busy)
+      return;
+    this.request = requestId("mochi");
+    this.requestVersion = this.selectionVersion;
+    if (type === "mochi:send" || type === "mochi:regenerate")
+      this.ownGenerations.set(this.roomId, this.request);
+    if (type === "mochi:send")
+      this.pendingSends.set(this.request, { roomId: this.roomId, content: String(values.content ?? "") });
+    this.operation = type;
+    this.busy = true;
+    this.error = "";
+    this.feedback = "";
+    clearTimeout(this.timeout);
+    this.timeout = setTimeout(() => {
+      this.busy = false;
+      this.error = "No response received. Refresh the inbox to check whether your room was saved before trying again.";
+      this.redraw();
+    }, 30000);
+    this.send({ type, requestId: this.request, accountId: this.state?.accountId || this.activeAccountId, ...this.phone ? { phone: this.phone } : {}, ...values });
+    this.redraw();
+  }
+  receive(payload) {
+    if (payload?.requestId === this.choicesRequest && this.choicesRequest && (payload.type === "mochi:choices" || payload.type === "mochi:error")) {
+      clearTimeout(this.choicesTimeout);
+      this.choicesRequest = "";
+      if (this.choicesVersion !== this.selectionVersion)
+        return true;
+      if (payload.type === "mochi:error")
+        this.error = String(payload.message);
+      else {
+        if (this.state) {
+          this.state.personas = payload.personas;
+          this.state.characters = payload.characters;
+          this.state.connections = payload.connections;
+        }
+        if (this.profiles.state)
+          this.profiles.state.personas = payload.personas;
+      }
+      this.redraw();
+      return true;
+    }
+    if (payload?.type === "mochi:room_assigned") {
+      const previous = this.associations.get(payload.roomId);
+      if (previous && previous.revision >= payload.associationRevision)
+        return true;
+      this.associations.set(payload.roomId, { accountId: payload.accountId, revision: payload.associationRevision });
+      if (this.state && (this.state.accountId === payload.sourceAccountId || this.state.accountId === payload.accountId)) {
+        const isSource = this.state.accountId === payload.sourceAccountId;
+        if (isSource) {
+          this.state.rooms = this.state.rooms.filter((r) => r.id !== payload.roomId);
+          this.state.notifications = this.state.notifications?.filter((n) => n.roomId !== payload.roomId);
+          this.notificationsChanged([], new Set([payload.roomId]));
+          if (this.roomId === payload.roomId) {
+            this.leave();
+            this.roomId = "";
+            this.editing = false;
+            this.settingsDraft = null;
+            this.draft = null;
+            this.navigate();
+          }
+        }
+        if (!this.creating && !this.editing) {
+          this.busy = false;
+          clearTimeout(this.timeout);
+          this.dispatch("mochi:list");
+        } else
+          this.redraw();
+      }
+      return true;
+    }
+    if (payload?.type === "mochi:accounts") {
+      if (payload.requestId !== this.request)
+        return true;
+      clearTimeout(this.timeout);
+      this.busy = false;
+      this.profiles.state = payload.state;
+      if (payload.uploadedAvatarId && this.profiles.draft)
+        this.profiles.draft.avatarId = payload.uploadedAvatarId;
+      else if (this.operation !== "mochi:accounts")
+        this.profiles.draft = null;
+      if (this.operation === "mochi:account_select") {
+        const id = payload.state.phone?.lastAccountId || payload.state.selectedAccountId;
+        if (id && payload.state.accounts.some((a) => a.id === id && !a.archived)) {
+          this.chooseAccount(id, false);
+          return true;
+        }
+      }
+      if (payload.createdAccountId && this.pickerOpen) {
+        this.chooseAccount(payload.createdAccountId);
+        return true;
+      }
+      if (this.state?.accountId && !payload.state.accounts.some((a) => a.id === this.state?.accountId && !a.archived)) {
+        this.showPicker();
+        return true;
+      }
+      if (this.startupOpen) {
+        this.startupOpen = false;
+        const id = payload.state.phone?.lastAccountId;
+        if (payload.state.phone?.preference === "last-used" && payload.state.accounts.some((a) => a.id === id && !a.archived)) {
+          this.chooseAccount(id, false);
+          return true;
+        }
+      }
+      this.redraw();
+      return true;
+    }
+    if (["mochi:notification", "mochi:notifications", "mochi:room_updated", "mochi:job_finished", "mochi:scheduling_updated"].includes(payload?.type) && (payload.accountId ?? payload.notification?.accountId ?? payload.room?.accountId) !== this.state?.accountId)
+      return true;
+    const eventRoom = payload?.roomId ?? payload?.notification?.roomId ?? payload?.room?.id;
+    if (eventRoom && this.associations.has(eventRoom) && this.associations.get(eventRoom).accountId !== this.state?.accountId)
+      return true;
+    if (payload?.type === "mochi:scheduling_updated") {
+      const room = this.state?.rooms.find((r) => r.id === payload.roomId);
+      if (!room || room.accountId !== payload.accountId || (payload.associationRevision || 0) !== (room.associationRevision || 0) || !Number.isSafeInteger(payload.roomRevision) || !payload.background?.snapshot)
+        return true;
+      room.background = this.mergeScheduling(room, payload.background, payload.roomRevision);
+      if (this.editing && room.id === this.roomId && this.schedulingRoot?.isConnected) {
+        const updated = this.scheduleList(room);
+        this.schedulingRoot.replaceChildren(...Array.from(updated.childNodes));
+      } else
+        this.redraw();
+      return true;
+    }
+    if (payload?.type === "mochi:room_updated") {
+      const room = this.state?.rooms.find((r) => r.id === payload.room?.id);
+      if (room && payload.room.revision > room.revision && !this.editing && !this.creating) {
+        payload.room.background = this.mergeScheduling(room, payload.room.background, payload.room.revision);
+        Object.assign(room, payload.room);
+        this.redraw();
+      }
+      return true;
+    }
+    if ((payload?.type === "mochi:accepted" || payload?.type === "mochi:state" && payload.accepted) && this.pendingSends.has(payload.requestId)) {
+      const sent = this.pendingSends.get(payload.requestId);
+      if ((this.drafts.get(sent.roomId) || "") === sent.content)
+        this.drafts.set(sent.roomId, "");
+      this.pendingSends.delete(payload.requestId);
+    }
+    if (payload?.type === "mochi:accepted")
+      return true;
+    if (payload?.type === "mochi:error")
+      this.pendingSends.delete(payload.requestId);
+    if (payload?.type === "mochi:error" && this.acknowledgementRequests.has(payload.requestId)) {
+      for (const id of this.acknowledgementRequests.get(payload.requestId))
+        this.acknowledged.delete(id);
+      this.acknowledgementRequests.delete(payload.requestId);
+      this.error = "Unable to mark notifications as read. Refresh to try again.";
+      this.redraw();
+      return true;
+    }
+    if (payload?.type === "mochi:job_finished") {
+      const jobs = this.state?.jobs;
+      if (jobs && jobs[payload.roomId] === payload.requestId)
+        delete jobs[payload.roomId];
+      if (this.ownGenerations.get(payload.roomId) === payload.requestId)
+        this.ownGenerations.delete(payload.roomId);
+      this.redraw();
+      return true;
+    }
+    if (payload?.type === "mochi:notifications") {
+      this.acknowledgementRequests.delete(payload.requestId);
+      if (this.state)
+        this.state.notifications = this.mergeNotifications((payload.notifications || []).filter((n) => !this.associations.has(n.roomId) || this.associations.get(n.roomId).accountId === this.state?.accountId), payload.notificationRevisions || {});
+      this.redraw();
+      return true;
+    }
+    if (payload?.type === "mochi:notification" && payload.notification) {
+      const n = payload.notification;
+      if (typeof payload.notificationRevision === "number" && payload.notificationRevision <= (this.notificationRevisions.get(n.roomId) ?? -1))
+        return true;
+      if (this.seenNotifications.has(n.id) || this.state?.notifications?.some((saved) => saved.id === n.id))
+        return true;
+      if (typeof payload.notificationRevision === "number")
+        this.notificationRevisions.set(n.roomId, payload.notificationRevision);
+      this.seenNotifications.add(n.id);
+      if (this.state)
+        this.state.notifications = [n, ...(this.state.notifications || []).filter((item) => item.id !== n.id)];
+      const policy = this.notificationPolicy();
+      if (policy.visible && this.roomId === n.roomId && !this.editing && !this.creating && !this.notificationsOpen)
+        this.markNotifications(n.roomId);
+      else if (policy.enabled)
+        this.notify(n);
+      this.redraw();
+      return true;
+    }
+    if (payload?.type !== "mochi:state" && payload?.type !== "mochi:error")
+      return false;
+    if (payload.requestId !== this.request)
+      return true;
+    clearTimeout(this.timeout);
+    this.busy = false;
+    if (payload.type === "mochi:error") {
+      if (this.requestVersion === this.selectionVersion)
+        this.error = String(payload.message);
+    } else {
+      payload.state.rooms = payload.state.rooms.filter((r) => {
+        const known = this.associations.get(r.id);
+        return !known || known.accountId === payload.state.accountId && (r.associationRevision || 0) >= known.revision;
+      });
+      payload.state.notifications = (payload.state.notifications || []).filter((n) => {
+        const known = this.associations.get(n.roomId);
+        return !known || known.accountId === payload.state.accountId;
+      });
+      const notifications = this.mergeNotifications(payload.state.notifications || [], Object.fromEntries(payload.state.rooms.map((r) => [r.id, r.notificationRevision || 0])));
+      for (const room of payload.state.rooms) {
+        const previous = this.state?.rooms.find((r) => r.id === room.id && r.accountId === room.accountId);
+        if (previous && (previous.associationRevision || 0) === (room.associationRevision || 0))
+          room.background = this.mergeScheduling(previous, room.background, room.revision);
+      }
+      this.state = { ...payload.state, notifications };
+      for (const [id, request] of this.ownGenerations)
+        if (this.state && this.state.jobs?.[id] !== request)
+          this.ownGenerations.delete(id);
+      if (payload.selectedRoomId && this.requestVersion === this.selectionVersion) {
+        this.creating = false;
+        this.editing = false;
+        this.draft = null;
+        this.roomId = payload.selectedRoomId;
+        this.navigate(this.roomId);
+      }
+    }
+    this.redraw();
+    if (this.notificationPolicy().visible && this.roomId && !this.editing && !this.creating && !this.notificationsOpen)
+      this.markNotifications(this.roomId);
+    return true;
+  }
+  mergeNotifications(incoming, revisions) {
+    const merged = new Map((this.state?.notifications || []).map((n) => [n.id, n]));
+    const rooms = new Set([...Object.keys(revisions), ...incoming.map((n) => n.roomId)]);
+    const accepted = new Set;
+    for (const room of rooms) {
+      const revision = revisions[room] ?? 0;
+      if (revision < (this.notificationRevisions.get(room) ?? -1))
+        continue;
+      this.notificationRevisions.set(room, revision);
+      accepted.add(room);
+      for (const [id, n] of merged)
+        if (n.roomId === room)
+          merged.delete(id);
+      for (const n of incoming.filter((n) => n.roomId === room)) {
+        merged.set(n.id, n);
+        this.seenNotifications.add(n.id);
+      }
+    }
+    const notices = [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    this.notificationsChanged(notices, accepted);
+    return notices;
+  }
+  render(surface = "all", configure = () => {}) {
+    const page = el("div", "mochi-view");
+    page.dataset.surface = surface;
+    if (surface !== "choices")
+      this.presenceRoot = page;
+    const style = el("style");
+    style.textContent = MOCHI_STYLES;
+    page.append(style);
+    const header = el("header");
+    const brand = el("div", "mochi-brand");
+    const wordmark = el("h2", "mochi-wordmark");
+    wordmark.setAttribute("aria-label", "Mochi");
+    wordmark.innerHTML = '<svg viewBox="0 0 88 32" aria-hidden="true" focusable="false" style="width:88px;height:32px;display:block"><text x="0" y="26" fill="currentColor" font-family="Inter,ui-sans-serif,system-ui,sans-serif" font-size="27" font-weight="700" letter-spacing="-1">Moch</text><path d="M76 16v10" stroke="currentColor" stroke-width="4"/><path d="M76 12c-2-2-6-4-6-7a3.3 3.3 0 0 1 6-2 3.3 3.3 0 0 1 6 2c0 3-4 5-6 7Z" fill="var(--mochi-accent,currentColor)"/></svg>';
+    brand.append(wordmark);
+    header.append(brand);
+    const headerActions = el("div", "mochi-actions");
+    if (surface !== "chat" && this.notificationPolicy().enabled && !this.pickerOpen && !this.profilesOpen) {
+      const bell = action("Mochi notifications", "notifications", true);
+      const unread = this.state?.notifications?.filter((n) => !n.read).length || 0;
+      bell.dataset.unread = String(unread > 0);
+      bell.title = `Mochi notifications · ${unread} unread`;
+      if (unread)
+        bell.append(el("span", "mochi-unread-count", String(unread)));
+      bell.onclick = () => {
+        this.leave();
+        this.notificationsOpen = !this.notificationsOpen;
+        this.redraw();
+        if (!this.state)
+          this.load();
+      };
+      headerActions.append(bell);
+      bell.setAttribute("aria-description", `${unread} unread notifications`);
+    }
+    header.append(headerActions);
+    page.append(header);
+    if (surface === "chat" && (!this.state?.rooms.some((room) => room.id === this.roomId) || this.pickerOpen || this.profilesOpen)) {
+      page.append(el("p", "mochi-muted", "Choose a conversation in the Pocket portal."));
+      const choose = action("Choose conversation", "back");
+      choose.onclick = configure;
+      page.append(choose);
+      return page;
+    }
+    if (this.error) {
+      const error = el("p", "mochi-error", this.error);
+      error.setAttribute("role", "alert");
+      page.append(error);
+    }
+    if (this.profilesOpen) {
+      page.append(this.profiles.render(this.busy, (type, input) => this.dispatch(type, input), () => this.redraw(), () => {
+        this.profilesOpen = false;
+        this.redraw();
+      }, (next, anchor) => this.confirmNavigation(next, anchor), () => this.refreshChoices()));
+      return page;
+    }
+    if (this.pickerOpen) {
+      page.append(accountPicker(this.profiles.state, this.busy, (id) => this.chooseAccount(id), () => {
+        this.profiles.start();
+        this.profilesOpen = true;
+        this.refreshChoices();
+        this.redraw();
+      }, () => {
+        this.leave();
+        this.resetScope();
+        this.pickerOpen = false;
+        this.load();
+      }, (preference) => this.dispatch("mochi:account_startup", { preference, revision: this.profiles.state?.revision }), () => {
+        this.profilesOpen = true;
+        this.profiles.draft = null;
+        this.redraw();
+      }, () => this.dispatch("mochi:accounts")));
+      return page;
+    }
+    if (!this.state)
+      return page;
+    if (this.feedback) {
+      const status = el("p", "mochi-muted", this.feedback);
+      status.setAttribute("role", "status");
+      page.append(status);
+    }
+    for (const warning of this.state.warnings)
+      page.append(el("p", "mochi-error", warning));
+    if (surface !== "chat" && this.notificationsOpen && this.notificationPolicy().enabled) {
+      page.append(this.notificationList());
+      return page;
+    }
+    const room = this.state.rooms.find((room) => room.id === this.roomId);
+    if (surface !== "chat" && (this.creating || this.editing)) {
+      page.append(this.form(this.editing ? room : undefined));
+      return page;
+    }
+    if (room && surface !== "choices") {
+      const roomHeader = el("div", "mochi-room-header");
+      const info = el("div", "mochi-room-info"), selector = el("select", "mochi-room-selector");
+      selector.setAttribute("aria-label", "Select room");
+      for (const r of this.state.rooms) {
+        const option = el("option", "", r.title);
+        option.value = r.id;
+        selector.append(option);
+      }
+      selector.value = room.id;
+      selector.onchange = () => this.openRoom(selector.value);
+      selector.title = room.title;
+      const roomSelector = el("div", "mochi-room-select");
+      const groupIcon = el("span", "mochi-room-select-icon");
+      groupIcon.setAttribute("aria-hidden", "true");
+      groupIcon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 5"/></svg>';
+      roomSelector.append(groupIcon, selector);
+      const statuses = room.characterIds.map((id) => statusFor(room, id)), online = statuses.filter((s) => s === "online").length;
+      const roomMeta = el("p", "mochi-room-meta", `${room.characterIds.length} ${room.characterIds.length === 1 ? "participant" : "participants"} · ${online ? "active now" : statuses.every((s) => s === "offline") ? "offline" : "replies delayed"}`);
+      roomMeta.dataset.status = online ? "online" : statuses.includes("away") ? "away" : statuses.includes("dnd") ? "dnd" : "offline";
+      roomMeta.title = room.characterIds.map((id, i) => `${room.settings?.characterNames[id] || this.state?.characters.find((c) => c.id === id)?.name || id}: ${statuses[i]}`).join(`
+`);
+      info.append(roomSelector, roomMeta);
+      const controls = el("div", "mochi-actions");
+      const inbox = action("Room inbox", "back", true);
+      inbox.onclick = () => {
+        this.select("");
+        this.navigate();
+      };
+      const openSettings = () => {
+        this.leave();
+        this.editing = true;
+        this.draft = null;
+        this.settingsDraft = null;
+        if (surface === "chat")
+          configure();
+        this.refreshChoices();
+        this.redraw();
+      };
+      const menu = el("details", "lp-conversation-menu"), more = el("summary", "lp-nav-action", "⋯");
+      more.setAttribute("aria-label", "Room options");
+      const menuSheet = el("div", "lp-conversation-menu-sheet");
+      const menuAction = (label, callback) => {
+        const item = button(label, "lp-conversation-menu-action");
+        item.setAttribute("aria-label", label);
+        item.addEventListener("click", () => {
+          menu.open = false;
+          callback();
+        });
+        return item;
+      };
+      menuSheet.append(menuAction("Participants", () => {
+        const members = el("div", "mochi-participants");
+        for (const id of room.characterIds) {
+          const c = this.state?.characters.find((c) => c.id === id), name = room.settings?.characterNames[id] || c?.name || "Unavailable character";
+          const row = el("div", "mochi-member");
+          row.append(portrait(name, c?.avatarUrl), el("span", "", name));
+          members.append(row);
+        }
+        this.sheet(roomHeader, "Room participants", members);
+        members.closest("dialog")?.addEventListener("close", () => {
+          if (more.isConnected)
+            more.focus();
+        }, { once: true });
+      }), menuAction("Settings", openSettings));
+      menu.append(more, menuSheet);
+      menu.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          menu.open = false;
+          more.focus();
+          event.stopPropagation();
+        }
+      });
+      menu.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && !menu.contains(event.relatedTarget))
+          menu.open = false;
+      });
+      controls.append(menu);
+      roomHeader.append(info, controls);
+      page.append(roomHeader);
+      if (surface === "chat")
+        roomHeader.classList.add("mochi-chat-heading");
+      else
+        headerActions.prepend(inbox);
+      page.append(this.thread(room), this.composer(room));
+      return page;
+    }
+    if (this.roomId && !room)
+      page.append(el("p", "mochi-error", "This room is unavailable. Refresh or select another room."));
+    page.append(el("p", "mochi-muted", "Your independent character rooms."));
+    const inboxActions = el("div", "mochi-inbox-actions");
+    page.append(inboxActions);
+    const change = action("Switch Mochi account", "people");
+    change.onclick = () => this.showPicker();
+    inboxActions.append(change);
+    const profiles = action(stateAccountLabel(this.state.accountId), "people");
+    profiles.disabled = this.busy;
+    profiles.onclick = () => {
+      this.leave();
+      this.profilesOpen = true;
+      const current = this.profiles.state?.accounts.find((a) => a.id === this.state?.accountId);
+      if (current)
+        this.profiles.start(current);
+      else
+        this.profiles.draft = null;
+      this.dispatch("mochi:accounts");
+    };
+    inboxActions.append(profiles);
+    const create = action("New room", "plus");
+    create.classList.add("mochi-primary");
+    create.disabled = this.busy;
+    create.onclick = () => {
+      this.creating = true;
+      this.draft = null;
+      this.refreshChoices();
+      this.redraw();
+    };
+    inboxActions.append(create);
+    if (!this.state.rooms.length)
+      page.append(el("p", "mochi-card", "No rooms yet. Choose your characters and the identity you want to use."));
+    for (const room of this.state.rooms) {
+      const row = button("", "mochi-card");
+      const avatars = el("div", "mochi-room-avatars");
+      avatars.dataset.single = String(room.characterIds.length === 1);
+      for (const id of room.characterIds.slice(0, 4)) {
+        const c = this.state.characters.find((c) => c.id === id);
+        avatars.append(portrait(room.settings?.characterNames[id] || c?.name || "?", c?.avatarUrl));
+      }
+      const copy = el("div", "mochi-card-copy");
+      copy.append(el("strong", "", room.title), el("span", "mochi-muted", `${room.characterIds.length === 1 ? "Direct room" : `${room.characterIds.length} characters`} · ${room.persona.name}`));
+      const last = room.messages.at(-1);
+      copy.append(el("span", "mochi-preview", last?.content ? `${last.name}: ${last.content}` : "Start a conversation"));
+      row.append(avatars, copy);
+      if (room.id === this.roomId)
+        row.setAttribute("aria-current", "true");
+      row.onclick = () => this.openRoom(room.id);
+      page.append(row);
+    }
+    return page;
+  }
+  form(room) {
+    const state = this.state;
+    const freshDraft = !this.draft;
+    if (freshDraft)
+      this.draftRevision = room?.revision || 0;
+    this.draft ||= { title: room?.title || "", characterIds: [...room?.characterIds || []], persona: room ? "keep" : "manual", name: room?.persona.name || "You", description: room?.persona.description || "" };
+    const draft = this.draft;
+    this.settingsDraft ||= structuredClone(room?.settings || defaultMochiSettings());
+    const settings = this.settingsDraft;
+    if (freshDraft)
+      this.formBaseline = JSON.stringify([draft, settings]);
+    const form = el("form", "mochi-form");
+    form.append(el("h3", "", room ? "Room settings" : "New room"));
+    let group = form;
+    const section = (title, collapsed = false) => {
+      const node = el(collapsed ? "details" : "fieldset", "mochi-settings-section");
+      node.append(el(collapsed ? "summary" : "legend", "", title));
+      if (collapsed) {
+        const details = node;
+        details.open = this.settingsSections.has(title);
+        details.ontoggle = () => {
+          if (details.open)
+            this.settingsSections.add(title);
+          else
+            this.settingsSections.delete(title);
+        };
+      }
+      form.append(node);
+      group = node;
+      return node;
+    };
+    section("Conversation");
+    const field = (label, input) => {
+      input.setAttribute("aria-label", label);
+      const node = el("label", input.tagName === "INPUT" && input.type === "checkbox" ? "mochi-toggle" : "", label);
+      node.append(input);
+      group.append(node);
+    };
+    const title = el("input");
+    title.required = true;
+    title.maxLength = 120;
+    title.value = draft.title;
+    title.oninput = () => {
+      draft.title = title.value;
+    };
+    field("Room name", title);
+    const picker = el("div", "mochi-picker");
+    picker.setAttribute("role", "group");
+    picker.setAttribute("aria-label", "Room characters");
+    for (const character of state.characters) {
+      const choice = button("", "mochi-choice");
+      choice.append(portrait(character.name, character.avatarUrl));
+      choice.append(el("span", "", character.name));
+      choice.setAttribute("aria-pressed", String(draft.characterIds.includes(character.id)));
+      choice.onclick = () => {
+        draft.characterIds = draft.characterIds.includes(character.id) ? draft.characterIds.filter((id) => id !== character.id) : [...draft.characterIds, character.id];
+        choice.setAttribute("aria-pressed", String(draft.characterIds.includes(character.id)));
+      };
+      picker.append(choice);
+    }
+    group.append(el("p", "mochi-muted", "Choose 1–12 characters"), picker);
+    const persona = el("select");
+    const option = (value, label) => {
+      const o = el("option", "", label);
+      o.value = value;
+      persona.append(o);
+    };
+    if (room)
+      option("keep", `Keep saved identity: ${room.persona.name}`);
+    option("manual", "Custom identity");
+    state.personas.forEach((p) => option(p.source + ":" + p.sourceId, `${p.name} (${p.source === "pocket" ? "Pocket profile" : "Lumiverse persona"})`));
+    persona.value = draft.persona;
+    persona.onchange = () => {
+      draft.persona = persona.value;
+      this.redraw();
+    };
+    if (!state.accountId)
+      field("Your identity in this room", persona);
+    else
+      group.append(el("p", "mochi-muted", `Saved chat identity: ${room?.persona.name || this.profiles.state?.accounts.find((a) => a.id === state.accountId)?.displayName || "Account profile"}. Profile settings are separate from chat settings.`));
+    if (draft.persona === "manual" && !state.accountId) {
+      const name = el("input");
+      name.required = true;
+      name.maxLength = 120;
+      name.value = draft.name;
+      name.oninput = () => {
+        draft.name = name.value;
+      };
+      field("Your name", name);
+      const description = el("textarea");
+      description.maxLength = 12000;
+      description.rows = 3;
+      description.value = draft.description;
+      description.oninput = () => {
+        draft.description = description.value;
+      };
+      field("Identity description", description);
+    }
+    if (room) {
+      section("Connection & replies");
+      const connection = el("select");
+      const empty = el("option", "", "Choose connection");
+      empty.value = "";
+      connection.append(empty);
+      for (const c of state.connections || []) {
+        const o = el("option", "", `${c.name} · ${c.model}`);
+        o.value = c.id;
+        connection.append(o);
+      }
+      if (settings.connectionId && !state.connections?.some((c) => c.id === settings.connectionId)) {
+        const missing = el("option", "", "Unavailable connection");
+        missing.value = settings.connectionId;
+        connection.append(missing);
+      }
+      connection.value = settings.connectionId;
+      connection.onchange = () => {
+        settings.connectionId = connection.value;
+        delete settings.model;
+        this.redraw();
+      };
+      field("Generation connection", connection);
+      const refresh = button("Refresh connections & personas", "lp-button mochi-secondary-action");
+      refresh.onclick = () => this.refreshChoices();
+      group.append(refresh);
+      group.append(mochiModelPicker(settings.connectionId, state.connections?.find((c) => c.id === settings.connectionId)?.model || "", settings.model || "", (value) => {
+        if (value)
+          settings.model = value;
+        else
+          delete settings.model;
+      }, this.modelChoices, this.modelControllers));
+      const auto = el("input");
+      auto.type = "checkbox";
+      auto.checked = settings.autoReply;
+      auto.onchange = () => {
+        settings.autoReply = auto.checked;
+      };
+      field("Reply automatically after sending", auto);
+      const mode = el("select");
+      if (settings.responseMode === undefined) {
+        const legacy = el("option", "", "Existing behavior");
+        legacy.value = "";
+        mode.append(legacy);
+      }
+      for (const [value, label] of [["natural", "Natural group chat"], ["instant", "Instant replies"], ["manual", "Manual"]]) {
+        const option = el("option", "", label);
+        option.value = value;
+        mode.append(option);
+      }
+      mode.value = settings.responseMode || "";
+      mode.onchange = () => {
+        if (mode.value)
+          settings.responseMode = mode.value;
+        else
+          delete settings.responseMode;
+      };
+      field("Response mode", mode);
+      auto.disabled = !!settings.responseMode;
+      section("Background messaging", true);
+      group.append(el("p", "mochi-muted", "These controls apply immediately. Scheduled and idle messages can generate replies while you are away."));
+      const accountBackground = el("input");
+      accountBackground.type = "checkbox";
+      accountBackground.checked = !!state.backgroundEnabled;
+      accountBackground.disabled = this.busy;
+      const aiBehavior = el("input");
+      aiBehavior.type = "checkbox";
+      aiBehavior.checked = !!settings.aiBehavior;
+      aiBehavior.disabled = this.busy || !settings.aiBehavior && (!state.backgroundEnabled || !room.background?.enabled);
+      aiBehavior.onchange = () => {
+        settings.aiBehavior = aiBehavior.checked;
+      };
+      field("Allow AI delivery timing and status suggestions", aiBehavior);
+      accountBackground.onchange = () => this.dispatch("mochi:background_account", { enabled: accountBackground.checked });
+      field("Allow server-side background messaging for my account", accountBackground);
+      const roomBackground = el("input");
+      roomBackground.type = "checkbox";
+      roomBackground.checked = !!room.background?.enabled;
+      roomBackground.disabled = this.busy;
+      roomBackground.onchange = () => this.dispatch("mochi:background_room", { roomId: room.id, revision: room.revision, enabled: roomBackground.checked });
+      field("Allow scheduled messages in this room", roomBackground);
+      const idle = el("input");
+      idle.type = "checkbox";
+      idle.checked = !!room.background?.idle?.enabled;
+      idle.disabled = this.busy || !idle.checked && (!state.backgroundEnabled || !room.background?.enabled || settings.responseMode === "manual");
+      idle.onchange = () => this.dispatch("mochi:idle", { roomId: room.id, revision: room.revision, enabled: idle.checked });
+      field("Allow idle messages (3 per idle period, 90 minutes apart)", idle);
+      if (state.backgroundEnabled && room.background?.enabled) {
+        const due = el("input");
+        due.type = "datetime-local";
+        due.value = this.schedulingTime.get(room.id) || "";
+        due.oninput = () => this.schedulingTime.set(room.id, due.value);
+        field("Scheduled message time", due);
+        const schedule = action("Schedule character message", "plus");
+        schedule.type = "button";
+        schedule.disabled = this.busy;
+        schedule.onclick = () => this.dispatch("mochi:schedule", { roomId: room.id, revision: room.revision, occurrenceId: requestId("scheduled"), dueAt: new Date(due.value).getTime(), responder: this.responders.get(room.id) || "auto" });
+        group.append(schedule);
+      }
+      this.schedulingRoot = this.scheduleList(room);
+      group.append(this.schedulingRoot);
+      section("Context & token limits", true);
+      for (const [label, key] of [["Total token budget", "contextTokens"], ["Maximum reply tokens", "outputTokens"]]) {
+        const input = el("input");
+        input.type = "number";
+        input.value = String(settings[key]);
+        input.oninput = () => {
+          settings[key] = Number(input.value);
+        };
+        field(label, input);
+      }
+      const instructions = el("textarea");
+      instructions.maxLength = 6000;
+      instructions.value = settings.instructions;
+      instructions.oninput = () => {
+        settings.instructions = instructions.value;
+      };
+      field("Room instructions", instructions);
+      for (const id of room.characterIds) {
+        section((state.characters.find((c) => c.id === id)?.name || id) + " · presence & room name", true);
+        group.append(el("p", "mochi-muted", "Presence and schedule changes apply immediately."));
+        const presence = structuredClone(room.background?.presence?.[id] || defaultPresence()), name = state.characters.find((c) => c.id === id)?.name || id;
+        const setPresence = () => this.dispatch("mochi:presence", { roomId: room.id, revision: room.revision, characterId: id, presence });
+        const status = el("select");
+        for (const s of STATUSES) {
+          const option = el("option", "", s === "dnd" ? "DND" : s[0].toUpperCase() + s.slice(1));
+          option.value = s;
+          status.append(option);
+        }
+        status.value = statusFor(room, id);
+        status.disabled = this.busy;
+        status.onchange = () => {
+          presence.manual = status.value;
+          setPresence();
+        };
+        field(`Status for ${name}`, status);
+        const automatic = el("input");
+        automatic.type = "checkbox";
+        automatic.checked = presence.manual === null;
+        automatic.disabled = this.busy;
+        automatic.onchange = () => {
+          presence.manual = automatic.checked ? null : status.value;
+          setPresence();
+        };
+        field(`Automatic status for ${name}`, automatic);
+        for (const [label, key] of [["Away delay (minutes)", "awayMs"], ["DND delay (minutes)", "dndMs"]]) {
+          const delay = el("input");
+          delay.type = "number";
+          delay.min = "0";
+          delay.max = "1440";
+          delay.value = String(presence[key] / 60000);
+          delay.disabled = this.busy;
+          delay.onchange = () => {
+            presence[key] = Number(delay.value) * 60000;
+            setPresence();
+          };
+          field(`${label} for ${name}`, delay);
+        }
+        const next = el("select");
+        for (const s of STATUSES) {
+          const option = el("option", "", s === "dnd" ? "DND" : s);
+          option.value = s;
+          next.append(option);
+        }
+        field(`Scheduled status for ${name}`, next);
+        const when = el("input");
+        when.type = "datetime-local";
+        field(`Status change time for ${name}`, when);
+        const plan = action(`Schedule status change for ${name}`, "plus");
+        plan.type = "button";
+        plan.disabled = this.busy;
+        plan.onclick = () => {
+          presence.transitions.push({ at: new Date(when.value).getTime(), status: next.value });
+          setPresence();
+        };
+        group.append(plan);
+        if (presence.transitions.length) {
+          const clear = action(`Clear status schedule for ${name}`, "trash");
+          clear.type = "button";
+          clear.disabled = this.busy;
+          clear.onclick = () => {
+            presence.transitions = [];
+            setPresence();
+          };
+          group.append(clear);
+        }
+        const input = el("input");
+        input.maxLength = 120;
+        input.value = settings.characterNames[id] || "";
+        input.oninput = () => {
+          settings.characterNames[id] = input.value;
+        };
+        field(`Room name for ${state.characters.find((c) => c.id === id)?.name || id}`, input);
+      }
+    }
+    if (room) {
+      section("Chat ownership", true);
+      group.append(this.assignmentControls(room));
+    }
+    const save = action(this.busy ? "Saving…" : room ? "Save settings" : "Create room", room ? "settings" : "plus");
+    save.classList.add("mochi-primary");
+    save.type = "submit";
+    save.disabled = this.busy;
+    const cancel = action("Cancel", "back");
+    cancel.disabled = this.busy;
+    cancel.onclick = () => this.confirmNavigation(() => {
+      this.creating = false;
+      this.editing = false;
+      this.draft = null;
+      this.settingsDraft = null;
+      this.redraw();
+    }, cancel);
+    const actions = el("div", "mochi-actions");
+    actions.append(save, cancel);
+    form.append(actions);
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const selected = state.accountId ? undefined : draft.persona === "keep" ? undefined : draft.persona === "manual" ? { source: "manual", name: draft.name, description: draft.description } : state.personas.find((p) => p.source + ":" + p.sourceId === draft.persona);
+      this.dispatch(room ? "mochi:update" : "mochi:create", { roomId: room?.id, revision: room ? this.draftRevision : undefined, title: draft.title, characterIds: draft.characterIds, persona: selected, ...room ? { settings } : {} });
+    };
+    return form;
+  }
+  scheduleList(room) {
+    const list = el("section");
+    list.setAttribute("aria-label", "Scheduled opportunities");
+    list.setAttribute("aria-live", "polite");
+    for (const job of room.background?.jobs || []) {
+      const row = el("div", "mochi-actions");
+      row.dataset.scheduleId = job.id;
+      row.dataset.status = job.status;
+      const times = [`Due ${new Date(job.dueAt).toLocaleString()}`, ...job.deliverAt ? [`Delivery ${new Date(job.deliverAt).toLocaleString()}`] : [], ...job.expiresAt ? [`Expires ${new Date(job.expiresAt).toLocaleString()}`] : []];
+      row.append(el("small", "mochi-muted", `${SCHEDULE_LABELS[job.status]} · ${times.join(" · ")}${job.reason ? ` · ${job.reason}` : ""}`));
+      if (!TERMINAL.has(job.status)) {
+        const cancelJob = action("Cancel scheduled message", "close");
+        cancelJob.type = "button";
+        cancelJob.disabled = this.busy;
+        cancelJob.onclick = () => this.dispatch("mochi:schedule_cancel", { roomId: room.id, occurrenceId: job.id });
+        row.append(cancelJob);
+      }
+      list.append(row);
+    }
+    return list;
+  }
+  assignmentControls(room) {
+    const section = el("section", "mochi-assignment mochi-form");
+    section.append(el("h4", "", "Chat ownership"), el("p", "mochi-muted", `Saved identity: ${room.persona.name}. Assignment keeps this snapshot, all messages and all schedules.`));
+    if (!this.profiles.state) {
+      const load = action("Load profiles for assignment", "people");
+      load.type = "button";
+      load.disabled = this.busy;
+      load.onclick = () => this.dispatch("mochi:accounts");
+      section.append(load);
+      return section;
+    }
+    const select = el("select");
+    select.setAttribute("aria-label", "Assign chat to Mochi account");
+    const empty = el("option", "", "Choose destination account");
+    empty.value = "";
+    select.append(empty);
+    for (const a of this.profiles.state.accounts.filter((a) => !a.archived && a.id !== room.accountId)) {
+      const option = el("option", "", a.displayName + (a.username ? " · @" + a.username : ""));
+      option.value = a.id;
+      select.append(option);
+    }
+    const confirm = el("input");
+    confirm.type = "checkbox";
+    confirm.setAttribute("aria-label", "Keep saved persona and all chat data");
+    const label = el("label", "mochi-toggle", "Keep saved persona and all chat data");
+    label.append(confirm);
+    const assign = action(room.accountId ? "Reassign chat" : "Assign legacy chat", "people");
+    assign.type = "button";
+    assign.disabled = true;
+    const update = () => {
+      assign.disabled = this.busy || !select.value || !confirm.checked;
+    };
+    select.onchange = update;
+    confirm.onchange = update;
+    assign.onclick = () => this.dispatch("mochi:room_assign", { roomId: room.id, revision: room.revision, associationRevision: room.associationRevision || 0, targetAccountId: select.value, confirmed: confirm.checked, preservePersona: confirm.checked });
+    section.append(select, label, assign);
+    return section;
+  }
+  thread(room) {
+    const thread = el("div", "mochi-thread");
+    thread.setAttribute("role", "log");
+    thread.setAttribute("aria-label", "Room messages");
+    thread.dataset.pocketThread = "mochi";
+    globalThis.requestAnimationFrame?.(() => {
+      thread.scrollTop = thread.scrollHeight;
+    });
+    let previous;
+    for (const raw of room.messages) {
+      const message = raw;
+      const row = el("div", "mochi-message");
+      row.dataset.role = message.role;
+      row.dataset.messageId = message.id;
+      const elapsed = previous ? Date.parse(message.createdAt) - Date.parse(previous.createdAt) : Infinity;
+      row.dataset.grouped = String(Boolean(previous && previous.role === message.role && previous.characterId === message.characterId && previous.name === message.name && elapsed >= 0 && elapsed < 300000));
+      previous = message;
+      const avatar = el("span", "mochi-message-avatar", message.name?.slice(0, 1) || "?");
+      if (message.avatarUrl) {
+        const image = el("img");
+        image.src = message.avatarUrl;
+        image.alt = "";
+        avatar.replaceChildren(image);
+      }
+      const avatarFrame = el("span", "mochi-avatar-frame");
+      avatarFrame.append(avatar);
+      if (message.role === "assistant") {
+        const dot = el("span", "mochi-presence-dot");
+        dot.dataset.characterId = message.characterId || "";
+        dot.dataset.status = statusFor(room, message.characterId || "");
+        dot.setAttribute("aria-hidden", "true");
+        dot.title = `Character status: ${dot.dataset.status}`;
+        avatarFrame.append(dot);
+      }
+      const body = el("div", "mochi-message-body");
+      const time = el("time", "", new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+      time.dateTime = message.createdAt;
+      const displayName = message.role === "user" ? "You" : message.name || "Unknown";
+      const name = el("strong", "mochi-message-name", displayName);
+      name.title = message.name || "Unknown";
+      row.setAttribute("aria-label", `Message from ${message.name || "Unknown"}`);
+      const heading = el("div", "mochi-message-heading");
+      heading.append(name, time);
+      const meta = el("div", "mochi-message-meta");
+      const more = action(`Actions for ${message.name || "message"}`, "more", true);
+      more.classList.add("mochi-message-actions");
+      more.onclick = () => this.messageActions(more, room, message);
+      const bubble = el("div", "mochi-bubble", message.content || "");
+      if (message.editedAt) {
+        bubble.title = `Edited ${new Date(message.editedAt).toLocaleString()}`;
+        bubble.setAttribute("aria-description", bubble.title);
+      }
+      meta.append(more);
+      body.append(heading, bubble, meta);
+      row.append(avatarFrame, body);
+      thread.append(row);
+    }
+    if (this.state?.jobs?.[room.id]) {
+      const status = el("p", "mochi-muted", "Character is replying…");
+      status.setAttribute("role", "status");
+      thread.append(status);
+    }
+    return thread;
+  }
+  sheet(anchor, title, content) {
+    const sheet = showPocketSheet(anchor, title, content);
+    if (sheet) {
+      this.sheets.add(sheet.dismiss);
+      content.closest("dialog")?.classList.add("mochi-sheet");
+      content.closest("dialog")?.addEventListener("close", () => this.sheets.delete(sheet.dismiss), { once: true });
+    }
+    return sheet;
+  }
+  messageActions(anchor, room, message) {
+    const revision = room.revision, content = el("div", "mochi-action-panel");
+    const context = el("p", "mochi-action-context");
+    const author = el("strong", "mochi-action-author", message.role === "user" ? "You" : message.name);
+    author.title = message.name;
+    const details = el("small", "", `${new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${message.editedAt ? ` · Edited ${new Date(message.editedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`);
+    if (message.editedAt)
+      details.title = `Edited ${new Date(message.editedAt).toLocaleString()}`;
+    context.append(author, details);
+    content.append(context);
+    const sheet = this.sheet(anchor, "Message actions", content);
+    const copy = action("Copy message", "copy");
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(message.content);
+        this.feedback = "Message copied.";
+        sheet?.dismiss();
+        this.redraw();
+      } catch {
+        this.error = "Clipboard is unavailable. Select the message text to copy it.";
+        sheet?.dismiss();
+        this.redraw();
+      }
+    };
+    const edit = action("Edit message", "edit");
+    edit.disabled = this.busy;
+    edit.onclick = () => {
+      const label = el("label", "", "Message text"), input = el("textarea");
+      input.value = message.content;
+      input.rows = 5;
+      input.maxLength = 32000;
+      input.required = true;
+      input.setAttribute("aria-label", "Edit message text");
+      label.append(input);
+      const save = action("Save message", "edit");
+      save.onclick = () => {
+        if (!input.value.trim()) {
+          input.focus();
+          return;
+        }
+        this.dispatch("mochi:message_action", { roomId: room.id, revision, messageId: message.id, action: "edit", content: input.value });
+        sheet?.dismiss();
+      };
+      content.replaceChildren(label, el("p", "mochi-muted", "Later messages stay unchanged. The previous text is retained in room storage."), save);
+      input.focus();
+    };
+    const remove = action("Delete message", "trash");
+    remove.disabled = this.busy;
+    remove.onclick = () => {
+      const confirm = action("Confirm delete", "trash");
+      confirm.onclick = () => {
+        this.dispatch("mochi:message_action", { roomId: room.id, revision, messageId: message.id, action: "delete", confirmed: true });
+        sheet?.dismiss();
+      };
+      content.replaceChildren(el("p", "", "Delete this saved message? Only this message and its prior versions will be removed. Later messages stay unchanged. This cannot be undone."), confirm);
+    };
+    content.append(copy, edit, remove);
+    if (message.role === "assistant") {
+      const reroll = action("Regenerate message", "refresh");
+      reroll.disabled = this.busy || Boolean(this.state?.jobs?.[room.id]);
+      reroll.onclick = () => {
+        const confirm = action("Confirm reroll", "refresh");
+        confirm.onclick = () => {
+          this.dispatch("mochi:regenerate", { roomId: room.id, revision, messageId: message.id, confirmed: true });
+          sheet?.dismiss();
+        };
+        content.replaceChildren(el("p", "", "Reroll using the conversation before this reply? The previous text is retained. Later messages stay unchanged and may no longer fit the new reply."), confirm);
+      };
+      content.append(reroll);
+    }
+  }
+  markNotifications(id) {
+    const unread = this.state?.notifications?.filter((n) => n.roomId === id && !n.read && !this.acknowledged.has(n.id)) || [];
+    if (!unread.length)
+      return;
+    unread.forEach((n) => this.acknowledged.add(n.id));
+    const idForRequest = requestId("mochi_read");
+    this.acknowledgementRequests.set(idForRequest, unread.map((n) => n.id));
+    this.send({ type: "mochi:notification_read", requestId: idForRequest, accountId: this.state?.accountId, roomId: id, notificationIds: unread.map((n) => n.id) });
+  }
+  openRoom(id) {
+    this.notificationsOpen = false;
+    this.select(id);
+    this.navigate(id);
+    this.markNotifications(id);
+    this.load();
+  }
+  resume() {
+    if (this.notificationPolicy().visible && this.roomId && !this.editing && !this.creating && !this.notificationsOpen)
+      this.markNotifications(this.roomId);
+  }
+  notificationList() {
+    const list = el("div", "mochi-notification-list");
+    list.append(el("h3", "", "Mochi notifications"));
+    const entries = this.state?.notifications || [];
+    list.append(el("p", "mochi-muted", "Reading marks notifications as read. Dismissing them keeps your room messages."));
+    const controls = el("div", "mochi-actions");
+    const clearRead = action("Clear read", "trash");
+    clearRead.disabled = this.busy || !entries.some((n) => n.read);
+    clearRead.onclick = () => this.clearNotices("read", entries.filter((n) => n.read));
+    const clearAll = action("Clear all", "trash");
+    clearAll.disabled = this.busy || !entries.length;
+    clearAll.onclick = () => {
+      const content = el("div", "mochi-action-panel");
+      const sheet = this.sheet(clearAll, "Clear all notifications?", content);
+      const confirm = action("Confirm clear all", "trash");
+      confirm.onclick = () => {
+        this.clearNotices("all", entries);
+        sheet?.dismiss();
+      };
+      content.append(el("p", "", "Dismiss these notifications, including unread ones? Saved room messages stay intact. New notifications arriving afterwards will remain."), confirm);
+    };
+    controls.append(clearRead, clearAll);
+    list.append(controls);
+    if (!entries.length)
+      list.append(el("p", "mochi-muted", "No character notifications yet."));
+    for (const n of entries) {
+      const entry = el("div", "mochi-notification-entry");
+      entry.dataset.notificationId = n.id;
+      const row = button("", "mochi-card");
+      const copy = el("div", "mochi-card-copy");
+      copy.append(el("strong", "", `${n.title} · ${n.roomTitle}`), el("span", "mochi-preview", notificationBody(n, this.notificationPolicy().previews)), el("small", "mochi-muted", n.read ? "Read" : "New"));
+      row.append(portrait(n.title, n.avatarUrl), copy);
+      row.onclick = () => this.openRoom(n.roomId);
+      const dismiss = action(`Dismiss notification from ${n.title}`, "close", true);
+      dismiss.disabled = this.busy;
+      dismiss.onclick = () => this.clearNotices("dismiss", [n]);
+      entry.append(row, dismiss);
+      list.append(entry);
+    }
+    const back = action("Back to rooms", "back");
+    back.onclick = () => {
+      this.notificationsOpen = false;
+      this.redraw();
+    };
+    list.append(back);
+    return list;
+  }
+  clearNotices(action, entries) {
+    const rooms = new Map;
+    for (const n of entries)
+      rooms.set(n.roomId, [...rooms.get(n.roomId) || [], n.id]);
+    this.dispatch("mochi:notification_clear", { action, rooms: [...rooms].map(([roomId, notificationIds]) => ({ roomId, notificationIds })), confirmed: action === "all" });
+  }
+  composer(room) {
+    const form = el("form", "mochi-composer");
+    const responder = el("select");
+    responder.setAttribute("aria-label", "Next responder");
+    const auto = el("option", "", "Automatic responder");
+    auto.value = "auto";
+    responder.append(auto);
+    for (const id of room.characterIds) {
+      const o = el("option", "", room.settings?.characterNames[id] || this.state?.characters.find((c) => c.id === id)?.name || id);
+      o.value = id;
+      responder.append(o);
+    }
+    const selected = this.responders.get(room.id) || "auto";
+    responder.value = room.characterIds.includes(selected) ? selected : "auto";
+    const responderField = el("div", "mochi-responder");
+    const identity = el("span", "mochi-responder-identity");
+    identity.setAttribute("aria-hidden", "true");
+    const showResponder = () => {
+      const character = this.state?.characters.find((c) => c.id === responder.value);
+      const name = responder.value === "auto" ? "Automatic" : room.settings?.characterNames[responder.value] || character?.name || responder.value;
+      const avatar = portrait(name, character?.avatarUrl);
+      if (responder.value === "auto")
+        avatar.innerHTML = POCKET_ICONS.contacts;
+      identity.replaceChildren(avatar, el("span", "mochi-responder-name", name));
+      responderField.title = `Next responder: ${name}`;
+    };
+    showResponder();
+    responder.onchange = () => {
+      this.responders.set(room.id, responder.value);
+      showResponder();
+    };
+    responderField.append(identity, responder);
+    const input = el("textarea");
+    input.rows = 1;
+    input.maxLength = 32000;
+    input.setAttribute("aria-label", "Message");
+    input.placeholder = "Message…";
+    input.value = this.drafts.get(room.id) || "";
+    input.dataset.pocketComposer = `mochi_${room.id}`;
+    const guidance = `Messaging as ${room.persona.name}. Enter to send; Shift+Enter for a new line. Send empty to continue.`;
+    input.setAttribute("aria-description", guidance);
+    input.title = guidance;
+    input.oninput = () => {
+      this.drafts.set(room.id, input.value);
+      input.style.height = "auto";
+      input.style.height = `${Math.min(input.scrollHeight, 112)}px`;
+    };
+    input.onkeydown = (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    };
+    const job = this.state?.jobs?.[room.id];
+    const submit = action("Send", "send", true);
+    submit.classList.add("mochi-primary");
+    submit.type = "submit";
+    submit.disabled = this.busy || Boolean(job);
+    const stop = action("Stop reply", "stop", true);
+    stop.disabled = !job;
+    stop.hidden = !job;
+    stop.onclick = () => this.send({ type: "mochi:cancel", accountId: this.state?.accountId, roomId: room.id, generationRequestId: job });
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      if (!this.busy && !job)
+        this.dispatch("mochi:send", { roomId: room.id, revision: room.revision, content: input.value, responder: responder.value });
+    };
+    const actions = el("div", "mochi-composer-row");
+    actions.append(input, submit, stop);
+    form.append(responderField, actions);
+    return form;
+  }
+}
+
+// src/frontend/components/portal.ts
+var artwork = {
+  phones: '<rect x="41" y="13" width="48" height="76" rx="10"/><path d="M56 22h18M60 79h10M51 41h28M51 50h19"/><path d="M25 42c-10 10-10 25 0 35M105 25c10 10 10 25 0 35" stroke-dasharray="3 5"/><circle cx="24" cy="24" r="5"/><path d="M101 78h12m-6-6v12"/>',
+  mochi: '<rect x="15" y="20" width="82" height="54" rx="9"/><path d="M15 34h82M25 27h1m7 0h1m7 0h1M30 47h35M30 56h25"/><path d="M79 52h31v28H95l-10 8v-8h-6z"/><path d="M87 63h15M87 70h9"/>'
+};
+
+class PocketPortal {
+  phones;
+  mochi;
+  startMochi;
+  mochiNavigation;
+  root = el("section", "pocket-portal lumiphone-device-drawer");
+  destination = "home";
+  constructor(phones, mochi, startMochi, mochiNavigation) {
+    this.phones = phones;
+    this.mochi = mochi;
+    this.startMochi = startMochi;
+    this.mochiNavigation = mochiNavigation;
+    this.root.setAttribute("aria-label", "Pocket portal");
+    this.render();
+  }
+  show(destination) {
+    this.destination = destination;
+    this.render();
+    if (destination === "mochi")
+      this.startMochi();
+    this.root.querySelector("h2")?.focus({ preventScroll: true });
+  }
+  refresh(mochi = false) {
+    if (this.destination === "phones" || mochi && this.destination === "mochi")
+      this.render();
+  }
+  render() {
+    const active = this.root.contains(document.activeElement) ? document.activeElement : null;
+    const label = active?.getAttribute("aria-label");
+    const selection = active && ["INPUT", "TEXTAREA"].includes(active.tagName) ? [active.selectionStart, active.selectionEnd] : undefined;
+    const nav = el("nav", "pocket-portal-nav");
+    nav.setAttribute("aria-label", "Portal navigation");
+    const home = button("Pocket /", "pocket-portal-home");
+    home.title = "Return to Pocket portal";
+    home.onclick = () => {
+      const exit = () => this.show("home");
+      if (this.destination === "mochi" && this.mochiNavigation)
+        this.mochiNavigation.home(exit, home);
+      else
+        exit();
+    };
+    if (this.destination !== "home") {
+      const back = button("← Back", "pocket-portal-back");
+      back.setAttribute("aria-label", this.destination === "mochi" ? "Back in Mochi" : "Back to portal");
+      back.onclick = () => {
+        const exit = () => this.show("home");
+        if (this.destination === "mochi" && this.mochiNavigation)
+          this.mochiNavigation.back(exit, back);
+        else
+          exit();
+      };
+      nav.append(back);
+    }
+    nav.append(home, el("span", "", this.destination === "home" ? "online" : this.destination === "phones" ? "devices" : "mochi"));
+    const body = el("div", "pocket-portal-body");
+    if (this.destination === "home") {
+      const title = el("h2", "", "A little closer.");
+      title.tabIndex = -1;
+      body.append(el("p", "pocket-portal-eyebrow", "YOUR POCKET OF THE INTERNET"), title, el("p", "pocket-portal-intro", "Pick a place to connect."));
+      body.append(el("p", "pocket-portal-info", "Pocket uses the active RP. Mochi keeps separate chat histories."));
+      const results = el("div", "pocket-portal-destinations");
+      for (const [id, title, copy, foot] of [
+        ["phones", "Connect to your phone", "Choose a phone to view its messages and apps.", "POCKET DEVICES"],
+        ["mochi", "Open Mochi", "Manage profiles and open independent character chats.", "INDEPENDENT CHATS"]
+      ]) {
+        const card = button("", "pocket-portal-destination");
+        card.setAttribute("aria-label", title);
+        const art = el("span", "pocket-portal-art");
+        art.setAttribute("aria-hidden", "true");
+        art.innerHTML = `<svg viewBox="0 0 130 100" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${artwork[id]}</svg>`;
+        card.append(art, el("small", "", foot), el("strong", "", title), el("span", "", copy), el("span", "pocket-portal-arrow", "↗"));
+        card.onclick = () => this.show(id);
+        results.append(card);
+      }
+      body.append(results);
+    } else
+      body.append(this.destination === "phones" ? this.phones() : this.mochi());
+    body.querySelector("h2")?.setAttribute("tabindex", "-1");
+    this.root.replaceChildren(nav, body);
+    if (label) {
+      const replacement = Array.from(this.root.querySelectorAll("[aria-label]")).find((n) => n.tagName === active.tagName && n.getAttribute("aria-label") === label);
+      (replacement || this.root.querySelector("h2"))?.focus({ preventScroll: true });
+      if (replacement && selection?.[0] != null && selection[1] != null)
+        replacement.setSelectionRange(selection[0], selection[1]);
+    }
+  }
+}
+var PORTAL_STYLES = `
+.mochi-view .mochi-wordmark{margin:0;line-height:1;width:88px;height:32px}.mochi-wordmark svg{display:block;width:88px;height:32px;overflow:visible}
+
+
+.pocket-portal{--lp-bg:var(--lumiverse-bg-elevated,#201e25);--lp-surface:var(--lumiverse-fill-subtle,#ffffff08);--lp-text:var(--lumiverse-text,#eee);--lp-muted:var(--lumiverse-text-muted,#aaa);--lp-border:var(--lumiverse-border,#ffffff14);--lp-accent:var(--lumiverse-primary,#a6a0d9);box-sizing:border-box;min-width:0;width:100%;min-height:100%;padding:18px 16px;color:var(--lp-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif}
+.pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal-nav{display:flex;justify-content:space-between;align-items:center;padding-bottom:22px;font-size:10px;letter-spacing:.08em;color:var(--lp-muted)}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal-home{border:0;background:none;color:var(--lp-text);padding:6px 0;font-weight:650!important}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.14em;color:var(--lp-muted);margin:8px 0}.pocket-portal h2{font-size:28px;line-height:1.15;letter-spacing:-.05em;font-weight:550;margin:0}.pocket-portal-intro{color:var(--lp-muted);margin:12px 0 24px}.pocket-portal-info{margin:0 0 18px;padding:10px 12px;border-left:2px solid var(--lp-accent);border-radius:0 6px 6px 0;background:var(--lp-surface);color:var(--lp-muted);font-size:11px;line-height:1.5}.pocket-portal-destinations{display:grid;gap:12px}.pocket-portal-destination{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:7px;text-align:left;align-items:start;width:100%;padding:18px 16px;border:1px solid var(--lp-border);border-radius:12px;background:var(--lp-surface);color:var(--lp-text)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--lp-muted)}.pocket-portal-destination strong{grid-column:1;font-size:17px;line-height:1.25;letter-spacing:-.03em;font-weight:550}.pocket-portal-destination>span:not(.pocket-portal-art):not(.pocket-portal-arrow){grid-column:1/-1;color:var(--lp-muted);font-size:11px;max-width:30ch}.pocket-portal-art{grid-column:2;grid-row:1/3;align-self:center;color:var(--lp-accent)}.pocket-portal-art svg{display:block;width:92px;height:72px}.pocket-portal-arrow{position:absolute;right:16px;bottom:14px;color:var(--lp-accent)}.pocket-portal-destination:hover{background:color-mix(in srgb,var(--lp-accent) 8%,var(--lp-bg));border-color:color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border))}.pocket-portal :is(button,input,textarea,select):focus-visible{outline:2px solid var(--lp-accent);outline-offset:3px}.pocket-portal .lumiphone-device-drawer{padding:0;min-height:0}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-device-access{flex:1 1 128px;min-height:44px;padding:10px 12px;border:1px solid var(--lp-border);border-radius:8px;background:var(--lp-surface);color:var(--lp-text);font-size:11px;line-height:1.3;text-align:center}.pocket-portal .lumiphone-device-access:disabled{cursor:default;color:var(--lp-muted)}.pocket-portal .lumiphone-device-access:not(:disabled):hover{border-color:var(--lp-accent);background:color-mix(in srgb,var(--lp-accent) 8%,var(--lp-bg))}.pocket-portal .mochi-view{min-height:0;height:auto;padding:0;background:none;overflow:visible}.pocket-portal .mochi-view>header{display:flex;justify-content:space-between;align-items:center;min-height:46px;padding-bottom:10px}.pocket-portal .mochi-view>header>.mochi-actions{margin-left:auto}.pocket-portal .mochi-view>header .mochi-icon-button{background:transparent;border:0;min-width:36px;width:36px;height:36px;min-height:36px}.pocket-portal .mochi-view h2{font-size:20px;letter-spacing:-.03em}.pocket-portal .mochi-view .mochi-card{border-radius:10px}.pocket-portal .mochi-view>.lp-button{min-height:38px;padding:8px 12px;font-size:12px;background:transparent;border-color:var(--lp-border);justify-content:flex-start}.pocket-portal .mochi-view>.mochi-primary{background:var(--lp-surface);color:var(--lp-text)}
+.mochi-view>header{grid-template-columns:minmax(0,1fr) auto;min-height:36px}.mochi-brand h2{font-family:inherit;font-size:17px;line-height:1.3;font-weight:600;letter-spacing:-.02em}.mochi-view[data-surface=chat]>header{display:none}.mochi-view[data-surface=chat]{--mochi-accent:var(--lp-accent);--mochi-surface:var(--lp-bg);--mochi-border:var(--lp-border);gap:8px}.mochi-view[data-surface=chat] .mochi-room-header{grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:0 0 8px;border-bottom:1px solid var(--lp-border)}.mochi-view[data-surface=chat] .mochi-room-header>.mochi-actions{flex-wrap:nowrap}.mochi-view[data-surface=chat] .mochi-room-selector{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;background:transparent;border:0;border-radius:0;padding-left:0;font-size:14px}.mochi-view[data-surface=chat] .mochi-room-select-icon{display:none}.mochi-view[data-surface=chat] .mochi-room-meta{font-size:10px}.mochi-view[data-surface=chat] .mochi-composer{padding:8px 14px 12px;background:var(--lp-bg);border-top:1px solid var(--lp-border)}.mochi-view[data-surface=chat] .mochi-composer-hint{display:none}.mochi-view[data-surface=chat] .mochi-responder{border:0;padding-block:3px;padding-right:8px;min-height:34px;background:transparent}.mochi-view[data-surface=chat] .mochi-responder::after{content:none}.mochi-view[data-surface=chat] .mochi-message-actions{right:0}.mochi-view[data-surface=chat] .mochi-thread{overflow-x:hidden}.mochi-view[data-surface=chat] .mochi-bubble{border-radius:14px;font-size:13px}
+@media(min-width:721px) and (min-height:541px){.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal .mochi-form{gap:14px}.pocket-portal .mochi-form .mochi-picker{grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px}.pocket-portal .mochi-form .mochi-choice{padding:10px 6px}.mochi-view[data-surface=chat] .mochi-room-header{grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}.mochi-view[data-surface=chat] .mochi-room-header .mochi-actions{gap:4px}.mochi-view[data-surface=chat] .mochi-room-header .mochi-icon-button{width:32px;min-width:32px;height:32px;min-height:32px;padding:7px}.mochi-view[data-surface=chat] .mochi-room-meta{margin-top:0}.mochi-view[data-surface=chat] .mochi-room-selector{min-height:32px}.mochi-view[data-surface=chat] .mochi-room-header>.mochi-actions{padding:0}}
+
+.pocket-portal-nav{gap:12px}.pocket-portal-nav>span{margin-left:auto}.pocket-portal-back{min-height:44px;padding:6px 0;border:0;background:transparent;color:var(--lp-text)}.pocket-portal .mochi-profile-screen{gap:18px}.pocket-portal .mochi-view .mochi-inbox-actions>.lp-button{width:auto;flex:1 1 auto}.pocket-portal .mochi-account-picker .mochi-secondary-action{width:auto}.pocket-portal .mochi-profile-actions .lp-button{font-size:12px}.pocket-portal .mochi-connection-indicator{min-height:44px}.pocket-portal .mochi-profile-fields input,.pocket-portal .mochi-profile-fields select,.pocket-portal .mochi-profile-fields textarea{font-size:13px;border-radius:8px}
+
+.pocket-portal .mochi-sheet{position:fixed;inset:var(--app-interactive-safe-top,0px) 0 0;margin:auto;max-height:calc(100dvh - var(--app-interactive-safe-top,0px) - 32px);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;letter-spacing:normal;text-transform:none}.pocket-portal .mochi-sheet h2{font-size:18px;letter-spacing:-.02em}.mochi-unsaved-sheet .lp-sheet-close{display:none}
+`;
 
 // src/frontend/components/tts-connection.ts
 async function listTtsConnections(signal) {
@@ -850,7 +3058,7 @@ function wallpaperCss(primary, secondary) {
 }
 
 // src/domain/navigation.ts
-var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings"]);
+var APPS = new Set(["home", "messages", "mochi", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings"]);
 function shortId(value) {
   if (typeof value !== "string")
     return;
@@ -862,6 +3070,8 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return fallback;
   const raw = value;
   const app = typeof raw.app === "string" && APPS.has(raw.app) ? raw.app : fallback.app;
+  if (app === "mochi")
+    return { app, ...typeof raw.roomId === "string" && MOCHI_ROOM_ID.test(raw.roomId) ? { roomId: raw.roomId } : {} };
   if (app === "messages")
     return {
       app,
@@ -1187,46 +3397,6 @@ function applyPocketTouchScroll(widget, preference) {
     widget.setTouchScrollMode(resolvePocketTouchScrollMode(preference));
 }
 
-// src/frontend/shared.ts
-function el(tag, className = "", content = "") {
-  const node = document.createElement(tag);
-  if (className)
-    node.className = className;
-  if (content)
-    node.textContent = content;
-  return node;
-}
-function button(label, className = "lp-button") {
-  const node = el("button", className, label);
-  node.type = "button";
-  return node;
-}
-function formatTime(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return "";
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
-}
-function formatDate(value, detail = false) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return String(value || "");
-  return new Intl.DateTimeFormat(undefined, detail ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" }).format(date);
-}
-function dateTimeLocal(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return "";
-  const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-function inputValue(input) {
-  return input.value.trim();
-}
-function requestId(prefix = "req") {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
-}
-
 // src/frontend/components/identity-profiles.ts
 function identityProfileControls(profiles, kind, contactId, send, readProfile) {
   const panel = el("section", "lp-card lp-settings-section lp-identity-library");
@@ -1273,119 +3443,6 @@ function refreshIdentityProfileControls(root, profiles, failed = false) {
     }
     delete panel.dataset.identityRequest;
   }
-}
-
-// src/frontend/components/ui.ts
-function classes(...values) {
-  return values.filter(Boolean).join(" ");
-}
-function identityBlock(options) {
-  const root = el("div", classes("lp-identity", options.prominent && "lp-identity-prominent", options.centered && "lp-identity-centered", options.className));
-  const line = el("div", "lp-identity-line");
-  line.appendChild(el("strong", "lp-identity-name", options.name));
-  if (options.meta)
-    line.appendChild(el("span", "lp-identity-meta", options.meta));
-  root.appendChild(line);
-  if (options.description)
-    root.appendChild(el("p", "lp-identity-description", options.description));
-  return root;
-}
-function statusBadge(label, tone = "neutral") {
-  const node = el("span", "lp-status-badge", label);
-  node.dataset.tone = tone;
-  return node;
-}
-function actionGroup(className = "") {
-  return el("div", classes("lp-actions", className));
-}
-function sectionBlock(label, help = "", className = "") {
-  const section = el("section", classes("lp-section", className));
-  const head = el("header", "lp-section-head");
-  head.appendChild(el("div", "lp-section-label", label));
-  if (help)
-    head.appendChild(el("p", "lp-section-help", help));
-  const body = el("div", "lp-section-body");
-  section.append(head, body);
-  return { section, body };
-}
-function fieldBlock(label, control, help = "") {
-  const field = el("label", "lp-field");
-  field.appendChild(el("span", "lp-field-label", label));
-  field.appendChild(control);
-  if (help)
-    field.appendChild(el("span", "lp-field-help", help));
-  return field;
-}
-function controlRow(label, control, help = "") {
-  const row = el("label", "lp-card lp-control-row");
-  const copy = el("span", "lp-control-copy");
-  copy.appendChild(el("span", "lp-control-label", label));
-  if (help)
-    copy.appendChild(el("span", "lp-control-help", help));
-  row.append(copy, control);
-  return row;
-}
-function disclosure(label, ...children) {
-  const root = el("details", "lp-disclosure");
-  root.append(el("summary", "", label), ...children);
-  return root;
-}
-function showPocketSheet(anchor, title, content) {
-  const parent = anchor.closest(".lumiphone-shell") || anchor.closest('[role="dialog"]') || anchor.parentElement;
-  if (!parent)
-    return;
-  const dialog = el("dialog", "lp-sheet");
-  const panel = el("div", "lp-sheet-panel");
-  const heading = el("h2", "lp-title", title);
-  dialog.setAttribute("aria-label", title);
-  const close = el("button", "lp-button lp-sheet-close", "Done");
-  close.type = "button";
-  const home = content.parentNode;
-  const marker = document.createComment("sheet content");
-  home?.insertBefore(marker, content);
-  const dismiss = () => dialog.close();
-  close.addEventListener("click", dismiss);
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog)
-      dismiss();
-  });
-  dialog.addEventListener("close", () => {
-    if (home)
-      marker.replaceWith(content);
-    dialog.remove();
-    if (anchor.isConnected)
-      anchor.focus();
-  }, { once: true });
-  panel.append(heading, content, close);
-  dialog.append(panel);
-  parent.append(dialog);
-  const bounds = parent.getBoundingClientRect();
-  if (parent.matches(".lumiphone-shell")) {
-    const layoutWidth = parent.offsetWidth;
-    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1;
-    const layoutPx = (pixels) => pixels / zoom;
-    dialog.style.position = "fixed";
-    dialog.style.margin = "0";
-    dialog.style.left = `${layoutPx(bounds.left + 12)}px`;
-    dialog.style.top = "auto";
-    dialog.style.bottom = `${layoutPx(Math.max(12, window.innerHeight - bounds.bottom + 24))}px`;
-    dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`;
-    dialog.style.maxHeight = `${layoutPx(Math.max(120, bounds.height - 70))}px`;
-  }
-  dialog.showModal();
-  return { dismiss };
-}
-function outgoingSurface(accent) {
-  const hex = /^#([0-9a-f]{6})$/i.exec(accent)?.[1] || "8b7dff";
-  let rgb = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  const luminance = () => rgb.map((v) => v / 255).map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
-  while (luminance() > 0.16)
-    rgb = rgb.map((v) => Math.floor(v * 0.95));
-  return "#" + rgb.map((v) => v.toString(16).padStart(2, "0")).join("");
-}
-function avatarColor(identity) {
-  const hash = Array.from(identity).reduce((n, c) => n * 31 + c.charCodeAt(0) >>> 0, 0);
-  return `hsl(${hash % 360} 27% 34%)`;
 }
 
 // src/frontend/components/wallpaper-gallery.ts
@@ -5147,7 +7204,7 @@ function node(tag, className, text = "") {
   element.textContent = text;
   return element;
 }
-function portrait(name, url) {
+function portrait2(name, url) {
   const avatar = node("span", "pocket-phone-avatar", name.slice(0, 1).toUpperCase());
   avatar.setAttribute("aria-hidden", "true");
   if (url) {
@@ -5246,7 +7303,7 @@ function appHeader(title, subtitle, openRoute, avatarUrl) {
   const back = node("span", "pocket-phone-header-back");
   back.append(icon("back"));
   const identity = node("span", "pocket-phone-header-identity");
-  identity.append(portrait(title, avatarUrl), node("strong", "pocket-phone-conversation-title", title));
+  identity.append(portrait2(title, avatarUrl), node("strong", "pocket-phone-conversation-title", title));
   if (subtitle)
     identity.append(node("span", "pocket-phone-subtitle", subtitle));
   const video = node("span", "pocket-phone-header-action");
@@ -5310,7 +7367,7 @@ function buildPhoneScreen(activity, openRoute, options) {
     const app = node("span", "pocket-phone-notification-app");
     app.append(icon("message"), node("span", "pocket-phone-app-label", "Messages"));
     const body = node("span", "pocket-phone-notification-body");
-    body.append(portrait(presentation.senderName || "?", options.avatarUrl));
+    body.append(portrait2(presentation.senderName || "?", options.avatarUrl));
     const copy = node("span", "pocket-phone-notification-content");
     copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", `${presentation.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`));
     body.append(copy);
@@ -5324,7 +7381,7 @@ function buildPhoneScreen(activity, openRoute, options) {
     back.append(icon("back"));
     callHeader.append(back, node("span", "pocket-phone-app-label", "Phone"));
     const identity = node("div", "pocket-phone-call-identity");
-    identity.append(portrait(presentation.senderName || "Call", options.avatarUrl), node("strong", "pocket-phone-call-name", [presentation.senderName, recipients].filter(Boolean).join(" → ") || activity.title), node("span", "pocket-phone-call-status", callSummary(presentation.call)));
+    identity.append(portrait2(presentation.senderName || "Call", options.avatarUrl), node("strong", "pocket-phone-call-name", [presentation.senderName, recipients].filter(Boolean).join(" → ") || activity.title), node("span", "pocket-phone-call-status", callSummary(presentation.call)));
     const controls = node("div", "pocket-phone-call-controls");
     const control = (name, label, danger = false) => {
       const item = node("span", `pocket-phone-call-control${danger ? " pocket-phone-call-danger" : ""}`);
@@ -5350,7 +7407,7 @@ function buildPhoneScreen(activity, openRoute, options) {
       const previous = messages[index - 1];
       row.dataset.continuation = String(Boolean(previous && previous.senderName === message.senderName));
       if (message.direction !== "sent") {
-        row.append(portrait(message.senderName, options.avatars?.[message.senderActorId || ""]));
+        row.append(portrait2(message.senderName, options.avatars?.[message.senderActorId || ""]));
         const content = node("span", "pocket-phone-message-content");
         if (row.dataset.continuation !== "true")
           content.append(node("strong", "pocket-phone-sender", message.senderName));
@@ -5371,969 +7428,969 @@ function buildPhoneScreen(activity, openRoute, options) {
 }
 
 // src/frontend/components/pocket-inline-redesign.css
-var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappers too; a transformed parent distorts the whole device. */
-.pocket-artifact-stack[data-pocket-ui="true"],
-.pocket-inline-anchor[data-pocket-host="true"],
-.pocket-receipt-host[data-pocket-host="true"] {
-  all: revert;
-  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  text-transform: none;
-  text-shadow: none;
-  letter-spacing: normal;
-  color: #f5f2fb;
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-  position: static;
-  transform: none;
-  padding: 0;
-  border: 0;
-  background: none;
-}
-.pocket-inline-anchor[data-pocket-host="true"] { margin: 12px 0; }
-.pocket-receipt-host[data-pocket-host="true"] { margin: 8px 0 2px; max-width: min(100%,460px); }
-.pocket-artifact-stack[data-pocket-ui="true"]::before,
-.pocket-artifact-stack[data-pocket-ui="true"]::after,
-.pocket-inline-anchor[data-pocket-host="true"]::before,
-.pocket-inline-anchor[data-pocket-host="true"]::after,
-.pocket-receipt-host[data-pocket-host="true"]::before,
-.pocket-receipt-host[data-pocket-host="true"]::after { content: none; }
-.pocket-artifact-stack[data-pocket-ui="true"] > .pocket-inline-frame[data-pocket-ui="true"] { margin-inline: auto; }
-
-/* Pocket owns its inline UI; host prose/theme rules must not become phone chrome. */
-.pocket-inline-frame[data-pocket-ui="true"] {
-  all: revert;
-  display: block;
-  isolation: isolate;
-  color-scheme: dark;
-  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: var(--pocket-inline-text, #f5f2fb);
-  text-align: left;
-  text-transform: none;
-  letter-spacing: normal;
-  text-shadow: none;
-  white-space: normal;
-  word-break: normal;
-  overflow-wrap: anywhere;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] :where(div, span, strong, button, input, textarea, img, time) {
-  all: revert;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  letter-spacing: inherit;
-  text-transform: none;
-  text-shadow: none;
-  text-align: inherit;
-  white-space: normal;
-  overflow-wrap: inherit;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"],
-.pocket-inline-frame[data-pocket-ui="true"] *,
-.pocket-inline-frame[data-pocket-ui="true"] *::before,
-.pocket-inline-frame[data-pocket-ui="true"] *::after {
-  box-sizing: border-box;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"]::before,
-.pocket-inline-frame[data-pocket-ui="true"]::after,
-.pocket-inline-frame[data-pocket-ui="true"] *::before,
-.pocket-inline-frame[data-pocket-ui="true"] *::after {
-  all: revert;
-  content: none;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] :where(button, input, textarea) {
-  appearance: none;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] :where(svg) {
-  display: inline-block;
-  position: static;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  filter: none;
-  text-transform: none;
-  letter-spacing: inherit;
-  text-shadow: none;
-  transform: none;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] {
-  --pocket-inline-accent: #8b7dff;
-  --pocket-inline-text: #f5f2fb;
-  --pocket-inline-muted: #a8a2b3;
-  --pocket-inline-surface: #242129;
-  --pocket-inline-surface-2: #2b2731;
-  --pocket-inline-surface-3: #17151c;
-  --pocket-inline-border: rgba(255, 255, 255, .075);
-  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);
-}
-
-.pocket-artifact-stack,
-.pocket-inline-frame[data-pocket-ui="true"] {
-  box-sizing: border-box;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
-  width: min(100%, 470px);
-  color: var(--pocket-inline-text);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-artifact,
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-batch {
-  width: 100%;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  padding: 16px 18px;
-  color: var(--pocket-inline-text);
-  text-align: left;
-  font: inherit;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),
-    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);
-  border: 1px solid var(--pocket-inline-border);
-  border-radius: 18px;
-  box-shadow: var(--pocket-inline-shadow);
-  cursor: pointer;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:hover {
-  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:focus-visible,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more:focus-visible,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);
-  outline-offset: 3px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-device {
-  display: block;
-  margin-bottom: -2px;
-  color: #8f8998;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: .015em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {
-  min-width: 0;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255,255,255,.055);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #a9a3b2;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app svg {
-  width: 14px;
-  height: 14px;
-  color: var(--pocket-inline-accent);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-state,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {
-  color: #8e8897;
-  font-size: 10px;
-  font-weight: 560;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {
-  align-self: flex-end;
-  margin-top: -24px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-body {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 11px;
-  align-items: start;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-content,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-content,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-details {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  overflow: hidden;
-  color: white;
-  font-weight: 720;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  font-size: 13px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar img,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {
-  color: #fbf9ff;
-  font-weight: 760;
-  letter-spacing: -.01em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors {
-  font-size: 14px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-copy {
-  color: #e5e1ea;
-  font-size: 13px;
-  line-height: 1.46;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {
-  border: 1px solid rgba(255,255,255,.035);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble {
-  align-self: flex-end;
-  max-width: 82%;
-  padding: 9px 13px;
-  border-radius: 15px 15px 5px 15px;
-  color: white;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {
-  align-items: center;
-  min-height: 180px;
-  justify-content: center;
-  text-align: center;
-  background:
-    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),
-    linear-gradient(160deg, #28252e, #1d1b22);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-identity {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-avatar {
-  width: 46px;
-  height: 46px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-artifact-chrome {
-  justify-content: center;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol {
-  display: inline-grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  margin-top: 4px;
-  color: #fff;
-  background: linear-gradient(145deg, #bd5d69, #974552);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol svg {
-  width: 18px;
-  height: 18px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {
-  font-size: 15px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {
-  visibility: hidden;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row .pocket-inline-avatar {
-  width: 28px;
-  height: 28px;
-  font-size: 11px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-sender {
-  color: #938d9b;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .01em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {
-  align-self: flex-start;
-  max-width: 90%;
-  padding: 9px 12px;
-  color: #f0edf5;
-  font-size: 12px;
-  line-height: 1.42;
-  background: linear-gradient(145deg, #2c2933, #27242d);
-  border-radius: 5px 13px 13px 13px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
-  color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {
-  border-radius: 18px;
-  overflow: hidden;
-  background: #1e1c23;
-  border: 1px solid var(--pocket-inline-border);
-  box-shadow: var(--pocket-inline-shadow);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch .pocket-inline-artifact {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more {
-  width: 100%;
-  padding: 11px 14px;
-  color: #a8a2b2;
-  font: inherit;
-  font-size: 11px;
-  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));
-  border: 0;
-  border-top: 1px solid rgba(255,255,255,.055);
-  cursor: pointer;
-}
-
-/* Full-phone renderer */
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {
-  box-sizing: border-box;
-  width: min(360px, 92vw);
-  aspect-ratio: 9 / 18.4;
-  padding: 5px;
-  color: var(--pocket-inline-text);
-  background:
-    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 42px;
-  box-shadow:
-    0 32px 70px rgba(0,0,0,.48),
-    0 8px 24px rgba(0,0,0,.3),
-    inset 0 1px 0 rgba(255,255,255,.18),
-    inset 0 -1px 0 rgba(255,255,255,.04);
-  overflow: hidden;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-screen {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  color: #f7f5fb;
-  background:
-    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),
-    linear-gradient(180deg, #15131a 0%, #100f14 100%);
-  border-radius: 36px;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status {
-  position: relative;
-  z-index: 5;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  flex: 0 0 35px;
-  padding: 0 17px;
-  color: rgba(255,255,255,.92);
-  font-size: 10px;
-  font-weight: 720;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status-time {
-  justify-self: start;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island {
-  width: 76px;
-  height: 20px;
-  border-radius: 999px;
-  background: rgba(0,0,0,.82);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators {
-  display: flex;
-  align-items: center;
-  justify-self: end;
-  gap: 5px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg {
-  width: 13px;
-  height: 13px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg:last-child {
-  width: 18px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-home-indicator {
-  position: absolute;
-  left: 50%;
-  bottom: 7px;
-  width: 92px;
-  height: 4px;
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: rgba(255,255,255,.64);
-  box-shadow: 0 1px 4px rgba(0,0,0,.25);
-}
-
-/* Lock screen */
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {
-  background:
-    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),
-    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),
-    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {
-  content: '';
-  position: absolute;
-  inset: 35px 0 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-hero {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  padding: 40px 18px 26px;
-  text-shadow: 0 2px 14px rgba(0,0,0,.28);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-label {
-  color: rgba(255,255,255,.64);
-  font-size: 11px;
-  font-weight: 580;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock {
-  color: #fff;
-  font-size: 54px;
-  font-weight: 280;
-  line-height: 1;
-  letter-spacing: -.045em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {
-  color: rgba(255,255,255,.74);
-  font-size: 12px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: calc(100% - 28px);
-  margin: 0 14px;
-  padding: 13px 14px 14px;
-  color: #f7f4fb;
-  text-align: left;
-  font: inherit;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),
-    rgba(28,25,34,.86);
-  border: 1px solid rgba(255,255,255,.11);
-  border-radius: 18px;
-  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);
-  backdrop-filter: blur(14px);
-  cursor: pointer;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: rgba(255,255,255,.68);
-  font-size: 10px;
-  font-weight: 650;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app svg {
-  width: 14px;
-  height: 14px;
-  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-body {
-  display: grid;
-  grid-template-columns: 34px minmax(0,1fr);
-  gap: 10px;
-  align-items: start;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-content {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  font-size: 12px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-sender {
-  font-size: 13px;
-  font-weight: 760;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-copy {
-  display: -webkit-box;
-  overflow: hidden;
-  color: rgba(255,255,255,.9);
-  font-size: 12px;
-  line-height: 1.4;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-}
-
-/* Open chat */
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-chat {
-  background:
-    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),
-    #0c0b0f;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-app-header {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  grid-template-columns: 36px minmax(0,1fr) 36px;
-  align-items: center;
-  flex: 0 0 72px;
-  width: 100%;
-  padding: 7px 12px 9px;
-  color: inherit;
-  text-align: center;
-  font: inherit;
-  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));
-  border: 0;
-  border-bottom: 1px solid rgba(255,255,255,.065);
-  box-shadow: 0 9px 18px rgba(0,0,0,.12);
-  cursor: pointer;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);
-  border-radius: 50%;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back svg,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action svg {
-  width: 20px;
-  height: 20px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {
-  background: rgba(255,255,255,.055);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity {
-  display: grid;
-  grid-template-columns: 34px minmax(0,1fr);
-  grid-template-rows: auto auto;
-  align-items: center;
-  justify-self: center;
-  column-gap: 8px;
-  min-width: 0;
-  text-align: left;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pocket-phone-avatar {
-  grid-row: 1 / 3;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-conversation-title {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 760;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-subtitle {
-  color: #918b99;
-  font-size: 9px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px 13px 20px;
-  scrollbar-color: rgba(255,255,255,.12) transparent;
-  scrollbar-width: thin;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar {
-  width: 6px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,.12);
-  border-radius: 999px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  width: 100%;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="false"] {
-  margin-top: 4px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] {
-  justify-content: flex-end;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar {
-  visibility: hidden;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message-content {
-  display: flex;
-  max-width: 76%;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-sender {
-  margin-left: 4px;
-  color: #878190;
-  font-size: 9px;
-  font-weight: 680;
-  letter-spacing: .01em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-bubble {
-  display: block;
-  padding: 10px 12px;
-  color: #f3eff7;
-  font-size: 12px;
-  line-height: 1.42;
-  background: linear-gradient(145deg, #2b2731, #232029);
-  border: 1px solid rgba(255,255,255,.045);
-  border-radius: 6px 15px 15px 15px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {
-  color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));
-  border-radius: 15px 15px 5px 15px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-delivery {
-  align-self: flex-end;
-  margin: -3px 3px 0 0;
-  color: #77727f;
-  font-size: 8px;
-  font-weight: 680;
-  text-transform: uppercase;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer {
-  display: grid;
-  grid-template-columns: 34px minmax(0,1fr) 32px;
-  align-items: center;
-  flex: 0 0 58px;
-  gap: 7px;
-  padding: 8px 10px 13px;
-  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));
-  border-top: 1px solid rgba(255,255,255,.065);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  color: #aaa4b3;
-  background: #24212a;
-  border: 1px solid rgba(255,255,255,.055);
-  border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {
-  color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action svg,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send svg {
-  width: 16px;
-  height: 16px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-field {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  height: 34px;
-  padding: 0 12px;
-  color: #797480;
-  font-size: 11px;
-  background: #131117;
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 999px;
-  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);
-}
-
-/* Dedicated call screen */
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {
-  background:
-    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
-    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),
-    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header {
-  grid-template-columns: 36px 1fr;
-  justify-items: start;
-  flex-basis: 54px;
-  background: transparent;
-  border-bottom: 0;
-  box-shadow: none;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header .pocket-phone-app-label {
-  color: #aaa4b3;
-  font-size: 11px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  padding: 0 24px 40px;
-  text-align: center;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity .pocket-phone-avatar {
-  width: 86px;
-  height: 86px;
-  margin-bottom: 9px;
-  font-size: 28px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-name {
-  font-size: 20px;
-  font-weight: 760;
-  letter-spacing: -.025em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-status {
-  color: #a39dab;
-  font-size: 12px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-controls {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 9px;
-  flex: 0 0 auto;
-  padding: 0 18px 36px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  color: #aaa4b3;
-  font-size: 9px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon {
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  color: #f8f6fb;
-  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
-  border: 1px solid rgba(255,255,255,.09);
-  border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon > svg,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol svg {
-  width: 19px;
-  height: 19px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control.pocket-phone-call-danger .pocket-phone-call-control-icon {
-  background: linear-gradient(145deg, #c35d69, #984651);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-}
-
-@media (max-width: 560px) {
-  .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
-    width: 100%;
-  }
-
-  .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {
-    padding: 14px;
-    border-radius: 16px;
-  }
-
-  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {
-    width: min(340px, 94vw);
-  }
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] [hidden] { display: none; }
-
-/* Between-turn connectors stay compact even when prose artifacts use Full Phone. */
-.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] { width:100%; max-width:none; margin:8px 0; }
-.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] { display:none; }
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] { width:100%; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector { display:grid; gap:0; border:1px solid var(--pocket-inline-border); border-radius:12px; background:var(--pocket-inline-surface,#201e25); overflow:hidden; box-shadow:0 3px 12px #0002; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading { display:block; width:100%; padding:9px 12px; text-align:left; color:var(--pocket-inline-text); font-size:11px; font-weight:650; border-bottom:1px solid var(--pocket-inline-border); cursor:pointer; opacity:.8; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row { display:grid; position:relative; grid-template-columns:minmax(0,1fr); gap:3px; width:100%; padding:10px 12px; text-align:left; cursor:pointer; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row { border-top:1px solid var(--pocket-inline-border); }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] { text-align:right; border-right:2px solid var(--pocket-inline-accent); }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender { font-size:10px; font-weight:650; opacity:.65; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy { font-size:13px; line-height:1.45; white-space:pre-wrap; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }
+var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappers too; a transformed parent distorts the whole device. */\r
+.pocket-artifact-stack[data-pocket-ui="true"],\r
+.pocket-inline-anchor[data-pocket-host="true"],\r
+.pocket-receipt-host[data-pocket-host="true"] {\r
+  all: revert;\r
+  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\r
+  text-transform: none;\r
+  text-shadow: none;\r
+  letter-spacing: normal;\r
+  color: #f5f2fb;\r
+  display: grid;\r
+  gap: 5px;\r
+  min-width: 0;\r
+  width: 100%;\r
+  box-sizing: border-box;\r
+  position: static;\r
+  transform: none;\r
+  padding: 0;\r
+  border: 0;\r
+  background: none;\r
+}\r
+.pocket-inline-anchor[data-pocket-host="true"] { margin: 12px 0; }\r
+.pocket-receipt-host[data-pocket-host="true"] { margin: 8px 0 2px; max-width: min(100%,460px); }\r
+.pocket-artifact-stack[data-pocket-ui="true"]::before,\r
+.pocket-artifact-stack[data-pocket-ui="true"]::after,\r
+.pocket-inline-anchor[data-pocket-host="true"]::before,\r
+.pocket-inline-anchor[data-pocket-host="true"]::after,\r
+.pocket-receipt-host[data-pocket-host="true"]::before,\r
+.pocket-receipt-host[data-pocket-host="true"]::after { content: none; }\r
+.pocket-artifact-stack[data-pocket-ui="true"] > .pocket-inline-frame[data-pocket-ui="true"] { margin-inline: auto; }\r
+\r
+/* Pocket owns its inline UI; host prose/theme rules must not become phone chrome. */\r
+.pocket-inline-frame[data-pocket-ui="true"] {\r
+  all: revert;\r
+  display: block;\r
+  isolation: isolate;\r
+  color-scheme: dark;\r
+  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\r
+  color: var(--pocket-inline-text, #f5f2fb);\r
+  text-align: left;\r
+  text-transform: none;\r
+  letter-spacing: normal;\r
+  text-shadow: none;\r
+  white-space: normal;\r
+  word-break: normal;\r
+  overflow-wrap: anywhere;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] :where(div, span, strong, button, input, textarea, img, time) {\r
+  all: revert;\r
+  margin: 0;\r
+  padding: 0;\r
+  border: 0;\r
+  background: none;\r
+  font: inherit;\r
+  color: inherit;\r
+  letter-spacing: inherit;\r
+  text-transform: none;\r
+  text-shadow: none;\r
+  text-align: inherit;\r
+  white-space: normal;\r
+  overflow-wrap: inherit;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"],\r
+.pocket-inline-frame[data-pocket-ui="true"] *,\r
+.pocket-inline-frame[data-pocket-ui="true"] *::before,\r
+.pocket-inline-frame[data-pocket-ui="true"] *::after {\r
+  box-sizing: border-box;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"]::before,\r
+.pocket-inline-frame[data-pocket-ui="true"]::after,\r
+.pocket-inline-frame[data-pocket-ui="true"] *::before,\r
+.pocket-inline-frame[data-pocket-ui="true"] *::after {\r
+  all: revert;\r
+  content: none;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] :where(button, input, textarea) {\r
+  appearance: none;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] :where(svg) {\r
+  display: inline-block;\r
+  position: static;\r
+  margin: 0;\r
+  padding: 0;\r
+  border: 0;\r
+  background: none;\r
+  filter: none;\r
+  text-transform: none;\r
+  letter-spacing: inherit;\r
+  text-shadow: none;\r
+  transform: none;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] {\r
+  --pocket-inline-accent: #8b7dff;\r
+  --pocket-inline-text: #f5f2fb;\r
+  --pocket-inline-muted: #a8a2b3;\r
+  --pocket-inline-surface: #242129;\r
+  --pocket-inline-surface-2: #2b2731;\r
+  --pocket-inline-surface-3: #17151c;\r
+  --pocket-inline-border: rgba(255, 255, 255, .075);\r
+  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);\r
+}\r
+\r
+.pocket-artifact-stack,\r
+.pocket-inline-frame[data-pocket-ui="true"] {\r
+  box-sizing: border-box;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {\r
+  width: min(100%, 470px);\r
+  color: var(--pocket-inline-text);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-artifact,\r
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-batch {\r
+  width: 100%;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {\r
+  box-sizing: border-box;\r
+  display: flex;\r
+  flex-direction: column;\r
+  gap: 10px;\r
+  width: 100%;\r
+  min-width: 0;\r
+  padding: 16px 18px;\r
+  color: var(--pocket-inline-text);\r
+  text-align: left;\r
+  font: inherit;\r
+  background:\r
+    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),\r
+    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);\r
+  border: 1px solid var(--pocket-inline-border);\r
+  border-radius: 18px;\r
+  box-shadow: var(--pocket-inline-shadow);\r
+  cursor: pointer;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:hover {\r
+  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:focus-visible,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more:focus-visible,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device button:focus-visible {\r
+  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);\r
+  outline-offset: 3px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-device {\r
+  display: block;\r
+  margin-bottom: -2px;\r
+  color: #8f8998;\r
+  font-size: 11px;\r
+  font-weight: 650;\r
+  letter-spacing: .015em;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {\r
+  min-width: 0;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header {\r
+  display: flex;\r
+  flex-direction: column;\r
+  gap: 7px;\r
+  padding-bottom: 10px;\r
+  border-bottom: 1px solid rgba(255,255,255,.055);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {\r
+  display: flex;\r
+  align-items: center;\r
+  justify-content: space-between;\r
+  gap: 12px;\r
+  color: #a9a3b2;\r
+  font-size: 11px;\r
+  font-weight: 650;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app {\r
+  display: inline-flex;\r
+  align-items: center;\r
+  gap: 6px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app svg {\r
+  width: 14px;\r
+  height: 14px;\r
+  color: var(--pocket-inline-accent);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-state,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {\r
+  color: #8e8897;\r
+  font-size: 10px;\r
+  font-weight: 560;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {\r
+  align-self: flex-end;\r
+  margin-top: -24px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-body {\r
+  display: grid;\r
+  grid-template-columns: 34px minmax(0, 1fr);\r
+  gap: 11px;\r
+  align-items: start;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-content,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-content,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-details {\r
+  display: flex;\r
+  min-width: 0;\r
+  flex-direction: column;\r
+  gap: 5px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {\r
+  display: inline-grid;\r
+  place-items: center;\r
+  flex: 0 0 auto;\r
+  overflow: hidden;\r
+  color: white;\r
+  font-weight: 720;\r
+  background:\r
+    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar {\r
+  width: 34px;\r
+  height: 34px;\r
+  border-radius: 50%;\r
+  font-size: 13px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar img,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar img {\r
+  width: 100%;\r
+  height: 100%;\r
+  object-fit: cover;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {\r
+  color: #fbf9ff;\r
+  font-weight: 760;\r
+  letter-spacing: -.01em;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors {\r
+  font-size: 14px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-copy {\r
+  color: #e5e1ea;\r
+  font-size: 13px;\r
+  line-height: 1.46;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {\r
+  border: 1px solid rgba(255,255,255,.035);\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble {\r
+  align-self: flex-end;\r
+  max-width: 82%;\r
+  padding: 9px 13px;\r
+  border-radius: 15px 15px 5px 15px;\r
+  color: white;\r
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {\r
+  align-items: center;\r
+  min-height: 180px;\r
+  justify-content: center;\r
+  text-align: center;\r
+  background:\r
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),\r
+    linear-gradient(160deg, #28252e, #1d1b22);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-identity {\r
+  display: flex;\r
+  flex-direction: column;\r
+  align-items: center;\r
+  gap: 9px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-avatar {\r
+  width: 46px;\r
+  height: 46px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-artifact-chrome {\r
+  justify-content: center;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol {\r
+  display: inline-grid;\r
+  place-items: center;\r
+  width: 38px;\r
+  height: 38px;\r
+  margin-top: 4px;\r
+  color: #fff;\r
+  background: linear-gradient(145deg, #bd5d69, #974552);\r
+  border: 1px solid rgba(255,255,255,.1);\r
+  border-radius: 50%;\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol svg {\r
+  width: 18px;\r
+  height: 18px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {\r
+  font-size: 15px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript {\r
+  display: flex;\r
+  flex-direction: column;\r
+  gap: 14px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row {\r
+  display: grid;\r
+  grid-template-columns: 28px minmax(0, 1fr);\r
+  gap: 10px;\r
+  align-items: start;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {\r
+  visibility: hidden;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row .pocket-inline-avatar {\r
+  width: 28px;\r
+  height: 28px;\r
+  font-size: 11px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-sender {\r
+  color: #938d9b;\r
+  font-size: 10px;\r
+  font-weight: 700;\r
+  letter-spacing: .01em;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {\r
+  align-self: flex-start;\r
+  max-width: 90%;\r
+  padding: 9px 12px;\r
+  color: #f0edf5;\r
+  font-size: 12px;\r
+  line-height: 1.42;\r
+  background: linear-gradient(145deg, #2c2933, #27242d);\r
+  border-radius: 5px 13px 13px 13px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {\r
+  color: #fff;\r
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {\r
+  border-radius: 18px;\r
+  overflow: hidden;\r
+  background: #1e1c23;\r
+  border: 1px solid var(--pocket-inline-border);\r
+  box-shadow: var(--pocket-inline-shadow);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch .pocket-inline-artifact {\r
+  border: 0;\r
+  border-radius: 0;\r
+  box-shadow: none;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more {\r
+  width: 100%;\r
+  padding: 11px 14px;\r
+  color: #a8a2b2;\r
+  font: inherit;\r
+  font-size: 11px;\r
+  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));\r
+  border: 0;\r
+  border-top: 1px solid rgba(255,255,255,.055);\r
+  cursor: pointer;\r
+}\r
+\r
+/* Full-phone renderer */\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {\r
+  box-sizing: border-box;\r
+  width: min(360px, 92vw);\r
+  aspect-ratio: 9 / 18.4;\r
+  padding: 5px;\r
+  color: var(--pocket-inline-text);\r
+  background:\r
+    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);\r
+  border: 1px solid rgba(255,255,255,.12);\r
+  border-radius: 42px;\r
+  box-shadow:\r
+    0 32px 70px rgba(0,0,0,.48),\r
+    0 8px 24px rgba(0,0,0,.3),\r
+    inset 0 1px 0 rgba(255,255,255,.18),\r
+    inset 0 -1px 0 rgba(255,255,255,.04);\r
+  overflow: hidden;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-screen {\r
+  position: relative;\r
+  display: flex;\r
+  flex-direction: column;\r
+  width: 100%;\r
+  height: 100%;\r
+  min-height: 0;\r
+  overflow: hidden;\r
+  color: #f7f5fb;\r
+  background:\r
+    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),\r
+    linear-gradient(180deg, #15131a 0%, #100f14 100%);\r
+  border-radius: 36px;\r
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status {\r
+  position: relative;\r
+  z-index: 5;\r
+  display: grid;\r
+  grid-template-columns: 1fr auto 1fr;\r
+  align-items: center;\r
+  flex: 0 0 35px;\r
+  padding: 0 17px;\r
+  color: rgba(255,255,255,.92);\r
+  font-size: 10px;\r
+  font-weight: 720;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status-time {\r
+  justify-self: start;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island {\r
+  width: 76px;\r
+  height: 20px;\r
+  border-radius: 999px;\r
+  background: rgba(0,0,0,.82);\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators {\r
+  display: flex;\r
+  align-items: center;\r
+  justify-self: end;\r
+  gap: 5px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg {\r
+  width: 13px;\r
+  height: 13px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg:last-child {\r
+  width: 18px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-home-indicator {\r
+  position: absolute;\r
+  left: 50%;\r
+  bottom: 7px;\r
+  width: 92px;\r
+  height: 4px;\r
+  transform: translateX(-50%);\r
+  border-radius: 999px;\r
+  background: rgba(255,255,255,.64);\r
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);\r
+}\r
+\r
+/* Lock screen */\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {\r
+  background:\r
+    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),\r
+    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),\r
+    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {\r
+  content: '';\r
+  position: absolute;\r
+  inset: 35px 0 0;\r
+  pointer-events: none;\r
+  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-hero {\r
+  position: relative;\r
+  z-index: 1;\r
+  display: flex;\r
+  flex-direction: column;\r
+  align-items: center;\r
+  gap: 5px;\r
+  padding: 40px 18px 26px;\r
+  text-shadow: 0 2px 14px rgba(0,0,0,.28);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-label {\r
+  color: rgba(255,255,255,.64);\r
+  font-size: 11px;\r
+  font-weight: 580;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock {\r
+  color: #fff;\r
+  font-size: 54px;\r
+  font-weight: 280;\r
+  line-height: 1;\r
+  letter-spacing: -.045em;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {\r
+  color: rgba(255,255,255,.74);\r
+  font-size: 12px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification {\r
+  position: relative;\r
+  z-index: 2;\r
+  display: flex;\r
+  flex-direction: column;\r
+  gap: 10px;\r
+  width: calc(100% - 28px);\r
+  margin: 0 14px;\r
+  padding: 13px 14px 14px;\r
+  color: #f7f4fb;\r
+  text-align: left;\r
+  font: inherit;\r
+  background:\r
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),\r
+    rgba(28,25,34,.86);\r
+  border: 1px solid rgba(255,255,255,.11);\r
+  border-radius: 18px;\r
+  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);\r
+  backdrop-filter: blur(14px);\r
+  cursor: pointer;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app {\r
+  display: flex;\r
+  align-items: center;\r
+  gap: 6px;\r
+  color: rgba(255,255,255,.68);\r
+  font-size: 10px;\r
+  font-weight: 650;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app svg {\r
+  width: 14px;\r
+  height: 14px;\r
+  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-body {\r
+  display: grid;\r
+  grid-template-columns: 34px minmax(0,1fr);\r
+  gap: 10px;\r
+  align-items: start;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-content {\r
+  display: flex;\r
+  min-width: 0;\r
+  flex-direction: column;\r
+  gap: 4px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {\r
+  width: 34px;\r
+  height: 34px;\r
+  border-radius: 50%;\r
+  font-size: 12px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-sender {\r
+  font-size: 13px;\r
+  font-weight: 760;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-copy {\r
+  display: -webkit-box;\r
+  overflow: hidden;\r
+  color: rgba(255,255,255,.9);\r
+  font-size: 12px;\r
+  line-height: 1.4;\r
+  -webkit-box-orient: vertical;\r
+  -webkit-line-clamp: 4;\r
+}\r
+\r
+/* Open chat */\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-chat {\r
+  background:\r
+    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),\r
+    #0c0b0f;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-app-header {\r
+  position: relative;\r
+  z-index: 2;\r
+  display: grid;\r
+  grid-template-columns: 36px minmax(0,1fr) 36px;\r
+  align-items: center;\r
+  flex: 0 0 72px;\r
+  width: 100%;\r
+  padding: 7px 12px 9px;\r
+  color: inherit;\r
+  text-align: center;\r
+  font: inherit;\r
+  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));\r
+  border: 0;\r
+  border-bottom: 1px solid rgba(255,255,255,.065);\r
+  box-shadow: 0 9px 18px rgba(0,0,0,.12);\r
+  cursor: pointer;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {\r
+  display: grid;\r
+  place-items: center;\r
+  width: 32px;\r
+  height: 32px;\r
+  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);\r
+  border-radius: 50%;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back svg,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action svg {\r
+  width: 20px;\r
+  height: 20px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {\r
+  background: rgba(255,255,255,.055);\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity {\r
+  display: grid;\r
+  grid-template-columns: 34px minmax(0,1fr);\r
+  grid-template-rows: auto auto;\r
+  align-items: center;\r
+  justify-self: center;\r
+  column-gap: 8px;\r
+  min-width: 0;\r
+  text-align: left;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pocket-phone-avatar {\r
+  grid-row: 1 / 3;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-conversation-title {\r
+  overflow: hidden;\r
+  font-size: 13px;\r
+  font-weight: 760;\r
+  line-height: 1.2;\r
+  text-overflow: ellipsis;\r
+  white-space: nowrap;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-subtitle {\r
+  color: #918b99;\r
+  font-size: 9px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread {\r
+  display: flex;\r
+  flex: 1 1 auto;\r
+  min-height: 0;\r
+  overflow: auto;\r
+  flex-direction: column;\r
+  gap: 12px;\r
+  padding: 16px 13px 20px;\r
+  scrollbar-color: rgba(255,255,255,.12) transparent;\r
+  scrollbar-width: thin;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar {\r
+  width: 6px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-thumb {\r
+  background: rgba(255,255,255,.12);\r
+  border-radius: 999px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-track {\r
+  background: transparent;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message {\r
+  display: flex;\r
+  align-items: flex-end;\r
+  gap: 8px;\r
+  width: 100%;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="false"] {\r
+  margin-top: 4px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] {\r
+  justify-content: flex-end;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar {\r
+  visibility: hidden;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message-content {\r
+  display: flex;\r
+  max-width: 76%;\r
+  min-width: 0;\r
+  flex-direction: column;\r
+  gap: 4px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-sender {\r
+  margin-left: 4px;\r
+  color: #878190;\r
+  font-size: 9px;\r
+  font-weight: 680;\r
+  letter-spacing: .01em;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-bubble {\r
+  display: block;\r
+  padding: 10px 12px;\r
+  color: #f3eff7;\r
+  font-size: 12px;\r
+  line-height: 1.42;\r
+  background: linear-gradient(145deg, #2b2731, #232029);\r
+  border: 1px solid rgba(255,255,255,.045);\r
+  border-radius: 6px 15px 15px 15px;\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {\r
+  color: #fff;\r
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));\r
+  border-radius: 15px 15px 5px 15px;\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-delivery {\r
+  align-self: flex-end;\r
+  margin: -3px 3px 0 0;\r
+  color: #77727f;\r
+  font-size: 8px;\r
+  font-weight: 680;\r
+  text-transform: uppercase;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer {\r
+  display: grid;\r
+  grid-template-columns: 34px minmax(0,1fr) 32px;\r
+  align-items: center;\r
+  flex: 0 0 58px;\r
+  gap: 7px;\r
+  padding: 8px 10px 13px;\r
+  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));\r
+  border-top: 1px solid rgba(255,255,255,.065);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {\r
+  display: grid;\r
+  place-items: center;\r
+  width: 30px;\r
+  height: 30px;\r
+  color: #aaa4b3;\r
+  background: #24212a;\r
+  border: 1px solid rgba(255,255,255,.055);\r
+  border-radius: 50%;\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {\r
+  color: #fff;\r
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action svg,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send svg {\r
+  width: 16px;\r
+  height: 16px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-field {\r
+  display: flex;\r
+  align-items: center;\r
+  min-width: 0;\r
+  height: 34px;\r
+  padding: 0 12px;\r
+  color: #797480;\r
+  font-size: 11px;\r
+  background: #131117;\r
+  border: 1px solid rgba(255,255,255,.12);\r
+  border-radius: 999px;\r
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);\r
+}\r
+\r
+/* Dedicated call screen */\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {\r
+  background:\r
+    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),\r
+    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),\r
+    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header {\r
+  grid-template-columns: 36px 1fr;\r
+  justify-items: start;\r
+  flex-basis: 54px;\r
+  background: transparent;\r
+  border-bottom: 0;\r
+  box-shadow: none;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header .pocket-phone-app-label {\r
+  color: #aaa4b3;\r
+  font-size: 11px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity {\r
+  display: flex;\r
+  flex: 1 1 auto;\r
+  min-height: 0;\r
+  flex-direction: column;\r
+  align-items: center;\r
+  justify-content: center;\r
+  gap: 9px;\r
+  padding: 0 24px 40px;\r
+  text-align: center;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity .pocket-phone-avatar {\r
+  width: 86px;\r
+  height: 86px;\r
+  margin-bottom: 9px;\r
+  font-size: 28px;\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-name {\r
+  font-size: 20px;\r
+  font-weight: 760;\r
+  letter-spacing: -.025em;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-status {\r
+  color: #a39dab;\r
+  font-size: 12px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-controls {\r
+  display: grid;\r
+  grid-template-columns: repeat(4, 1fr);\r
+  gap: 9px;\r
+  flex: 0 0 auto;\r
+  padding: 0 18px 36px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control {\r
+  display: flex;\r
+  min-width: 0;\r
+  flex-direction: column;\r
+  align-items: center;\r
+  gap: 7px;\r
+  color: #aaa4b3;\r
+  font-size: 9px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon {\r
+  display: grid;\r
+  place-items: center;\r
+  width: 48px;\r
+  height: 48px;\r
+  color: #f8f6fb;\r
+  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));\r
+  border: 1px solid rgba(255,255,255,.09);\r
+  border-radius: 50%;\r
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon > svg,\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol svg {\r
+  width: 19px;\r
+  height: 19px;\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control.pocket-phone-call-danger .pocket-phone-call-control-icon {\r
+  background: linear-gradient(145deg, #c35d69, #984651);\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol {\r
+  width: 100%;\r
+  height: 100%;\r
+  margin: 0;\r
+  background: transparent;\r
+  border: 0;\r
+  box-shadow: none;\r
+}\r
+\r
+@media (max-width: 560px) {\r
+  .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {\r
+    width: 100%;\r
+  }\r
+\r
+  .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {\r
+    padding: 14px;\r
+    border-radius: 16px;\r
+  }\r
+\r
+  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {\r
+    width: min(340px, 94vw);\r
+  }\r
+}\r
+\r
+.pocket-inline-frame[data-pocket-ui="true"] [hidden] { display: none; }\r
+\r
+/* Between-turn connectors stay compact even when prose artifacts use Full Phone. */\r
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] { width:100%; max-width:none; margin:8px 0; }\r
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] { display:none; }\r
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] { width:100%; }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector { display:grid; gap:0; border:1px solid var(--pocket-inline-border); border-radius:12px; background:var(--pocket-inline-surface,#201e25); overflow:hidden; box-shadow:0 3px 12px #0002; }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading { display:block; width:100%; padding:9px 12px; text-align:left; color:var(--pocket-inline-text); font-size:11px; font-weight:650; border-bottom:1px solid var(--pocket-inline-border); cursor:pointer; opacity:.8; }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row { display:grid; position:relative; grid-template-columns:minmax(0,1fr); gap:3px; width:100%; padding:10px 12px; text-align:left; cursor:pointer; }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row { border-top:1px solid var(--pocket-inline-border); }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] { text-align:right; border-right:2px solid var(--pocket-inline-accent); }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender { font-size:10px; font-weight:650; opacity:.65; }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy { font-size:13px; line-height:1.45; white-space:pre-wrap; }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,\r
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }\r
 `;
 
 // src/frontend/components/inline-styles.ts
@@ -7011,6 +9068,7 @@ function renderDevicePicker(state, selected, deviceKey, select) {
 
 // src/frontend/controller.ts
 var PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>';
+var POCKET_PERMISSIONS = ["ui_panels", "chats", "chat_mutation", "characters", "personas", "generation", "tools", "interceptor", "images", "image_gen", "push_notification"];
 var EMPTY_RESOLVED_IMAGE = { url: "", status: "empty", sourceKind: "none", sourceLabel: "Theme gradient" };
 function pocketDeviceKey(chatId, characterId, deviceOwnerActorId) {
   return [chatId || "_none", characterId || "_none", deviceOwnerActorId || "_unassigned"].map((value) => encodeURIComponent(value)).join("::");
@@ -7018,24 +9076,6 @@ function pocketDeviceKey(chatId, characterId, deviceOwnerActorId) {
 function pocketSurfaceId() {
   return requestId("pocket_surface").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
-var ICONS2 = {
-  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
-  messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
-  contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>',
-  camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h3l1.5-2h7l1.5 2h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
-  gallery: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m4.5 18 4.7-4.7 3.1 3.1 2.2-2.2 5 5"/></svg>',
-  notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg>',
-  weather: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18.5h9a4 4 0 0 0 .4-8A6 6 0 0 0 6 12.5a3 3 0 0 0 2 6Z"/><path d="M8 5V3M4.5 7 3 5.5M11.5 7 13 5.5"/></svg>',
-  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg>',
-  trackers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2.8 2.8-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.6v.2H10V21a1.8 1.8 0 0 0-1.1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1L4 17.1l.1-.1a1.8 1.8 0 0 0 .4-2A1.8 1.8 0 0 0 3 13.9h-.2V10H3a1.8 1.8 0 0 0 1.6-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1L6.9 4l.1.1a1.8 1.8 0 0 0 2 .4A1.8 1.8 0 0 0 10 3V2.8h4V3a1.8 1.8 0 0 0 1.1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1L20 6.9l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1.1h.2V14h-.2a1.8 1.8 0 0 0-1.7 1Z"/></svg>',
-  notifications: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
-  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
-  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.2 18-3.2-7.6L3 10zM10.6 13.4 21 3"/></svg>',
-  sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5c.5 4.2 2.8 6.5 7 7-4.2.5-6.5 2.8-7 7-.5-4.2-2.8-6.5-7-7 4.2-.5 6.5-2.8 7-7Z"/><path d="M19 16.5c.2 2 1.3 3.1 3 3.3-1.7.2-2.8 1.3-3 3.2-.2-1.9-1.3-3-3-3.2 1.7-.2 2.8-1.3 3-3.3Z"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>'
-};
 var APP_META = [
   { app: "messages", label: "Messages", icon: "messages", dock: true },
   { app: "camera", label: "Camera", icon: "camera", dock: true },
@@ -7049,7 +9089,7 @@ var APP_META = [
 ];
 function icon2(name) {
   const node = el("span");
-  node.innerHTML = ICONS2[name] || ICONS2.home;
+  node.innerHTML = POCKET_ICONS[name] || POCKET_ICONS.home;
   return node;
 }
 function iconButton(name, label) {
@@ -7079,6 +9119,19 @@ class PocketController {
   clock;
   expanded = false;
   currentApp = "home";
+  portal;
+  mochiStarted = false;
+  dismissMochiNotification;
+  mochi = new MochiView((payload) => this.ctx.sendToBackend(payload), () => {
+    this.portal?.refresh(true);
+    if (this.currentApp === "mochi")
+      this.render(false);
+  }, (roomId) => {
+    if (roomId)
+      this.openPocket({ app: "mochi", roomId });
+    else
+      this.openMochiPortal();
+  }, () => ({ enabled: this.preferences.notifyMessages, previews: this.preferences.notificationPreviews, visible: this.expanded && this.currentApp === "mochi" && !document.hidden }), (n) => this.showMochiNotification(n), (notices, rooms) => reconcileMochiNotifications(this.shell, notices, rooms));
   state = null;
   preferences = defaultPreferences();
   settingsDraft = null;
@@ -7218,6 +9271,7 @@ class PocketController {
     this.launcher.appendChild(this.launcherBadge);
     this.handsetHost = el("div", "lumiphone-widget-root lumiphone-handset-host");
     this.shell = el("div", "lumiphone-shell");
+    this.shell.dataset.pocketUiRevision = "portal-2";
     this.shell.hidden = true;
     const status = el("div", "lumiphone-statusbar");
     const dismiss = iconButton("back", "Dismiss phone");
@@ -7286,6 +9340,8 @@ class PocketController {
     this.refresh();
   }
   destroy() {
+    this.dismissMochiNotification?.();
+    this.mochi.destroy();
     this.voicePlayer.stop();
     this.setupModalDismiss?.();
     this.destroyed = true;
@@ -7464,7 +9520,23 @@ class PocketController {
     }
   }
   renderDrawerLanding() {
-    this.drawer.root.replaceChildren();
+    if (!this.portal)
+      this.portal = new PocketPortal(() => this.renderPhoneChoices(), () => this.mochi.render("choices"), () => {
+        if (!this.mochiStarted) {
+          this.mochiStarted = true;
+          this.mochi.open();
+        }
+      }, { back: (exit, anchor) => this.mochi.back(exit, anchor), home: (exit, anchor) => this.mochi.exitPortal(exit, anchor) });
+    if (!this.drawer.root.contains(this.portal.root))
+      this.drawer.root.replaceChildren(this.portal.root);
+    this.portal.refresh();
+  }
+  openMochiPortal() {
+    this.renderDrawerLanding();
+    this.drawer.activate();
+    this.portal.show("mochi");
+  }
+  renderPhoneChoices() {
     const outer = el("div", "lumiphone-drawer lumiphone-device-drawer");
     const card = el("div", "lumiphone-device-switcher");
     const logo = el("div", "lumiphone-device-mark");
@@ -7491,6 +9563,7 @@ class PocketController {
         this.selectedConversationId = "";
         this.selectedMessageId = "";
         this.currentApp = "home";
+        this.mochi.leave();
         this.router.reset({ app: "home" });
         this.updateBadge();
         this.renderDrawerLanding();
@@ -7507,8 +9580,24 @@ class PocketController {
       card.appendChild(el("p", "lumiphone-drawer-copy", "Pocket is still loading this chat."));
     }
     const actions = el("div", "lumiphone-device-footer");
-    const permission = button("Manage access", "lumiphone-device-access");
-    permission.addEventListener("click", () => this.requestPermissions());
+    const permission = button("Permissions", "lumiphone-device-access");
+    permission.title = "Request permissions for Pocket features";
+    const updatePermissionState = async () => {
+      try {
+        const granted = await this.ctx.permissions.getGranted();
+        if (this.destroyed)
+          return;
+        const complete = POCKET_PERMISSIONS.every((scope) => granted.includes(scope));
+        permission.textContent = complete ? "Permissions granted" : "Permissions";
+        permission.disabled = complete;
+        permission.title = complete ? "All requested permissions are enabled" : "Request permissions for Pocket features";
+      } catch {}
+    };
+    updatePermissionState();
+    permission.addEventListener("click", async () => {
+      await this.requestPermissions();
+      await updatePermissionState();
+    });
     actions.append(permission);
     const restore = button("Show launcher", "lumiphone-device-access");
     restore.addEventListener("click", async () => {
@@ -7525,14 +9614,14 @@ class PocketController {
     }
     card.appendChild(actions);
     outer.appendChild(card);
-    this.drawer.root.appendChild(outer);
+    return outer;
   }
   ensureDockPanel() {
     if (this.dockPanel)
       return this.dockPanel;
     try {
-      this.dockPanel = this.ctx.ui.requestDockPanel({
-        edge: "right",
+      const dockOptions = {
+        edge: "left",
         title: "Pocket",
         size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292,
@@ -7540,8 +9629,10 @@ class PocketController {
         resizable: false,
         startCollapsed: true,
         chromeless: true,
-        centerContent: true
-      });
+        centerContent: true,
+        respectRequestedEdge: true
+      };
+      this.dockPanel = this.ctx.ui.requestDockPanel(dockOptions);
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false;
@@ -7653,19 +9744,7 @@ class PocketController {
   }
   async requestPermissions() {
     try {
-      await this.ctx.permissions.request([
-        "ui_panels",
-        "chats",
-        "chat_mutation",
-        "characters",
-        "personas",
-        "generation",
-        "tools",
-        "interceptor",
-        "images",
-        "image_gen",
-        "push_notification"
-      ], { reason: "Pocket uses these permissions for its launcher and handset, per-chat character state, generated text messages, user-requested scene contact sync, model actions, gallery, camera, and optional push notifications." });
+      await this.ctx.permissions.request([...POCKET_PERMISSIONS], { reason: "Pocket uses these permissions for its launcher and handset, per-chat character state, generated text messages, user-requested scene contact sync, model actions, gallery, camera, and optional push notifications." });
       await this.ensureWidget();
       this.refresh();
     } catch (error) {
@@ -7783,7 +9862,7 @@ class PocketController {
     this.send("lumiphone:get_state");
   }
   announceView() {
-    this.send("lumiphone:view_state", { open: this.expanded, route: this.router.current });
+    this.send("lumiphone:view_state", { open: this.expanded && this.currentApp !== "mochi", route: this.currentApp === "mochi" ? { app: "home" } : this.router.current });
   }
   activeComposerReference() {
     if (!this.state)
@@ -7941,6 +10020,8 @@ class PocketController {
     this.lastComposerReferenceId = reference.id;
   }
   onBackend(payload) {
+    if (this.mochi.receive(payload))
+      return;
     if (!payload || typeof payload !== "object" || typeof payload.type !== "string")
       return;
     if (payload.type === "lumiphone:state" && payload.state) {
@@ -7986,7 +10067,10 @@ class PocketController {
           this.manualMessageOverrides.delete(conversationId);
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true;
-      this.preferences = normalizePreferences(payload.preferences || this.preferences);
+      const nextPreferences = normalizePreferences(payload.preferences || this.preferences);
+      if (nextPreferences.notifyMessages !== this.preferences.notifyMessages || nextPreferences.notificationPreviews !== this.preferences.notificationPreviews)
+        this.dismissMochiNotification?.();
+      this.preferences = nextPreferences;
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode);
       if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences")
         this.settingsDraft = structuredClone(this.preferences);
@@ -8565,6 +10649,8 @@ class PocketController {
       Object.assign(this.settingsDraft, structuredClone(normalized));
     else
       this.settingsDraft = structuredClone(normalized);
+    if (normalized.notifyMessages !== this.preferences.notifyMessages || normalized.notificationPreviews !== this.preferences.notificationPreviews)
+      this.dismissMochiNotification?.();
     this.preferences = normalized;
     applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrollMode);
     this.applyAppearance();
@@ -8578,6 +10664,14 @@ class PocketController {
     this.settingsSaveTimer = window.setTimeout(() => {
       this.send("lumiphone:save_preferences", { preferences: this.settingsDraft || this.preferences });
     }, 240);
+  }
+  showMochiNotification(notification) {
+    if (!this.preferences.notifyMessages || !this.expanded || document.hidden)
+      return;
+    if (this.shell.querySelector(".lp-floating-notification:not(.mochi-notification-toast)"))
+      return;
+    this.dismissMochiNotification?.();
+    this.dismissMochiNotification = showMochiNotification(this.shell, notification, this.preferences.notificationPreviews, () => this.mochi.openRoom(notification.roomId));
   }
   showIncomingNotification(notification) {
     if (this.state && !notificationBelongsToDevice(this.state, this.currentDeviceOwnerActorId(), notification.deviceOwnerActorId))
@@ -8653,7 +10747,8 @@ class PocketController {
     this.shell.hidden = false;
     this.resizeExpanded();
     this.render(true);
-    this.refresh();
+    if (this.currentApp !== "mochi")
+      this.refresh();
     this.announceView();
     requestAnimationFrame(() => {
       this.shell.tabIndex = -1;
@@ -8661,6 +10756,8 @@ class PocketController {
     });
   }
   close() {
+    this.dismissMochiNotification?.();
+    this.mochi.leave();
     this.voicePlayer.stop();
     if (!this.widget && !this.dockPanel && !this.mobileWidget)
       return;
@@ -8749,17 +10846,38 @@ class PocketController {
   openPocket(routeInput, pushHistory = true) {
     const normalized = normalizePocketRoute(routeInput);
     const route = this.router.navigate(normalized, !pushHistory);
-    if (!this.state) {
+    if (this.currentApp === "mochi" && route.app !== "mochi")
+      this.mochi.leave();
+    if (!this.state && route.app !== "mochi") {
       this.pendingRoute = route;
       this.open();
       this.refresh();
       return;
     }
-    if (!this.expanded)
+    if (route.app === "mochi") {
+      this.currentApp = "mochi";
+      if (!this.expanded)
+        this.open();
+    } else if (!this.expanded)
       this.open();
     if (this.currentApp === "settings" && route.app !== "settings")
       this.settingsDraft = null;
     this.currentApp = route.app;
+    if (route.app === "mochi") {
+      if (!this.mochiStarted || !route.roomId) {
+        this.openMochiPortal();
+        return;
+      }
+      this.mochi.select(route.roomId);
+      this.render(true);
+      const viewport = currentViewport();
+      if (this.mobileWidget && (viewport.width <= 720 || viewport.height <= 540))
+        this.ctx.sendToBackend({ type: "mochi:open_shell" });
+      this.announceView();
+      return;
+    }
+    if (!this.state)
+      return;
     if (route.app === "messages") {
       const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
       const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId && conversationVisibleOnDevice(this.state, entry, owner)) : null) || (route.contactId ? this.state.conversations.find((entry) => entry.kind === "direct" && conversationVisibleOnDevice(this.state, entry, owner) && conversationActorIds(entry).includes(route.contactId)) : null);
@@ -8989,14 +11107,14 @@ class PocketController {
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     for (const cleanup of this.viewCleanups.splice(0))
       cleanup();
-    if (!this.state) {
+    if (!this.state && this.currentApp !== "mochi") {
       this.screen.replaceChildren(this.loadingView());
       return;
     }
     this.applyAppearance();
-    const view = this.currentApp === "home" ? this.renderHome() : this.currentApp === "messages" ? this.renderMessages() : this.currentApp === "contacts" ? this.renderContacts() : this.currentApp === "gallery" ? this.renderGallery() : this.currentApp === "camera" ? this.renderCamera() : this.currentApp === "notes" ? this.renderNotes() : this.currentApp === "weather" ? this.renderWeather() : this.currentApp === "calendar" ? this.renderCalendar() : this.currentApp === "trackers" ? this.renderTrackers() : this.currentApp === "notifications" ? this.renderNotifications() : this.renderSettings();
+    const view = this.currentApp === "mochi" ? this.mochi.render("chat", () => this.openMochiPortal()) : this.currentApp === "home" ? this.renderHome() : this.currentApp === "messages" ? this.renderMessages() : this.currentApp === "contacts" ? this.renderContacts() : this.currentApp === "gallery" ? this.renderGallery() : this.currentApp === "camera" ? this.renderCamera() : this.currentApp === "notes" ? this.renderNotes() : this.currentApp === "weather" ? this.renderWeather() : this.currentApp === "calendar" ? this.renderCalendar() : this.currentApp === "trackers" ? this.renderTrackers() : this.currentApp === "notifications" ? this.renderNotifications() : this.renderSettings();
     view.classList.add("lumiphone-app-view");
-    if (this.currentApp === "contacts" && ["config", "new", "draft"].includes(this.selectedContactView)) {
+    if (this.state && this.currentApp === "contacts" && ["config", "new", "draft"].includes(this.selectedContactView)) {
       const key = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactId}:${this.selectedContactView}`;
       const fields = [...view.querySelectorAll("input, textarea, select")];
       const draft = this.contactFormDrafts.get(key);
@@ -12300,9 +14418,127 @@ ${INLINE_FINISH_STYLES}
 ${VOICE_MESSAGE_STYLES}
 `;
 
+// src/mochi/workspace.ts
+function createMochiWorkspace(options) {
+  const frame = document.createElement("section");
+  frame.className = "mochi-workspace";
+  frame.setAttribute("aria-label", "Mochi workspace");
+  frame.hidden = true;
+  const style = document.createElement("style");
+  style.textContent = ".mochi-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;box-sizing:border-box}.mochi-workspace[hidden]{display:none!important}.mochi-workspace>.mochi-view{min-height:0}";
+  frame.append(style);
+  options.root.append(frame);
+  let opened = false, started = false, destroyed = false, dirty = false;
+  let dismissNotice;
+  const policy = () => ({ ...options.notificationPolicy(), visible: opened && frame.isConnected && !document.hidden && !frame.closest("[hidden]") && (typeof frame.checkVisibility !== "function" || frame.checkVisibility({ visibilityProperty: true })) });
+  const render = () => {
+    if (destroyed)
+      return;
+    if (!opened) {
+      dirty = true;
+      return;
+    }
+    const focused = frame.contains(document.activeElement) ? document.activeElement : null;
+    const label = focused?.getAttribute("aria-label");
+    const selection = focused && (focused.tagName === "TEXTAREA" || focused.tagName === "INPUT") ? [focused.selectionStart, focused.selectionEnd] : null;
+    const viewNode = view.render();
+    viewNode.classList.add("lumiphone-app-view");
+    const old = frame.querySelector(":scope > .mochi-view");
+    if (old)
+      old.replaceWith(viewNode);
+    else
+      frame.append(viewNode);
+    if (label) {
+      const replacement = Array.from(viewNode.querySelectorAll("[aria-label]")).find((n) => n.tagName === focused.tagName && n.getAttribute("aria-label") === label);
+      replacement?.focus({ preventScroll: true });
+      if (replacement && selection?.[0] !== null && selection?.[0] !== undefined && selection[1] !== null && (replacement.tagName === "INPUT" || replacement.tagName === "TEXTAREA"))
+        replacement.setSelectionRange(selection[0], selection[1]);
+    }
+    dirty = false;
+  };
+  const view = new MochiView((payload) => {
+    if (!destroyed)
+      options.transport.sendToBackend(payload);
+  }, render, (roomId) => {
+    view.select(roomId || "");
+    render();
+  }, policy, (notice) => {
+    if (!policy().visible)
+      return;
+    dismissNotice?.();
+    dismissNotice = showMochiNotification(frame, notice, policy().previews, () => view.openRoom(notice.roomId));
+  }, (notices, rooms) => reconcileMochiNotifications(frame, notices, rooms));
+  const unsubscribe = options.transport.onBackendMessage((payload) => {
+    if (!destroyed)
+      view.receive(payload);
+  });
+  const ensureActive = () => {
+    if (destroyed)
+      throw new Error("This Mochi workspace has been destroyed.");
+  };
+  const openWorkspace = () => {
+    ensureActive();
+    if (opened)
+      return;
+    opened = true;
+    frame.hidden = false;
+    if (!started) {
+      started = true;
+      view.open();
+    } else {
+      if (dirty)
+        render();
+      view.resume();
+    }
+  };
+  return {
+    apiVersion: 1,
+    get isOpen() {
+      return opened;
+    },
+    open: openWorkspace,
+    close() {
+      if (destroyed || !opened)
+        return;
+      opened = false;
+      frame.hidden = true;
+      dismissNotice?.();
+      dismissNotice = undefined;
+      view.leave();
+    },
+    refresh() {
+      ensureActive();
+      if (started)
+        view.load();
+    },
+    openRoom(roomId) {
+      ensureActive();
+      if (!view.canOpenRoom(roomId))
+        return false;
+      openWorkspace();
+      view.openRoom(roomId);
+      return true;
+    },
+    destroy() {
+      if (destroyed)
+        return;
+      opened = false;
+      frame.hidden = true;
+      dismissNotice?.();
+      unsubscribe();
+      try {
+        view.destroy();
+      } finally {
+        destroyed = true;
+        frame.remove();
+      }
+    }
+  };
+}
+
 // src/frontend.ts
 function setup(ctx) {
-  const removeStyle = ctx.dom.addStyle(PHONE_STYLES);
+  const removeStyle = ctx.dom.addStyle(PHONE_STYLES + PORTAL_STYLES);
   const destroyPhone = setupPhone(ctx);
   return () => {
     destroyPhone();
@@ -12310,5 +14546,6 @@ function setup(ctx) {
   };
 }
 export {
+  createMochiWorkspace,
   setup
 };
