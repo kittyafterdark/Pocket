@@ -32,7 +32,7 @@ import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domai
 import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
 import { activityDeviceOwner, conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
-import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clearVisualViewportSurface, currentViewport, desktopDockSize, PHONE_ASPECT } from './surface.js'
+import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clampLauncherPosition, clearVisualViewportSurface, currentViewport, desktopDockSize, LAUNCHER_SIZE, PHONE_ASPECT, resolveLauncherPosition } from './surface.js'
 import { applyPocketTouchScroll, resolvePocketTouchScrollMode } from './touch-scroll.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
@@ -230,6 +230,7 @@ class PocketController {
   private launcherFocus: HTMLElement | null = null
   private suppressLauncherClick = false
   private launcherPointer: { x: number; y: number } | null = null
+  private lastLauncherWindowWidth = typeof window !== 'undefined' ? window.innerWidth : 0
   private pendingRoute: PocketRoute | null = null
   private injectedActivities = new Map<string, Element>()
   private pendingActivities = new Map<string, PocketActivity>()
@@ -419,7 +420,10 @@ class PocketController {
     }
     window.addEventListener('spindle:desktop-widget-returned', returned)
     this.cleanups.push(() => window.removeEventListener('spindle:desktop-widget-returned', returned))
-    const resize = () => { if (this.expanded) this.resizeExpanded() }
+    const resize = () => {
+      if (this.expanded) this.resizeExpanded()
+      this.reclampLauncherPosition()
+    }
     window.addEventListener('resize', resize)
     this.cleanups.push(() => window.removeEventListener('resize', resize))
     // CSS zoom changes don't fire window.resize. Host tokens live on the root.
@@ -470,10 +474,11 @@ class PocketController {
       const granted = await this.ctx.permissions.getGranted()
       if (!granted.includes('ui_panels')) return
       if (this.destroyed) return
+      const initialPosition = resolveLauncherPosition(this.preferences.launcherPosition)
       this.widget = this.ctx.ui.createFloatWidget({
-        width: 58,
-        height: 58,
-        initialPosition: { x: Math.max(12, window.innerWidth - 82), y: Math.max(58, window.innerHeight * .22) },
+        width: LAUNCHER_SIZE,
+        height: LAUNCHER_SIZE,
+        initialPosition,
         snapToEdge: true,
         tooltip: 'Pocket',
         chromeless: true,
@@ -487,6 +492,7 @@ class PocketController {
       this.cleanups.push(this.widget.onDragEnd(() => {
         this.suppressLauncherClick = true
         window.setTimeout(() => { this.suppressLauncherClick = false }, 180)
+        this.persistLauncherPosition()
       }))
       this.launcher.hidden = false
       this.renderDrawerLanding()
@@ -494,6 +500,38 @@ class PocketController {
       this.widget = null
       this.mountPhoneInDrawer()
     }
+  }
+
+  private persistLauncherPosition(): void {
+    if (!this.widget) return
+    try {
+      const position = this.widget.getPosition?.()
+      if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return
+      const clamped = clampLauncherPosition(position.x, position.y)
+      const previous = this.preferences.launcherPosition
+      if (previous && previous.x === clamped.x && previous.y === clamped.y) return
+      this.updatePreferences({ ...this.preferences, launcherPosition: clamped })
+    } catch { /* host may omit getPosition */ }
+  }
+
+  private applyLauncherPosition(): void {
+    if (!this.widget || this.expanded) return
+    try {
+      const next = resolveLauncherPosition(this.preferences.launcherPosition)
+      this.widget.moveTo(next.x, next.y)
+    } catch { /* host may omit moveTo */ }
+  }
+
+  private reclampLauncherPosition(): void {
+    const width = window.innerWidth
+    const active = document.activeElement
+    const inputFocused = active instanceof HTMLInputElement
+      || active instanceof HTMLTextAreaElement
+      || (active instanceof HTMLElement && active.isContentEditable)
+    // Ignore transient height resizes from the mobile virtual keyboard while typing.
+    if (inputFocused && width === this.lastLauncherWindowWidth) return
+    this.lastLauncherWindowWidth = width
+    this.applyLauncherPosition()
   }
 
   private renderDrawerLanding(): void {
@@ -994,6 +1032,7 @@ class PocketController {
       this.jevKeyConfigured = payload.jevKeyConfigured === true
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
+      this.applyLauncherPosition()
       if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences') this.settingsDraft = structuredClone(this.preferences)
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile

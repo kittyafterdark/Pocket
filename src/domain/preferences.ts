@@ -95,6 +95,14 @@ export function themePalette(theme: PhoneTheme): PhonePalette {
   return structuredClone(THEME_COLORS[theme === 'custom' ? 'midnight' : theme])
 }
 
+export function normalizeLauncherPosition(value: unknown): { x: number; y: number } | null {
+  const raw = record(value)
+  const x = Number(raw.x)
+  const y = Number(raw.y)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+  return { x, y }
+}
+
 export function defaultPreferences(): DevicePreferences {
   return {
     version: PREFERENCES_VERSION,
@@ -108,6 +116,7 @@ export function defaultPreferences(): DevicePreferences {
     chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
     uiScale: 1,
+    launcherPosition: null,
     animation: 'spring',
     animationDurationMs: 280,
     reducedMotion: false,
@@ -233,6 +242,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, '', 2_000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
+    launcherPosition: normalizeLauncherPosition(raw.launcherPosition),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation as DevicePreferences['animation'] : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),

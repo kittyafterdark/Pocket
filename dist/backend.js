@@ -554,6 +554,14 @@ function safeColor(value, fallback) {
 function themePalette(theme) {
   return structuredClone(THEME_COLORS[theme === "custom" ? "midnight" : theme]);
 }
+function normalizeLauncherPosition(value) {
+  const raw = record2(value);
+  const x = Number(raw.x);
+  const y = Number(raw.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y))
+    return null;
+  return { x, y };
+}
 function defaultPreferences() {
   return {
     version: PREFERENCES_VERSION,
@@ -567,6 +575,7 @@ function defaultPreferences() {
     chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
     uiScale: 1,
+    launcherPosition: null,
     animation: "spring",
     animationDurationMs: 280,
     reducedMotion: false,
@@ -688,6 +697,7 @@ function normalizePreferences(value) {
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
+    launcherPosition: normalizeLauncherPosition(raw.launcherPosition),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
     reducedMotion: bool(raw.reducedMotion, fallback.reducedMotion),

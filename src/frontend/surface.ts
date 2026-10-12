@@ -4,11 +4,14 @@ export const PHONE_ASPECT = 9 / 18.4
 export const PHONE_BASE_WIDTH = 360
 export const PHONE_SCALE_MIN = 0.8
 export const PHONE_SCALE_MAX = 1.25
+export const LAUNCHER_SIZE = 58
+export const LAUNCHER_PADDING = 12
 
 const surfaceStyles = new WeakMap<HTMLElement, Map<string, { requested: string; applied: string }>>()
 
 export interface SurfaceViewport { width: number; height: number }
 export interface PhoneSurfaceGeometry extends SurfaceViewport { fullscreen: boolean; x: number; y: number }
+export interface LauncherPosition { x: number; y: number }
 
 export function currentViewport(): SurfaceViewport {
   const visual = window.visualViewport
@@ -16,6 +19,41 @@ export function currentViewport(): SurfaceViewport {
     width: Math.max(1, Math.floor(visual?.width || window.innerWidth)),
     height: Math.max(1, Math.floor(visual?.height || window.innerHeight)),
   }
+}
+
+export function clampLauncherPosition(
+  x: number,
+  y: number,
+  viewport = currentViewport(),
+  size = LAUNCHER_SIZE,
+  padding = LAUNCHER_PADDING,
+): LauncherPosition {
+  const maxX = Math.max(padding, viewport.width - size - padding)
+  const maxY = Math.max(padding, viewport.height - size - padding)
+  return {
+    x: Math.min(Math.max(padding, x), maxX),
+    y: Math.min(Math.max(padding, y), maxY),
+  }
+}
+
+/** Pocket's historical default: right edge, ~22% down the viewport. */
+export function defaultLauncherPosition(viewport = currentViewport()): LauncherPosition {
+  return {
+    x: Math.max(LAUNCHER_PADDING, viewport.width - 82),
+    y: Math.max(58, viewport.height * .22),
+  }
+}
+
+export function resolveLauncherPosition(
+  saved: LauncherPosition | null | undefined,
+  viewport = currentViewport(),
+  size = LAUNCHER_SIZE,
+): LauncherPosition {
+  if (!saved || !Number.isFinite(saved.x) || !Number.isFinite(saved.y)) {
+    const fallback = defaultLauncherPosition(viewport)
+    return clampLauncherPosition(fallback.x, fallback.y, viewport, size)
+  }
+  return clampLauncherPosition(saved.x, saved.y, viewport, size)
 }
 
 export function calculatePhoneSurface(scale: number, viewport = currentViewport(), allowFullscreen = true): PhoneSurfaceGeometry {

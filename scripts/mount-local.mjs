@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 
 const repoDir = dirname(dirname(fileURLToPath(import.meta.url)))
-const lumiverseDir = join(repoDir, '..', '..', '..', '..')
+// Prefer LUMIVERSE_DIR when mounting outside the nested extensions/<id>/repo layout.
+const lumiverseDir = process.env.LUMIVERSE_DIR
+  ? process.env.LUMIVERSE_DIR
+  : join(repoDir, '..', '..', '..', '..')
 const manifest = JSON.parse(readFileSync(join(repoDir, 'spindle.json'), 'utf8'))
 const dbPath = join(lumiverseDir, 'data', 'lumiverse.db')
 const storagePath = join(lumiverseDir, 'data', 'extensions', manifest.identifier, 'storage')
