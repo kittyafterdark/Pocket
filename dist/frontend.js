@@ -7592,7 +7592,15 @@ class PocketController {
     };
     window.addEventListener("resize", resize);
     this.cleanups.push(() => window.removeEventListener("resize", resize));
-    const scaleObserver = new MutationObserver(resize);
+    const readUiScale = () => getComputedStyle(document.documentElement).getPropertyValue("--lumiverse-ui-scale");
+    let uiScale = readUiScale();
+    const scaleObserver = new MutationObserver(() => {
+      const next = readUiScale();
+      if (next === uiScale)
+        return;
+      uiScale = next;
+      resize();
+    });
     scaleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
     scaleObserver.observe(document.body, { attributes: true, attributeFilter: ["style", "class"] });
     this.cleanups.push(() => scaleObserver.disconnect());
@@ -7699,6 +7707,9 @@ class PocketController {
       return;
     try {
       const next = resolveLauncherPosition(this.preferences.launcherPosition);
+      const current = this.widget.getPosition?.();
+      if (current?.x === next.x && current.y === next.y)
+        return;
       this.widget.moveTo(next.x, next.y);
     } catch {}
   }

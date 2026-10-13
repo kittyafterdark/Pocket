@@ -428,8 +428,16 @@ class PocketController {
     }
     window.addEventListener('resize', resize)
     this.cleanups.push(() => window.removeEventListener('resize', resize))
-    // CSS zoom changes don't fire window.resize. Host tokens live on the root.
-    const scaleObserver = new MutationObserver(resize)
+    // CSS zoom changes don't fire window.resize. Ignore unrelated styles such
+    // as modal scroll locks: host placement updates can rerender those modals.
+    const readUiScale = () => getComputedStyle(document.documentElement).getPropertyValue('--lumiverse-ui-scale')
+    let uiScale = readUiScale()
+    const scaleObserver = new MutationObserver(() => {
+      const next = readUiScale()
+      if (next === uiScale) return
+      uiScale = next
+      resize()
+    })
     scaleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] })
     scaleObserver.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] })
     this.cleanups.push(() => scaleObserver.disconnect())
@@ -520,6 +528,10 @@ class PocketController {
     if (!this.widget || this.expanded) return
     try {
       const next = resolveLauncherPosition(this.preferences.launcherPosition)
+      const current = this.widget.getPosition?.()
+      // Host moveTo publishes widget state even for identical coordinates.
+      // Avoid feeding modal scroll-lock style changes back into host renders.
+      if (current?.x === next.x && current.y === next.y) return
       this.widget.moveTo(next.x, next.y)
     } catch { /* host may omit moveTo */ }
   }
