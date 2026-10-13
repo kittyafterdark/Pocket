@@ -188,6 +188,13 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
   for (const value of ['spring', 'slide', 'fade', 'none']) { const option = el('option', '', value[0].toUpperCase() + value.slice(1)); option.value = value; option.selected = settings.animation === value; animation.appendChild(option) }
   animation.addEventListener('change', () => commit((next) => { next.animation = animation.value as PhoneSettings['animation'] }))
   motion.append(fieldBlock('Animation', animation), slider('Animation duration', settings.animationDurationMs, 0, 700, 20, (value) => `${value} ms`, (value) => commit((next) => { next.animationDurationMs = value })), toggle('Reduce motion', settings.reducedMotion, (value) => commit((next) => { next.reducedMotion = value })))
+  const dockSide = el('select', 'lp-input'); dockSide.setAttribute('aria-label', 'Desktop phone side')
+  for (const [value, label] of [['left', 'Left'], ['right', 'Right']] as const) {
+    const option = el('option', '', label); option.value = value; dockSide.append(option)
+  }
+  dockSide.value = settings.desktopDockSide
+  dockSide.addEventListener('change', () => commit(next => { next.desktopDockSide = dockSide.value === 'right' ? 'right' : 'left' }))
+  content.append(fieldBlock('Desktop phone side', dockSide), el('p', 'lp-copy', 'Choose which side of the chat the desktop handset opens on. Mobile stays full-screen.'))
   const scrolling = toggle('Native touch scrolling', resolvePocketTouchScrollMode(settings.nativeTouchScrollMode) === 'native', (value) => commit((next) => { next.nativeTouchScrollMode = value ? 'native' : 'guarded' }), 'On by default on iPhone. Turn off to restore the scroll guard. Requires the Lumiverse Spindle touch scroll API; this choice can be saved before the mobile widget opens.')
   const custom = el('section', 'lp-card lp-settings-section'); custom.append(el('div', 'lp-eyebrow', 'Advanced custom CSS'), el('p', 'lp-copy', 'Scoped separately to this Pocket surface and its inline artifacts. Stable hooks include data-pocket-app, data-pocket-thread, data-message-id, data-settings-category, and data-setting.'))
   const css = el('textarea', 'lp-textarea lp-code-input'); css.value = settings.customCss; css.placeholder = '.lp-bubble { border-radius: 12px; }'; css.addEventListener('input', () => commit((next) => { next.customCss = css.value }, { persist: false }))

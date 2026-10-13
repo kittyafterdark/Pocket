@@ -1744,6 +1744,7 @@ const dockHandle = {
   collapse() { this.collapsed = true }, expand() { this.collapsed = false }, isCollapsed() { return this.collapsed },
   setTitle: () => {}, setSize(size) { this.size = size }, destroy: () => { dockDestroyCount += 1 }, onVisibilityChange: () => () => {},
 }
+const requestedDockEdges = []
 let dockRequestCount = 0
 let dockDestroyCount = 0
 const injected = []
@@ -1761,7 +1762,7 @@ const frontendContext = {
     registerDrawerTab: () => drawerHandle,
     registerInputBarAction: () => inputHandle,
     createFloatWidget: options => { floatWidgetOptions.push(options); return widgetHandle },
-    requestDockPanel: (options) => { dockRequestCount += 1; assert.equal(options.edge, 'left'); assert.equal(options.respectRequestedEdge, true); assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
+    requestDockPanel: (options) => { dockRequestCount += 1; requestedDockEdges.push(options.edge); assert.ok(['left', 'right'].includes(options.edge)); assert.equal(options.respectRequestedEdge, true); assert.equal(options.chromeless, true); assert.equal(options.centerContent, true); return dockHandle },
     showModal: (options) => {
       const record = { options, root: document.createElement('div'), dismissed: false }
       shownModals.push(record)
@@ -1979,6 +1980,21 @@ scaleInput.dispatchEvent(new Event('input', { bubbles: true }))
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 18.4)) < 0.01, 'scale update broke 9:18.4 bounds')
 assert.ok(dockHandle.size < initialDockSize, 'scale control did not derive a new semantic dock size')
 
+const sideControl = dockRoot.querySelector('select[aria-label="Desktop phone side"]')
+assert.equal(sideControl.value, 'left')
+const sideRequestCount = dockRequestCount, sideDestroyCount = dockDestroyCount
+sideControl.focus(); sideControl.value = 'right'; sideControl.dispatchEvent(new Event('change', { bubbles: true }))
+assert.equal(requestedDockEdges.at(-1), 'right', 'Side setting recreates the dock on the chosen edge')
+assert.equal(dockRequestCount, sideRequestCount + 1)
+assert.equal(dockDestroyCount, sideDestroyCount + 1, 'Previous dock must be released before moving')
+assert.equal(dockRoot.querySelector('select[aria-label="Desktop phone side"]').value, 'right')
+assert.equal(document.activeElement.getAttribute('aria-label'), 'Desktop phone side', 'Side switch retains keyboard focus')
+await new Promise(resolve => setTimeout(resolve, 300))
+assert.equal(frontendSends.filter(message => message.type === 'lumiphone:save_preferences').at(-1).preferences.desktopDockSide, 'right')
+const restoredSideControl = dockRoot.querySelector('select[aria-label="Desktop phone side"]'); restoredSideControl.value = 'left'; restoredSideControl.dispatchEvent(new Event('change', { bubbles: true }))
+assert.equal(requestedDockEdges.at(-1), 'left')
+assert.equal(dockRequestCount, sideRequestCount + 2)
+assert.equal(dockDestroyCount, sideDestroyCount + 2)
 dockRoot.querySelector('.lumiphone-homebar button').click()
 const messagesIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Messages'))
 messagesIcon.click()

@@ -686,6 +686,7 @@ function defaultPreferences() {
     homeWallpaper: defaultWallpaper(),
     chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
+    desktopDockSide: "left",
     uiScale: 1,
     launcherPosition: null,
     animation: "spring",
@@ -808,6 +809,7 @@ function normalizePreferences(value) {
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
+    desktopDockSide: raw.desktopDockSide === "right" ? "right" : "left",
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     launcherPosition: normalizeLauncherPosition(raw.launcherPosition),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
@@ -1880,6 +1882,18 @@ function appearance(host) {
   })), toggle("Reduce motion", settings.reducedMotion, (value) => commit((next) => {
     next.reducedMotion = value;
   })));
+  const dockSide = el("select", "lp-input");
+  dockSide.setAttribute("aria-label", "Desktop phone side");
+  for (const [value, label] of [["left", "Left"], ["right", "Right"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    dockSide.append(option);
+  }
+  dockSide.value = settings.desktopDockSide;
+  dockSide.addEventListener("change", () => commit((next) => {
+    next.desktopDockSide = dockSide.value === "right" ? "right" : "left";
+  }));
+  content.append(fieldBlock("Desktop phone side", dockSide), el("p", "lp-copy", "Choose which side of the chat the desktop handset opens on. Mobile stays full-screen."));
   const scrolling = toggle("Native touch scrolling", resolvePocketTouchScrollMode(settings.nativeTouchScrollMode) === "native", (value) => commit((next) => {
     next.nativeTouchScrollMode = value ? "native" : "guarded";
   }), "On by default on iPhone. Turn off to restore the scroll guard. Requires the Lumiverse Spindle touch scroll API; this choice can be saved before the mobile widget opens.");
@@ -7263,6 +7277,8 @@ class PocketController {
   cleanups = [];
   drawer;
   dockPanel = null;
+  dockSide = null;
+  dockFocusObserver = null;
   dockVisibilityCleanup = null;
   widget = null;
   mobileWidget = null;
@@ -7760,11 +7776,13 @@ class PocketController {
     this.drawer.root.appendChild(outer);
   }
   ensureDockPanel() {
+    if (this.dockPanel && this.dockSide !== this.preferences.desktopDockSide)
+      this.releaseDockPanel();
     if (this.dockPanel)
       return this.dockPanel;
     try {
       const dockOptions = {
-        edge: "left",
+        edge: this.preferences.desktopDockSide,
         title: "Pocket",
         size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292,
@@ -7776,6 +7794,7 @@ class PocketController {
         respectRequestedEdge: true
       };
       this.dockPanel = this.ctx.ui.requestDockPanel(dockOptions);
+      this.dockSide = this.preferences.desktopDockSide;
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false;
@@ -7794,10 +7813,13 @@ class PocketController {
       this.dockVisibilityCleanup?.();
     } catch {}
     this.dockVisibilityCleanup = null;
+    this.dockFocusObserver?.disconnect();
+    this.dockFocusObserver = null;
     try {
       this.dockPanel?.destroy();
     } catch {}
     this.dockPanel = null;
+    this.dockSide = null;
   }
   ensureMobileWidget() {
     if (this.mobileWidget)
@@ -8220,11 +8242,14 @@ class PocketController {
           this.manualMessageOverrides.delete(conversationId);
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true;
+      const previousDockSide = this.preferences.desktopDockSide;
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode);
       this.applyLauncherPosition();
       if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences")
         this.settingsDraft = structuredClone(this.preferences);
+      if (previousDockSide !== this.preferences.desktopDockSide)
+        this.resizeExpanded();
       this.caps = payload.capabilities || this.caps;
       this.swarmProfile = payload.swarmProfile || this.swarmProfile;
       this.generation = payload.generation || this.generation;
@@ -8795,7 +8820,9 @@ class PocketController {
     }
   }
   updatePreferences(next, options = {}) {
+    const dockSideFocused = document.activeElement?.getAttribute("aria-label") === "Desktop phone side";
     const normalized = normalizePreferences(next);
+    const dockSideChanged = normalized.desktopDockSide !== this.preferences.desktopDockSide;
     if (this.settingsDraft)
       Object.assign(this.settingsDraft, structuredClone(normalized));
     else
@@ -8803,8 +8830,23 @@ class PocketController {
     this.preferences = normalized;
     applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrollMode);
     this.applyAppearance();
-    if (options.resize)
+    if (options.resize || dockSideChanged)
       this.resizeExpanded();
+    if (dockSideFocused) {
+      const restoreSideFocus = () => {
+        if (!this.screen.isConnected)
+          return;
+        this.dockFocusObserver?.disconnect();
+        this.dockFocusObserver = null;
+        if (!this.destroyed && this.expanded && (document.activeElement === document.body || document.activeElement?.getAttribute("aria-label") === "Desktop phone side")) {
+          this.screen.querySelector('select[aria-label="Desktop phone side"]')?.focus({ preventScroll: true });
+        }
+      };
+      this.dockFocusObserver?.disconnect();
+      this.dockFocusObserver = new MutationObserver(restoreSideFocus);
+      this.dockFocusObserver.observe(document.body, { childList: true, subtree: true });
+      restoreSideFocus();
+    }
     this.mountInlineArtifacts();
     this.refreshActivityConnectors();
     if (options.persist === false)
@@ -9221,6 +9263,7 @@ class PocketController {
     const oldThread = this.screen.querySelector("[data-pocket-thread]");
     const oldThreadScroll = oldThread?.scrollTop;
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false;
+    const focusedDockSide = document.activeElement?.getAttribute("aria-label") === "Desktop phone side";
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : "";
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     for (const cleanup of this.viewCleanups.splice(0))
@@ -9260,6 +9303,8 @@ class PocketController {
         const thread = this.screen.querySelector("[data-pocket-thread]");
         if (thread && oldThreadScroll !== undefined)
           thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll;
+        if (focusedDockSide)
+          this.screen.querySelector('select[aria-label="Desktop phone side"]')?.focus({ preventScroll: true });
         if (focusedComposer) {
           const composer = this.screen.querySelector(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`);
           composer?.focus({ preventScroll: true });

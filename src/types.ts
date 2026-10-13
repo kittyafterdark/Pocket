@@ -219,6 +219,7 @@ export interface DevicePreferences {
   chatWallpaper: PocketWallpaper
   /** Desktop-only physical size of the 9:18.4 handset. */
   handsetScale: number
+  desktopDockSide: 'left' | 'right'
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
   uiScale: number
   /** Launcher float origin in CSS pixels; null means use default placement. */

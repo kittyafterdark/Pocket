@@ -128,6 +128,8 @@ class PocketController {
   private cleanups: Cleanup[] = []
   private drawer: SpindleDrawerTabHandle
   private dockPanel: SpindleDockPanelHandle | null = null
+  private dockSide: DevicePreferences['desktopDockSide'] | null = null
+  private dockFocusObserver: MutationObserver | null = null
   private dockVisibilityCleanup: Cleanup | null = null
   private widget: SpindleFloatWidgetHandle | null = null
   private mobileWidget: SpindleFloatWidgetHandle | null = null
@@ -593,14 +595,16 @@ class PocketController {
   }
 
   private ensureDockPanel(): SpindleDockPanelHandle | null {
+    if (this.dockPanel && this.dockSide !== this.preferences.desktopDockSide) this.releaseDockPanel()
     if (this.dockPanel) return this.dockPanel
     try {
       const dockOptions = {
-        edge: 'left' as const, title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
+        edge: this.preferences.desktopDockSide, title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
         minSize: 292, maxSize: 620, resizable: false, startCollapsed: true,
         chromeless: true, centerContent: true, respectRequestedEdge: true,
       }
       this.dockPanel = this.ctx.ui.requestDockPanel(dockOptions)
+      this.dockSide = this.preferences.desktopDockSide
       this.dockVisibilityCleanup = this.dockPanel.onVisibilityChange((visible) => {
         if (!visible && this.expanded && !calculatePhoneSurface(this.preferences.handsetScale).fullscreen) {
           this.expanded = false
@@ -618,8 +622,11 @@ class PocketController {
   private releaseDockPanel(): void {
     try { this.dockVisibilityCleanup?.() } catch { /* best effort */ }
     this.dockVisibilityCleanup = null
+    this.dockFocusObserver?.disconnect()
+    this.dockFocusObserver = null
     try { this.dockPanel?.destroy() } catch { /* host may already have closed it */ }
     this.dockPanel = null
+    this.dockSide = null
   }
 
   private ensureMobileWidget(): SpindleFloatWidgetHandle | null {
@@ -1030,10 +1037,12 @@ class PocketController {
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true
+      const previousDockSide = this.preferences.desktopDockSide
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
       this.applyLauncherPosition()
       if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences') this.settingsDraft = structuredClone(this.preferences)
+      if (previousDockSide !== this.preferences.desktopDockSide) this.resizeExpanded()
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile
       this.generation = payload.generation || this.generation
@@ -1487,13 +1496,29 @@ class PocketController {
   }
 
   private updatePreferences(next: DevicePreferences, options: { persist?: boolean; resize?: boolean } = {}): void {
+    const dockSideFocused = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
     const normalized = normalizePreferences(next)
+    const dockSideChanged = normalized.desktopDockSide !== this.preferences.desktopDockSide
     if (this.settingsDraft) Object.assign(this.settingsDraft, structuredClone(normalized))
     else this.settingsDraft = structuredClone(normalized)
     this.preferences = normalized
     applyPocketTouchScroll(this.mobileWidget, normalized.nativeTouchScrollMode)
     this.applyAppearance()
-    if (options.resize) this.resizeExpanded()
+    if (options.resize || dockSideChanged) this.resizeExpanded()
+    if (dockSideFocused) {
+      const restoreSideFocus = () => {
+        if (!this.screen.isConnected) return
+        this.dockFocusObserver?.disconnect()
+        this.dockFocusObserver = null
+        if (!this.destroyed && this.expanded && (document.activeElement === document.body || document.activeElement?.getAttribute('aria-label') === 'Desktop phone side')) {
+          this.screen.querySelector<HTMLSelectElement>('select[aria-label="Desktop phone side"]')?.focus({ preventScroll: true })
+        }
+      }
+      this.dockFocusObserver?.disconnect()
+      this.dockFocusObserver = new MutationObserver(restoreSideFocus)
+      this.dockFocusObserver.observe(document.body, { childList: true, subtree: true })
+      restoreSideFocus()
+    }
     this.mountInlineArtifacts()
     this.refreshActivityConnectors()
     if (options.persist === false) return
@@ -1891,6 +1916,7 @@ class PocketController {
     const oldThread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
     const oldThreadScroll = oldThread?.scrollTop
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false
+    const focusedDockSide = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : ''
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
     for (const cleanup of this.viewCleanups.splice(0)) cleanup()
@@ -1930,6 +1956,7 @@ class PocketController {
       view.scrollTop = oldViewScroll
       const thread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
       if (thread && oldThreadScroll !== undefined) thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll
+      if (focusedDockSide) this.screen.querySelector<HTMLSelectElement>('select[aria-label="Desktop phone side"]')?.focus({ preventScroll: true })
       if (focusedComposer) {
         const composer = this.screen.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`)
         composer?.focus({ preventScroll: true })

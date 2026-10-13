@@ -70,3 +70,13 @@ test('appearance toggle saves reversible iPhone overrides without a widget capab
     dom.window.close()
   }
 })
+
+
+test('desktop dock side migrates left, validates choices and survives saved preference reload', () => {
+  expect(defaultPreferences().desktopDockSide).toBe('left')
+  expect(normalizePreferences({}).desktopDockSide).toBe('left')
+  expect(normalizePreferences({ desktopDockSide: 'top' }).desktopDockSide).toBe('left')
+  const saved = normalizePreferences({ desktopDockSide: 'right', launcherPosition: { x: 10, y: 20 } })
+  expect(normalizePreferences(JSON.parse(JSON.stringify(saved))).desktopDockSide).toBe('right')
+  expect(saved.launcherPosition).toEqual({ x: 10, y: 20 })
+})
