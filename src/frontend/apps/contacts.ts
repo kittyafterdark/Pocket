@@ -3,6 +3,7 @@ import { renderContactGroups } from './contact-groups.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
+import { conversationActorIds, resolvePocketActor } from '../../domain/actors.js'
 import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -37,6 +38,10 @@ export interface ContactsViewHost {
   select(contactId: string, view?: ContactView, replace?: boolean): void
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
+  iconButton(name: string, label: string): HTMLButtonElement
+  readOnlyDevice?: boolean
+  callPending?: boolean
+  startCall?(contactId: string, mode: 'voice' | 'video', callId?: string): void
   choosePhoto(contactId?: string): void
   uploadPhoto(contactId?: string): void
   generatePhoto(contactId: string): void
@@ -397,6 +402,33 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const { page, content } = host.page(contact.name, contact.role, { label: 'Edit', callback: () => host.select(contact.id, 'config') })
     const hero = el('div', 'lp-card lp-contact-detail')
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || 'No compact identity brief.', prominent: true, centered: true }))
+    const communication = el('div', 'lp-contact-communication')
+    communication.setAttribute('role', 'group')
+    communication.setAttribute('aria-label', `Contact ${contact.name}`)
+    const communicationAction = (icon: string, label: string, callback: () => void) => {
+      const action = host.iconButton(icon, label)
+      action.className = 'lp-button lp-contact-communication-action'
+      action.append(el('span', '', label))
+      action.addEventListener('click', callback)
+      communication.append(action)
+      return action
+    }
+    communicationAction('messages', 'Message', () => host.openDirect(contact.id))
+    if (host.startCall) {
+      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
+      const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
+      const activeCall = conversation?.messages.filter(row => row.call?.interactive).at(-1)?.call
+      const connected = activeCall?.status === 'connected'
+      const call = communicationAction('call', connected ? 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
+      call.disabled = Boolean(host.readOnlyDevice || host.callPending || (!connected && !host.capabilities?.generation))
+      if (!connected) {
+        const video = communicationAction('video', 'Video call', () => host.startCall!(contact.id, 'video'))
+        video.disabled = call.disabled
+      }
+      if (host.readOnlyDevice) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Switch to your Persona’s phone to call.'))
+      else if (!connected && !host.capabilities?.generation) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Connect a generation model to start a call.'))
+    }
+    hero.append(communication)
     if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
     const phoneProfile = contact.phoneProfile
     if (phoneProfile && (phoneProfile.personality || phoneProfile.appearance || phoneProfile.textingStyle)) {
@@ -426,8 +458,6 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
       presenceControls.appendChild(choice)
     }
     presence.append(presenceControls, el('p', 'lp-copy', 'Correct their location now. Later story updates can change it.'))
-    const message = button('Message')
-    message.addEventListener('click', () => host.openDirect(contact.id))
     content.prepend(hero); content.append(presence)
     if (contact.source.kind === 'npc') {
       const bankId = contact.source.bankId
@@ -453,7 +483,6 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
         const progressMessage = el('strong', '', profileOperation.message); progressMessage.dataset.operationMessage = 'true'; progress.append(el('span', 'lp-indeterminate'), progressMessage); content.appendChild(progress)
       }
     }
-    content.append(message)
     return page
   }
 

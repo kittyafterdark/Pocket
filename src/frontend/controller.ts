@@ -79,6 +79,7 @@ function pocketSurfaceId(): string {
 }
 
 const ICONS: Record<string, string> = {
+  video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="14" height="14" rx="3"/><path d="m16 9 6-4v14l-6-4Z"/></svg>',
   call: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1Z"/></svg>',
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
   messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
@@ -218,6 +219,7 @@ class PocketController {
   private cameraBusy = false
   private cameraRequestId = ''
   private messageRequests = new Map<string, { conversationId: string; speakerContactId: string; phase: 'checking' | 'pending' }>()
+  private contactCallRequests = new Map<string, { contactId: string; mode: 'voice' | 'video'; chatId: string; characterId: string; deviceOwnerActorId: string }>()
   private messageDrafts = new Map<string, string>()
   private groupSpeakerSelections = new Map<string, string>()
   private manualMessageOverrides = new Set<string>()
@@ -1298,6 +1300,16 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:conversation_opened' && payload.conversationId) {
+      const call = this.contactCallRequests.get(payload.requestId)
+      if (call) {
+        this.contactCallRequests.delete(payload.requestId)
+        const active = this.activeContext()
+        if (this.expanded && this.currentApp === 'contacts' && this.selectedContactId === call.contactId && active.chatId === call.chatId && active.characterId === call.characterId && this.currentDeviceOwnerActorId() === call.deviceOwnerActorId) {
+          this.liveCall.start({ chatId: call.chatId, characterId: call.characterId, deviceOwnerActorId: call.deviceOwnerActorId, conversationId: payload.conversationId }, call.mode)
+        }
+        this.render(false)
+        return
+      }
       if (payload.requestId === this.groupSaveRequest) {
         this.groupDrafts.delete(this.groupSaveDraftKey); this.groupSaveRequest = ''
         this.openPocket(this.router.settle({ app: 'messages', conversationId: payload.conversationId, view: 'thread' }), false)
@@ -1396,6 +1408,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      this.contactCallRequests.delete(payload.requestId)
       if (payload.requestId === this.galleryRequestId) this.galleryLoading = false
       if (payload.requestId === this.trackerMutationRequest) this.trackerMutationRequest = ''
       if (payload.requestId === this.trackerJevRequest) { this.trackerJevRequest = ''; this.jevWorking = false }
@@ -2096,10 +2109,6 @@ class PocketController {
     return renderMessagesView({
       state: this.state!, selectedConversationId: this.selectedConversationId,
       renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
-      startCall: (conversationId, mode, callId) => {
-        if (!this.state) return
-        this.liveCall.start({ chatId: this.state.chatId, characterId: this.state.characterId, conversationId, deviceOwnerActorId: this.currentDeviceOwnerActorId() }, mode, callId)
-      },
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
@@ -2453,6 +2462,10 @@ class PocketController {
         this.render(false)
       },
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
+      iconButton,
+      readOnlyDevice: this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state!),
+      callPending: [...this.contactCallRequests.values()].some(call => call.chatId === this.state!.chatId && call.characterId === this.state!.characterId && call.contactId === this.selectedContactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
+      startCall: (contactId, mode, callId) => this.startContactCall(contactId, mode, callId),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       uploadPhoto: (contactId) => { void this.uploadAvatarPhoto(contactId) },
       generatePhoto: (contactId) => this.openPocket({ app: 'camera', contactId }),
@@ -2465,6 +2478,19 @@ class PocketController {
       },
       send: (type, payload) => { this.send(type, payload) }, showError: (message) => this.showError(message),
     })
+  }
+
+  private startContactCall(contactId: string, mode: 'voice' | 'video', callId?: string): void {
+    if (!this.state || this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state) || (!callId && !this.caps?.generation)) return
+    const actorId = resolvePocketActor(this.state, contactId)?.actorId
+    if (!actorId) return
+    const scope = { chatId: this.state.chatId, characterId: this.state.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId() }
+    const conversation = this.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
+    if (conversation) { this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId); return }
+    if ([...this.contactCallRequests.values()].some(call => call.contactId === contactId && call.chatId === scope.chatId && call.characterId === scope.characterId && call.deviceOwnerActorId === scope.deviceOwnerActorId)) return
+    const requestId = this.send('lumiphone:open_direct', { contactId })
+    this.contactCallRequests.set(requestId, { ...scope, contactId, mode })
+    this.render(false)
   }
 
   private async uploadAvatarPhoto(contactId = '__draft__'): Promise<void> {

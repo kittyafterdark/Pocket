@@ -10,13 +10,11 @@ ${SURFACE_TOKENS}
   .lumiphone-shell .lp-nav-title { white-space:normal; overflow-wrap:anywhere; font-size:15px; line-height:1.2; text-wrap:balance; }
   .lumiphone-shell .lp-nav-subtitle { font-size:10px; line-height:1.35; margin-top:4px; }
   .lumiphone-shell .lp-nav-action { min-width:0; min-height:var(--lp-touch); font-size:12px; overflow-wrap:anywhere; }
-  .lumiphone-shell .lp-thread .lp-nav { grid-template-columns:auto minmax(0,1fr) auto; }
-  .lp-thread-header-actions { display:flex; align-items:center; justify-content:flex-end; gap:4px; }
-  .lumiphone-shell .lp-thread-call { display:flex; align-items:center; gap:5px; padding:8px; border-radius:12px; background:color-mix(in srgb,var(--lp-accent) 12%,transparent); white-space:nowrap; }
-  .lp-thread-call > span:first-child { display:flex; }
-  .lp-thread-call svg { width:18px; height:18px; stroke-width:1.8; }
-  .lp-call-options { display:grid; gap:10px; }
-  .lp-sheet .lp-call-option { text-align:left; justify-content:flex-start; }
+  .lp-contact-communication { display:grid; grid-template-columns:repeat(auto-fit,minmax(75px,1fr)); gap:8px; width:100%; margin-top:8px; }
+  .lumiphone-shell .lp-contact-communication-action { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; min-height:70px; padding:10px 5px; font-size:12px; line-height:1.3; }
+  .lp-contact-communication-action > span:first-child { display:flex; }
+  .lp-contact-communication-action svg { width:20px; height:20px; stroke-width:1.8; }
+  .lp-contact-call-hint { grid-column:1 / -1; margin:0; }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }

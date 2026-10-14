@@ -54,7 +54,6 @@ export interface MessagesViewHost {
   shouldFocusHandoff(relayId: string): boolean
   showGenerationInfo(message: PhoneMessage): void
   renderVoiceMessage?(message: PhoneMessage): HTMLElement
-  startCall?(conversationId: string, mode: 'voice' | 'video', callId?: string): void
   back(): void
 }
 
@@ -440,39 +439,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   menuSheet.appendChild(menuAction('Generation info', () => host.showConversationGenerationInfo(conversation.id)))
   menuSheet.appendChild(menuAction('Outgoing prompt', () => host.showOutgoingPrompt(conversation.id)))
   menu.append(menuToggle, menuSheet)
-  const headerActions = el('div', 'lp-thread-header-actions')
-  if (conversation.kind === 'direct' && !host.readOnlyDevice && host.startCall) {
-    const call = host.iconButton('call', 'Call options')
-    call.className = 'lp-nav-action lp-thread-call'
-    call.title = 'Phone or video call'
-    call.setAttribute('aria-haspopup', 'dialog')
-    call.append(el('span', '', 'Call'))
-    call.addEventListener('click', () => {
-      menu.open = false
-      const options = el('div', 'lp-call-options')
-      let sheet: ReturnType<typeof showPocketSheet>
-      const callOption = (label: string, mode: 'voice' | 'video', callId?: string) => {
-        const option = button(label, 'lp-button lp-call-option')
-        option.disabled = !callId && !host.generationAvailable
-        option.addEventListener('click', () => {
-          sheet?.dismiss()
-          host.startCall!(conversation.id, mode, callId)
-        })
-        options.append(option)
-      }
-      const activeCall = conversation.messages.filter(row => row.call?.interactive).at(-1)?.call
-      if (activeCall?.status === 'connected') callOption('Resume call', activeCall.mode || 'voice', activeCall.callId)
-      else {
-        callOption('Phone call', 'voice')
-        callOption('Video call', 'video')
-        if (!host.generationAvailable) options.append(el('p', 'lp-copy', 'Connect a generation model to start a call.'))
-      }
-      sheet = showPocketSheet(call, `Call ${titleText}`, options)
-    })
-    headerActions.append(call)
-  }
-  headerActions.append(menu)
-  nav.append(back, title, headerActions)
+  nav.append(back, title, menu)
   page.appendChild(nav)
 
   const referenceSlot = el('div', 'lp-reference-slot')
