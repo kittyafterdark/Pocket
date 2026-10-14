@@ -127,11 +127,12 @@ async function domFixture(run: (dom: JSDOM) => Promise<void>) {
   try { await run(dom) } finally { for (const [key, value] of saved) { if (value) Object.defineProperty(globalThis, key, value); else delete (globalThis as any)[key] }; dom.window.close() }
 }
 test('call controls offer VN, typed and STT replies; microphone results need review and late results are discarded', async () => domFixture(async dom => {
-  const sent: any[] = [], spoken: any[] = []; let resolveSpeech!: (value: { text: string }) => void, cancelled = false
+  const sent: any[] = [], spoken: any[] = []; let resolveSpeech!: (value: { text: string }) => void, cancelled = false, speechOptions: any
   Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: (value: any) => spoken.push(value), cancel() {} }, SpeechSynthesisUtterance: class { constructor(public text: string) {} } })
   const ui = new LiveCallUi({ root: dom.window.document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {},
     send: (type, payload) => { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId },
-    speech: { start: () => ({ ready: Promise.resolve(), result: new Promise(resolve => { resolveSpeech = resolve }), stop: async () => {}, cancel: () => { cancelled = true } }) } })
+    speech: { listProviders: () => [{ id: 'whistle', name: 'Whistle (on this device)', onDevice: true, available: true }, { id: 'remote', name: 'Remote provider', available: false }],
+      start: options => { speechOptions = options; return { ready: Promise.resolve(), result: new Promise(resolve => { resolveSpeech = resolve }), stop: async () => {}, cancel: () => { cancelled = true } } } } })
   ui.start({ chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }, 'video')
   ui.receive({ type: 'lumiphone:call_ready', requestId: 'r0', chatId: 'chat', characterId: 'card', callId: 'call', name: 'Alice', video: true, expressions: { happy: '/api/v1/images/happy' }, turns: [] })
   const message: any = { id: 'turn', text: 'Hello!', senderName: 'Alice', callTurn: { callId: 'call', expression: 'happy', choices: ['Hi!'] } }
@@ -142,8 +143,13 @@ test('call controls offer VN, typed and STT replies; microphone results need rev
   const selector = dom.window.document.querySelector('select')!
   expect([...selector.options].map(row => row.value)).toEqual(['vn', 'type', 'stt'])
   selector.value = 'stt'; selector.dispatchEvent(new dom.window.Event('change'))
+  const provider = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Call speech provider"]')!
+  expect(provider.value).toBe('whistle')
+  expect(provider.selectedOptions[0].textContent).toBe('Whistle (on this device)')
+  expect(provider.querySelector<HTMLOptionElement>('option[value="remote"]')!.disabled).toBe(true)
   const record = [...dom.window.document.querySelectorAll('button')].find(row => row.textContent === 'Start microphone')!
   record.click(); resolveSpeech({ text: 'My speech' }); await new Promise(resolve => setTimeout(resolve, 0))
+  expect(speechOptions).toMatchObject({ provider: 'whistle', continuous: true })
   expect(dom.window.document.querySelector('textarea')?.value).toBe('My speech')
   expect(sent).toHaveLength(1)
   record.click(); ui.close(); resolveSpeech({ text: 'late' }); await Promise.resolve()

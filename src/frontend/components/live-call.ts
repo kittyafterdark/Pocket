@@ -15,10 +15,11 @@ interface CallUiHost {
   roleplay(): void
 }
 const STYLES = `
-.lp-live-call{position:absolute;inset:0;z-index:70;display:flex;flex-direction:column;gap:12px;padding:22px 16px 28px;background:#050609;color:#faf9ff;border-radius:inherit;overflow:auto;box-sizing:border-box;font:14px/1.5 system-ui,sans-serif;overscroll-behavior:contain}
-.lp-live-call *{box-sizing:border-box}.lp-live-call button,.lp-live-call textarea,.lp-live-call select{font:inherit;color:inherit;background:#23232e;border:1px solid #5e5c70;border-radius:12px;padding:10px;min-height:44px}.lp-live-call button{cursor:pointer}.lp-live-call button:disabled{opacity:.5;cursor:default}.lp-live-call button:focus-visible,.lp-live-call textarea:focus-visible,.lp-live-call select:focus-visible{outline:2px solid #c4adff;outline-offset:2px}
+.lp-live-call{position:absolute;inset:0;z-index:70;display:flex;flex-direction:column;gap:12px;padding:22px 16px 28px;background:#050609;color:#faf9ff;border-radius:inherit;overflow-y:auto;overflow-x:hidden;min-width:0;box-sizing:border-box;font:14px/1.5 system-ui,sans-serif;overscroll-behavior:contain}
+.lp-live-call *{box-sizing:border-box}.lp-live-call> *{min-width:0}.lp-live-call button,.lp-live-call textarea,.lp-live-call select{font:inherit;color:inherit;background:#23232e;border:1px solid #5e5c70;border-radius:12px;padding:10px;min-height:44px;min-width:0;max-width:100%}.lp-live-call button{cursor:pointer}.lp-live-call button:disabled{opacity:.5;cursor:default}.lp-live-call button:focus-visible,.lp-live-call textarea:focus-visible,.lp-live-call select:focus-visible{outline:2px solid #c4adff;outline-offset:2px}
 .lp-call-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:4px 0 8px;background:#050609}.lp-call-header .lp-call-hangup{flex-shrink:0}
-.lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:flex;align-items:center;gap:10px}.lp-call-mode select{flex:1}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap}.lp-call-error{color:#ffc6d3;white-space:pre-wrap}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap}
+.lp-call-stage[data-video=false]{flex:0 0 auto;min-height:0}
+.lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0;overflow-wrap:anywhere}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px;overflow-wrap:anywhere}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left;overflow-wrap:anywhere}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;flex-shrink:0;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:6px}.lp-call-mode select{width:100%;text-overflow:ellipsis}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-error{color:#ffc6d3;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 `
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.className = className; node.textContent = text; return node
@@ -69,7 +70,8 @@ export class LiveCallUi {
     this.error = element('div', 'lp-call-error'); this.error.setAttribute('role', 'alert')
     this.playback = element('div')
     this.controls = element('div', 'lp-call-controls')
-    const modeLabel = element('label', 'lp-call-mode', 'Reply with')
+    const modeLabel = element('label', 'lp-call-mode')
+    modeLabel.append(element('span', '', 'Reply with'))
     const selector = element('select'); selector.setAttribute('aria-label', 'Call reply method')
     for (const [value, text] of [['vn', 'Suggested replies'], ['type', 'Type a reply'], ['stt', 'Speech to text']]) { const option = element('option', '', text); option.value = value; selector.append(option) }
     this.choices = element('div', 'lp-call-choices')
@@ -78,11 +80,12 @@ export class LiveCallUi {
     this.record.disabled = !this.host.speech
     if (!this.host.speech) this.record.title = 'Speech to text needs a host with the speech API and Pocket’s Media permission.'
     this.record.addEventListener('click', () => this.recordSpeech())
-    const providerLabel = element('label', 'lp-call-mode', 'Speech provider')
+    const providerLabel = element('label', 'lp-call-mode')
+    providerLabel.append(element('span', '', 'Speech provider'))
     this.speechProvider = element('select'); this.speechProvider.setAttribute('aria-label', 'Call speech provider')
     const automatic = element('option', '', 'Voice & Speech setting'); automatic.value = ''; this.speechProvider.append(automatic)
     const providers = this.host.speech?.listProviders?.() || []
-    for (const provider of providers) { const option = element('option', '', `${provider.name}${provider.onDevice ? ' · on device' : ''}`); option.value = provider.id; option.disabled = !provider.available; this.speechProvider.append(option) }
+    for (const provider of providers) { const option = element('option', '', `${provider.name}${provider.onDevice && !/\bon (?:this )?device\b/i.test(provider.name) ? ' · on device' : ''}`); option.value = provider.id; option.disabled = !provider.available; this.speechProvider.append(option) }
     if (providers.some(row => row.id === 'whistle' && row.available)) this.speechProvider.value = 'whistle'
     providerLabel.append(this.speechProvider)
     const send = element('button', '', 'Say this'); send.type = 'button'; send.addEventListener('click', () => this.reply(this.input!.value))
