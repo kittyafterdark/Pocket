@@ -20,6 +20,7 @@ const STYLES = `
 .lp-call-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:4px 0 8px;background:#050609}.lp-call-header .lp-call-hangup{flex-shrink:0}
 .lp-call-stage[data-video=false]{flex:0 0 auto;min-height:0}
 .lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;overflow-wrap:anywhere}.lp-call-caption-text{white-space:pre-wrap;max-height:calc(45vh - 60px);overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0;overflow-wrap:anywhere}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px;overflow-wrap:anywhere}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left;overflow-wrap:anywhere}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;flex-shrink:0;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:6px}.lp-call-mode select{width:100%;text-overflow:ellipsis}.lp-call-mode.lp-call-reply-mode{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;font-size:12px}.lp-live-call .lp-call-reply-mode select{min-height:36px;padding:6px 8px;font-size:12px}.lp-call-playback{margin-top:4px}.lp-call-playback .lp-voice-message{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;gap:8px;width:100%}.lp-call-playback .lp-voice-play{grid-column:2;grid-row:1;display:grid;place-items:center;width:44px;height:44px;padding:10px;border:0;border-radius:50%;background:transparent}.lp-call-playback .lp-voice-play:hover{background:#ffffff16}.lp-call-playback .lp-voice-play svg{display:block;width:20px;height:20px}.lp-call-playback .lp-voice-status{grid-column:1;grid-row:1;font-size:11px;white-space:normal;overflow-wrap:anywhere}.lp-call-playback .lp-voice-status:empty,.lp-call-error:empty{display:none}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-error{color:#ffc6d3;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.lp-call-status:empty{display:none}.lp-call-controls{gap:8px;font-size:12px}.lp-call-controls .lp-call-mode{gap:4px;font-size:12px}.lp-call-controls .lp-call-mode>span{font-size:11px}.lp-call-controls button,.lp-call-controls select,.lp-call-controls textarea{font-size:12px;padding:8px;min-height:36px;border-radius:10px}.lp-call-controls textarea{min-height:64px}.lp-live-call>details{font-size:12px}
 `
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.className = className; node.textContent = text; return node
@@ -117,7 +118,7 @@ export class LiveCallUi {
   private setBusy(value: boolean): void {
     this.busy = value
     for (const control of this.controls?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button,textarea') || []) control.disabled = value || !this.ready || (control === this.record && !this.host.speech)
-    if (this.status) this.status.textContent = value ? (this.ready ? 'Listening for a reply…' : 'Connecting…') : 'Connected · reply when you’re ready'
+    if (this.status) this.status.textContent = value ? (this.ready ? 'Listening for a reply…' : 'Connecting…') : ''
   }
   receive(payload: Record<string, any>): void {
     if (!this.root || !this.scope) return
@@ -178,7 +179,7 @@ export class LiveCallUi {
       })
     } catch (error) { this.error!.textContent = error instanceof Error ? error.message : 'Could not start the microphone.' }
   }
-  private cancelSpeech(): void { ++this.voiceOperation; this.session?.cancel(); this.session = undefined; if (this.record) { this.record.textContent = 'Start microphone'; this.record.disabled = !this.host.speech } }
+  private cancelSpeech(): void { ++this.voiceOperation; this.session?.cancel(); this.session = undefined; if (this.record) { this.record.textContent = 'Start microphone'; this.record.disabled = !this.host.speech }; if (this.ready && !this.busy && this.status) this.status.textContent = '' }
   close(notify = true): void {
     if (!this.root) return
     if (notify && this.scope) this.host.send('lumiphone:call_end', { ...this.scope, callId: this.callId })
