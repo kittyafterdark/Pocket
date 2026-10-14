@@ -682,6 +682,7 @@ export interface PocketReferenceParticipant {
 
 export interface PocketReferenceMessage {
   messageId: string
+  format?: 'voice'
   sender: 'persona' | 'contact'
   senderContactId?: string
   senderActorId?: string

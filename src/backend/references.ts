@@ -34,6 +34,7 @@ export function createPocketReference(input: {
     : conversation.messages.slice(scope === 'recent_messages' ? -6 : -8)
   const messages: PocketReferenceMessage[] = sourceMessages.flatMap((message) => message.sender === 'system' ? [] : [{
     messageId: message.id,
+    format: message.callTurn ? undefined : message.format,
     sender: message.sender,
     senderActorId: message.senderActorId,
     senderContactId: message.senderContactId,
@@ -79,7 +80,7 @@ export function serializePocketReference(reference: PocketContextReference, maxC
     const detail = [entry.role, entry.identityBrief].filter(Boolean).join(' — ')
     return detail ? `- ${entry.name}: ${detail}` : `- ${entry.name}`
   })
-  const messageRows = reference.messages.map((message) => `${message.senderName}: ${JSON.stringify(compact(message.text, 360))}`)
+  const messageRows = reference.messages.map((message) => `${message.senderName}${message.format === 'voice' ? ' [voice message transcript]' : ''}: ${JSON.stringify(compact(message.text, 360))}`)
   const fixedStart = [
     '=== POCKET USER REFERENCE — THIS TURN ===',
     `referenceId: ${reference.id}`,

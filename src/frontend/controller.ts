@@ -222,6 +222,7 @@ class PocketController {
   private messageRequests = new Map<string, { conversationId: string; speakerContactId: string; phase: 'checking' | 'pending' }>()
   private contactCallRequests = new Map<string, { contactId: string; view: ContactView; mode: 'voice' | 'video'; chatId: string; characterId: string; deviceOwnerActorId: string }>()
   private messageDrafts = new Map<string, string>()
+  private voiceMessageDrafts = new Set<string>()
   private groupSpeakerSelections = new Map<string, string>()
   private manualMessageOverrides = new Set<string>()
   private focusedHandoffRelays = new Set<string>()
@@ -1703,7 +1704,7 @@ class PocketController {
         const canonical = this.state?.conversations.flatMap(row => row.messages).find(row => row.id === message.id)
           || this.state?.conversations.flatMap(row => row.messages).find(row => row.id === routeMessageId)
         const full = canonical || { ...message, text: activity.presentation?.voiceTranscript || message.text }
-        return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || 'voice'}` }, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ''])
+        return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || 'voice'}` }, this.preferences.ttsVoiceURI, canonical?.sender === 'persona' || activity.presentation?.kind === 'sent' || this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ''])
       },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map(row => [row.senderActorId || '', resolvePocketActor(this.state!, row.senderActorId || '')?.avatarUrl || ''])) }
@@ -2110,7 +2111,7 @@ class PocketController {
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     return renderMessagesView({
       state: this.state!, selectedConversationId: this.selectedConversationId,
-      renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
+      renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, message.sender === 'persona' || this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
@@ -2127,7 +2128,9 @@ class PocketController {
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || 'auto',
       draft: this.messageDrafts.get(this.selectedConversationId) || '',
+      draftFormat: this.voiceMessageDrafts.has(`${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId}`) ? 'voice' : 'text',
       updateDraft: (conversationId, value) => { if (value) this.messageDrafts.set(conversationId, value); else this.messageDrafts.delete(conversationId) },
+      updateDraftFormat: (conversationId, value) => { const key = `${this.state!.chatId}:${this.state!.characterId}:${conversationId}`; if (value === 'voice') this.voiceMessageDrafts.add(key); else this.voiceMessageDrafts.delete(key) },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty('messages', title, copy), iconButton,
       selectConversation: (conversationId, view = 'thread') => this.openPocket({ app: 'messages', conversationId: conversationId || undefined, view }),

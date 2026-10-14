@@ -1583,6 +1583,7 @@ function createPocketReference(input) {
   const sourceMessages = scope === "selected_messages" ? conversation.messages.filter((message) => selected.has(message.id)).slice(-8) : conversation.messages.slice(scope === "recent_messages" ? -6 : -8);
   const messages = sourceMessages.flatMap((message) => message.sender === "system" ? [] : [{
     messageId: message.id,
+    format: message.callTurn ? undefined : message.format,
     sender: message.sender,
     senderActorId: message.senderActorId,
     senderContactId: message.senderContactId,
@@ -1628,7 +1629,7 @@ function serializePocketReference(reference, maxChars = 2200) {
     const detail = [entry.role, entry.identityBrief].filter(Boolean).join(" \u2014 ");
     return detail ? `- ${entry.name}: ${detail}` : `- ${entry.name}`;
   });
-  const messageRows = reference.messages.map((message) => `${message.senderName}: ${JSON.stringify(compact(message.text, 360))}`);
+  const messageRows = reference.messages.map((message) => `${message.senderName}${message.format === "voice" ? " [voice message transcript]" : ""}: ${JSON.stringify(compact(message.text, 360))}`);
   const fixedStart = [
     "=== POCKET USER REFERENCE \u2014 THIS TURN ===",
     `referenceId: ${reference.id}`,
@@ -3123,7 +3124,7 @@ function currentChannelLines(state, contact, conversation) {
 }
 function threadLine(state, conversation, message) {
   const persona = state.pocketPersona.displayName || "You";
-  const sender = message.sender === "persona" ? persona : message.senderName || "Pocket";
+  const sender = `${message.sender === "persona" ? persona : message.senderName || "Pocket"}${message.callTurn ? " [spoken on call]" : message.format === "voice" ? " [voice message transcript]" : ""}`;
   if (conversation.kind !== "group" || message.sender !== "contact")
     return `${sender}: ${clean8(message.text, 520)}`;
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds]);
@@ -4120,6 +4121,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         senderActorId: text2(message.senderActorId, 180) || text2(message.senderContactId, 180) || undefined,
         senderContactId: text2(message.senderContactId, 180) || undefined,
         senderName: text2(message.senderName, 120) || (message.sender === "contact" ? "Participant" : "Persona"),
+        format: voiceMessage(message.format) ? "voice" : undefined,
         text: body,
         createdAt: text2(message.createdAt, 40) || nowIso()
       }];
@@ -8382,7 +8384,7 @@ async function applyAction(input, userId, source = "model") {
         senderName: sender === "persona" ? state.pocketPersona.displayName || "You" : sender === "system" ? "Pocket" : senderActor.name,
         senderAccent: sender === "contact" ? senderActor.accent : state.pocketPersona.accent,
         text: messageText,
-        format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? "voice" : undefined,
+        format: !call && (source === "user" || preferences.voiceMessages !== false) && voiceMessage(payload.format) ? "voice" : undefined,
         createdAt: phoneMessageTimestamp(state),
         read: personaRead,
         call,

@@ -511,6 +511,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
         senderActorId: text(message.senderActorId, 180) || text(message.senderContactId, 180) || undefined,
         senderContactId: text(message.senderContactId, 180) || undefined,
         senderName: text(message.senderName, 120) || (message.sender === 'contact' ? 'Participant' : 'Persona'),
+        format: voiceMessage(message.format) ? 'voice' as const : undefined,
         text: body,
         createdAt: text(message.createdAt, 40) || nowIso(),
       }]
@@ -4477,7 +4478,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         senderContactId: senderContact?.id,
         senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
         senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
-        text: messageText, format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), read: personaRead,
+        text: messageText, format: !call && (source === 'user' || preferences.voiceMessages !== false) && voiceMessage(payload.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), read: personaRead,
         call,
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
         origin: actionOrigin,

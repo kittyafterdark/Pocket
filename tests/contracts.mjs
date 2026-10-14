@@ -1883,6 +1883,11 @@ voiceUiState.state.conversations.find(entry => entry.id === 'picker-latest').mes
 backendReceiver({ ...voiceUiState, reason: 'refresh' })
 assert.ok(dockRoot.querySelector('.lp-voice-message'), 'canonical voice messages must render a playback control and transcript')
 await exportVisual('chat-voice', dockRoot)
+const ownVoiceUiState = structuredClone(voiceUiState)
+ownVoiceUiState.preferences.voiceMessages = false
+ownVoiceUiState.state.conversations.find(entry => entry.id === 'picker-latest').messages[0].sender = 'persona'
+backendReceiver({ ...ownVoiceUiState, reason: 'refresh' })
+assert.equal(dockRoot.querySelector('.lp-voice-play').disabled, false, 'explicitly authored Persona voice messages remain playable when character voice generation is off')
 backendReceiver({ ...identityUiState, reason: 'refresh' })
 if (speechBeforeVoiceFixture.synthesis === undefined) delete dom.window.speechSynthesis
 else dom.window.speechSynthesis = speechBeforeVoiceFixture.synthesis
@@ -2016,6 +2021,28 @@ assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:actio
 messageTextarea.value = 'keep editing'
 messageTextarea.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }))
 assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:action' && message.action === 'message').length, actionCountBeforeClick + 2, 'Shift+Enter must not submit')
+const voiceComposerCheckbox = dockRoot.querySelector('input[aria-label="Send as voice message"]')
+assert.equal(voiceComposerCheckbox.checked, false, 'ordinary text is the default message format')
+voiceComposerCheckbox.click()
+messageTextarea.value = ''
+messageTextarea.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+assert.equal(voiceComposerCheckbox.checked, true, 'an empty send must keep the draft voice choice')
+messageTextarea.value = 'This is my typed spoken transcript.'
+messageTextarea.dispatchEvent(new Event('input', { bubbles: true }))
+backendReceiver({ ...firstState, reason: 'refresh' })
+assert.equal(dockRoot.querySelector('input[aria-label="Send as voice message"]').checked, true, 'a state refresh must retain the voice choice with the draft')
+assert.equal(dockRoot.querySelector('.lp-compose textarea').value, 'This is my typed spoken transcript.', 'voice mode must preserve the typed draft')
+assert.ok(dockRoot.querySelector('button[aria-label="Send voice message"]'), 'voice mode clearly identifies the send action')
+dockRoot.querySelector('.lp-compose textarea').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+const authoredVoiceSend = frontendSends.filter(message => message.type === 'lumiphone:action' && message.action === 'message').at(-1)
+assert.equal(authoredVoiceSend.payload.format, 'voice')
+assert.equal(authoredVoiceSend.payload.text, 'This is my typed spoken transcript.')
+assert.equal(dockRoot.querySelector('input[aria-label="Send as voice message"]').checked, false, 'sending a voice message resets the next message to text')
+backendReceiver({ ...firstState, reason: 'refresh' })
+assert.equal(dockRoot.querySelector('input[aria-label="Send as voice message"]').checked, false, 'the reset survives a subsequent state refresh')
+dockRoot.querySelector('.lp-compose textarea').value = 'The next message is ordinary text.'
+dockRoot.querySelector('button[aria-label="Send message"]').click()
+assert.equal(frontendSends.filter(message => message.type === 'lumiphone:action' && message.action === 'message').at(-1).payload.format, undefined)
 const activeConversationId = firstState.state.conversations[0].id
 backendReceiver({ type: 'lumiphone:message_progress', requestId: 'checking-ui', chatId: 'chat-a', characterId: 'char-a', conversationId: activeConversationId, speakerContactId: 'char-a', phase: 'checking' })
 assert.match(dockRoot.textContent, /Checking for reply/, 'reply decision status must be observable')
@@ -3031,6 +3058,15 @@ try {
   await frontendHandler({ type: 'lumiphone:save_preferences', preferences: { ...voicePreferencesBefore, voiceMessages: false, generationMode: 'roleplay', autoReplyAfterSend: false } }, 'user-a')
   await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'voice-dm-disabled', chatId: 'voice-contract', characterId: 'char-a', conversationId: voiceConversationId }, 'user-a')
   assert.equal(storage.get('phones/voice-contract__char-a.json').conversations[0].messages.at(-1).format, undefined, 'disabled voice generation must normalize model voice output to text')
+  await frontendHandler({ type: 'lumiphone:action', requestId: 'authored-voice', chatId: 'voice-contract', characterId: 'char-a', action: 'message', payload: { conversationId: voiceConversationId, sender: 'persona', text: 'My typed voice transcript.', format: 'voice' } }, 'user-a')
+  const authoredVoice = storage.get('phones/voice-contract__char-a.json').conversations[0].messages.at(-1)
+  assert.equal(authoredVoice.sender, 'persona')
+  assert.equal(authoredVoice.format, 'voice', 'the explicit user format is independent of the character voice setting')
+  assert.equal(authoredVoice.text, 'My typed voice transcript.')
+  await frontendHandler({ type: 'lumiphone:arm_reference', requestId: 'authored-voice-reference', chatId: 'voice-contract', characterId: 'char-a', conversationId: voiceConversationId, scope: 'selected_messages', messageIds: [authoredVoice.id] }, 'user-a')
+  await frontendHandler({ type: 'lumiphone:get_state', requestId: 'authored-voice-reload', chatId: 'voice-contract', characterId: 'char-a' }, 'user-a')
+  assert.equal(storage.get('phones/voice-contract__char-a.json').conversations[0].messages.at(-1).format, 'voice', 'outgoing voice format survives reloading')
+  assert.equal(storage.get('phones/voice-contract__char-a.json').references.at(-1).messages[0].format, 'voice', 'attached references retain the spoken format across reloading')
 } finally {
   spindle.generate.quiet = quietBeforeVoice
   await frontendHandler({ type: 'lumiphone:save_preferences', preferences: voicePreferencesBefore }, 'user-a')

@@ -87,7 +87,7 @@ function currentChannelLines(state: PhoneState, contact: PocketContact, conversa
 }
 function threadLine(state: PhoneState, conversation: PocketConversation, message: PocketConversation['messages'][number]): string {
   const persona = state.pocketPersona.displayName || 'You'
-  const sender = message.sender === 'persona' ? persona : message.senderName || 'Pocket'
+  const sender = `${message.sender === 'persona' ? persona : message.senderName || 'Pocket'}${message.callTurn ? ' [spoken on call]' : message.format === 'voice' ? ' [voice message transcript]' : ''}`
   if (conversation.kind !== 'group' || message.sender !== 'contact') return `${sender}: ${clean(message.text, 520)}`
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds])
   const senderId = message.senderActorId || message.senderContactId || ''
