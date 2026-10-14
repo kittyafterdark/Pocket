@@ -82,11 +82,13 @@ class VoiceMessagePlayer {
       URL.revokeObjectURL(url);
     if (status)
       status.textContent = "";
-    button.textContent = "▶ Play voice message";
+    button.textContent = button.dataset.voicePlayLabel || "▶ Play voice message";
     button.setAttribute("aria-pressed", "false");
   }
-  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions) {
-    const signature = JSON.stringify([message.text, message.senderName, voiceURI, enabled, connectionId, connectionOptions]);
+  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions, kind = "message") {
+    const playLabel = kind === "call" ? "▶ Replay spoken turn" : "▶ Play voice message";
+    const stopLabel = kind === "call" ? "■ Stop speech" : "■ Stop voice message";
+    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind]);
     if (message.id && this.views.get(message.id)?.signature === signature)
       return this.views.get(message.id).element;
     const container = document.createElement("div");
@@ -94,8 +96,9 @@ class VoiceMessagePlayer {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "lp-voice-play";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-label", `Play voice message from ${message.senderName}`);
+    button.dataset.voicePlayLabel = playLabel;
+    button.textContent = playLabel;
+    button.setAttribute("aria-label", `Play ${kind === "call" ? "spoken turn" : "voice message"} from ${message.senderName}`);
     button.setAttribute("aria-pressed", "false");
     const status = document.createElement("span");
     status.className = "lp-voice-status";
@@ -115,9 +118,9 @@ class VoiceMessagePlayer {
       if (connectionId) {
         const active = { button, status, abort: new AbortController };
         this.active = active;
-        button.textContent = "■ Stop voice message";
+        button.textContent = stopLabel;
         button.setAttribute("aria-pressed", "true");
-        status.textContent = "Preparing voice message…";
+        status.textContent = kind === "call" ? "Preparing speech…" : "Preparing voice message…";
         active.timer = setTimeout(() => {
           if (this.active === active) {
             this.stop();
@@ -169,12 +172,12 @@ class VoiceMessagePlayer {
       }
       this.active = { button, utterance };
       status.textContent = "";
-      button.textContent = "■ Stop voice message";
+      button.textContent = stopLabel;
       button.setAttribute("aria-pressed", "true");
       const finish = () => {
         if (this.active?.utterance === utterance) {
           this.active = undefined;
-          button.textContent = "▶ Play voice message";
+          button.textContent = playLabel;
           button.setAttribute("aria-pressed", "false");
         }
       };
@@ -243,6 +246,7 @@ class LiveCallUi {
   input;
   retry;
   record;
+  speechProvider;
   controls;
   ready = false;
   busy = false;
@@ -319,6 +323,22 @@ class LiveCallUi {
     if (!this.host.speech)
       this.record.title = "Speech to text needs a host with the speech API and Pocket’s Media permission.";
     this.record.addEventListener("click", () => this.recordSpeech());
+    const providerLabel = element("label", "lp-call-mode", "Speech provider");
+    this.speechProvider = element("select");
+    this.speechProvider.setAttribute("aria-label", "Call speech provider");
+    const automatic = element("option", "", "Voice & Speech setting");
+    automatic.value = "";
+    this.speechProvider.append(automatic);
+    const providers = this.host.speech?.listProviders?.() || [];
+    for (const provider of providers) {
+      const option = element("option", "", `${provider.name}${provider.onDevice ? " · on device" : ""}`);
+      option.value = provider.id;
+      option.disabled = !provider.available;
+      this.speechProvider.append(option);
+    }
+    if (providers.some((row) => row.id === "whistle" && row.available))
+      this.speechProvider.value = "whistle";
+    providerLabel.append(this.speechProvider);
     const send = element("button", "", "Say this");
     send.type = "button";
     send.addEventListener("click", () => this.reply(this.input.value));
@@ -334,11 +354,12 @@ class LiveCallUi {
       this.input.hidden = selector.value === "vn";
       send.hidden = selector.value === "vn";
       this.record.hidden = selector.value !== "stt";
+      providerLabel.hidden = selector.value !== "stt";
     };
     selector.addEventListener("change", switchMode);
     modeLabel.append(selector);
     switchMode();
-    this.controls.append(modeLabel, this.choices, this.record, this.input, send);
+    this.controls.append(modeLabel, this.choices, providerLabel, this.record, this.input, send);
     const actions = element("div", "lp-call-actions");
     this.retry = element("button", "", "Retry reply");
     this.retry.type = "button";
@@ -451,7 +472,7 @@ class LiveCallUi {
     if (image)
       this.image.src = image;
     const preferences = this.host.preferences();
-    const player = this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ""]);
+    const player = this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ""], "call");
     this.playback.replaceChildren(player);
     this.choices.replaceChildren();
     for (const choice of message.callTurn?.choices || []) {
@@ -506,7 +527,7 @@ class LiveCallUi {
     this.host.player.stop();
     const token = ++this.voiceOperation;
     try {
-      const session = this.host.speech.start({ continuous: true, onStatus: (status) => {
+      const session = this.host.speech.start({ provider: this.speechProvider?.value || undefined, continuous: true, onStatus: (status) => {
         if (token === this.voiceOperation && this.status)
           this.status.textContent = `Microphone · ${status.phase}`;
       } });
@@ -7420,6 +7441,9 @@ function sequence(group, open) {
     const notification = phone.querySelector(".pocket-phone-notification");
     notification.replaceWith(notifications);
     notifications.append(notification);
+    const voice = phone.querySelector(".lp-voice-message");
+    if (voice)
+      notifications.append(voice);
   }
   const destination = lock ? phone.querySelector(".pocket-phone-notifications") : target;
   const selector = lock ? ".pocket-phone-notification" : ".pocket-phone-message";
@@ -7428,6 +7452,11 @@ function sequence(group, open) {
     const extra = buildPhoneScreen(entry.activity, (route) => open(entry.activity, route), entry.options);
     for (const row of extra?.querySelectorAll(selector) || [])
       destination.append(row);
+    if (lock) {
+      const voice = extra?.querySelector(".lp-voice-message");
+      if (voice)
+        destination.append(voice);
+    }
   }
   if (delivery)
     destination.append(delivery);
@@ -9451,7 +9480,7 @@ class PocketController {
       renderVoiceMessage: (message) => {
         const routeMessageId = activity.route.app === "messages" ? activity.route.messageId : undefined;
         const canonical = this.state?.conversations.flatMap((row) => row.messages).find((row) => row.id === message.id) || this.state?.conversations.flatMap((row) => row.messages).find((row) => row.id === routeMessageId);
-        const full = canonical || message;
+        const full = canonical || { ...message, text: activity.presentation?.voiceTranscript || message.text };
         return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || "voice"}` }, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]);
       },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,

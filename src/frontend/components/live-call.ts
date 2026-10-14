@@ -2,7 +2,10 @@ import type { DevicePreferences, PhoneMessage } from '../../types.js'
 import { VoiceMessagePlayer } from './voice-message.js'
 
 type SpeechSession = { ready: Promise<void>; result: Promise<{ text: string }>; stop(): Promise<unknown>; cancel(): void }
-type SpeechApi = { start(options?: { continuous?: boolean; onStatus?(status: { phase: string }): void }): SpeechSession }
+type SpeechApi = {
+  listProviders?(): Array<{ id: string; name: string; available: boolean; onDevice?: boolean }>
+  start(options?: { provider?: string; continuous?: boolean; onStatus?(status: { phase: string }): void }): SpeechSession
+}
 interface CallUiHost {
   root: HTMLElement
   player: VoiceMessagePlayer
@@ -37,6 +40,7 @@ export class LiveCallUi {
   private input?: HTMLTextAreaElement
   private retry?: HTMLButtonElement
   private record?: HTMLButtonElement
+  private speechProvider?: HTMLSelectElement
   private controls?: HTMLElement
   private ready = false
   private busy = false
@@ -70,11 +74,18 @@ export class LiveCallUi {
     this.record.disabled = !this.host.speech
     if (!this.host.speech) this.record.title = 'Speech to text needs a host with the speech API and Pocket’s Media permission.'
     this.record.addEventListener('click', () => this.recordSpeech())
+    const providerLabel = element('label', 'lp-call-mode', 'Speech provider')
+    this.speechProvider = element('select'); this.speechProvider.setAttribute('aria-label', 'Call speech provider')
+    const automatic = element('option', '', 'Voice & Speech setting'); automatic.value = ''; this.speechProvider.append(automatic)
+    const providers = this.host.speech?.listProviders?.() || []
+    for (const provider of providers) { const option = element('option', '', `${provider.name}${provider.onDevice ? ' · on device' : ''}`); option.value = provider.id; option.disabled = !provider.available; this.speechProvider.append(option) }
+    if (providers.some(row => row.id === 'whistle' && row.available)) this.speechProvider.value = 'whistle'
+    providerLabel.append(this.speechProvider)
     const send = element('button', '', 'Say this'); send.type = 'button'; send.addEventListener('click', () => this.reply(this.input!.value))
     this.input.addEventListener('keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send.click() } })
-    const switchMode = () => { this.cancelSpeech(); this.choices!.hidden = selector.value !== 'vn'; this.input!.hidden = selector.value === 'vn'; send.hidden = selector.value === 'vn'; this.record!.hidden = selector.value !== 'stt' }
+    const switchMode = () => { this.cancelSpeech(); this.choices!.hidden = selector.value !== 'vn'; this.input!.hidden = selector.value === 'vn'; send.hidden = selector.value === 'vn'; this.record!.hidden = selector.value !== 'stt'; providerLabel.hidden = selector.value !== 'stt' }
     selector.addEventListener('change', switchMode); modeLabel.append(selector); switchMode()
-    this.controls.append(modeLabel, this.choices, this.record, this.input, send)
+    this.controls.append(modeLabel, this.choices, providerLabel, this.record, this.input, send)
     const actions = element('div', 'lp-call-actions')
     this.retry = element('button', '', 'Retry reply'); this.retry.type = 'button'; this.retry.hidden = true; this.retry.addEventListener('click', () => this.request(this.ready ? 'lumiphone:call_reply' : 'lumiphone:call_start', {}))
     const hangup = element('button', 'lp-call-hangup', 'End call'); hangup.type = 'button'; hangup.addEventListener('click', () => this.close())
@@ -134,7 +145,7 @@ export class LiveCallUi {
     this.image!.hidden = !image; if (image) this.image!.src = image
     const preferences = this.host.preferences()
     // Calls are explicitly started by the player and always speak; the separate voice-message setting does not mute calls.
-    const player = this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ''])
+    const player = this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ''], 'call')
     this.playback!.replaceChildren(player)
     this.choices!.replaceChildren()
     for (const choice of message.callTurn?.choices || []) { const button = element('button', '', choice); button.type = 'button'; button.addEventListener('click', () => this.reply(choice)); this.choices!.append(button) }
@@ -153,7 +164,7 @@ export class LiveCallUi {
     if (!this.host.speech || this.busy) return
     this.host.player.stop(); const token = ++this.voiceOperation
     try {
-      const session = this.host.speech.start({ continuous: true, onStatus: status => { if (token === this.voiceOperation && this.status) this.status.textContent = `Microphone · ${status.phase}` } })
+      const session = this.host.speech.start({ provider: this.speechProvider?.value || undefined, continuous: true, onStatus: status => { if (token === this.voiceOperation && this.status) this.status.textContent = `Microphone · ${status.phase}` } })
       this.session = session; this.record!.textContent = 'Stop microphone'
       void session.ready.catch(() => {})
       void session.result.then(result => { if (token === this.voiceOperation && this.input) this.input.value = result.text }).catch(error => { if (token === this.voiceOperation && this.error && error.name !== 'AbortError') this.error.textContent = error.message }).finally(() => {

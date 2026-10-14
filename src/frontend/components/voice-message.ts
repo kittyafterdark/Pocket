@@ -18,15 +18,18 @@ export class VoiceMessagePlayer {
     if (audio) { audio.onended = audio.onerror = null; audio.pause(); audio.removeAttribute('src'); audio.load() }
     if (url) URL.revokeObjectURL(url)
     if (status) status.textContent = ''
-    button.textContent = '▶ Play voice message'; button.setAttribute('aria-pressed', 'false')
+    button.textContent = button.dataset.voicePlayLabel || '▶ Play voice message'; button.setAttribute('aria-pressed', 'false')
   }
 
-  render(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string }, voiceURI = '', enabled = true, connectionId = '', connectionOptions?: { voice?: string; model?: string }): HTMLElement {
-    const signature = JSON.stringify([message.text, message.senderName, voiceURI, enabled, connectionId, connectionOptions])
+  render(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string }, voiceURI = '', enabled = true, connectionId = '', connectionOptions?: { voice?: string; model?: string }, kind: 'message' | 'call' = 'message'): HTMLElement {
+    const playLabel = kind === 'call' ? '▶ Replay spoken turn' : '▶ Play voice message'
+    const stopLabel = kind === 'call' ? '■ Stop speech' : '■ Stop voice message'
+    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind])
     if (message.id && this.views.get(message.id)?.signature === signature) return this.views.get(message.id)!.element
     const container = document.createElement('div'); container.className = 'lp-voice-message'
     const button = document.createElement('button'); button.type = 'button'; button.className = 'lp-voice-play'
-    button.textContent = '▶ Play voice message'; button.setAttribute('aria-label', `Play voice message from ${message.senderName}`); button.setAttribute('aria-pressed', 'false')
+    button.dataset.voicePlayLabel = playLabel
+    button.textContent = playLabel; button.setAttribute('aria-label', `Play ${kind === 'call' ? 'spoken turn' : 'voice message'} from ${message.senderName}`); button.setAttribute('aria-pressed', 'false')
     const status = document.createElement('span'); status.className = 'lp-voice-status'; status.setAttribute('role', 'status')
     const supported = typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
     button.disabled = !enabled || (!supported && !connectionId)
@@ -39,7 +42,7 @@ export class VoiceMessagePlayer {
       if (same) return
       if (connectionId) {
         const active = { button, status, abort: new AbortController() } as NonNullable<VoiceMessagePlayer['active']>
-        this.active = active; button.textContent = '■ Stop voice message'; button.setAttribute('aria-pressed', 'true'); status.textContent = 'Preparing voice message…'
+        this.active = active; button.textContent = stopLabel; button.setAttribute('aria-pressed', 'true'); status.textContent = kind === 'call' ? 'Preparing speech…' : 'Preparing voice message…'
         active.timer = setTimeout(() => { if (this.active === active) { this.stop(); status.textContent = 'TTS generation timed out. Try again.' } }, 90_000)
         void synthesizeVoiceMessage(connectionId, message.text, active.abort!.signal, connectionOptions).then(async blob => {
           if (this.active !== active) return
@@ -62,8 +65,8 @@ export class VoiceMessagePlayer {
       const pool = defaults.length ? defaults : voices
       const voice = voices.find(voice => voice.voiceURI === voiceURI) || pool[hash % (pool.length || 1)]
       if (voice) { utterance.voice = voice; utterance.lang = voice.lang }
-      this.active = { button, utterance }; status.textContent = ''; button.textContent = '■ Stop voice message'; button.setAttribute('aria-pressed', 'true')
-      const finish = () => { if (this.active?.utterance === utterance) { this.active = undefined; button.textContent = '▶ Play voice message'; button.setAttribute('aria-pressed', 'false') } }
+      this.active = { button, utterance }; status.textContent = ''; button.textContent = stopLabel; button.setAttribute('aria-pressed', 'true')
+      const finish = () => { if (this.active?.utterance === utterance) { this.active = undefined; button.textContent = playLabel; button.setAttribute('aria-pressed', 'false') } }
       utterance.onend = () => { finish(); container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-ended')) }
       utterance.onerror = () => { finish(); status.textContent = 'Could not play this voice message. The transcript is available below.'; container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-error')) }
       try { window.speechSynthesis.speak(utterance) } catch { finish(); status.textContent = 'Speech playback failed. Try again.' }

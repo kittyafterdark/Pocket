@@ -3931,6 +3931,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         conversationTitle: text2(presentation?.conversationTitle, 120) || undefined,
         call: normalizeCallMarker(presentation?.call),
         format: voiceMessage(presentation?.format) ? "voice" : undefined,
+        voiceTranscript: voiceMessage(presentation?.format) ? text2(presentation?.voiceTranscript, 12000) || undefined : undefined,
         storyAt: text2(presentation?.storyAt, 80) || undefined,
         storyTimeLabel: text2(presentation?.storyTimeLabel, 160) || undefined,
         storyTimezoneOffsetMinutes: typeof presentation?.storyTimezoneOffsetMinutes === "number" && Number.isFinite(presentation.storyTimezoneOffsetMinutes) && Math.abs(presentation.storyTimezoneOffsetMinutes) <= 840 ? presentation.storyTimezoneOffsetMinutes : undefined,
@@ -8429,6 +8430,7 @@ async function applyAction(input, userId, source = "model") {
             conversationTitle: conversation.title,
             format: message.format,
             call,
+            voiceTranscript: message.format === "voice" ? message.text : undefined,
             ...snapshotActivityClock(state)
           },
           source: { messageId: text2(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id }

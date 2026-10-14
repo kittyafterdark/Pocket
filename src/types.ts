@@ -843,6 +843,8 @@ export interface PocketActivityBatchMessage {
 }
 export interface PocketActivityPresentation {
   format?: 'voice'
+  /** Full transcript for replay after the bounded conversation tail is pruned. */
+  voiceTranscript?: string
   kind: PocketActivityPresentationKind
   senderActorId?: string
   recipientActorIds?: string[]

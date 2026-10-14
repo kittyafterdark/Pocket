@@ -1686,7 +1686,7 @@ class PocketController {
         const routeMessageId = activity.route.app === 'messages' ? activity.route.messageId : undefined
         const canonical = this.state?.conversations.flatMap(row => row.messages).find(row => row.id === message.id)
           || this.state?.conversations.flatMap(row => row.messages).find(row => row.id === routeMessageId)
-        const full = canonical || message
+        const full = canonical || { ...message, text: activity.presentation?.voiceTranscript || message.text }
         return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || 'voice'}` }, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ''])
       },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
