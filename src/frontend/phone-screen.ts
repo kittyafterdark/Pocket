@@ -132,9 +132,12 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
     const body = node('span', 'pocket-phone-notification-body')
     body.append(portrait(presentation.senderName || '?', options.avatarUrl))
     const copy = node('span', 'pocket-phone-notification-content')
-    copy.append(node('strong', 'pocket-phone-notification-sender', presentation.senderName || 'Message'), node('span', 'pocket-phone-notification-copy', `${presentation.format === 'voice' ? '▶ Voice message · ' : ''}${activity.summary || ''}`))
+    const preview = node('span', 'pocket-phone-notification-copy', `${presentation.format === 'voice' ? '▶ Voice message · ' : ''}${activity.summary || ''}`)
+    // The notification itself is a button; place the player beside it below to avoid nested controls.
+    copy.append(node('strong', 'pocket-phone-notification-sender', presentation.senderName || 'Message'), preview)
     body.append(copy); notification.append(app, body)
     screen.append(lockHero, notification, node('span', 'pocket-phone-home-indicator'))
+    if (presentation.format === 'voice' && options.renderVoiceMessage) screen.append(options.renderVoiceMessage({ id: activity.source?.messageId || (activity.route.app === 'messages' ? activity.route.messageId : undefined), text: activity.summary || '', senderName: presentation.senderName || 'Contact', senderActorId: presentation.senderActorId }))
   } else if (type === 'call') {
     screen.classList.add('pocket-phone-call'); screen.dataset.callStatus = presentation.call!.status
     const callHeader = routeButton('', 'pocket-phone-app-header pocket-phone-call-header', 'Open call history in Pocket')
@@ -157,7 +160,7 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
     screen.append(appHeader(title, subtitle, () => openRoute(activity.route), type === 'chat' ? options.avatarUrl : undefined))
 
     const thread = node('div', 'pocket-phone-thread'); thread.tabIndex = 0; thread.setAttribute('role', 'region'); thread.setAttribute('aria-label', `${title} conversation`)
-    const messages = type === 'group' ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || 'You', senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || '', direction: 'sent' }]
+    const messages = type === 'group' ? presentation.batchMessages || [] : [{ messageId: activity.source?.messageId || (activity.route.app === 'messages' ? activity.route.messageId : undefined), senderName: presentation.senderName || 'You', senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || '', direction: 'sent' }]
     for (const [index, message] of messages.entries()) {
       const row = node('div', 'pocket-phone-message'); row.dataset.direction = message.direction
       const previous = messages[index - 1]; row.dataset.continuation = String(Boolean(previous && previous.senderName === message.senderName))
@@ -169,6 +172,7 @@ export function buildPhoneScreen(activity: PocketActivity, openRoute: (route: Po
       } else {
         const content = node('span', 'pocket-phone-message-content'); content.append(node('span', 'pocket-phone-bubble', `${message.format === 'voice' ? '▶ Voice message · ' : ''}${message.text}`)); row.append(content)
       }
+      if (message.format === 'voice' && options.renderVoiceMessage) row.querySelector('.pocket-phone-bubble')?.replaceChildren(options.renderVoiceMessage({ ...message, id: message.messageId }))
       thread.append(row)
     }
     if (type === 'chat') thread.append(node('span', 'pocket-phone-delivery', 'Delivered'))

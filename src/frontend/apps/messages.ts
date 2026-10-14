@@ -54,6 +54,7 @@ export interface MessagesViewHost {
   shouldFocusHandoff(relayId: string): boolean
   showGenerationInfo(message: PhoneMessage): void
   renderVoiceMessage?(message: PhoneMessage): HTMLElement
+  startCall?(conversationId: string, mode: 'voice' | 'video', callId?: string): void
   back(): void
 }
 
@@ -432,6 +433,16 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     if (conversation.kind === 'group') host.selectConversation(conversation.id, 'group-detail')
     else if (counterpartIds[0]) host.openActor(counterpartIds[0])
   }))
+  if (conversation.kind === 'direct' && !host.readOnlyDevice && host.startCall) {
+    const activeCall = conversation.messages.filter(row => row.call?.interactive).at(-1)?.call
+    if (activeCall?.status === 'connected') menuSheet.appendChild(menuAction('Resume call', () => host.startCall!(conversation.id, activeCall.mode || 'voice', activeCall.callId)))
+    else {
+      const phone = menuAction('Phone call', () => host.startCall!(conversation.id, 'voice'))
+      const video = menuAction('Video call', () => host.startCall!(conversation.id, 'video'))
+      phone.disabled = video.disabled = !host.generationAvailable
+      menuSheet.append(phone, video)
+    }
+  }
   const referenceAction = menuAction('Reference in roleplay', () => host.showReferenceSheet(conversation.id))
   referenceAction.disabled = host.readOnlyDevice || !conversation.messages.some((message) => message.sender !== 'system')
   menuSheet.appendChild(referenceAction)
@@ -466,6 +477,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
     if (message.call) { bubble.classList.add('lp-call-history'); bubble.dataset.callStatus = message.call.status }
+    if (message.callTurn) bubble.append(el('span', 'lp-bubble-time', 'Spoken on call'))
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId)
     bubble.dataset.sender = direction === 'outbound' ? 'persona' : message.sender === 'system' ? 'system' : 'contact'
     const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === 'contact' ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || '') : null

@@ -3,7 +3,11 @@ import { synthesizeVoiceMessage } from './tts-connection.js'
 
 /** One player per mounted Pocket surface. Playback always starts with a user gesture. */
 export class VoiceMessagePlayer {
+  private static current?: VoiceMessagePlayer
+  private views = new Map<string, { signature: string; element: HTMLElement }>()
   private active?: { button: HTMLButtonElement; status?: HTMLElement; utterance?: SpeechSynthesisUtterance; abort?: AbortController; audio?: HTMLAudioElement; url?: string; timer?: ReturnType<typeof setTimeout> }
+
+  stopIfDetached(): void { if (this.active && !this.active.button.isConnected) this.stop() }
 
   stop(): void {
     if (!this.active) return
@@ -17,7 +21,9 @@ export class VoiceMessagePlayer {
     button.textContent = '▶ Play voice message'; button.setAttribute('aria-pressed', 'false')
   }
 
-  render(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'>, voiceURI = '', enabled = true, connectionId = '', connectionOptions?: { voice?: string; model?: string }): HTMLElement {
+  render(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string }, voiceURI = '', enabled = true, connectionId = '', connectionOptions?: { voice?: string; model?: string }): HTMLElement {
+    const signature = JSON.stringify([message.text, message.senderName, voiceURI, enabled, connectionId, connectionOptions])
+    if (message.id && this.views.get(message.id)?.signature === signature) return this.views.get(message.id)!.element
     const container = document.createElement('div'); container.className = 'lp-voice-message'
     const button = document.createElement('button'); button.type = 'button'; button.className = 'lp-voice-play'
     button.textContent = '▶ Play voice message'; button.setAttribute('aria-label', `Play voice message from ${message.senderName}`); button.setAttribute('aria-pressed', 'false')
@@ -26,6 +32,8 @@ export class VoiceMessagePlayer {
     button.disabled = !enabled || (!supported && !connectionId)
     if (button.disabled) status.textContent = enabled ? 'Speech playback unavailable in this browser.' : 'Voice playback is disabled in Settings.'
     button.addEventListener('click', () => {
+      if (VoiceMessagePlayer.current && VoiceMessagePlayer.current !== this) VoiceMessagePlayer.current.stop()
+      VoiceMessagePlayer.current = this
       const same = this.active?.button === button
       this.stop()
       if (same) return
@@ -37,13 +45,13 @@ export class VoiceMessagePlayer {
           if (this.active !== active) return
           clearTimeout(active.timer)
           active.url = URL.createObjectURL(blob); active.audio = new window.Audio(active.url)
-          active.audio.onended = () => { if (this.active === active) this.stop() }
-          active.audio.onerror = () => { if (this.active === active) { this.stop(); status.textContent = 'Could not play the generated audio. The transcript is available below.' } }
+          active.audio.onended = () => { if (this.active === active) { this.stop(); container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-ended')) } }
+          active.audio.onerror = () => { if (this.active === active) { this.stop(); status.textContent = 'Could not play the generated audio. The transcript is available below.'; container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-error')) } }
           await active.audio.play()
           if (this.active === active) status.textContent = ''
         }).catch(error => {
           if (this.active !== active) return
-          this.stop(); status.textContent = error instanceof Error ? error.message : 'TTS playback failed. The transcript is available below.'
+          this.stop(); status.textContent = error instanceof Error ? error.message : 'TTS playback failed. The transcript is available below.'; container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-error'))
         })
         return
       }
@@ -56,13 +64,18 @@ export class VoiceMessagePlayer {
       if (voice) { utterance.voice = voice; utterance.lang = voice.lang }
       this.active = { button, utterance }; status.textContent = ''; button.textContent = '■ Stop voice message'; button.setAttribute('aria-pressed', 'true')
       const finish = () => { if (this.active?.utterance === utterance) { this.active = undefined; button.textContent = '▶ Play voice message'; button.setAttribute('aria-pressed', 'false') } }
-      utterance.onend = finish
-      utterance.onerror = () => { finish(); status.textContent = 'Could not play this voice message. The transcript is available below.' }
+      utterance.onend = () => { finish(); container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-ended')) }
+      utterance.onerror = () => { finish(); status.textContent = 'Could not play this voice message. The transcript is available below.'; container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-error')) }
       try { window.speechSynthesis.speak(utterance) } catch { finish(); status.textContent = 'Speech playback failed. Try again.' }
     })
     const transcript = document.createElement('details'); transcript.className = 'lp-voice-transcript'
     const title = document.createElement('summary'); title.textContent = 'Voice message transcript'
     const text = document.createElement('p'); text.textContent = message.text
-    transcript.append(title, text); container.append(button, status, transcript); return container
+    transcript.append(title, text); container.append(button, status, transcript)
+    if (message.id) {
+      this.views.set(message.id, { signature, element: container })
+      if (this.views.size > 300) this.views.delete(this.views.keys().next().value!)
+    }
+    return container
   }
 }

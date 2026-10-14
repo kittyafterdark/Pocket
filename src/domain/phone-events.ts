@@ -12,6 +12,7 @@ export function normalizeCallMarker(value: unknown): PocketCallMarker | undefine
   if (!['connected', 'ended', 'missed'].includes(String(raw.status)) || typeof raw.callId !== 'string' || !raw.callId.trim()) return undefined
   const duration = raw.durationSeconds
   return { callId: raw.callId.trim().slice(0, 180), status: raw.status as PocketCallMarker['status'], speakerphone: raw.speakerphone === true,
+    mode: raw.mode === 'video' ? 'video' : raw.mode === 'voice' ? 'voice' : undefined, interactive: raw.interactive === true || undefined,
     durationSeconds: raw.status === 'ended' && typeof duration === 'number' && Number.isFinite(duration) && duration >= 0 && duration <= 86_400 ? Math.round(duration) : undefined }
 }
 

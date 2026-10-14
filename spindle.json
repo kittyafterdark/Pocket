@@ -15,6 +15,7 @@
     "characters",
     "personas",
     "images",
+    "media",
     "cors_proxy",
     "image_gen",
     "ui_panels",

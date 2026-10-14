@@ -1,4 +1,5 @@
 import { INLINE_STYLES } from './inline-styles.js'
+import { VOICE_MESSAGE_STYLES } from './voice-message-styles.js'
 
 // A shared sheet keeps the isolated renderers cheap even in a long roleplay thread.
 const sheets = new WeakMap<Document, CSSStyleSheet>()
@@ -13,6 +14,7 @@ const ISOLATED_STYLES = `
 }
 :host::before, :host::after { content: none !important; display: none !important; }
 ${INLINE_STYLES}
+${VOICE_MESSAGE_STYLES}
 `
 
 export function isolatedActivity(content: HTMLElement): HTMLElement {

@@ -1,5 +1,6 @@
 import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
 import { VoiceMessagePlayer } from './components/voice-message.js'
+import { LiveCallUi } from './components/live-call.js'
 import type {
   CalendarEvent,
   DevicePreferences,
@@ -123,6 +124,7 @@ function iconButton(name: string, label: string): HTMLButtonElement {
 
 class PocketController {
   private voicePlayer = new VoiceMessagePlayer()
+  private liveCall: LiveCallUi
   private ctx: SpindleFrontendContext
   private readonly surfaceId = pocketSurfaceId()
   private cleanups: Cleanup[] = []
@@ -309,6 +311,8 @@ class PocketController {
     this.customStyle = document.createElement('style')
     this.customStyle.dataset.pocketCustomCss = 'true'
     this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle)
+    this.liveCall = new LiveCallUi({ root: this.shell, player: this.voicePlayer, preferences: () => this.preferences,
+      send: (type, payload) => this.send(type, payload), speech: (ctx as any).stt, roleplay: () => this.close() })
     this.syncSurfaceIdentity()
     this.launcher.addEventListener('pointerdown', (event) => { this.launcherPointer = { x: event.clientX, y: event.clientY } })
     this.launcher.addEventListener('pointermove', (event) => {
@@ -334,6 +338,7 @@ class PocketController {
   }
 
   destroy(): void {
+    this.liveCall.close()
     this.voicePlayer.stop()
     this.setupModalDismiss?.()
     this.destroyed = true
@@ -407,6 +412,8 @@ class PocketController {
     this.installInlineArtifactObserver()
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
+      this.liveCall.close()
+      this.voicePlayer.stop()
       this.setupModalDismiss?.()
       this.settledOperationRequests.clear()
       this.operations.clear()
@@ -1022,6 +1029,7 @@ class PocketController {
 
   private onBackend(payload: BackendPayload): void {
     if (!payload || typeof payload !== 'object' || typeof payload.type !== 'string') return
+    this.liveCall.receive(payload)
     if (payload.type === 'lumiphone:state' && payload.state) {
       const active = this.ctx.getActiveChat()
       if (active.chatId && payload.state.chatId !== active.chatId) return
@@ -1630,6 +1638,7 @@ class PocketController {
   }
 
   private close(): void {
+    this.liveCall.close()
     this.voicePlayer.stop()
     if (!this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
@@ -1672,6 +1681,14 @@ class PocketController {
     return { appearance: this.preferences.inlineAppearance || 'cards', reducedMotion: this.preferences.reducedMotion || this.preferences.animation === 'none', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
       backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
+      voicePlaybackKey: JSON.stringify([this.preferences.voiceMessages, this.preferences.ttsVoiceURI, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions]),
+      renderVoiceMessage: message => {
+        const routeMessageId = activity.route.app === 'messages' ? activity.route.messageId : undefined
+        const canonical = this.state?.conversations.flatMap(row => row.messages).find(row => row.id === message.id)
+          || this.state?.conversations.flatMap(row => row.messages).find(row => row.id === routeMessageId)
+        const full = canonical || message
+        return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || 'voice'}` }, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ''])
+      },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map(row => [row.senderActorId || '', resolvePocketActor(this.state!, row.senderActorId || '')?.avatarUrl || ''])) }
   }
@@ -1964,6 +1981,7 @@ class PocketController {
       view.addEventListener('animationend', () => view.removeAttribute('data-animate'), { once: true })
     }
     this.screen.replaceChildren(view)
+    requestAnimationFrame(() => this.voicePlayer.stopIfDetached())
     if (!transition) requestAnimationFrame(() => {
       view.scrollTop = oldViewScroll
       const thread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
@@ -2073,11 +2091,14 @@ class PocketController {
   }
 
   private renderMessages(): HTMLDivElement {
-    this.viewCleanups.push(() => this.voicePlayer.stop())
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     return renderMessagesView({
       state: this.state!, selectedConversationId: this.selectedConversationId,
       renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
+      startCall: (conversationId, mode, callId) => {
+        if (!this.state) return
+        this.liveCall.start({ chatId: this.state.chatId, characterId: this.state.characterId, conversationId, deviceOwnerActorId: this.currentDeviceOwnerActorId() }, mode, callId)
+      },
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,

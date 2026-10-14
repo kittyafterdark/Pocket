@@ -1,5 +1,6 @@
 import { GALLERY_PAGE_SIZE, galleryOffset } from './domain/gallery-page.js'
 import { voiceMessage } from './domain/voice.js'
+import { PocketCalls } from './backend/calls.js'
 import type {
   CalendarEvent,
   GalleryResult,
@@ -4757,6 +4758,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
   try {
     const context = await resolveContext(payload, userId)
     switch (payload.type) {
+      case 'lumiphone:call_start':
+      case 'lumiphone:call_resume':
+      case 'lumiphone:call_reply':
+      case 'lumiphone:call_end': {
+        await liveCalls.handle(String(payload.type), { ...payload, ...context }, userId)
+        break
+      }
       case 'lumiphone:get_debug_prompt': {
         const state = await loadState(context.chatId, context.characterId, userId)
         const conversationId = text(payload.conversationId, 180)
@@ -5957,6 +5965,27 @@ function ensureInterceptor(): void {
 }
 
 spindle.frontendCapabilities.declare('message_tag_interceptor')
+const liveCalls = new PocketCalls({
+  load: loadState, save: saveState, lock: (chatId, characterId, action) => withStateLock(stateKey(chatId, characterId), action), publish: (state, userId) => sendState(state, userId, 'call'),
+  send, id, timestamp: phoneMessageTimestamp, contact: actor => actorAsGenerationContact(actor, nowIso()), profile: resolveContactProfile,
+  character: async (characterId, userId) => (spindle.characters.get as any)(characterId, userId),
+  background: async (state, contact, conversation, userId) => {
+    const preferences = await loadPreferences(userId)
+    const persona = await resolveGenerationPocketPersona(state, userId)
+    const assembled = await assemblePocketContext({ state: { ...state, pocketPersona: persona }, contact, conversation,
+      preferences, actorIdentity: pocketContactPhoneBrief(contact, await resolveContactProfile(contact, userId)),
+      getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(state.chatId) : undefined,
+      includePhoneThread: false, includeRoleplayBackground: false })
+    return assembled.text
+  },
+  generate: async (requestId, messages, signal, userId) => {
+    if (!spindle.permissions.has('generation')) throw new Error('Enable Pocket’s Generation permission to make calls.')
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'call-reply', requestId,
+      { type: 'quiet', messages, signal, userId, parameters: { temperature: 0.8, max_tokens: 900 } }, userId)
+    return parseGeneratedObject(response.content)
+  },
+  remember: rememberPhoneMessage,
+})
 spindle.onFrontendMessage(handleFrontend)
 function pocketArtifactTag(activityId: unknown, action: unknown): string | undefined {
   const value = text(activityId, 180)

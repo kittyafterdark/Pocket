@@ -29,6 +29,18 @@ Each visible phone now has two explicit frontend identities. Its logical device 
 
 ## Model integration
 
+### Phone and video calls
+
+Open a direct conversation on your Pocket Persona’s phone, then choose **⋯ → Phone call** or **Video call**. Calls use the same saved Playback TTS connection, model, and voice as voice messages. A call speaks each character turn automatically and keeps its text visible. **Reply with** switches between short suggested replies (visual novel style), a typed reply, and speech to text. Dictation fills the reply box for review; **Say this** commits it. The microphone starts only when you choose **Start microphone** and stops on cancel, hangup, phone close, or chat switch.
+
+Video uses only expression images on the contact’s linked Character Card. The reply model selects from that card’s expression labels. If no linked card has expressions, the character gives an in-world reason for a faulty webcam and continues by voice on a black screen. A failed expression image also falls back to the audio layout. NPC/Council contacts without a card can make audio calls.
+
+Speech to text uses Lumiverse’s current Voice & Speech provider through its optional host speech API (including local Whistle). Pocket requests the **Media** permission for this feature; approve it in Extensions before using the microphone. Older hosts can still use typed and suggested replies. Call playback has a visible Play/Stop control for replay or browser autoplay failures, and transcripts remain readable after a speech failure.
+
+Call markers and spoken turns persist in the conversation. **Resume call** restores an interrupted session without regenerating or automatically replaying history. Each answered exchange arms a bounded spoken-call reference for the next normal roleplay turn, using Pocket’s existing retryable reference lifecycle. It explicitly distinguishes spoken dialogue from text messages and keeps knowledge with the participants; a remote call does not establish physical presence. Call dialogue never starts the asynchronous DM reply scheduler. An ended call rejects stale or late generation results.
+
+Voice-message Play/Stop and expandable transcripts also work directly in roleplay cards, merged exchanges, group batches, and full-phone presentations. All surfaces share exclusive playback, keep the complete canonical transcript when available, and preserve playback controls during state refreshes.
+
 ### Character voice messages
 
 Characters can send voice messages through `message` and individual `message_batch` rows by adding `"format":"voice"`; `text` contains the spoken transcript. Generated direct and group replies can choose the same format. For example:

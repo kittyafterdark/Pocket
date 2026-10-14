@@ -185,6 +185,10 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     status,
     imageId: clean(value.imageId, 160) || undefined,
     call: normalizeCallMarker(value.call),
+    callTurn: record(value.callTurn) && clean(value.callTurn.callId, 180) ? {
+      callId: clean(value.callTurn.callId, 180), expression: clean(value.callTurn.expression, 80) || undefined,
+      choices: (Array.isArray(value.callTurn.choices) ? value.callTurn.choices : []).map(entry => clean(entry, 180)).filter(Boolean).slice(0, 3),
+    } : undefined,
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     origin: record(value.origin) && clean(value.origin.chatId, 180) && clean(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {

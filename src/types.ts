@@ -114,7 +114,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'call-reply' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -308,6 +308,8 @@ export interface PocketCandidateClockSnapshot extends PocketRoleplayClockSnapsho
 export interface PhoneMessage {
   format?: 'voice'
   call?: PocketCallMarker
+  /** Spoken call dialogue, distinct from an asynchronous voice message. */
+  callTurn?: { callId: string; expression?: string; choices?: string[] }
   id: string
   sender: 'persona' | 'contact' | 'system'
   /** Generic Pocket actor identity. Contact ids remain valid actor ids. Persona messages also carry the canonical Pocket Persona actor id. */
@@ -859,6 +861,8 @@ export interface PocketCallMarker {
   status: 'connected' | 'ended' | 'missed'
   speakerphone: boolean
   durationSeconds?: number
+  mode?: 'voice' | 'video'
+  interactive?: boolean
 }
 
 export interface PocketActivity {
