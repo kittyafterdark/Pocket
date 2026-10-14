@@ -1898,7 +1898,7 @@ assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'))
 const handsetHost = dockRoot.querySelector('.lumiphone-handset-host')
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 18.4)) < 0.01, 'desktop phone bounds are not 9:18.4')
 assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 10)
-assert.ok(dockRoot.querySelector('.lp-app-grid button[aria-label="Phone"]'), 'Phone must be visible on the normal home screen')
+assert.ok(dockRoot.querySelector('.lp-home-dock button[aria-label="Messages"] + button[aria-label="Phone"]'), 'Phone must sit beside Messages in the home dock')
 await exportVisual('home', dockRoot)
 for (const [name, width, scale] of [['min', 288, .7], ['max', 443, 1.3]]) {
   const scaledHome = dockRoot.cloneNode(true)

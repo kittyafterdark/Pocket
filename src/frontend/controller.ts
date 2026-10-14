@@ -101,10 +101,10 @@ const ICONS: Record<string, string> = {
 
 const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boolean; route?: PocketRoute }> = [
   { app: 'messages', label: 'Messages', icon: 'messages', dock: true },
+  { app: 'contacts', label: 'Phone', icon: 'call', dock: true, route: { app: 'contacts', view: 'calls' } },
   { app: 'camera', label: 'Camera', icon: 'camera', dock: true },
   { app: 'gallery', label: 'Gallery', icon: 'gallery', dock: true },
   { app: 'notes', label: 'Notes', icon: 'notes', dock: true },
-  { app: 'contacts', label: 'Phone', icon: 'call', route: { app: 'contacts', view: 'calls' } },
   { app: 'weather', label: 'Weather', icon: 'weather' },
   { app: 'contacts', label: 'Contacts', icon: 'contacts' },
   { app: 'calendar', label: 'Timeline', icon: 'calendar' },

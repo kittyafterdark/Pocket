@@ -19,6 +19,8 @@ ${SURFACE_TOKENS}
   .lp-call-empty[hidden] { display:none; }
   .lp-call-contact { display:grid; gap:6px; }
   .lp-icon-call { background:linear-gradient(145deg,#4ee580,#12aa4b); }
+  .lumiphone-shell .lp-home-dock .lp-app-icon { min-height:44px; }
+  .lumiphone-shell .lp-home-dock .lp-app-icon-box { width:min(calc(44px * var(--pocket-ui-scale,1)),100%); height:auto; aspect-ratio:1; }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }
