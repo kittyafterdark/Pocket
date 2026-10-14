@@ -140,7 +140,8 @@ export class PocketCalls {
     const referenceId = `call_reference_${callId}`
     const existing = state.references.find(row => row.id.startsWith(referenceId) && (row.status === 'armed' || row.status === 'failed'))
     const reference = createPocketReference({ state, conversation: { ...conversation, messages: conversation.messages.filter(row => row.callTurn?.callId === callId) }, scope: 'conversation', createdAt: new Date().toISOString(), makeId: () => `call_reference_${callId}` })
-    reference.snapshot = `Spoken ${conversation.messages.find(row => row.call?.callId === callId)?.call?.mode === 'video' ? 'video' : 'phone'} call transcript. These lines were spoken, not sent as text messages. Only the call participants heard them; this does not establish physical presence. ${reference.snapshot}`.slice(0, 600)
+    const call = conversation.messages.filter(row => row.call?.callId === callId).at(-1)?.call
+    reference.snapshot = `Spoken ${call?.mode === 'video' ? 'video' : 'phone'} call transcript. Call ID: ${callId}. Call state: ${call?.status || 'connected'}. ${call?.status === 'ended' ? 'The call is already ended in Pocket; do not recreate its end action.' : 'The call is still connected.'} These lines already happened as speech, not text messages. Only the call participants heard them; this does not establish physical presence. ${reference.snapshot}`.slice(0, 600)
     if (!reference.messages.length) return
     if (existing) Object.assign(existing, reference)
     else { // Never overwrite an in-flight or consumed reference id.
