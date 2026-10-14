@@ -27,6 +27,8 @@ export class VoiceMessagePlayer {
     const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind])
     if (message.id && this.views.get(message.id)?.signature === signature) return this.views.get(message.id)!.element
     const container = document.createElement('div'); container.className = 'lp-voice-message'
+    // Inline cards can open their conversation on click; playback and transcript controls own their clicks.
+    container.addEventListener('click', event => event.stopPropagation())
     const button = document.createElement('button'); button.type = 'button'; button.className = 'lp-voice-play'
     button.dataset.voicePlayLabel = playLabel
     button.textContent = playLabel; button.setAttribute('aria-label', `Play ${kind === 'call' ? 'spoken turn' : 'voice message'} from ${message.senderName}`); button.setAttribute('aria-pressed', 'false')

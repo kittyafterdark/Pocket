@@ -158,9 +158,12 @@ test('inline phone and merged cards mount real voice controls without nested but
     presentation: { kind: 'sent', senderName: 'Alice', format: 'voice' } }
   const options = { appearance: 'phone' as const, renderVoiceMessage: (message: any) => player.render(message) }
   const phone = buildPhoneScreen(activity, () => {}, options)!
+  let opened = 0
+  phone.addEventListener('click', () => { opened++ })
   dom.window.document.body.append(phone)
   expect(plays).toBe(0); expect(phone.querySelector('button button')).toBeNull()
-  phone.querySelector<HTMLButtonElement>('.lp-voice-play')!.click(); expect(plays).toBe(1)
+  phone.querySelector<HTMLButtonElement>('.lp-voice-play')!.click(); expect(plays).toBe(1); expect(opened).toBe(0)
+  phone.querySelector<HTMLElement>('.lp-voice-transcript summary')!.click(); expect(opened).toBe(0)
   const host = dom.window.document.createElement('div'); dom.window.document.body.append(host)
   refreshActivityConnectors([{ host, activity, options, owner: 'persona' }], () => {})
   expect(host.querySelector('pocket-inline-ui')?.shadowRoot?.querySelector('.lp-voice-play')).toBeTruthy()

@@ -93,6 +93,7 @@ class VoiceMessagePlayer {
       return this.views.get(message.id).element;
     const container = document.createElement("div");
     container.className = "lp-voice-message";
+    container.addEventListener("click", (event) => event.stopPropagation());
     const button = document.createElement("button");
     button.type = "button";
     button.className = "lp-voice-play";
