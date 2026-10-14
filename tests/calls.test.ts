@@ -12,7 +12,7 @@ import { buildPhoneScreen } from '../src/frontend/phone-screen.js'
 import { refreshActivityConnectors } from '../src/frontend/components/activity-connectors.js'
 
 const now = '2026-10-14T18:00:00.000Z'
-function fixture(expressions: Record<string, string> = {}) {
+function fixture(expressions: Record<string, string> = {}, expressionGroups: Record<string, Record<string, string>> = {}) {
   let sequence = 0
   const makeId = (prefix: string) => `${prefix}_${++sequence}`
   const collections = normalizeContactCollections({ contacts: [{ id: 'alice', name: 'Alice', source: { kind: 'character', characterId: 'alice-card' } }] }, { characterId: 'narrator', characterName: 'Narrator', now, makeId, personaActorId: 'persona' })
@@ -26,7 +26,7 @@ function fixture(expressions: Record<string, string> = {}) {
     lock: (_chatId, _characterId, action) => { const next = lock.catch(() => {}).then(action); lock = next.then(() => {}, () => {}); return next },
     publish: async () => {}, send: payload => sent.push(payload), id: makeId, timestamp: () => now,
     contact: actor => actorAsGenerationContact(actor, now), profile: async contact => ({ name: contact.name, description: 'A patient friend.', personality: 'Kind.', behavior: '' }),
-    character: async () => ({ extensions: { expressions: { mappings: expressions } } }), background: async () => 'The player is at home.',
+    character: async () => ({ extensions: { expressions: { mappings: expressions }, expression_groups: expressionGroups } }), background: async () => 'The player is at home.',
     generate: (...args) => generate(...args), remember: () => {},
   }
   const calls = new PocketCalls(host), input = { chatId: 'chat', characterId: 'narrator', conversationId: conversation.id, deviceOwnerActorId: 'persona', requestId: 'start', mode: 'video' }
@@ -44,6 +44,15 @@ test('video requires the linked card’s expression pack and uses only its label
   await audio.calls.handle('lumiphone:call_start', audio.input)
   expect(audio.sent.find(row => row.type === 'lumiphone:call_ready').video).toBe(false)
   expect(audio.prompts[0][0].content).toContain('invent a short believable in-character reason')
+})
+
+test('video supports grouped expression packs with unambiguous character labels', async () => {
+  const f = fixture({}, { Alice: { neutral: 'alice-neutral' }, Bob: { happy: 'bob-happy' } })
+  f.generation(async (_id, messages) => { f.prompts.push(messages); return { message: 'Hello from Bob.', expression: 'Bob: happy', choices: ['Hello Bob!'] } })
+  await f.calls.handle('lumiphone:call_start', f.input)
+  expect(f.sent.find(row => row.type === 'lumiphone:call_ready')).toMatchObject({ video: true, expressions: { 'Alice: neutral': '/api/v1/images/alice-neutral', 'Bob: happy': '/api/v1/images/bob-happy' } })
+  expect(f.prompts[0][0].content).toContain('Alice: neutral, Bob: happy')
+  expect(f.state().conversations[0].messages.at(-1)?.callTurn?.expression).toBe('Bob: happy')
 })
 
 test('call turns persist as spoken dialogue and arm a bounded RP reference without creating user speech from choices', async () => {

@@ -21,6 +21,24 @@ export interface CallHost {
 }
 
 function clean(value: unknown, max: number): string { return typeof value === 'string' ? value.trim().slice(0, max) : '' }
+function callExpressions(character: any): Record<string, string> {
+  const entries = new Map<string, string>()
+  const add = (mappings: unknown, prefix = '') => {
+    if (!mappings || typeof mappings !== 'object' || Array.isArray(mappings)) return
+    for (const [label, imageId] of Object.entries(mappings)) {
+      const key = `${prefix}${label}`
+      if (!label.trim() || key.length > 80 || typeof imageId !== 'string' || !imageId) continue
+      if (entries.size >= 100) return
+      entries.set(key, `/api/v1/images/${encodeURIComponent(imageId)}`)
+    }
+  }
+  add(character?.extensions?.expressions?.mappings)
+  const groups = character?.extensions?.expression_groups
+  if (groups && typeof groups === 'object' && !Array.isArray(groups)) {
+    for (const [name, mappings] of Object.entries(groups)) add(mappings, `${name}: `)
+  }
+  return Object.fromEntries(entries)
+}
 export function normalizeCallReply(raw: unknown, expressions: Record<string, string>): { text: string; expression: string; choices: string[]; end: boolean } {
   const value = raw && typeof raw === 'object' ? raw as Input : {}
   const text = clean(value.message, 4_000)
@@ -59,9 +77,7 @@ export class PocketCalls {
       const contact = this.host.contact(actor), profile = await this.host.profile(contact, userId)
       abort.signal.throwIfAborted()
       const character = contact.source.kind === 'character' ? await this.host.character(contact.source.characterId, userId) : null
-      const mappings = character?.extensions?.expressions?.mappings
-      const expressions: Record<string, string> = Object.fromEntries(Object.entries(mappings && typeof mappings === 'object' ? mappings : {}).flatMap(([label, imageId]) =>
-        typeof imageId === 'string' && imageId && label.length <= 80 ? [[label, `/api/v1/images/${encodeURIComponent(imageId)}`]] : []).slice(0, 100))
+      const expressions = callExpressions(character)
       const mode = input.mode === 'video' ? 'video' : 'voice'
       let callId = clean(input.callId, 180)
       await this.host.lock(input.chatId, input.characterId, async () => {
