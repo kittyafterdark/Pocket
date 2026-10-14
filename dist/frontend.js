@@ -1285,7 +1285,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
       app,
       contactId: shortId(raw.contactId),
       groupId: shortId(raw.groupId),
-      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
+      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "calls", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -5172,7 +5172,68 @@ function quickGenerateView(host) {
     footer.append(el("p", "lp-warning", "Enable text generation in Settings to generate an NPC."));
   return page;
 }
+function communicationActions(host, contact, includeMessage = true) {
+  const communication = el("div", "lp-contact-communication");
+  communication.setAttribute("role", "group");
+  communication.setAttribute("aria-label", `Contact ${contact.name}`);
+  const action = (icon, label, callback) => {
+    const control = host.iconButton(icon, includeMessage ? label : `${label} ${contact.name}`);
+    control.className = "lp-button lp-contact-communication-action";
+    control.append(el("span", "", label));
+    control.addEventListener("click", callback);
+    communication.append(control);
+    return control;
+  };
+  if (includeMessage)
+    action("messages", "Message", () => host.openDirect(contact.id));
+  if (host.startCall) {
+    const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id;
+    const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
+    const activeCall = conversation?.messages.filter((row) => row.call?.interactive).at(-1)?.call;
+    const connected = activeCall?.status === "connected";
+    const call = action("call", connected ? "Resume call" : "Call", () => host.startCall(contact.id, connected ? activeCall.mode || "voice" : "voice", connected ? activeCall.callId : undefined));
+    call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || !connected && !host.capabilities?.generation);
+    if (!connected) {
+      const video = action("video", "Video call", () => host.startCall(contact.id, "video"));
+      video.disabled = call.disabled;
+    }
+    if (host.readOnlyDevice)
+      communication.append(el("p", "lp-copy lp-contact-call-hint", "Switch to your Persona’s phone to call."));
+    else if (!connected && !host.capabilities?.generation)
+      communication.append(el("p", "lp-copy lp-contact-call-hint", "Connect a generation model to start a call."));
+  }
+  return communication;
+}
+function phoneView(host) {
+  const { page, content } = host.page("Phone", "Choose someone to call", { label: "Add", callback: () => host.select("", "import"), enabled: !host.readOnlyDevice });
+  const search = el("input", "lp-input");
+  search.type = "search";
+  search.placeholder = "Who would you like to call?";
+  search.setAttribute("aria-label", "Search contacts to call");
+  const list = el("div", "lp-call-contact-list");
+  const noMatches = host.empty(host.state.contacts.length ? "No matching contacts" : "No contacts yet", host.state.contacts.length ? "Try another name." : "Add someone to Contacts to make your first call.");
+  noMatches.classList.add("lp-call-empty");
+  const renderList = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    const contacts = [...host.state.contacts].filter((contact) => `${contact.name} ${contact.role}`.toLocaleLowerCase().includes(query)).sort((a, b) => a.name.localeCompare(b.name));
+    list.replaceChildren();
+    for (const contact of contacts) {
+      const card = el("section", "lp-card lp-call-contact");
+      const identity = el("div", "lp-row");
+      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: contact.role }));
+      card.append(identity, communicationActions(host, contact, false));
+      list.append(card);
+    }
+    noMatches.hidden = contacts.length > 0;
+  };
+  search.addEventListener("input", renderList);
+  renderList();
+  content.append(search, list, noMatches);
+  return page;
+}
 function renderContactsView(host) {
+  if (host.selectedView === "calls")
+    return phoneView(host);
   if (["groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(host.selectedView))
     return renderContactGroups(host);
   if (host.selectedView === "quick-gen")
@@ -5192,35 +5253,7 @@ function renderContactsView(host) {
     const { page, content } = host.page(contact.name, contact.role, { label: "Edit", callback: () => host.select(contact.id, "config") });
     const hero = el("div", "lp-card lp-contact-detail");
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || "No compact identity brief.", prominent: true, centered: true }));
-    const communication = el("div", "lp-contact-communication");
-    communication.setAttribute("role", "group");
-    communication.setAttribute("aria-label", `Contact ${contact.name}`);
-    const communicationAction = (icon, label, callback) => {
-      const action = host.iconButton(icon, label);
-      action.className = "lp-button lp-contact-communication-action";
-      action.append(el("span", "", label));
-      action.addEventListener("click", callback);
-      communication.append(action);
-      return action;
-    };
-    communicationAction("messages", "Message", () => host.openDirect(contact.id));
-    if (host.startCall) {
-      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id;
-      const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
-      const activeCall = conversation?.messages.filter((row) => row.call?.interactive).at(-1)?.call;
-      const connected = activeCall?.status === "connected";
-      const call = communicationAction("call", connected ? "Resume call" : "Call", () => host.startCall(contact.id, connected ? activeCall.mode || "voice" : "voice", connected ? activeCall.callId : undefined));
-      call.disabled = Boolean(host.readOnlyDevice || host.callPending || !connected && !host.capabilities?.generation);
-      if (!connected) {
-        const video = communicationAction("video", "Video call", () => host.startCall(contact.id, "video"));
-        video.disabled = call.disabled;
-      }
-      if (host.readOnlyDevice)
-        communication.append(el("p", "lp-copy lp-contact-call-hint", "Switch to your Persona’s phone to call."));
-      else if (!connected && !host.capabilities?.generation)
-        communication.append(el("p", "lp-copy lp-contact-call-hint", "Connect a generation model to start a call."));
-    }
-    hero.append(communication);
+    hero.append(communicationActions(host, contact));
     if (contact.sceneNote)
       hero.append(el("p", "lp-scene-note", contact.sceneNote));
     const phoneProfile = contact.phoneProfile;
@@ -7736,6 +7769,7 @@ var APP_META = [
   { app: "camera", label: "Camera", icon: "camera", dock: true },
   { app: "gallery", label: "Gallery", icon: "gallery", dock: true },
   { app: "notes", label: "Notes", icon: "notes", dock: true },
+  { app: "contacts", label: "Phone", icon: "call", route: { app: "contacts", view: "calls" } },
   { app: "weather", label: "Weather", icon: "weather" },
   { app: "contacts", label: "Contacts", icon: "contacts" },
   { app: "calendar", label: "Timeline", icon: "calendar" },
@@ -9049,7 +9083,8 @@ class PocketController {
       if (call) {
         this.contactCallRequests.delete(payload.requestId);
         const active = this.activeContext();
-        if (this.expanded && this.currentApp === "contacts" && this.selectedContactId === call.contactId && active.chatId === call.chatId && active.characterId === call.characterId && this.currentDeviceOwnerActorId() === call.deviceOwnerActorId) {
+        const samePage = this.selectedContactView === call.view && (call.view === "calls" || this.selectedContactId === call.contactId);
+        if (this.expanded && this.currentApp === "contacts" && samePage && active.chatId === call.chatId && active.characterId === call.characterId && this.currentDeviceOwnerActorId() === call.deviceOwnerActorId) {
           this.liveCall.start({ chatId: call.chatId, characterId: call.characterId, deviceOwnerActorId: call.deviceOwnerActorId, conversationId: payload.conversationId }, call.mode);
         }
         this.render(false);
@@ -9934,11 +9969,11 @@ class PocketController {
     const box = el("span", `lp-app-icon-box lp-icon-${meta.icon}`);
     box.appendChild(icon2(meta.icon));
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
-    const unread = meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
+    const unread = meta.route ? 0 : meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
     if (unread)
       box.appendChild(el("span", "lp-app-dot", unread > 99 ? "99+" : String(unread)));
     node.append(box, el("span", "lp-app-label", meta.label));
-    node.addEventListener("click", () => this.openApp(meta.app));
+    node.addEventListener("click", () => meta.route ? this.openPocket(meta.route) : this.openApp(meta.app));
     return node;
   }
   renderMessages() {
@@ -10378,7 +10413,7 @@ ${body}`;
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
       iconButton,
       readOnlyDevice: this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state),
-      callPending: [...this.contactCallRequests.values()].some((call) => call.chatId === this.state.chatId && call.characterId === this.state.characterId && call.contactId === this.selectedContactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
+      isCallPending: (contactId) => [...this.contactCallRequests.values()].some((call) => call.chatId === this.state.chatId && call.characterId === this.state.characterId && call.contactId === contactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
       startCall: (contactId, mode, callId) => this.startContactCall(contactId, mode, callId),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       uploadPhoto: (contactId) => {
@@ -10414,7 +10449,7 @@ ${body}`;
     if ([...this.contactCallRequests.values()].some((call) => call.contactId === contactId && call.chatId === scope.chatId && call.characterId === scope.characterId && call.deviceOwnerActorId === scope.deviceOwnerActorId))
       return;
     const requestId = this.send("lumiphone:open_direct", { contactId });
-    this.contactCallRequests.set(requestId, { ...scope, contactId, mode });
+    this.contactCallRequests.set(requestId, { ...scope, contactId, mode, view: this.selectedContactView });
     this.render(false);
   }
   async uploadAvatarPhoto(contactId = "__draft__") {
@@ -11746,6 +11781,10 @@ ${SURFACE_TOKENS}
   .lp-contact-communication-action > span:first-child { display:flex; }
   .lp-contact-communication-action svg { width:20px; height:20px; stroke-width:1.8; }
   .lp-contact-call-hint { flex-basis:100%; margin:0; }
+  .lp-call-contact-list { display:grid; gap:12px; }
+  .lp-call-empty[hidden] { display:none; }
+  .lp-call-contact { display:grid; gap:6px; }
+  .lp-icon-call { background:linear-gradient(145deg,#4ee580,#12aa4b); }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }

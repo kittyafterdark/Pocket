@@ -17,7 +17,7 @@ export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 export type PocketRoute =
   | { app: 'home' }
   | { app: 'messages'; conversationId?: string; contactId?: string; messageId?: string; view?: 'thread' | 'new-group' | 'group-editor' | 'group-detail' }
-  | { app: 'contacts'; contactId?: string; groupId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' | 'groups' | 'group-config' | 'bank' | 'cast-config' | 'cast-import' | 'bank-entry' }
+  | { app: 'contacts'; contactId?: string; groupId?: string; view?: 'list' | 'calls' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' | 'groups' | 'group-config' | 'bank' | 'cast-config' | 'cast-import' | 'bank-entry' }
   | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
   | { app: 'calendar'; eventId?: string }
   | { app: 'notes'; noteId?: string }

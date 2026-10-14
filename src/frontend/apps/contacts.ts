@@ -40,7 +40,7 @@ export interface ContactsViewHost {
   openDirect(contactId: string): void
   iconButton(name: string, label: string): HTMLButtonElement
   readOnlyDevice?: boolean
-  callPending?: boolean
+  isCallPending?(contactId: string): boolean
   startCall?(contactId: string, mode: 'voice' | 'video', callId?: string): void
   choosePhoto(contactId?: string): void
   uploadPhoto(contactId?: string): void
@@ -390,7 +390,63 @@ function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
   return page
 }
 
+function communicationActions(host: ContactsViewHost, contact: PocketContact, includeMessage = true): HTMLDivElement {
+  const communication = el('div', 'lp-contact-communication')
+  communication.setAttribute('role', 'group')
+  communication.setAttribute('aria-label', `Contact ${contact.name}`)
+  const action = (icon: string, label: string, callback: () => void) => {
+    const control = host.iconButton(icon, includeMessage ? label : `${label} ${contact.name}`)
+    control.className = 'lp-button lp-contact-communication-action'
+    control.append(el('span', '', label))
+    control.addEventListener('click', callback)
+    communication.append(control)
+    return control
+  }
+  if (includeMessage) action('messages', 'Message', () => host.openDirect(contact.id))
+  if (host.startCall) {
+    const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
+    const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
+    const activeCall = conversation?.messages.filter(row => row.call?.interactive).at(-1)?.call
+    const connected = activeCall?.status === 'connected'
+    const call = action('call', connected ? 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
+    call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || (!connected && !host.capabilities?.generation))
+    if (!connected) {
+      const video = action('video', 'Video call', () => host.startCall!(contact.id, 'video'))
+      video.disabled = call.disabled
+    }
+    if (host.readOnlyDevice) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Switch to your Persona’s phone to call.'))
+    else if (!connected && !host.capabilities?.generation) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Connect a generation model to start a call.'))
+  }
+  return communication
+}
+
+function phoneView(host: ContactsViewHost): HTMLDivElement {
+  const { page, content } = host.page('Phone', 'Choose someone to call', { label: 'Add', callback: () => host.select('', 'import'), enabled: !host.readOnlyDevice })
+  const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = 'Who would you like to call?'; search.setAttribute('aria-label', 'Search contacts to call')
+  const list = el('div', 'lp-call-contact-list')
+  const noMatches = host.empty(host.state.contacts.length ? 'No matching contacts' : 'No contacts yet', host.state.contacts.length ? 'Try another name.' : 'Add someone to Contacts to make your first call.')
+  noMatches.classList.add('lp-call-empty')
+  const renderList = () => {
+    const query = search.value.trim().toLocaleLowerCase()
+    const contacts = [...host.state.contacts].filter(contact => `${contact.name} ${contact.role}`.toLocaleLowerCase().includes(query)).sort((a, b) => a.name.localeCompare(b.name))
+    list.replaceChildren()
+    for (const contact of contacts) {
+      const card = el('section', 'lp-card lp-call-contact')
+      const identity = el('div', 'lp-row')
+      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: contact.role }))
+      card.append(identity, communicationActions(host, contact, false))
+      list.append(card)
+    }
+    noMatches.hidden = contacts.length > 0
+  }
+  search.addEventListener('input', renderList)
+  renderList()
+  content.append(search, list, noMatches)
+  return page
+}
+
 export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
+  if (host.selectedView === 'calls') return phoneView(host)
   if (['groups', 'group-config', 'bank', 'cast-config', 'cast-import', 'bank-entry'].includes(host.selectedView)) return renderContactGroups(host)
   if (host.selectedView === 'quick-gen') return quickGenerateView(host)
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null
@@ -402,33 +458,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const { page, content } = host.page(contact.name, contact.role, { label: 'Edit', callback: () => host.select(contact.id, 'config') })
     const hero = el('div', 'lp-card lp-contact-detail')
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || 'No compact identity brief.', prominent: true, centered: true }))
-    const communication = el('div', 'lp-contact-communication')
-    communication.setAttribute('role', 'group')
-    communication.setAttribute('aria-label', `Contact ${contact.name}`)
-    const communicationAction = (icon: string, label: string, callback: () => void) => {
-      const action = host.iconButton(icon, label)
-      action.className = 'lp-button lp-contact-communication-action'
-      action.append(el('span', '', label))
-      action.addEventListener('click', callback)
-      communication.append(action)
-      return action
-    }
-    communicationAction('messages', 'Message', () => host.openDirect(contact.id))
-    if (host.startCall) {
-      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
-      const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
-      const activeCall = conversation?.messages.filter(row => row.call?.interactive).at(-1)?.call
-      const connected = activeCall?.status === 'connected'
-      const call = communicationAction('call', connected ? 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
-      call.disabled = Boolean(host.readOnlyDevice || host.callPending || (!connected && !host.capabilities?.generation))
-      if (!connected) {
-        const video = communicationAction('video', 'Video call', () => host.startCall!(contact.id, 'video'))
-        video.disabled = call.disabled
-      }
-      if (host.readOnlyDevice) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Switch to your Persona’s phone to call.'))
-      else if (!connected && !host.capabilities?.generation) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Connect a generation model to start a call.'))
-    }
-    hero.append(communication)
+    hero.append(communicationActions(host, contact))
     if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
     const phoneProfile = contact.phoneProfile
     if (phoneProfile && (phoneProfile.personality || phoneProfile.appearance || phoneProfile.textingStyle)) {

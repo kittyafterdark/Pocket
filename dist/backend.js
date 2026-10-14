@@ -2077,7 +2077,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
       app,
       contactId: shortId(raw.contactId),
       groupId: shortId(raw.groupId),
-      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
+      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "calls", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
     };
   if (app === "trackers")
     return {

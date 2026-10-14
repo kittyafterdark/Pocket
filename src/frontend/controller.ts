@@ -99,11 +99,12 @@ const ICONS: Record<string, string> = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>',
 }
 
-const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boolean }> = [
+const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boolean; route?: PocketRoute }> = [
   { app: 'messages', label: 'Messages', icon: 'messages', dock: true },
   { app: 'camera', label: 'Camera', icon: 'camera', dock: true },
   { app: 'gallery', label: 'Gallery', icon: 'gallery', dock: true },
   { app: 'notes', label: 'Notes', icon: 'notes', dock: true },
+  { app: 'contacts', label: 'Phone', icon: 'call', route: { app: 'contacts', view: 'calls' } },
   { app: 'weather', label: 'Weather', icon: 'weather' },
   { app: 'contacts', label: 'Contacts', icon: 'contacts' },
   { app: 'calendar', label: 'Timeline', icon: 'calendar' },
@@ -219,7 +220,7 @@ class PocketController {
   private cameraBusy = false
   private cameraRequestId = ''
   private messageRequests = new Map<string, { conversationId: string; speakerContactId: string; phase: 'checking' | 'pending' }>()
-  private contactCallRequests = new Map<string, { contactId: string; mode: 'voice' | 'video'; chatId: string; characterId: string; deviceOwnerActorId: string }>()
+  private contactCallRequests = new Map<string, { contactId: string; view: ContactView; mode: 'voice' | 'video'; chatId: string; characterId: string; deviceOwnerActorId: string }>()
   private messageDrafts = new Map<string, string>()
   private groupSpeakerSelections = new Map<string, string>()
   private manualMessageOverrides = new Set<string>()
@@ -1304,7 +1305,8 @@ class PocketController {
       if (call) {
         this.contactCallRequests.delete(payload.requestId)
         const active = this.activeContext()
-        if (this.expanded && this.currentApp === 'contacts' && this.selectedContactId === call.contactId && active.chatId === call.chatId && active.characterId === call.characterId && this.currentDeviceOwnerActorId() === call.deviceOwnerActorId) {
+        const samePage = this.selectedContactView === call.view && (call.view === 'calls' || this.selectedContactId === call.contactId)
+        if (this.expanded && this.currentApp === 'contacts' && samePage && active.chatId === call.chatId && active.characterId === call.characterId && this.currentDeviceOwnerActorId() === call.deviceOwnerActorId) {
           this.liveCall.start({ chatId: call.chatId, characterId: call.characterId, deviceOwnerActorId: call.deviceOwnerActorId, conversationId: payload.conversationId }, call.mode)
         }
         this.render(false)
@@ -2095,12 +2097,12 @@ class PocketController {
     const box = el('span', `lp-app-icon-box lp-icon-${meta.icon}`)
     box.appendChild(icon(meta.icon))
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
-    const unread = meta.app === 'messages'
+    const unread = meta.route ? 0 : meta.app === 'messages'
       ? this.state!.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state!, conversation, owner), 0)
       : this.state!.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state!, owner, item.deviceOwnerActorId)).length
     if (unread) box.appendChild(el('span', 'lp-app-dot', unread > 99 ? '99+' : String(unread)))
     node.append(box, el('span', 'lp-app-label', meta.label))
-    node.addEventListener('click', () => this.openApp(meta.app))
+    node.addEventListener('click', () => meta.route ? this.openPocket(meta.route) : this.openApp(meta.app))
     return node
   }
 
@@ -2464,7 +2466,7 @@ class PocketController {
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       iconButton,
       readOnlyDevice: this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state!),
-      callPending: [...this.contactCallRequests.values()].some(call => call.chatId === this.state!.chatId && call.characterId === this.state!.characterId && call.contactId === this.selectedContactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
+      isCallPending: contactId => [...this.contactCallRequests.values()].some(call => call.chatId === this.state!.chatId && call.characterId === this.state!.characterId && call.contactId === contactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
       startCall: (contactId, mode, callId) => this.startContactCall(contactId, mode, callId),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       uploadPhoto: (contactId) => { void this.uploadAvatarPhoto(contactId) },
@@ -2489,7 +2491,7 @@ class PocketController {
     if (conversation) { this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId); return }
     if ([...this.contactCallRequests.values()].some(call => call.contactId === contactId && call.chatId === scope.chatId && call.characterId === scope.characterId && call.deviceOwnerActorId === scope.deviceOwnerActorId)) return
     const requestId = this.send('lumiphone:open_direct', { contactId })
-    this.contactCallRequests.set(requestId, { ...scope, contactId, mode })
+    this.contactCallRequests.set(requestId, { ...scope, contactId, mode, view: this.selectedContactView })
     this.render(false)
   }
 
