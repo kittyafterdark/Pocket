@@ -4238,17 +4238,6 @@ function renderMessagesView(host) {
     else if (counterpartIds[0])
       host.openActor(counterpartIds[0]);
   }));
-  if (conversation.kind === "direct" && !host.readOnlyDevice && host.startCall) {
-    const activeCall = conversation.messages.filter((row) => row.call?.interactive).at(-1)?.call;
-    if (activeCall?.status === "connected")
-      menuSheet.appendChild(menuAction("Resume call", () => host.startCall(conversation.id, activeCall.mode || "voice", activeCall.callId)));
-    else {
-      const phone = menuAction("Phone call", () => host.startCall(conversation.id, "voice"));
-      const video = menuAction("Video call", () => host.startCall(conversation.id, "video"));
-      phone.disabled = video.disabled = !host.generationAvailable;
-      menuSheet.append(phone, video);
-    }
-  }
   const referenceAction = menuAction("Reference in roleplay", () => host.showReferenceSheet(conversation.id));
   referenceAction.disabled = host.readOnlyDevice || !conversation.messages.some((message) => message.sender !== "system");
   menuSheet.appendChild(referenceAction);
@@ -4256,7 +4245,41 @@ function renderMessagesView(host) {
   menuSheet.appendChild(menuAction("Generation info", () => host.showConversationGenerationInfo(conversation.id)));
   menuSheet.appendChild(menuAction("Outgoing prompt", () => host.showOutgoingPrompt(conversation.id)));
   menu.append(menuToggle, menuSheet);
-  nav.append(back, title, menu);
+  const headerActions = el("div", "lp-thread-header-actions");
+  if (conversation.kind === "direct" && !host.readOnlyDevice && host.startCall) {
+    const call = host.iconButton("call", "Call options");
+    call.className = "lp-nav-action lp-thread-call";
+    call.title = "Phone or video call";
+    call.setAttribute("aria-haspopup", "dialog");
+    call.append(el("span", "", "Call"));
+    call.addEventListener("click", () => {
+      menu.open = false;
+      const options = el("div", "lp-call-options");
+      let sheet;
+      const callOption = (label, mode, callId) => {
+        const option = button(label, "lp-button lp-call-option");
+        option.disabled = !callId && !host.generationAvailable;
+        option.addEventListener("click", () => {
+          sheet?.dismiss();
+          host.startCall(conversation.id, mode, callId);
+        });
+        options.append(option);
+      };
+      const activeCall = conversation.messages.filter((row) => row.call?.interactive).at(-1)?.call;
+      if (activeCall?.status === "connected")
+        callOption("Resume call", activeCall.mode || "voice", activeCall.callId);
+      else {
+        callOption("Phone call", "voice");
+        callOption("Video call", "video");
+        if (!host.generationAvailable)
+          options.append(el("p", "lp-copy", "Connect a generation model to start a call."));
+      }
+      sheet = showPocketSheet(call, `Call ${titleText}`, options);
+    });
+    headerActions.append(call);
+  }
+  headerActions.append(menu);
+  nav.append(back, title, headerActions);
   page.appendChild(nav);
   const referenceSlot = el("div", "lp-reference-slot");
   const activeReference = [...host.state.references].reverse().find((entry) => entry.conversationId === conversation.id && (entry.status === "armed" || entry.status === "injected" || entry.status === "failed"));
@@ -7697,6 +7720,7 @@ function pocketSurfaceId() {
   return requestId("pocket_surface").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 var ICONS2 = {
+  call: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1Z"/></svg>',
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
   messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
   contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>',
@@ -11695,6 +11719,13 @@ ${SURFACE_TOKENS}
   .lumiphone-shell .lp-nav-title { white-space:normal; overflow-wrap:anywhere; font-size:15px; line-height:1.2; text-wrap:balance; }
   .lumiphone-shell .lp-nav-subtitle { font-size:10px; line-height:1.35; margin-top:4px; }
   .lumiphone-shell .lp-nav-action { min-width:0; min-height:var(--lp-touch); font-size:12px; overflow-wrap:anywhere; }
+  .lumiphone-shell .lp-thread .lp-nav { grid-template-columns:auto minmax(0,1fr) auto; }
+  .lp-thread-header-actions { display:flex; align-items:center; justify-content:flex-end; gap:4px; }
+  .lumiphone-shell .lp-thread-call { display:flex; align-items:center; gap:5px; padding:8px; border-radius:12px; background:color-mix(in srgb,var(--lp-accent) 12%,transparent); white-space:nowrap; }
+  .lp-thread-call > span:first-child { display:flex; }
+  .lp-thread-call svg { width:18px; height:18px; stroke-width:1.8; }
+  .lp-call-options { display:grid; gap:10px; }
+  .lp-sheet .lp-call-option { text-align:left; justify-content:flex-start; }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }
