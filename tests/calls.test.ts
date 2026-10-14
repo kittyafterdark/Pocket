@@ -139,7 +139,17 @@ test('call controls offer VN, typed and STT replies; microphone results need rev
   ui.receive({ type: 'lumiphone:call_turn', requestId: 'r0', callId: 'call', message })
   await Promise.resolve()
   expect(spoken[0].text).toBe('Hello!')
-  expect(dom.window.document.querySelector('.lp-call-caption')?.textContent).toBe('Hello!')
+  expect(dom.window.document.querySelector('.lp-call-caption-text')?.textContent).toBe('Hello!')
+  const replay = dom.window.document.querySelector<HTMLButtonElement>('.lp-call-caption .lp-voice-play')!
+  expect(replay.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+  expect(replay.textContent).toBe('')
+  expect(replay.getAttribute('aria-label')).toBe('Stop speech from Alice')
+  spoken[0].onend()
+  expect(replay.getAttribute('aria-label')).toBe('Replay spoken turn from Alice')
+  replay.click(); expect(spoken).toHaveLength(2)
+  expect(replay.getAttribute('aria-pressed')).toBe('true')
+  replay.click(); expect(replay.getAttribute('aria-pressed')).toBe('false')
+  expect(replay.querySelector('svg')).toBeTruthy()
   const selector = dom.window.document.querySelector('select')!
   expect([...selector.options].map(row => row.value)).toEqual(['vn', 'type', 'stt'])
   selector.value = 'stt'; selector.dispatchEvent(new dom.window.Event('change'))

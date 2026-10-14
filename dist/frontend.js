@@ -53,6 +53,18 @@ async function synthesizeVoiceMessage(connectionId, text, signal, options) {
 }
 
 // src/frontend/components/voice-message.ts
+function setPlaybackButton(button, playing) {
+  const label = (playing ? button.dataset.voiceStopLabel : button.dataset.voicePlayLabel) || "▶ Play voice message";
+  if (button.dataset.voiceIcon === "true") {
+    button.innerHTML = playing ? '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/></svg>';
+  } else
+    button.textContent = label;
+  const accessibleLabel = `${label.replace(/^[▶■]\s*/, "")} from ${button.dataset.voiceSender}`;
+  button.setAttribute("aria-label", accessibleLabel);
+  button.title = accessibleLabel;
+  button.setAttribute("aria-pressed", String(playing));
+}
+
 class VoiceMessagePlayer {
   static current;
   views = new Map;
@@ -82,8 +94,7 @@ class VoiceMessagePlayer {
       URL.revokeObjectURL(url);
     if (status)
       status.textContent = "";
-    button.textContent = button.dataset.voicePlayLabel || "▶ Play voice message";
-    button.setAttribute("aria-pressed", "false");
+    setPlaybackButton(button, false);
   }
   render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions, kind = "message") {
     const playLabel = kind === "call" ? "▶ Replay spoken turn" : "▶ Play voice message";
@@ -98,9 +109,10 @@ class VoiceMessagePlayer {
     button.type = "button";
     button.className = "lp-voice-play";
     button.dataset.voicePlayLabel = playLabel;
-    button.textContent = playLabel;
-    button.setAttribute("aria-label", `Play ${kind === "call" ? "spoken turn" : "voice message"} from ${message.senderName}`);
-    button.setAttribute("aria-pressed", "false");
+    button.dataset.voiceStopLabel = stopLabel;
+    button.dataset.voiceSender = message.senderName;
+    button.dataset.voiceIcon = String(kind === "call");
+    setPlaybackButton(button, false);
     const status = document.createElement("span");
     status.className = "lp-voice-status";
     status.setAttribute("role", "status");
@@ -119,8 +131,7 @@ class VoiceMessagePlayer {
       if (connectionId) {
         const active = { button, status, abort: new AbortController };
         this.active = active;
-        button.textContent = stopLabel;
-        button.setAttribute("aria-pressed", "true");
+        setPlaybackButton(button, true);
         status.textContent = kind === "call" ? "Preparing speech…" : "Preparing voice message…";
         active.timer = setTimeout(() => {
           if (this.active === active) {
@@ -173,13 +184,11 @@ class VoiceMessagePlayer {
       }
       this.active = { button, utterance };
       status.textContent = "";
-      button.textContent = stopLabel;
-      button.setAttribute("aria-pressed", "true");
+      setPlaybackButton(button, true);
       const finish = () => {
         if (this.active?.utterance === utterance) {
           this.active = undefined;
-          button.textContent = playLabel;
-          button.setAttribute("aria-pressed", "false");
+          setPlaybackButton(button, false);
         }
       };
       utterance.onend = () => {
@@ -221,7 +230,7 @@ var STYLES = `
 .lp-live-call *{box-sizing:border-box}.lp-live-call> *{min-width:0}.lp-live-call button,.lp-live-call textarea,.lp-live-call select{font:inherit;color:inherit;background:#23232e;border:1px solid #5e5c70;border-radius:12px;padding:10px;min-height:44px;min-width:0;max-width:100%}.lp-live-call button{cursor:pointer}.lp-live-call button:disabled{opacity:.5;cursor:default}.lp-live-call button:focus-visible,.lp-live-call textarea:focus-visible,.lp-live-call select:focus-visible{outline:2px solid #c4adff;outline-offset:2px}
 .lp-call-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:4px 0 8px;background:#050609}.lp-call-header .lp-call-hangup{flex-shrink:0}
 .lp-call-stage[data-video=false]{flex:0 0 auto;min-height:0}
-.lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0;overflow-wrap:anywhere}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px;overflow-wrap:anywhere}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left;overflow-wrap:anywhere}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;flex-shrink:0;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:6px}.lp-call-mode select{width:100%;text-overflow:ellipsis}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-error{color:#ffc6d3;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;overflow-wrap:anywhere}.lp-call-caption-text{white-space:pre-wrap;max-height:calc(45vh - 60px);overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0;overflow-wrap:anywhere}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px;overflow-wrap:anywhere}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left;overflow-wrap:anywhere}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;flex-shrink:0;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:6px}.lp-call-mode select{width:100%;text-overflow:ellipsis}.lp-call-mode.lp-call-reply-mode{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;font-size:12px}.lp-live-call .lp-call-reply-mode select{min-height:36px;padding:6px 8px;font-size:12px}.lp-call-playback{margin-top:4px}.lp-call-playback .lp-voice-message{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;gap:8px;width:100%}.lp-call-playback .lp-voice-play{grid-column:2;grid-row:1;display:grid;place-items:center;width:44px;height:44px;padding:10px;border:0;border-radius:50%;background:transparent}.lp-call-playback .lp-voice-play:hover{background:#ffffff16}.lp-call-playback .lp-voice-play svg{display:block;width:20px;height:20px}.lp-call-playback .lp-voice-status{grid-column:1;grid-row:1;font-size:11px;white-space:normal;overflow-wrap:anywhere}.lp-call-playback .lp-voice-status:empty,.lp-call-error:empty{display:none}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-error{color:#ffc6d3;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 `;
 function element(tag, className = "", text = "") {
   const node = document.createElement(tag);
@@ -305,14 +314,16 @@ class LiveCallUi {
       if (this.status)
         this.status.textContent = "Video interrupted · voice call continues";
     });
-    this.caption = element("div", "lp-call-caption", "Waiting for the character to answer…");
+    const bubble = element("div", "lp-call-caption");
+    this.caption = element("div", "lp-call-caption-text", "Waiting for the character to answer…");
     this.caption.setAttribute("aria-live", "polite");
-    this.stage.append(this.image, this.caption);
+    this.playback = element("div", "lp-call-playback");
+    bubble.append(this.caption, this.playback);
+    this.stage.append(this.image, bubble);
     this.error = element("div", "lp-call-error");
     this.error.setAttribute("role", "alert");
-    this.playback = element("div");
     this.controls = element("div", "lp-call-controls");
-    const modeLabel = element("label", "lp-call-mode");
+    const modeLabel = element("label", "lp-call-mode lp-call-reply-mode");
     modeLabel.append(element("span", "", "Reply with"));
     const selector = element("select");
     selector.setAttribute("aria-label", "Call reply method");
@@ -379,7 +390,7 @@ class LiveCallUi {
     const history = element("div", "lp-call-history");
     history.dataset.callHistory = "true";
     transcript.append(history);
-    this.root.append(style, header, this.status, this.stage, this.playback, this.error, this.retry, this.controls, transcript);
+    this.root.append(style, header, this.status, this.stage, this.error, this.retry, this.controls, transcript);
     this.root.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
