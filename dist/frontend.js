@@ -7765,8 +7765,8 @@ var ICONS2 = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>'
 };
 var APP_META = [
-  { app: "messages", label: "Messages", icon: "messages", dock: true },
   { app: "contacts", label: "Phone", icon: "call", dock: true, route: { app: "contacts", view: "calls" } },
+  { app: "messages", label: "Messages", icon: "messages", dock: true },
   { app: "camera", label: "Camera", icon: "camera", dock: true },
   { app: "gallery", label: "Gallery", icon: "gallery", dock: true },
   { app: "notes", label: "Notes", icon: "notes", dock: true },

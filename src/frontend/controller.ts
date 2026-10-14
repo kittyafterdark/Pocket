@@ -100,8 +100,8 @@ const ICONS: Record<string, string> = {
 }
 
 const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boolean; route?: PocketRoute }> = [
-  { app: 'messages', label: 'Messages', icon: 'messages', dock: true },
   { app: 'contacts', label: 'Phone', icon: 'call', dock: true, route: { app: 'contacts', view: 'calls' } },
+  { app: 'messages', label: 'Messages', icon: 'messages', dock: true },
   { app: 'camera', label: 'Camera', icon: 'camera', dock: true },
   { app: 'gallery', label: 'Gallery', icon: 'gallery', dock: true },
   { app: 'notes', label: 'Notes', icon: 'notes', dock: true },
