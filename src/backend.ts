@@ -5977,7 +5977,7 @@ const liveCalls = new PocketCalls({
     const assembled = await assemblePocketContext({ state: { ...state, pocketPersona: persona }, contact, conversation,
       preferences, actorIdentity: pocketContactPhoneBrief(contact, await resolveContactProfile(contact, userId)),
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(state.chatId) : undefined,
-      includePhoneThread: false, includeRoleplayBackground: false })
+      includePhoneThread: true, includeRoleplayBackground: false })
     return assembled.text
   },
   generate: async (requestId, messages, signal, userId) => {
