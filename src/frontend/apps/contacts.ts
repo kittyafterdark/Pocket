@@ -3,6 +3,7 @@ import { renderContactGroups } from './contact-groups.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
+import { callAvailability } from '../../domain/call-availability.js'
 import { conversationActorIds, resolvePocketActor } from '../../domain/actors.js'
 import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el, formatDate } from '../shared.js'
@@ -407,7 +408,7 @@ function communicationActions(host: ContactsViewHost, contact: PocketContact, in
     const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
     const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
     const activeCall = conversation?.messages.filter(row => row.call?.interactive).at(-1)?.call
-    const connected = activeCall?.status === 'connected'
+    const connected = activeCall?.status === 'connected' || activeCall?.status === 'ringing'
     const call = action('call', connected ? 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
     call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || (!connected && !host.capabilities?.generation))
     if (!connected) {
@@ -433,7 +434,9 @@ function phoneView(host: ContactsViewHost): HTMLDivElement {
     for (const contact of contacts) {
       const card = el('section', 'lp-card lp-call-contact')
       const identity = el('div', 'lp-row')
-      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: contact.role }))
+      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
+      const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
+      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: [contact.role, callAvailability(contact, conversation)].filter(Boolean).join(' · ') }))
       card.append(identity, communicationActions(host, contact, false))
       list.append(card)
     }

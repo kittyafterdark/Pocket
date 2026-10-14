@@ -1285,6 +1285,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
     else contact.avatarUrl = image.url
   }))
   send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  if (reason !== 'state_reconciled' && state.conversations.some(thread => thread.messages.some(row => row.call?.followUp?.status === 'pending'))) void liveCalls.processFollowUps({ chatId: state.chatId, characterId: state.characterId }, userId).catch(error => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`))
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -3128,6 +3129,7 @@ ${recentNarrative}`,
       }
     })
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
+    if (state.conversations.some(thread => thread.messages.some(row => row.call?.followUp?.status === 'pending'))) void liveCalls.processFollowUps({ chatId, characterId }, userId).catch(error => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`))
 
     return seed
   })()
@@ -4376,7 +4378,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       }, command)
     } else if (action === 'message' || action === 'call') {
       const call = action === 'call' ? normalizeCallMarker({ ...payload, callId: text(payload.callId, 180) || (payload.status !== 'ended' ? id('call') : '') }) : undefined
-      if (action === 'call' && !call) throw new Error('A call needs status connected, ended, or missed. Ending a call requires its callId.')
+      if (action === 'call' && (!call || call.status === 'ringing')) throw new Error('A call needs status connected, ended, or missed. Ending a call requires its callId.')
       if (action === 'call' && payload.durationSeconds !== undefined && (typeof payload.durationSeconds !== 'number' || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds < 0 || payload.durationSeconds > 86_400)) throw new Error('Use an explicit duration in seconds, up to one day, or omit it.')
       let messageText = call ? callSummary(call) : text(payload.text ?? payload.message ?? payload.content, 12_000)
       if (!messageText) throw new Error('A phone message needs text.')
@@ -5979,7 +5981,10 @@ const liveCalls = new PocketCalls({
       preferences, actorIdentity: pocketContactPhoneBrief(contact, await resolveContactProfile(contact, userId)),
       getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(state.chatId) : undefined,
       includePhoneThread: true, includeRoleplayBackground: false })
-    return assembled.text
+    const seed = preferences.roleplayContextMode === 'off' ? null : await loadNarrativeSeed(state.chatId, state.characterId, userId)
+    const continuity = narrativeSeedContext(seed, contact.name, [contact.name, persona.displayName || 'You'])
+    const memory = actorPhoneMemoryContext(state.actorMemories, { actorIds: [contact.id], actorNames: [contact.name], actorName: contact.name, excludeConversationId: conversation.id, maxChars: 2_600 })
+    return [assembled.text, continuity, memory].filter(Boolean).join('\n\n')
   },
   generate: async (requestId, messages, signal, userId) => {
     if (!spindle.permissions.has('generation')) throw new Error('Enable Pocket’s Generation permission to make calls.')
@@ -5988,6 +5993,14 @@ const liveCalls = new PocketCalls({
     return parseGeneratedObject(response.content)
   },
   remember: rememberPhoneMessage,
+  availabilityKey: async (state, contact, conversation, userId) => {
+    const seed = await loadNarrativeSeed(state.chatId, state.characterId, userId)
+    const actor = seed?.actors.find(row => normalizeActorName(row.name) === normalizeActorName(contact.name))
+    return JSON.stringify({ presence: contact.presence.inScene, activity: contact.sceneNote, availability: conversation.availability, pause: conversation.pause?.reason, actor: actor && { status: actor.status, activity: actor.activity, location: actor.location, presence: actor.presence }, roleplayNow: state.roleplayNow })
+  },
+  sendText: async (input, userId) => {
+    await applyAction({ chatId: input.chatId, characterId: input.characterId, requestId: input.requestId, action: 'message', payload: { conversationId: input.conversationId, speaker: { actorId: input.actorId }, text: input.text } }, userId, 'model')
+  },
 })
 spindle.onFrontendMessage(handleFrontend)
 function pocketArtifactTag(activityId: unknown, action: unknown): string | undefined {

@@ -860,8 +860,11 @@ export interface PocketActivityPresentation {
 }
 
 export interface PocketCallMarker {
+  /** Optional character-chosen text after a call; later texts wait for a story/status change. */
+  followUp?: { when: 'now' | 'later'; text: string; status: 'pending' | 'sent' | 'cancelled'; availabilityKey: string }
   callId: string
-  status: 'connected' | 'ended' | 'missed'
+  status: 'ringing' | 'connected' | 'ended' | 'missed'
+  outcome?: 'declined' | 'ignored' | 'cancelled'
   speakerphone: boolean
   durationSeconds?: number
   mode?: 'voice' | 'video'

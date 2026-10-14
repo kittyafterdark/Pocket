@@ -263,6 +263,8 @@ class LiveCallUi {
   record;
   speechProvider;
   controls;
+  hangup;
+  finished = false;
   ready = false;
   busy = false;
   mode = "voice";
@@ -285,6 +287,7 @@ class LiveCallUi {
     this.mode = mode;
     this.callId = callId;
     this.ready = false;
+    this.finished = false;
     this.current = undefined;
     this.history = [];
     this.expressions = {};
@@ -302,8 +305,9 @@ class LiveCallUi {
     const hangup = element("button", "lp-call-hangup", "End call");
     hangup.type = "button";
     hangup.addEventListener("click", () => this.close());
+    this.hangup = hangup;
     header.append(title, hangup);
-    this.status = element("div", "lp-call-status", "Connecting…");
+    this.status = element("div", "lp-call-status");
     this.status.setAttribute("role", "status");
     this.stage = element("div", "lp-call-stage");
     this.image = element("img");
@@ -326,6 +330,7 @@ class LiveCallUi {
     this.error = element("div", "lp-call-error");
     this.error.setAttribute("role", "alert");
     this.controls = element("div", "lp-call-controls");
+    this.controls.hidden = true;
     const modeLabel = element("label", "lp-call-mode lp-call-reply-mode");
     modeLabel.append(element("span", "", "Reply with"));
     const selector = element("select");
@@ -388,7 +393,18 @@ class LiveCallUi {
     this.retry = element("button", "", "Retry reply");
     this.retry.type = "button";
     this.retry.hidden = true;
-    this.retry.addEventListener("click", () => this.request(this.ready ? "lumiphone:call_reply" : "lumiphone:call_start", {}));
+    this.retry.addEventListener("click", () => {
+      if (this.finished) {
+        this.finished = false;
+        this.callId = "";
+        this.history = [];
+        this.current = undefined;
+        this.refreshHistory();
+        this.hangup.textContent = "End call";
+        this.caption.textContent = "Waiting for the character to answer…";
+      }
+      this.request(this.ready ? "lumiphone:call_reply" : "lumiphone:call_start", {});
+    });
     const transcript = element("details");
     transcript.append(element("summary", "", "Call transcript"));
     const history = element("div", "lp-call-history");
@@ -433,7 +449,7 @@ class LiveCallUi {
     for (const control of this.controls?.querySelectorAll("button,textarea") || [])
       control.disabled = value || !this.ready || control === this.record && !this.host.speech;
     if (this.status)
-      this.status.textContent = value ? this.ready ? "Listening for a reply…" : "Connecting…" : "";
+      this.status.textContent = value && this.ready ? "Listening for a reply…" : "";
   }
   receive(payload) {
     if (!this.root || !this.scope)
@@ -444,11 +460,33 @@ class LiveCallUi {
       this.setBusy(false);
       return;
     }
+    if ((payload.type === "lumiphone:call_ringing" || payload.type === "lumiphone:call_result") && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
+      this.callId = payload.callId;
+      this.ready = false;
+      this.controls.hidden = true;
+      this.stage.dataset.video = "false";
+      this.image.hidden = true;
+      this.root.querySelector("[data-call-title]").textContent = payload.name;
+      this.playback.replaceChildren();
+      this.host.player.stop();
+      this.cancelSpeech();
+      this.caption.textContent = payload.type === "lumiphone:call_ringing" ? "Calling…" : payload.outcome === "declined" ? "Call declined" : "No answer";
+      if (payload.type === "lumiphone:call_result") {
+        this.finished = true;
+        this.setBusy(false);
+        this.hangup.textContent = "Close";
+        this.retry.textContent = "Call again";
+        this.retry.hidden = false;
+      }
+      return;
+    }
     if (payload.type === "lumiphone:call_ready" && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
       this.callId = payload.callId;
       this.ready = true;
       this.expressions = payload.video ? payload.expressions : {};
       this.stage.dataset.video = String(Boolean(payload.video));
+      this.controls.hidden = false;
+      this.retry.textContent = "Retry reply";
       this.root.querySelector("[data-call-title]").textContent = payload.name;
       this.image.alt = `${payload.name}’s expression`;
       this.history = payload.turns || [];
@@ -542,7 +580,7 @@ class LiveCallUi {
       });
       return;
     }
-    if (!this.host.speech || this.busy)
+    if (!this.host.speech || this.busy || !this.ready || this.finished)
       return;
     this.host.player.stop();
     const token = ++this.voiceOperation;
@@ -589,7 +627,7 @@ class LiveCallUi {
   close(notify = true) {
     if (!this.root)
       return;
-    if (notify && this.scope)
+    if (notify && this.scope && !this.finished)
       this.host.send("lumiphone:call_end", { ...this.scope, callId: this.callId });
     this.cancelSpeech();
     this.host.player.stop();
@@ -1330,7 +1368,8 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
 
 // src/domain/phone-events.ts
 function callSummary(call) {
-  return `${call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call"}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
+  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? "Calling…" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
+  return `${label}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
 }
 
 // src/domain/contacts.ts
@@ -4770,6 +4809,16 @@ function renderContactGroups(host) {
   return page;
 }
 
+// src/domain/call-availability.ts
+function callAvailability(contact, conversation) {
+  const reason = conversation?.availability.state === "paused" ? conversation.availability.reason : conversation?.availability.state === "local" ? conversation.availability.resumePauseReason : conversation?.pause?.reason;
+  if (reason === "busy")
+    return "Busy";
+  if (reason === "away" || reason === "sleeping")
+    return "Away";
+  return contact.presence.inScene ? "Here" : "Away";
+}
+
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
@@ -5234,7 +5283,7 @@ function communicationActions(host, contact, includeMessage = true) {
     const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id;
     const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
     const activeCall = conversation?.messages.filter((row) => row.call?.interactive).at(-1)?.call;
-    const connected = activeCall?.status === "connected";
+    const connected = activeCall?.status === "connected" || activeCall?.status === "ringing";
     const call = action("call", connected ? "Resume call" : "Call", () => host.startCall(contact.id, connected ? activeCall.mode || "voice" : "voice", connected ? activeCall.callId : undefined));
     call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || !connected && !host.capabilities?.generation);
     if (!connected) {
@@ -5264,7 +5313,9 @@ function phoneView(host) {
     for (const contact of contacts) {
       const card = el("section", "lp-card lp-call-contact");
       const identity = el("div", "lp-row");
-      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: contact.role }));
+      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id;
+      const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
+      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: [contact.role, callAvailability(contact, conversation)].filter(Boolean).join(" · ") }));
       card.append(identity, communicationActions(host, contact, false));
       list.append(card);
     }

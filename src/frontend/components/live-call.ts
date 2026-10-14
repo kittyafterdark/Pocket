@@ -47,6 +47,8 @@ export class LiveCallUi {
   private record?: HTMLButtonElement
   private speechProvider?: HTMLSelectElement
   private controls?: HTMLElement
+  private hangup?: HTMLButtonElement
+  private finished = false
   private ready = false
   private busy = false
   private mode: 'voice' | 'video' = 'voice'
@@ -58,22 +60,23 @@ export class LiveCallUi {
   get active(): boolean { return Boolean(this.root) }
   start(scope: NonNullable<LiveCallUi['scope']>, mode: 'voice' | 'video', callId = ''): void {
     if (this.root) { this.root.focus(); return }
-    this.scope = scope; this.mode = mode; this.callId = callId; this.ready = false; this.current = undefined; this.history = []; this.expressions = {}
+    this.scope = scope; this.mode = mode; this.callId = callId; this.ready = false; this.finished = false; this.current = undefined; this.history = []; this.expressions = {}
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     this.root = element('section', 'lp-live-call'); this.root.tabIndex = -1; this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', mode === 'video' ? 'Pocket video call' : 'Pocket phone call')
     const style = element('style'); style.textContent = STYLES
     const title = element('h2', 'lp-call-title', mode === 'video' ? 'Video call' : 'Phone call'); title.dataset.callTitle = 'true'
     const header = element('div', 'lp-call-header')
     const hangup = element('button', 'lp-call-hangup', 'End call'); hangup.type = 'button'; hangup.addEventListener('click', () => this.close())
+    this.hangup = hangup
     header.append(title, hangup)
-    this.status = element('div', 'lp-call-status', 'Connecting…'); this.status.setAttribute('role', 'status')
+    this.status = element('div', 'lp-call-status'); this.status.setAttribute('role', 'status')
     this.stage = element('div', 'lp-call-stage'); this.image = element('img'); this.image.hidden = true; this.image.alt = 'Character expression'
     this.image.addEventListener('error', () => { if (this.stage) this.stage.dataset.video = 'false'; if (this.image) this.image.hidden = true; if (this.status) this.status.textContent = 'Video interrupted · voice call continues' })
     const bubble = element('div', 'lp-call-caption')
     this.caption = element('div', 'lp-call-caption-text', 'Waiting for the character to answer…'); this.caption.setAttribute('aria-live', 'polite')
     this.playback = element('div', 'lp-call-playback'); bubble.append(this.caption, this.playback); this.stage.append(this.image, bubble)
     this.error = element('div', 'lp-call-error'); this.error.setAttribute('role', 'alert')
-    this.controls = element('div', 'lp-call-controls')
+    this.controls = element('div', 'lp-call-controls'); this.controls.hidden = true
     const modeLabel = element('label', 'lp-call-mode lp-call-reply-mode')
     modeLabel.append(element('span', '', 'Reply with'))
     const selector = element('select'); selector.setAttribute('aria-label', 'Call reply method')
@@ -99,7 +102,10 @@ export class LiveCallUi {
     const switchMode = () => { this.cancelSpeech(); this.choices!.hidden = selector.value !== 'vn'; this.input!.hidden = selector.value === 'vn'; send.hidden = selector.value === 'vn'; speechRow.hidden = selector.value !== 'stt' }
     selector.addEventListener('change', switchMode); modeLabel.append(selector); switchMode()
     this.controls.append(modeLabel, this.choices, speechRow, this.input, send)
-    this.retry = element('button', '', 'Retry reply'); this.retry.type = 'button'; this.retry.hidden = true; this.retry.addEventListener('click', () => this.request(this.ready ? 'lumiphone:call_reply' : 'lumiphone:call_start', {}))
+    this.retry = element('button', '', 'Retry reply'); this.retry.type = 'button'; this.retry.hidden = true; this.retry.addEventListener('click', () => {
+      if (this.finished) { this.finished = false; this.callId = ''; this.history = []; this.current = undefined; this.refreshHistory(); this.hangup!.textContent = 'End call'; this.caption!.textContent = 'Waiting for the character to answer…' }
+      this.request(this.ready ? 'lumiphone:call_reply' : 'lumiphone:call_start', {})
+    })
     const transcript = element('details'); transcript.append(element('summary', '', 'Call transcript')); const history = element('div', 'lp-call-history'); history.dataset.callHistory = 'true'; transcript.append(history)
     this.root.append(style, header, this.status, this.stage, this.error, this.retry, this.controls, transcript)
     this.root.addEventListener('keydown', event => {
@@ -122,13 +128,24 @@ export class LiveCallUi {
   private setBusy(value: boolean): void {
     this.busy = value
     for (const control of this.controls?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button,textarea') || []) control.disabled = value || !this.ready || (control === this.record && !this.host.speech)
-    if (this.status) this.status.textContent = value ? (this.ready ? 'Listening for a reply…' : 'Connecting…') : ''
+    if (this.status) this.status.textContent = value && this.ready ? 'Listening for a reply…' : ''
   }
   receive(payload: Record<string, any>): void {
     if (!this.root || !this.scope) return
     if (payload.type === 'lumiphone:error' && this.requests.has(payload.requestId)) { this.error!.textContent = payload.error; this.retry!.hidden = false; this.setBusy(false); return }
+    if ((payload.type === 'lumiphone:call_ringing' || payload.type === 'lumiphone:call_result') && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
+      this.callId = payload.callId; this.ready = false; this.controls!.hidden = true; this.stage!.dataset.video = 'false'; this.image!.hidden = true
+      this.root.querySelector('[data-call-title]')!.textContent = payload.name
+      this.playback!.replaceChildren(); this.host.player.stop(); this.cancelSpeech()
+      this.caption!.textContent = payload.type === 'lumiphone:call_ringing' ? 'Calling…' : payload.outcome === 'declined' ? 'Call declined' : 'No answer'
+      if (payload.type === 'lumiphone:call_result') {
+        this.finished = true; this.setBusy(false); this.hangup!.textContent = 'Close'; this.retry!.textContent = 'Call again'; this.retry!.hidden = false
+      }
+      return
+    }
     if (payload.type === 'lumiphone:call_ready' && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
       this.callId = payload.callId; this.ready = true; this.expressions = payload.video ? payload.expressions : {}; this.stage!.dataset.video = String(Boolean(payload.video))
+      this.controls!.hidden = false; this.retry!.textContent = 'Retry reply'
       this.root.querySelector('[data-call-title]')!.textContent = payload.name
       this.image!.alt = `${payload.name}’s expression`
       this.history = payload.turns || []
@@ -171,7 +188,7 @@ export class LiveCallUi {
   }
   private recordSpeech(): void {
     if (this.session) { this.record!.disabled = true; void this.session.stop().catch(error => { if (this.error) this.error.textContent = error.message }); return }
-    if (!this.host.speech || this.busy) return
+    if (!this.host.speech || this.busy || !this.ready || this.finished) return
     this.host.player.stop(); const token = ++this.voiceOperation
     try {
       const session = this.host.speech.start({ provider: this.speechProvider?.value || undefined, continuous: true, onStatus: status => { if (token === this.voiceOperation && this.status) this.status.textContent = `Microphone · ${status.phase}` } })
@@ -186,7 +203,7 @@ export class LiveCallUi {
   private cancelSpeech(): void { ++this.voiceOperation; this.session?.cancel(); this.session = undefined; if (this.record) { this.record.textContent = 'Start microphone'; this.record.disabled = !this.host.speech }; if (this.ready && !this.busy && this.status) this.status.textContent = '' }
   close(notify = true): void {
     if (!this.root) return
-    if (notify && this.scope) this.host.send('lumiphone:call_end', { ...this.scope, callId: this.callId })
+    if (notify && this.scope && !this.finished) this.host.send('lumiphone:call_end', { ...this.scope, callId: this.callId })
     this.cancelSpeech(); this.host.player.stop(); this.root.remove(); this.root = undefined; this.scope = undefined; this.requests.clear(); this.busy = false; ++this.generation
     this.returnFocus?.focus(); this.returnFocus = undefined
   }
