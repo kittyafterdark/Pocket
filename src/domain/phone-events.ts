@@ -6,6 +6,13 @@ export function assertPersonaAuthorship(state: PhoneState, source: 'model' | 'ta
   }
 }
 
+export function normalizeCallSceneCheck(value: unknown): PhoneState['callSceneCheck'] {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  return { sourceKey: typeof raw.sourceKey === 'string' ? raw.sourceKey.trim().slice(0, 1_600) : '',
+    lastOfferRevision: typeof raw.lastOfferRevision === 'number' && Number.isFinite(raw.lastOfferRevision) ? Math.max(-10, Math.round(raw.lastOfferRevision)) : -10 }
+}
+
 export function normalizeCallMarker(value: unknown): PocketCallMarker | undefined {
   if (!value || typeof value !== 'object') return undefined
   const raw = value as Record<string, unknown>

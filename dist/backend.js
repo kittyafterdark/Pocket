@@ -823,6 +823,15 @@ function assertPersonaAuthorship(state, source, personaSender) {
     throw new Error("Roleplay mode: only the user can send as the Pocket Persona. Enable Impersonation in this chat to let the model write your side.");
   }
 }
+function normalizeCallSceneCheck(value) {
+  if (!value || typeof value !== "object")
+    return;
+  const raw = value;
+  return {
+    sourceKey: typeof raw.sourceKey === "string" ? raw.sourceKey.trim().slice(0, 1600) : "",
+    lastOfferRevision: typeof raw.lastOfferRevision === "number" && Number.isFinite(raw.lastOfferRevision) ? Math.max(-10, Math.round(raw.lastOfferRevision)) : -10
+  };
+}
 function normalizeCallMarker(value) {
   if (!value || typeof value !== "object")
     return;
@@ -2123,8 +2132,9 @@ ${briefScenes ? 'Opt-in enabled. If your current situation fits, you may answer 
     });
   }
   async offerIncoming(input, userId) {
+    input = { ...input, sourceKey: clean5(input.sourceKey, 1600) };
     const preferences = await this.host.preferences?.(userId), scope = this.key(input, userId);
-    if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === "off" || !input.seed || !clean5(input.sourceKey, 240) || this.incomingFlights.has(scope))
+    if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === "off" || !input.seed || !clean5(input.sourceKey, 1600) || this.incomingFlights.has(scope))
       return;
     this.incomingFlights.add(scope);
     try {
@@ -2192,7 +2202,7 @@ ${JSON.stringify(candidates)}` }, { role: "user", content: "Does this RP moment 
       await this.host.lock(input.chatId, input.characterId, async () => {
         const latest = await this.host.load(input.chatId, input.characterId, userId);
         const currentPreferences = await this.host.preferences?.(userId);
-        if (!currentPreferences?.incomingCallScenes || currentPreferences.roleplayContextMode === "off" || latest.callSceneCheck?.sourceKey !== input.sourceKey || latest.lastReconciliation?.sourceKey && latest.lastReconciliation.sourceKey !== input.sourceKey)
+        if (!currentPreferences?.incomingCallScenes || currentPreferences.roleplayContextMode === "off" || latest.callSceneCheck?.sourceKey !== input.sourceKey || latest.lastReconciliation?.sourceKey && clean5(latest.lastReconciliation.sourceKey, 1600) !== input.sourceKey)
           return;
         const latestActive = new Map(latest.conversations.flatMap((row) => row.messages).filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
         if ([...latestActive.values()].some((row) => row.status === "ringing" || row.status === "connected") || !latest.contacts.some((row) => row.id === contact.id))
@@ -4604,7 +4614,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     roleplayClockLabel: value.roleplayClockPrecision === "exact" || value.roleplayClockSource === "manual" ? text2(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
-    callSceneCheck: isRecord2(value.callSceneCheck) ? { sourceKey: text2(value.callSceneCheck.sourceKey, 240), lastOfferRevision: Math.max(-10, Math.round(numberValue(value.callSceneCheck.lastOfferRevision, -10))) } : undefined,
+    callSceneCheck: normalizeCallSceneCheck(value.callSceneCheck),
     hostSwipeSelections,
     hostClockBaselines,
     candidateClocks,

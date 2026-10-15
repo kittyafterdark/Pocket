@@ -41,7 +41,7 @@ import type {
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
 import { clockDayPart, clockLabel, CLOCK_DAY_PART_KEYS } from './domain/clock-label.js'
 import { projectPhoneContext } from './domain/projection.js'
-import { assertPersonaAuthorship, callSummary, normalizeCallMarker } from './domain/phone-events.js'
+import { assertPersonaAuthorship, callSummary, normalizeCallMarker, normalizeCallSceneCheck } from './domain/phone-events.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, setTrackerClockPaused, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeAvatarFocus, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
@@ -634,7 +634,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayClockLabel: value.roleplayClockPrecision === 'exact' || value.roleplayClockSource === 'manual' ? text(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
-    callSceneCheck: isRecord(value.callSceneCheck) ? { sourceKey: text(value.callSceneCheck.sourceKey, 240), lastOfferRevision: Math.max(-10, Math.round(numberValue(value.callSceneCheck.lastOfferRevision, -10))) } : undefined,
+    callSceneCheck: normalizeCallSceneCheck(value.callSceneCheck),
     hostSwipeSelections,
     hostClockBaselines,
     candidateClocks,

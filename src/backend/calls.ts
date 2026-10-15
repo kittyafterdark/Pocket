@@ -253,8 +253,9 @@ export class PocketCalls {
   }
   /** One bounded decision after a new RP source; repeated refreshes never cause calls. */
   async offerIncoming(input: Input, userId?: string): Promise<void> {
+    input = { ...input, sourceKey: clean(input.sourceKey, 1_600) }
     const preferences = await this.host.preferences?.(userId), scope = this.key(input, userId)
-    if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === 'off' || !input.seed || !clean(input.sourceKey, 240) || this.incomingFlights.has(scope)) return
+    if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === 'off' || !input.seed || !clean(input.sourceKey, 1_600) || this.incomingFlights.has(scope)) return
     this.incomingFlights.add(scope)
     try {
       let state = await this.host.load(input.chatId, input.characterId, userId)
@@ -303,7 +304,7 @@ export class PocketCalls {
       await this.host.lock(input.chatId, input.characterId, async () => {
         const latest = await this.host.load(input.chatId, input.characterId, userId)
         const currentPreferences = await this.host.preferences?.(userId)
-        if (!currentPreferences?.incomingCallScenes || currentPreferences.roleplayContextMode === 'off' || latest.callSceneCheck?.sourceKey !== input.sourceKey || latest.lastReconciliation?.sourceKey && latest.lastReconciliation.sourceKey !== input.sourceKey) return
+        if (!currentPreferences?.incomingCallScenes || currentPreferences.roleplayContextMode === 'off' || latest.callSceneCheck?.sourceKey !== input.sourceKey || latest.lastReconciliation?.sourceKey && clean(latest.lastReconciliation.sourceKey, 1_600) !== input.sourceKey) return
         const latestActive = new Map(latest.conversations.flatMap(row => row.messages).filter(row => row.call?.interactive).map(row => [row.call!.callId, row.call!]))
         if ([...latestActive.values()].some(row => row.status === 'ringing' || row.status === 'connected') || !latest.contacts.some(row => row.id === contact.id)) return
         const conversation = ensureDirectConversation(latest, contact.id, this.host.timestamp(latest), prefix => this.host.id(prefix)), callId = this.host.id('call')

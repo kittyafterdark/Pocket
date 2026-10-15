@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 import { PocketCalls, normalizeCallReply, normalizeCallDecision, type CallHost } from '../src/backend/calls.js'
 import { callAvailability } from '../src/domain/call-availability.js'
+import { normalizeCallSceneCheck } from '../src/domain/phone-events.js'
 import { normalizeContactCollections, ensureDirectConversation } from '../src/domain/contacts.js'
 import { actorAsGenerationContact } from '../src/domain/actors.js'
 import { serializePocketReference } from '../src/backend/references.js'
@@ -111,6 +112,16 @@ test('incoming offers suppress stale generation after another RP turn and respec
   await cooldown.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp2' }); expect(cooldown.prompts).toHaveLength(1)
   cooldown.state().stateRevision = 3
   await cooldown.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp3' }); expect(cooldown.prompts).toHaveLength(2)
+})
+
+test('incoming source identity survives storage normalization with realistic multi-message RP keys', async () => {
+  const f = incomingFixture(), source = { ...incomingSource, sourceKey: `v4:${'message-id::assistant:current scene context. '.repeat(24)}` }
+  const load = f.host.load
+  f.host.load = async (...args) => { const state = await load(...args); state.callSceneCheck = normalizeCallSceneCheck(state.callSceneCheck); return state }
+  f.state().lastReconciliation = { sourceKey: source.sourceKey } as any
+  await f.calls.offerIncoming(source)
+  expect(f.sent.at(-1)?.type).toBe('lumiphone:call_incoming')
+  await f.calls.offerIncoming(source); expect(f.prompts).toHaveLength(1)
 })
 
 test('persona camera visibility persists, appears in RP references and governs the next spoken reply', async () => {
