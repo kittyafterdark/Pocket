@@ -2,6 +2,7 @@ import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, Po
 import { normalizeEventSuggestion } from './scheduler.js'
 import { normalizeImageSource } from './preferences.js'
 import { normalizeCallMarker } from './phone-events.js'
+import { normalizePocketVoice } from './voice-playback.js'
 
 export function normalizeAvatarFocus(value: unknown): { x: number; y: number } {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -116,6 +117,7 @@ export function normalizePocketContact(value: unknown, context: {
     description,
     identityBrief,
     phoneProfile: normalizePhoneProfile(value.phoneProfile),
+    voicePlayback: normalizePocketVoice(value.voicePlayback),
     sceneNote: clean(value.sceneNote, 600),
     avatarUrl: clean(value.avatarUrl, 2_000),
     sourceAvatarUrl: clean(value.sourceAvatarUrl, 2_000) || clean(value.avatarUrl, 2_000),
@@ -185,6 +187,12 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     status,
     imageId: clean(value.imageId, 160) || undefined,
     call: normalizeCallMarker(value.call),
+    callTurn: record(value.callTurn) && clean(value.callTurn.callId, 180) ? {
+      callId: clean(value.callTurn.callId, 180), expression: clean(value.callTurn.expression, 80) || undefined,
+      choices: (Array.isArray(value.callTurn.choices) ? value.callTurn.choices : []).map(entry => clean(entry, 180)).filter(Boolean).slice(0, 3),
+      scene: clean(value.callTurn.scene, 600) || undefined,
+    } : undefined,
+    callCamera: record(value.callCamera) && clean(value.callCamera.callId, 180) && typeof value.callCamera.visible === 'boolean' ? { callId: clean(value.callCamera.callId, 180), visible: value.callCamera.visible } : undefined,
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     origin: record(value.origin) && clean(value.origin.chatId, 180) && clean(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {

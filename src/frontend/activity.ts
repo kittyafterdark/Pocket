@@ -1,4 +1,4 @@
-import type { PocketActivity, PocketRoute } from '../types.js'
+import type { PocketActivity, PocketRoute, PhoneMessage } from '../types.js'
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { callSummary } from '../domain/phone-events.js'
 import { buildPhoneScreen, callSymbol } from './phone-screen.js'
@@ -6,6 +6,8 @@ import { isolatedActivity } from './components/activity-shadow.js'
 import { refreshActivityConnectors } from './components/activity-connectors.js'
 
 export interface ActivityRenderOptions {
+  voicePlaybackKey?: string
+  renderVoiceMessage?(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string }): HTMLElement
   includeReceipt?: boolean
   includeArtifact?: boolean
   appearance?: 'cards' | 'phone'
@@ -108,8 +110,9 @@ function buildBatchArtifact(
   const presentation = activity.presentation
   if (presentation?.kind !== 'batch' || !presentation.batchMessages?.length) return null
 
-  const primary = document.createElement('button')
-  primary.type = 'button'
+  const interactiveVoice = Boolean(options.renderVoiceMessage && presentation.batchMessages.some(row => row.format === 'voice'))
+  const primary = document.createElement(interactiveVoice ? 'div' : 'button')
+  if (primary.tagName === 'BUTTON') (primary as HTMLButtonElement).type = 'button'
   primary.className = 'pocket-inline-artifact pocket-inline-chat-transcript'
   primary.dataset.kind = 'batch'
 
@@ -141,7 +144,8 @@ function buildBatchArtifact(
 
     const bubble = document.createElement('span')
     bubble.className = 'pocket-inline-transcript-bubble'
-    bubble.textContent = `${item.format === 'voice' ? '▶ Voice message · ' : ''}${item.text}`
+    if (item.format === 'voice' && options.renderVoiceMessage) bubble.append(options.renderVoiceMessage({ ...item, id: item.messageId }))
+    else bubble.textContent = `${item.format === 'voice' ? '▶ Voice message · ' : ''}${item.text}`
 
     content.append(sender, bubble)
     row.append(avatar(item.senderName, options.avatars?.[item.senderActorId || '']), content)
@@ -149,7 +153,8 @@ function buildBatchArtifact(
   }
   primary.appendChild(transcript)
   primary.setAttribute('aria-label', `Open ${presentation.conversationTitle || activity.title || 'group chat'} in Pocket`)
-  primary.addEventListener('click', () => openRoute(activity.route))
+  if (interactiveVoice) { const open = document.createElement('button'); open.type = 'button'; open.textContent = 'Open conversation'; open.addEventListener('click', () => openRoute(activity.route)); primary.append(open) }
+  else primary.addEventListener('click', () => openRoute(activity.route))
   const group = document.createElement('div'); group.className = 'pocket-inline-batch'; group.append(primary)
   if (visible.length > 3) {
     const more = document.createElement('button'); more.type = 'button'; more.className = 'pocket-inline-transcript-more'; more.setAttribute('aria-expanded', 'false')
@@ -170,14 +175,16 @@ function buildMessageArtifact(
   const presentation = activity.presentation
   if (!presentation || !['sent', 'received', 'observed'].includes(presentation.kind)) return null
 
-  const primary = document.createElement('button')
-  primary.type = 'button'
+  const interactiveVoice = Boolean(presentation.format === 'voice' && options.renderVoiceMessage)
+  const primary = document.createElement(interactiveVoice ? 'div' : 'button')
+  if (primary.tagName === 'BUTTON') (primary as HTMLButtonElement).type = 'button'
   primary.className = 'pocket-inline-artifact'
   primary.dataset.kind = presentation.kind
 
   const copy = document.createElement('span')
   copy.className = 'pocket-inline-artifact-copy'
   copy.textContent = `${activity.presentation?.format === 'voice' ? '▶ Voice message · ' : ''}${activity.summary || ''}`
+  if (presentation.format === 'voice' && options.renderVoiceMessage) copy.replaceChildren(options.renderVoiceMessage({ id: activity.source?.messageId || activity.route.app === 'messages' && activity.route.messageId || undefined, text: activity.summary || '', senderName: presentation.senderName || activity.title, senderActorId: presentation.senderActorId }))
 
   if (presentation.call) {
     primary.classList.add('pocket-inline-call'); primary.dataset.callStatus = presentation.call.status
@@ -221,7 +228,8 @@ function buildMessageArtifact(
   }
 
   primary.setAttribute('aria-label', `Open ${presentation.kind === 'observed' ? `${observedDeviceLine(activity)} · ` : ''}${presentation.conversationTitle || activity.title} in Pocket`)
-  primary.addEventListener('click', () => openRoute(activity.route))
+  if (interactiveVoice) { const open = document.createElement('button'); open.type = 'button'; open.textContent = 'Open in Pocket'; open.addEventListener('click', () => openRoute(activity.route)); primary.append(open) }
+  else primary.addEventListener('click', () => openRoute(activity.route))
   return frameArtifact(primary, activity, options)
 }
 

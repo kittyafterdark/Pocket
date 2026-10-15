@@ -309,6 +309,7 @@ describe('conversation channel continuity', () => {
       availability: { state: 'remote' as const }, createdAt: now, updatedAt: now,
       messages: Array.from({ length: 10 }, (_, index) => ({
         id: `message-${index}`, sender: 'contact' as const, senderContactId: 'mizi', senderName: 'Mizi', senderAccent: '#ff00aa',
+        format: index === 9 ? 'voice' as const : undefined,
         text: `Message ${index} ${'chaos '.repeat(90)}`, createdAt: now, read: true, status: 'read' as const,
       })),
     }
@@ -318,9 +319,11 @@ describe('conversation channel continuity', () => {
     } as unknown as PhoneState
     const reference = createPocketReference({ state, conversation, scope: 'conversation', createdAt: now, makeId: () => 'reference-1' })
     expect(reference.messages).toHaveLength(8)
+    expect(reference.messages.at(-1)?.format).toBe('voice')
     const serialized = serializePocketReference(reference, 1_500)
     expect(serialized.length).toBeLessThanOrEqual(1_500)
     expect(serialized).toContain('POCKET USER REFERENCE — THIS TURN')
+    expect(serialized).toContain('Mizi [voice message transcript]:')
     expect(serialized).toContain('does not hand off the conversation')
     expect(serialized).toContain('Do not assume a scene actor')
     expect(serialized).toContain('=== END POCKET USER REFERENCE ===')
@@ -522,12 +525,14 @@ describe('roleplay context bridge', () => {
     const collections = normalizeContactCollections({ contacts: [{ id: 'zephyr', name: 'Zephyr', sceneNote: 'Walking toward the user.' }] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` })
     const contact = collections.contacts.find((entry) => entry.id === 'zephyr')!
     const conversation = ensureDirectConversation(collections, contact.id, now, () => 'dm-zephyr')
+    conversation.messages.push({ id: 'typed-voice', sender: 'persona', senderName: 'You', senderAccent: '', text: 'My spoken transcript.', format: 'voice', createdAt: now, read: true, status: 'sent' })
     const state = { version: 5, chatId: 'chat', characterId: 'active', characterName: 'Active', roleplayNow: now, sceneSnapshot: null, pocketPersona: { source: 'manual', linkedPersonaId: '', displayName: 'You', pronouns: '', role: 'Persona', identityBrief: '', avatarUrl: '', accent: '#8b7dff', canAppear: false, updatedAt: now }, setup: { initialized: true, dismissed: false }, ...collections, notes: [], events: [], trackers: [], notifications: [], activities: [], processedCommands: [], updatedAt: now, weather: { location: 'Hall', condition: 'Dark', temperature: 20, unit: 'C', high: 20, low: 10, details: '', updatedAt: now } } as PhoneState
     const preferences = normalizePreferences({ version: 3, roleplayContextMode: 'smart', recentRoleplayMessages: 2 })
     const context = await buildRoleplayContext({ state, contact, conversation, preferences, getMessages: async () => [{ role: 'user', content: 'old' }, { role: 'assistant', content: 'recent one' }, { role: 'user', content: 'recent two' }] })
     expect(context).not.toContain('old')
     expect(context).toContain('RECENT ROLEPLAY')
     expect(context).toContain('STORY CONTEXT')
+    expect(context).toContain('You [voice message transcript]: My spoken transcript.')
     expect(context.length).toBeLessThanOrEqual(10_500)
   })
 

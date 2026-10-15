@@ -70,18 +70,20 @@ function connector(group: ActivityConnectorEntry[], open: (activity: PocketActiv
   heading.setAttribute('aria-label', `Open ${heading.textContent} in Pocket`)
   heading.addEventListener('click', () => open(group.at(-1)!.activity))
   section.append(heading)
-  for (const { activity } of group) {
+  for (const { activity, options } of group) {
     const batch = activity.presentation?.batchMessages
-    const messages = batch?.length ? batch : [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === 'sent' ? 'sent' : 'received', text: activity.summary || '', messageId: '' }]
+    const messages = batch?.length ? batch : [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === 'sent' ? 'sent' : 'received', text: activity.summary || '', format: activity.presentation?.format, messageId: activity.route.app === 'messages' ? activity.route.messageId || '' : '' }]
     for (const message of messages) {
-      const row = document.createElement('button'); row.type = 'button'; row.className = 'pocket-connector-row'
+      const voice = message.format === 'voice' && options.renderVoiceMessage
+      const row = document.createElement(voice ? 'div' : 'button'); if (row.tagName === 'BUTTON') (row as HTMLButtonElement).type = 'button'; row.className = 'pocket-connector-row'
       row.dataset.direction = message.direction; row.dataset.pocketConnectorActivity = activity.id
       const sender = document.createElement('span'); sender.className = 'pocket-connector-sender'
       sender.textContent = activity.kind === 'call' ? 'Call' : message.senderName
       const body = document.createElement('span'); body.className = 'pocket-connector-copy'; body.textContent = message.text
+      if (voice) body.replaceChildren(options.renderVoiceMessage!({ ...message, id: message.messageId }))
       row.append(sender, body)
       row.setAttribute('aria-label', `Open ${message.senderName}'s ${activity.kind === 'call' ? 'call' : 'message'} in Pocket`)
-      row.addEventListener('click', () => open(message.messageId && activity.route.app === 'messages' ? { ...activity, route: { ...activity.route, messageId: message.messageId } } : activity))
+      if (!voice) row.addEventListener('click', () => open(message.messageId && activity.route.app === 'messages' ? { ...activity, route: { ...activity.route, messageId: message.messageId } } : activity))
       section.append(row)
     }
   }

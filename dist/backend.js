@@ -11,6 +11,65 @@ function voiceMessage(value) {
   return value === "voice";
 }
 
+// src/domain/scheduler.ts
+function record(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean(value, max) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function names(value) {
+  if (!Array.isArray(value))
+    return [];
+  const result = [];
+  const seen = new Set;
+  for (const item of value) {
+    const name = clean(item, 120).replace(/\s+/g, " ");
+    const key = name.toLocaleLowerCase();
+    if (!name || seen.has(key))
+      continue;
+    seen.add(key);
+    result.push(name);
+    if (result.length >= 16)
+      break;
+  }
+  return result;
+}
+function normalizeSuggestionWhenKind(value) {
+  return value === "exact" || value === "approximate" || value === "relative" || value === "unscheduled" ? value : "unscheduled";
+}
+function normalizeEventSuggestion(value, makeId) {
+  if (!record(value) || value.kind !== undefined && value.kind !== "event")
+    return;
+  const title = clean(value.title, 180);
+  if (!title)
+    return;
+  const status = value.status === "declined" || value.status === "scheduled" ? value.status : "pending";
+  const start = clean(value.start, 80);
+  const end = clean(value.end, 80);
+  return {
+    id: clean(value.id, 180) || makeId("suggestion"),
+    kind: "event",
+    status,
+    title,
+    description: clean(value.description, 1200),
+    whenKind: normalizeSuggestionWhenKind(value.whenKind),
+    whenText: clean(value.whenText, 240),
+    start: Number.isFinite(Date.parse(start)) ? start : undefined,
+    end: Number.isFinite(Date.parse(end)) ? end : undefined,
+    participantNames: names(value.participantNames ?? value.participants),
+    scheduledEventId: clean(value.scheduledEventId, 180) || undefined
+  };
+}
+function generatedEventSuggestion(value, makeId) {
+  const suggestion = normalizeEventSuggestion(value, makeId);
+  if (!suggestion)
+    return;
+  suggestion.status = "pending";
+  suggestion.scheduledEventId = undefined;
+  return suggestion;
+}
+
 // src/domain/trackers.ts
 var TRACKER_HISTORY_LIMIT = 40;
 var KINDS = new Set(["meter", "counter", "state", "timer"]);
@@ -18,10 +77,10 @@ var CLOCKS = new Set(["real", "roleplay"]);
 var MODES = new Set(["manual", "model", "automatic", "jev"]);
 var PRESENTATIONS = new Set(["relationship", "meter", "vitals", "segmented", "counter", "timer", "state", "compact"]);
 var TARGETS = new Set(["character", "persona", "relationship", "scene", "world", "custom"]);
-function record(value) {
+function record2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean(value, max = 160) {
+function clean2(value, max = 160) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function finite(value, fallback) {
@@ -29,14 +88,14 @@ function finite(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 function iso(value, fallback) {
-  const text = clean(value, 80);
+  const text = clean2(value, 80);
   return Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 function trackerId(prefix = "trk") {
   return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
 }
 function trackerKey(value, fallback = "tracker") {
-  const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const key = clean2(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return key || fallback;
 }
 function uniqueTrackerKey(label, trackers) {
@@ -50,7 +109,7 @@ function uniqueTrackerKey(label, trackers) {
 function validateTrackerConfig(value) {
   if (value.updateMode === "jev")
     validateJevTracker(value);
-  if (!clean(value.label, 120))
+  if (!clean2(value.label, 120))
     throw new Error("Give your tracker a name.");
   if (!KINDS.has(value.kind))
     throw new Error("Choose a tracker type.");
@@ -58,7 +117,7 @@ function validateTrackerConfig(value) {
   if (!allowed.includes(String(value.presentation)))
     throw new Error("Choose a display that matches this tracker type.");
   if (value.kind === "state") {
-    const states = Array.isArray(value.states) ? value.states.map((entry) => clean(entry, 80)).filter(Boolean) : [];
+    const states = Array.isArray(value.states) ? value.states.map((entry) => clean2(entry, 80)).filter(Boolean) : [];
     if (!states.length || !states.includes(String(value.state)))
       throw new Error("Choose a current state from the allowed states.");
     if (value.updateMode === "automatic")
@@ -86,27 +145,27 @@ function validateTrackerConfig(value) {
     throw new Error("Choose a non-zero change per hour for time updates.");
   if (value.updateMode === "model" && value.allowModelWrite !== true)
     throw new Error("Story updates require model changes to be enabled.");
-  if (!record(value.target) || !TARGETS.has(value.target.type) || !clean(value.target.label))
+  if (!record2(value.target) || !TARGETS.has(value.target.type) || !clean2(value.target.label))
     throw new Error("Choose who or what this tracker belongs to.");
   for (const band of Array.isArray(value.bands) ? value.bands : []) {
-    if (!record(band) || !clean(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
+    if (!record2(band) || !clean2(band.label) || !Number.isFinite(Number(band.min)) || !Number.isFinite(Number(band.max)) || Number(band.max) <= Number(band.min) || Number(band.min) < Number(value.min) || Number(band.max) > Number(value.max))
       throw new Error("Each band needs a label and a valid range inside the tracker range.");
   }
 }
 function normalizeTrackerTarget(value, fallback = { type: "custom", id: "", label: "Unassigned" }) {
-  if (!record(value))
+  if (!record2(value))
     return fallback;
   const type = TARGETS.has(value.type) ? value.type : fallback.type;
-  return { type, id: clean(value.id, 180), label: clean(value.label, 160) || fallback.label };
+  return { type, id: clean2(value.id, 180), label: clean2(value.label, 160) || fallback.label };
 }
 function normalizeBands(value, min, max, color) {
   const bands = (Array.isArray(value) ? value : []).flatMap((item) => {
-    if (!record(item))
+    if (!record2(item))
       return [];
     const bandMin = Math.max(min, Math.min(max, finite(item.min, min)));
     const bandMax = Math.max(bandMin, Math.min(max, finite(item.max, max)));
-    const label = clean(item.label, 80);
-    return label ? [{ min: bandMin, max: bandMax, label, color: clean(item.color, 40) || color, meaning: item.meaning === "good" || item.meaning === "bad" ? item.meaning : "neutral" }] : [];
+    const label = clean2(item.label, 80);
+    return label ? [{ min: bandMin, max: bandMax, label, color: clean2(item.color, 40) || color, meaning: item.meaning === "good" || item.meaning === "bad" ? item.meaning : "neutral" }] : [];
   }).slice(0, 12);
   if (bands.length || max <= min)
     return bands;
@@ -119,29 +178,29 @@ function normalizeBands(value, min, max, color) {
 }
 function normalizeHistory(value) {
   return (Array.isArray(value) ? value : []).flatMap((item) => {
-    if (!record(item))
+    if (!record2(item))
       return [];
     const operation = ["set", "add", "subtract", "reset", "set_state", "automatic"].includes(String(item.operation)) ? item.operation : "set";
     const source = item.source === "model" || item.source === "tag" || item.source === "automatic" || item.source === "migration" || item.source === "jev" ? item.source : "user";
     const createdAt = iso(item.createdAt, new Date().toISOString());
     return [{
-      id: clean(item.id, 160) || trackerId("hist"),
-      previous: typeof item.previous === "string" ? clean(item.previous, 160) : finite(item.previous, 0),
-      next: typeof item.next === "string" ? clean(item.next, 160) : finite(item.next, 0),
+      id: clean2(item.id, 160) || trackerId("hist"),
+      previous: typeof item.previous === "string" ? clean2(item.previous, 160) : finite(item.previous, 0),
+      next: typeof item.next === "string" ? clean2(item.next, 160) : finite(item.next, 0),
       operation,
       amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
-      reason: clean(item.reason, 300),
+      reason: clean2(item.reason, 300),
       source,
       createdAt,
-      roleplayAt: clean(item.roleplayAt, 80) || undefined
+      roleplayAt: clean2(item.roleplayAt, 80) || undefined
     }];
   }).slice(-TRACKER_HISTORY_LIMIT);
 }
 function normalizeTracker(value, context = {}) {
-  if (!record(value))
+  if (!record2(value))
     return null;
   const now = context.now || new Date().toISOString();
-  const label = clean(value.label, 120);
+  const label = clean2(value.label, 120);
   if (!label)
     return null;
   const legacy = !KINDS.has(value.kind);
@@ -150,14 +209,14 @@ function normalizeTracker(value, context = {}) {
   const max = Math.max(min, finite(value.max, kind === "counter" ? 999999 : 100));
   const numeric = Math.max(min, Math.min(max, finite(value.value, min)));
   const initialValue = Math.max(min, Math.min(max, finite(value.initialValue, numeric)));
-  const color = clean(value.color, 40) || "#8b7dff";
+  const color = clean2(value.color, 40) || "#8b7dff";
   const ratePerHour = Math.max(-1e5, Math.min(1e5, finite(value.ratePerHour, 0)));
   const target = legacy ? { type: "custom", id: "", label: "Unassigned" } : normalizeTrackerTarget(value.target, context.characterId ? { type: "character", id: context.characterId, label: context.characterName || "Character" } : { type: "custom", id: "", label: "Unassigned" });
   const clock = legacy ? "real" : CLOCKS.has(value.clock) ? value.clock : "real";
   const updateMode = MODES.has(value.updateMode) ? value.updateMode : ratePerHour ? "automatic" : "manual";
   const presentation = PRESENTATIONS.has(value.presentation) ? value.presentation : kind === "counter" ? "counter" : kind === "timer" ? "timer" : kind === "state" ? "state" : "meter";
   const base = {
-    id: clean(value.id, 120) || trackerId(),
+    id: clean2(value.id, 120) || trackerId(),
     key: trackerKey(value.key || label),
     label,
     kind,
@@ -165,13 +224,13 @@ function normalizeTracker(value, context = {}) {
     initialValue,
     min,
     max,
-    unit: clean(value.unit, 40),
+    unit: clean2(value.unit, 40),
     color,
     target,
     updateMode,
     clock,
     allowModelWrite: legacy || updateMode === "jev" ? false : value.allowModelWrite === true,
-    modelPrompt: clean(value.modelPrompt, 2000),
+    modelPrompt: clean2(value.modelPrompt, 2000),
     jev: normalizeJevConfig(value.jev),
     jevResult: normalizeJevResult(value.jevResult),
     presentation,
@@ -180,16 +239,16 @@ function normalizeTracker(value, context = {}) {
     ratePerHour,
     lastUpdated: iso(value.lastUpdated, now),
     lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, "")),
-    pausedReason: clean(value.pausedReason, 240),
+    pausedReason: clean2(value.pausedReason, 240),
     clockPaused: value.clockPaused === true,
     visibleToModel: value.visibleToModel !== false,
     createdAt: iso(value.createdAt, now),
     updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
   };
   if (kind === "state") {
-    const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean(entry, 80)).filter(Boolean).slice(0, 24);
-    const initialState = clean(value.initialState, 80) || states[0] || "Unknown";
-    const state = clean(value.state, 80) || initialState;
+    const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean2(entry, 80)).filter(Boolean).slice(0, 24);
+    const initialState = clean2(value.initialState, 80) || states[0] || "Unknown";
+    const state = clean2(value.state, 80) || initialState;
     return { ...base, kind, state, initialState, states: states.includes(state) ? states : [...states, state].slice(0, 24) };
   }
   if (kind === "counter")
@@ -209,7 +268,7 @@ function applyTrackerOperation(tracker, input) {
   if (tracker.kind === "state") {
     if (input.operation !== "set_state" && input.operation !== "reset")
       throw new Error("State trackers accept set_state or reset.");
-    const next = input.operation === "reset" ? tracker.initialState : clean(input.state, 80);
+    const next = input.operation === "reset" ? tracker.initialState : clean2(input.state, 80);
     if (!next)
       throw new Error("set_state requires a state value.");
     if (tracker.states.length && !tracker.states.includes(next))
@@ -220,10 +279,10 @@ function applyTrackerOperation(tracker, input) {
       previous: tracker.state,
       next,
       operation: input.operation,
-      reason: clean(input.reason, 300),
+      reason: clean2(input.reason, 300),
       source: input.source,
       createdAt: now,
-      roleplayAt: clean(input.roleplayNow, 80) || undefined
+      roleplayAt: clean2(input.roleplayNow, 80) || undefined
     });
   }
   const amount = finite(input.amount, 0);
@@ -238,10 +297,10 @@ function applyTrackerOperation(tracker, input) {
     next,
     operation: input.operation,
     amount: input.operation === "reset" ? undefined : amount,
-    reason: clean(input.reason, 300),
+    reason: clean2(input.reason, 300),
     source: input.source,
     createdAt: now,
-    roleplayAt: clean(input.roleplayNow, 80) || undefined
+    roleplayAt: clean2(input.roleplayNow, 80) || undefined
   });
 }
 function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOString()) {
@@ -288,7 +347,7 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
       reason: tracker.clock === "roleplay" ? "Roleplay time advanced" : "Real time advanced",
       source: "automatic",
       createdAt: wallNow,
-      roleplayAt: clean(roleplayNow, 80) || undefined
+      roleplayAt: clean2(roleplayNow, 80) || undefined
     });
   return { tracker: next, changed: true };
 }
@@ -304,17 +363,17 @@ function setTrackerClockPaused(tracker, paused, roleplayNow, wallNow = new Date(
 // src/domain/jev.ts
 var TYPESAFE_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
-var clean2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var clean3 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
 function normalizeJevSettings(value) {
   const raw = object(value) ? value : {};
   const knownProvider = raw.provider === "llm" || raw.provider === "typesafe";
-  const model = clean2(raw.model, 100);
+  const model = clean3(raw.model, 100);
   return { enabled: knownProvider && raw.enabled === true, provider: raw.provider === "typesafe" ? "typesafe" : "llm", model: /^jev-[a-zA-Z0-9._-]+$/.test(model) ? model : "jev-latest", autoAfterTurn: knownProvider && raw.autoAfterTurn === true };
 }
 function normalizeJevConfig(value) {
   const raw = object(value) ? value : {};
-  const levels = (Array.isArray(raw.levels) ? raw.levels : []).flatMap((entry) => object(entry) && typeof entry.value === "number" && Number.isFinite(entry.value) && clean2(entry.label, 160) ? [{ value: entry.value, label: clean2(entry.label, 160) }] : []).slice(0, 10);
-  return { question: clean2(raw.question, 240), levels, minConfidence: typeof raw.minConfidence === "number" && Number.isFinite(raw.minConfidence) ? Math.min(1, Math.max(0, raw.minConfidence)) : 0.65 };
+  const levels = (Array.isArray(raw.levels) ? raw.levels : []).flatMap((entry) => object(entry) && typeof entry.value === "number" && Number.isFinite(entry.value) && clean3(entry.label, 160) ? [{ value: entry.value, label: clean3(entry.label, 160) }] : []).slice(0, 10);
+  return { question: clean3(raw.question, 240), levels, minConfidence: typeof raw.minConfidence === "number" && Number.isFinite(raw.minConfidence) ? Math.min(1, Math.max(0, raw.minConfidence)) : 0.65 };
 }
 function validateJevTracker(tracker) {
   const raw = object(tracker.jev) ? tracker.jev : {};
@@ -340,7 +399,7 @@ function validateJevTracker(tracker) {
 function normalizeJevResult(value) {
   if (!object(value) || !["applied", "unchanged", "uncertain", "invalid"].includes(String(value.status)))
     return;
-  return { sourceKey: clean2(value.sourceKey, 200), status: value.status, evaluatedAt: clean2(value.evaluatedAt, 80), message: clean2(value.message, 300), confidence: typeof value.confidence === "number" && Number.isFinite(value.confidence) ? value.confidence : undefined };
+  return { sourceKey: clean3(value.sourceKey, 200), status: value.status, evaluatedAt: clean3(value.evaluatedAt, 80), message: clean3(value.message, 300), confidence: typeof value.confidence === "number" && Number.isFinite(value.confidence) ? value.confidence : undefined };
 }
 function jevQuestion(tracker) {
   validateJevTracker(tracker);
@@ -499,7 +558,7 @@ var THEME_COLORS = {
     chatSecondary: "#000000"
   }
 };
-function record2(value) {
+function record3(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function text(value, fallback = "", max = 12000) {
@@ -516,7 +575,7 @@ function defaultWallpaper() {
   return { source: null, fit: "cover", focalX: 0.5, focalY: 0.5, scrim: 0.22 };
 }
 function normalizeImageSource(value) {
-  const raw = record2(value);
+  const raw = record3(value);
   if (raw.kind === "builtin") {
     const wallpaperId = text(raw.wallpaperId, "", 100);
     return builtinWallpaper(wallpaperId) ? { kind: "builtin", wallpaperId } : null;
@@ -536,7 +595,7 @@ function normalizeImageSource(value) {
   return null;
 }
 function normalizeWallpaper(value, legacyUrl = "") {
-  const raw = record2(value);
+  const raw = record3(value);
   const fit = raw.fit === "contain" || raw.fit === "stretch" ? raw.fit : "cover";
   const migratedUrl = text(legacyUrl, "", 2000);
   return {
@@ -555,7 +614,7 @@ function themePalette(theme) {
   return structuredClone(THEME_COLORS[theme === "custom" ? "midnight" : theme]);
 }
 function normalizeLauncherPosition(value) {
-  const raw = record2(value);
+  const raw = record3(value);
   const x = Number(raw.x);
   const y = Number(raw.y);
   if (!Number.isFinite(x) || !Number.isFinite(y))
@@ -569,6 +628,10 @@ function defaultPreferences() {
     ttsVoiceURI: "",
     ttsConnectionId: "",
     ttsConnectionOptions: {},
+    voicePlaybackProvider: "pocket",
+    readOwnVoiceMessages: true,
+    briefCallScenes: false,
+    incomingCallScenes: false,
     theme: "midnight",
     colors: themePalette("midnight"),
     homeWallpaper: defaultWallpaper(),
@@ -611,14 +674,14 @@ function defaultPreferences() {
 }
 function normalizePreferences(value) {
   const fallback = defaultPreferences();
-  const raw = record2(value);
+  const raw = record3(value);
   const version = Number(raw.version ?? 0);
   if (Number.isFinite(version) && version > PREFERENCES_VERSION)
     return fallback;
   const allowedThemes = new Set(["midnight", "porcelain", "rose", "forest", "pink", "custom"]);
   const theme = allowedThemes.has(raw.theme) ? raw.theme : fallback.theme;
   const preset = themePalette(theme);
-  const colors = record2(raw.colors);
+  const colors = record3(raw.colors);
   const legacyAccent = safeColor(raw.accent, preset.accent);
   const legacyBezel = safeColor(raw.bezelColor, preset.bezel);
   const palette = {
@@ -632,13 +695,13 @@ function normalizePreferences(value) {
     chatPrimary: safeColor(colors.chatPrimary, preset.chatPrimary),
     chatSecondary: safeColor(colors.chatSecondary, preset.chatSecondary)
   };
-  const manual = record2(raw.manualVisualProfile);
+  const manual = record3(raw.manualVisualProfile);
   const allowedAnimations = new Set(["spring", "slide", "fade", "none"]);
   const history = (Array.isArray(raw.generationHistory) ? raw.generationHistory : []).slice(-24).flatMap((entry) => {
-    const item = record2(entry);
+    const item = record3(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "call-reply", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -657,14 +720,14 @@ function normalizePreferences(value) {
       error: text(item.error, "", 500) || undefined
     }];
   });
-  const rawPersonaAppearance = record2(raw.personaAppearance);
+  const rawPersonaAppearance = record3(raw.personaAppearance);
   const personaAppearance = {};
   for (const [personaId, value] of Object.entries(rawPersonaAppearance).slice(0, 32)) {
     if (!personaId || personaId.length > 180)
       continue;
-    const item = record2(value);
+    const item = record3(value);
     const overrideTheme = allowedThemes.has(item.theme) ? item.theme : theme;
-    const overrideColors = record2(item.colors);
+    const overrideColors = record3(item.colors);
     const overridePreset = themePalette(overrideTheme);
     personaAppearance[personaId] = {
       enabled: bool(item.enabled, false),
@@ -691,8 +754,12 @@ function normalizePreferences(value) {
     theme,
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
+    voicePlaybackProvider: raw.voicePlaybackProvider === "choir" ? "choir" : "pocket",
+    readOwnVoiceMessages: bool(raw.readOwnVoiceMessages, true),
+    briefCallScenes: bool(raw.briefCallScenes, false),
+    incomingCallScenes: bool(raw.incomingCallScenes, false),
     ttsConnectionId: text(raw.ttsConnectionId, "", 180),
-    ttsConnectionOptions: Object.fromEntries(Object.entries(record2(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record2(value).voice, "", 500), model: text(record2(value).model, "", 500) }])),
+    ttsConnectionOptions: Object.fromEntries(Object.entries(record3(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record3(value).voice, "", 500), model: text(record3(value).model, "", 500) }])),
     colors: palette,
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text(raw.wallpaperImageUrl, "", 2000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text(raw.chatWallpaperImageUrl, "", 2000)),
@@ -735,128 +802,19 @@ function normalizePreferences(value) {
       model: text(manual.model, "", 500),
       connectionId: text(manual.connectionId, "", 200),
       loras: (Array.isArray(manual.loras) ? manual.loras : []).slice(0, 24).flatMap((entry) => {
-        const item = record2(entry);
+        const item = record3(entry);
         const name = text(item.name, "", 500);
         if (!name)
           return [];
         return [{ name, weight: numberIn(item.weight, 1, -4, 4) }];
       }),
-      parameters: record2(manual.parameters)
+      parameters: record3(manual.parameters)
     }
   };
 }
 function isFuturePreferences(value) {
-  const raw = record2(value);
+  const raw = record3(value);
   return Number.isFinite(Number(raw.version)) && Number(raw.version) > PREFERENCES_VERSION;
-}
-
-// src/domain/clock-label.ts
-var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
-function clockDayPart(value) {
-  if (typeof value !== "string")
-    return "";
-  const key = value.trim().toLowerCase().replace(/[_-]/g, " ");
-  const match = [...CLOCK_DAY_PART_KEYS].sort((a, b) => b.length - a.length).find((part) => key === part.replaceAll("_", " ") || key.startsWith(part.replaceAll("_", " ") + ","));
-  return match || "";
-}
-function clockLabel(value, dayPart) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  const key = clockDayPart(dayPart) || clockDayPart(raw);
-  if (key) {
-    const label = key.replaceAll("_", " ");
-    return raw.toLowerCase() === label ? raw : label[0].toUpperCase() + label.slice(1);
-  }
-  if (/^(?:[01]?\d|2[0-3]):[0-5]\d(?:\s*[AP]M)?$/i.test(raw) || /^[+-]?\d{1,4} minutes?$/.test(raw))
-    return raw;
-  return "";
-}
-
-// src/domain/projection.ts
-var MODEL_CONTEXT_BUDGET = 5600;
-function safeTime(value) {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
-}
-function serializeWithinBudget(value, budget = MODEL_CONTEXT_BUDGET) {
-  let serialized = JSON.stringify(value);
-  if (serialized.length <= budget)
-    return serialized;
-  const compact = { ...value };
-  const shrinkOrder = ["contacts", "pinnedNotes", "upcoming", "trackers"];
-  for (const key of shrinkOrder) {
-    const entries = Array.isArray(compact[key]) ? compact[key] : [];
-    while (entries.length && serialized.length > budget) {
-      entries.pop();
-      serialized = JSON.stringify(compact);
-    }
-  }
-  if (serialized.length <= budget)
-    return serialized;
-  const fallback = JSON.stringify({ roleplayNow: String(value.roleplayNow || "").slice(0, Math.max(0, budget - 24)), truncated: true });
-  if (fallback.length <= budget)
-    return fallback;
-  return "{}";
-}
-function projectedRoleplayTime(state) {
-  if (state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" && state.roleplayClockLabel) {
-    return state.roleplayClockLabel;
-  }
-  return state.roleplayNow;
-}
-function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
-  const contacts = state.contacts.filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned || contact.relationship === "close").slice(0, 12).map((contact) => ({
-    id: contact.id.slice(0, 180),
-    name: contact.name.slice(0, 120),
-    role: contact.role.slice(0, 120),
-    source: contact.source.kind,
-    relationship: contact.relationship,
-    inScene: contact.presence.inScene,
-    pinned: contact.contextPolicy.pinned,
-    identityBrief: (contact.identityBrief || contact.description || "").slice(0, 360),
-    sceneNote: (contact.sceneNote || "").slice(0, 240)
-  }));
-  const discoveredActors = state.discoveredActors || [];
-  const knownContactIds = new Set(discoveredActors.map((actor) => actor.promotedContactId).filter(Boolean));
-  for (const actor of discoveredActors.filter((entry) => entry.relationship === "close" && !knownContactIds.has(entry.promotedContactId)).slice(0, Math.max(0, 12 - contacts.length))) {
-    contacts.push({
-      id: actor.id.slice(0, 180),
-      name: actor.displayName.slice(0, 120),
-      role: "Discovered actor",
-      source: "discovered",
-      relationship: "close",
-      inScene: false,
-      pinned: false,
-      identityBrief: "",
-      sceneNote: ""
-    });
-  }
-  const trackers = state.trackers.filter((tracker) => tracker.visibleToModel).slice(0, 12).map((tracker) => {
-    const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
-    const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
-    const band = tracker.kind === "state" ? "" : trackerBand(tracker)?.label || "";
-    return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}${tracker.updateMode === "model" && tracker.allowModelWrite && tracker.modelPrompt ? ` \xB7 Update guidance: ${JSON.stringify(tracker.modelPrompt.slice(0, 2000))}` : ""}`;
-  });
-  const upcoming = state.events.filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
-  return serializeWithinBudget({
-    roleplayNow: projectedRoleplayTime(state),
-    roleplayClock: {
-      source: state.roleplayClockSource || "legacy",
-      precision: state.roleplayClockPrecision || "unknown",
-      label: state.roleplayClockLabel || ""
-    },
-    stateRevision: state.stateRevision || 0,
-    weather: {
-      location: state.weather.location.slice(0, 160),
-      condition: state.weather.condition.slice(0, 120),
-      temperature: state.weather.temperature,
-      unit: state.weather.unit,
-      details: state.weather.details.slice(0, 300)
-    },
-    trackers,
-    upcoming,
-    pinnedNotes: state.notes.filter((note) => note.pinned).slice(0, 5).map((note) => `${note.title.slice(0, 120)}: ${note.body.slice(0, 320)}`),
-    contacts
-  }, budget);
 }
 
 // src/domain/phone-events.ts
@@ -865,148 +823,58 @@ function assertPersonaAuthorship(state, source, personaSender) {
     throw new Error("Roleplay mode: only the user can send as the Pocket Persona. Enable Impersonation in this chat to let the model write your side.");
   }
 }
+function normalizeCallSceneCheck(value) {
+  if (!value || typeof value !== "object")
+    return;
+  const raw = value;
+  return {
+    sourceKey: typeof raw.sourceKey === "string" ? raw.sourceKey.trim().slice(0, 1600) : "",
+    lastOfferRevision: typeof raw.lastOfferRevision === "number" && Number.isFinite(raw.lastOfferRevision) ? Math.max(-10, Math.round(raw.lastOfferRevision)) : -10
+  };
+}
 function normalizeCallMarker(value) {
   if (!value || typeof value !== "object")
     return;
   const raw = value;
-  if (!["connected", "ended", "missed"].includes(String(raw.status)) || typeof raw.callId !== "string" || !raw.callId.trim())
+  if (!["connected", "ended", "missed"].includes(String(raw.status)) && !(raw.status === "ringing" && raw.interactive === true) || typeof raw.callId !== "string" || !raw.callId.trim())
     return;
   const duration = raw.durationSeconds;
+  const opening = raw.incomingOpening && typeof raw.incomingOpening === "object" ? raw.incomingOpening : null;
+  const follow = raw.followUp && typeof raw.followUp === "object" ? raw.followUp : null;
+  const followUp = raw.interactive === true && follow && (follow.when === "now" || follow.when === "later") && typeof follow.text === "string" && follow.text.trim() ? { when: follow.when, text: follow.text.trim().slice(0, 1000), status: follow.status === "sent" || follow.status === "cancelled" ? follow.status : "pending", availabilityKey: typeof follow.availabilityKey === "string" ? follow.availabilityKey.slice(0, 4000) : "" } : undefined;
   return {
     callId: raw.callId.trim().slice(0, 180),
     status: raw.status,
     speakerphone: raw.speakerphone === true,
+    direction: raw.interactive === true && raw.direction === "incoming" ? "incoming" : raw.interactive === true ? "outgoing" : undefined,
+    personaCamera: raw.mode === "video" && raw.interactive === true ? raw.personaCamera !== false : undefined,
+    incomingOpening: raw.interactive === true && raw.direction === "incoming" && raw.status === "ringing" && opening && typeof opening.text === "string" && opening.text.trim() ? { text: opening.text.trim().slice(0, 4000), scene: typeof opening.scene === "string" ? opening.scene.trim().slice(0, 600) : "", expression: typeof opening.expression === "string" ? opening.expression.slice(0, 80) : "" } : undefined,
+    mode: raw.mode === "video" ? "video" : raw.mode === "voice" ? "voice" : undefined,
+    interactive: raw.interactive === true || undefined,
+    followUp,
+    outcome: raw.status === "missed" && (raw.outcome === "declined" || raw.outcome === "ignored") || raw.status === "ended" && raw.outcome === "cancelled" ? raw.outcome : undefined,
     durationSeconds: raw.status === "ended" && typeof duration === "number" && Number.isFinite(duration) && duration >= 0 && duration <= 86400 ? Math.round(duration) : undefined
   };
 }
 function callSummary(call) {
-  return `${call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call"}${call.speakerphone ? " \xB7 Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` \xB7 ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
+  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? call.direction === "incoming" ? "Incoming phone call" : "Calling\u2026" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
+  return `${label}${call.speakerphone ? " \xB7 Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` \xB7 ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
 }
 
-// src/domain/navigation.ts
-var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings"]);
-function shortId(value) {
-  if (typeof value !== "string")
+// src/domain/voice-playback.ts
+function normalizePocketVoice(raw) {
+  if (!raw || typeof raw !== "object")
     return;
-  const clean = value.trim().slice(0, 180);
-  return clean || undefined;
-}
-function normalizePocketRoute(value, fallback = { app: "home" }) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return fallback;
-  const raw = value;
-  const app = typeof raw.app === "string" && APPS.has(raw.app) ? raw.app : fallback.app;
-  if (app === "messages")
-    return {
-      app,
-      conversationId: shortId(raw.conversationId),
-      contactId: shortId(raw.contactId),
-      messageId: shortId(raw.messageId),
-      view: raw.view === "new-group" || raw.view === "group-editor" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
-    };
-  if (app === "contacts")
-    return {
-      app,
-      contactId: shortId(raw.contactId),
-      groupId: shortId(raw.groupId),
-      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
-    };
-  if (app === "trackers")
-    return {
-      app,
-      trackerId: shortId(raw.trackerId),
-      view: raw.view === "config" ? "config" : raw.view === "detail" ? "detail" : undefined
-    };
-  if (app === "calendar")
-    return { app, eventId: shortId(raw.eventId) };
-  if (app === "notes")
-    return { app, noteId: shortId(raw.noteId) };
-  if (app === "gallery")
-    return { app, imageId: shortId(raw.imageId) };
-  if (app === "settings")
-    return { app, section: shortId(raw.section) };
-  if (app === "camera")
-    return { app, contactId: shortId(raw.contactId), ...raw.draft === true ? { draft: true } : {} };
-  if (app === "weather" || app === "notifications" || app === "home")
-    return { app };
-  return fallback;
-}
-function legacyActionRoute(app, action) {
-  const id = shortId(action);
-  if (app === "messages")
-    return { app, contactId: id };
-  if (app === "contacts")
-    return { app, contactId: id, view: id ? "detail" : "list" };
-  if (app === "trackers")
-    return { app, trackerId: id, view: id ? "detail" : undefined };
-  if (app === "calendar")
-    return { app, eventId: id };
-  if (app === "notes")
-    return { app, noteId: id };
-  if (app === "gallery")
-    return { app, imageId: id };
-  if (app === "settings")
-    return { app, section: id };
-  return { app };
-}
-
-// src/domain/scheduler.ts
-function record3(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function clean3(value, max) {
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
-function names(value) {
-  if (!Array.isArray(value))
-    return [];
-  const result = [];
-  const seen = new Set;
-  for (const item of value) {
-    const name = clean3(item, 120).replace(/\s+/g, " ");
-    const key = name.toLocaleLowerCase();
-    if (!name || seen.has(key))
-      continue;
-    seen.add(key);
-    result.push(name);
-    if (result.length >= 16)
-      break;
-  }
-  return result;
-}
-function normalizeSuggestionWhenKind(value) {
-  return value === "exact" || value === "approximate" || value === "relative" || value === "unscheduled" ? value : "unscheduled";
-}
-function normalizeEventSuggestion(value, makeId) {
-  if (!record3(value) || value.kind !== undefined && value.kind !== "event")
-    return;
-  const title = clean3(value.title, 180);
-  if (!title)
-    return;
-  const status = value.status === "declined" || value.status === "scheduled" ? value.status : "pending";
-  const start = clean3(value.start, 80);
-  const end = clean3(value.end, 80);
+  const value = raw;
+  const clean = (key, max = 180) => typeof value[key] === "string" ? value[key].trim().slice(0, max) : "";
   return {
-    id: clean3(value.id, 180) || makeId("suggestion"),
-    kind: "event",
-    status,
-    title,
-    description: clean3(value.description, 1200),
-    whenKind: normalizeSuggestionWhenKind(value.whenKind),
-    whenText: clean3(value.whenText, 240),
-    start: Number.isFinite(Date.parse(start)) ? start : undefined,
-    end: Number.isFinite(Date.parse(end)) ? end : undefined,
-    participantNames: names(value.participantNames ?? value.participants),
-    scheduledEventId: clean3(value.scheduledEventId, 180) || undefined
+    source: value.source === "custom" || value.source === "choir" ? value.source : "default",
+    choirSpeaker: clean("choirSpeaker", 120),
+    voiceURI: clean("voiceURI", 500),
+    connectionId: clean("connectionId"),
+    voice: clean("voice"),
+    model: clean("model")
   };
-}
-function generatedEventSuggestion(value, makeId) {
-  const suggestion = normalizeEventSuggestion(value, makeId);
-  if (!suggestion)
-    return;
-  suggestion.status = "pending";
-  suggestion.scheduledEventId = undefined;
-  return suggestion;
 }
 
 // src/domain/contacts.ts
@@ -1111,6 +979,7 @@ function normalizePocketContact(value, context) {
     description,
     identityBrief,
     phoneProfile: normalizePhoneProfile(value.phoneProfile),
+    voicePlayback: normalizePocketVoice(value.voicePlayback),
     sceneNote: clean4(value.sceneNote, 600),
     avatarUrl: clean4(value.avatarUrl, 2000),
     sourceAvatarUrl: clean4(value.sourceAvatarUrl, 2000) || clean4(value.avatarUrl, 2000),
@@ -1181,6 +1050,13 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
     status,
     imageId: clean4(value.imageId, 160) || undefined,
     call: normalizeCallMarker(value.call),
+    callTurn: record4(value.callTurn) && clean4(value.callTurn.callId, 180) ? {
+      callId: clean4(value.callTurn.callId, 180),
+      expression: clean4(value.callTurn.expression, 80) || undefined,
+      choices: (Array.isArray(value.callTurn.choices) ? value.callTurn.choices : []).map((entry) => clean4(entry, 180)).filter(Boolean).slice(0, 3),
+      scene: clean4(value.callTurn.scene, 600) || undefined
+    } : undefined,
+    callCamera: record4(value.callCamera) && clean4(value.callCamera.callId, 180) && typeof value.callCamera.visible === "boolean" ? { callId: clean4(value.callCamera.callId, 180), visible: value.callCamera.visible } : undefined,
     imageUrl: clean4(value.imageUrl, 2000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     origin: record4(value.origin) && clean4(value.origin.chatId, 180) && clean4(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {
@@ -1425,225 +1301,6 @@ function normalizeContactCollections(value, context) {
   if (current)
     ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId);
   return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy };
-}
-
-// src/domain/contact-groups.ts
-function normalizeContactGroups(value, validIds, now) {
-  const ids = new Set(validIds), seen = new Set;
-  return (Array.isArray(value) ? value : []).slice(0, 80).flatMap((raw) => {
-    if (!raw || typeof raw !== "object")
-      return [];
-    const id = typeof raw.id === "string" ? raw.id.trim().slice(0, 180) : "";
-    const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 120) : "";
-    if (!id || !name || seen.has(id))
-      return [];
-    seen.add(id);
-    return [{ id, name, memberIds: [...new Set((Array.isArray(raw.memberIds) ? raw.memberIds : []).filter((id) => typeof id === "string" && ids.has(id)))], bankGroupId: typeof raw.bankGroupId === "string" ? raw.bankGroupId.slice(0, 180) : undefined, createdAt: Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : now, updatedAt: Number.isFinite(Date.parse(raw.updatedAt)) ? raw.updatedAt : now }];
-  });
-}
-function saveContactGroup(groups, input, validIds, now, makeId) {
-  const name = input.name.trim().slice(0, 120);
-  if (!name)
-    throw new Error("Give the group a name.");
-  const memberIds = [...new Set(input.memberIds)];
-  if (!memberIds.length)
-    throw new Error("Choose at least one member.");
-  if (memberIds.some((id) => !validIds.includes(id)))
-    throw new Error("A selected member no longer exists. Refresh the group.");
-  const existing = input.id ? groups.find((group) => group.id === input.id) : undefined;
-  if (input.id && !existing)
-    throw new Error("That group no longer exists.");
-  const group = { id: existing?.id || makeId("cast"), name, memberIds, bankGroupId: input.bankGroupId || existing?.bankGroupId, createdAt: existing?.createdAt || now, updatedAt: now };
-  if (!existing && groups.length >= 80)
-    throw new Error("The group limit has been reached.");
-  if (existing)
-    Object.assign(existing, group);
-  else
-    groups.push(group);
-  return group;
-}
-
-// src/domain/npc-bank.ts
-var NPC_BANK_VERSION = 2;
-var NPC_BANK_PATH = "device/npc-bank.json";
-var MAX_NPC_BANK_ENTRIES = 240;
-function record5(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function clean5(value, max) {
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
-function percentage2(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
-}
-function phoneProfile(value) {
-  if (!record5(value))
-    return;
-  const personality = clean5(value.personality, 600);
-  const appearance = clean5(value.appearance, 360);
-  const textingStyle = clean5(value.textingStyle, 600);
-  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
-}
-function timestamp2(value, fallback) {
-  const candidate = clean5(value, 40);
-  return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
-}
-function accent(value, fallback = "#8b7dff") {
-  const candidate = clean5(value, 20);
-  return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : fallback;
-}
-function normalizeNpcBankName(value) {
-  return clean5(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
-}
-function emptyNpcBank(now = new Date().toISOString()) {
-  return { version: NPC_BANK_VERSION, entries: [], groups: [], updatedAt: now };
-}
-function isFutureNpcBank(value) {
-  return record5(value) && Number(value.version) > NPC_BANK_VERSION;
-}
-function normalizeNpcBank(value, now = new Date().toISOString()) {
-  if (!record5(value) || isFutureNpcBank(value))
-    return emptyNpcBank(now);
-  const seen = new Set;
-  const entries = (Array.isArray(value.entries) ? value.entries : []).slice(0, MAX_NPC_BANK_ENTRIES).flatMap((raw) => {
-    if (!record5(raw))
-      return [];
-    const name = clean5(raw.name, 120).replace(/\s+/g, " ");
-    const normalizedName = normalizeNpcBankName(name);
-    const entryId = clean5(raw.id, 180);
-    if (!name || !normalizedName || !entryId || seen.has(entryId))
-      return [];
-    seen.add(entryId);
-    const aliases = [...new Set((Array.isArray(raw.aliases) ? raw.aliases : []).map((item) => clean5(item, 120).replace(/\s+/g, " ")).filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24);
-    return [{
-      id: entryId,
-      name,
-      normalizedName,
-      aliases,
-      role: clean5(raw.role, 120) || "Pocket NPC",
-      identityBrief: clean5(raw.identityBrief ?? raw.description, 1200),
-      phoneProfile: phoneProfile(raw.phoneProfile),
-      avatarUrl: clean5(raw.avatarUrl, 2000),
-      avatarSource: normalizeImageSource(raw.avatarSource) || normalizeImageSource({ kind: "url", url: raw.avatarUrl }),
-      avatarFocus: normalizeAvatarFocus(raw.avatarFocus),
-      accent: accent(raw.accent),
-      messagingStyle: {
-        talkativeness: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
-        fragmentation: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.fragmentation : undefined, 35)
-      },
-      tags: [...new Set((Array.isArray(raw.tags) ? raw.tags : []).map((item) => clean5(item, 80)).filter(Boolean))].slice(0, 24),
-      createdAt: timestamp2(raw.createdAt, now),
-      updatedAt: timestamp2(raw.updatedAt, now)
-    }];
-  });
-  return { version: NPC_BANK_VERSION, entries, groups: normalizeContactGroups(value.groups, entries.map((entry) => entry.id), now), updatedAt: timestamp2(value.updatedAt, now) };
-}
-function findNpcBankMatch(bank, name) {
-  const normalized = normalizeNpcBankName(name);
-  if (!normalized)
-    return null;
-  const matches = bank.entries.filter((entry) => entry.normalizedName === normalized || entry.aliases.some((alias) => normalizeNpcBankName(alias) === normalized));
-  return matches.length === 1 ? matches[0] : null;
-}
-function upsertNpcBankFromContact(bank, contact, now, makeId) {
-  if (contact.source.kind !== "npc")
-    throw new Error("Only Pocket NPC contacts can be saved to NPC Bank.");
-  const sourceBankId = contact.source.bankId || "";
-  const byId = sourceBankId ? bank.entries.find((entry) => entry.id === sourceBankId) : undefined;
-  const byName = findNpcBankMatch(bank, contact.name);
-  const existing = byId || byName || undefined;
-  if (!existing && bank.entries.length >= MAX_NPC_BANK_ENTRIES)
-    throw new Error("The NPC Bank is full. Remove an unused profile before saving another.");
-  const name = contact.name.trim().replace(/\s+/g, " ").slice(0, 120);
-  if (!name)
-    throw new Error("NPC Bank entries need a name.");
-  const previousName = existing?.name || "";
-  const aliases = [...new Set([
-    ...existing?.aliases || [],
-    ...previousName && normalizeNpcBankName(previousName) !== normalizeNpcBankName(name) ? [previousName] : []
-  ].map((item) => item.trim()).filter(Boolean))].slice(0, 24);
-  const entry = {
-    id: existing?.id || makeId("npcbank"),
-    name,
-    normalizedName: normalizeNpcBankName(name),
-    aliases,
-    role: contact.role || "Pocket NPC",
-    identityBrief: contact.identityBrief || contact.description || "",
-    phoneProfile: contact.phoneProfile ? { ...contact.phoneProfile } : undefined,
-    avatarUrl: contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl || "",
-    avatarSource: contact.avatarSource || normalizeImageSource({ kind: "url", url: contact.sourceAvatarUrl || contact.avatarUrl }),
-    avatarFocus: contact.avatarFocus,
-    accent: accent(contact.accent),
-    messagingStyle: {
-      talkativeness: percentage2(contact.messagingStyle?.talkativeness, 50),
-      fragmentation: percentage2(contact.messagingStyle?.fragmentation, 35)
-    },
-    tags: existing?.tags || [],
-    createdAt: existing?.createdAt || now,
-    updatedAt: now
-  };
-  bank.entries = [entry, ...bank.entries.filter((item) => item.id !== entry.id)].slice(0, MAX_NPC_BANK_ENTRIES);
-  bank.updatedAt = now;
-  return entry;
-}
-function contactFromNpcBank(entry, now, makeId) {
-  return {
-    id: makeId("contact"),
-    name: entry.name,
-    role: entry.role || "Pocket NPC",
-    description: entry.identityBrief,
-    identityBrief: entry.identityBrief,
-    phoneProfile: entry.phoneProfile ? { ...entry.phoneProfile } : undefined,
-    sceneNote: "",
-    avatarUrl: entry.avatarUrl,
-    sourceAvatarUrl: entry.avatarUrl,
-    avatarOverrideUrl: "",
-    avatarSource: entry.avatarSource,
-    avatarFocus: entry.avatarFocus,
-    accent: entry.accent,
-    sourceAccent: "",
-    colorMode: "pocket",
-    source: { kind: "npc", origin: "manual", description: entry.identityBrief, bankId: entry.id },
-    relationship: "background",
-    presence: { inScene: false, lastSceneAt: "" },
-    contextPolicy: { pinned: false },
-    generationPolicy: { relevant: true },
-    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
-    messagingStyle: { ...entry.messagingStyle },
-    createdAt: now,
-    updatedAt: now
-  };
-}
-function applyNpcBankProfile(contact, entry, now) {
-  if (contact.source.kind !== "npc")
-    return contact;
-  contact.name = entry.name;
-  contact.role = entry.role || contact.role;
-  contact.description = entry.identityBrief;
-  contact.identityBrief = entry.identityBrief;
-  contact.phoneProfile = entry.phoneProfile ? { ...entry.phoneProfile } : contact.phoneProfile;
-  contact.avatarUrl = entry.avatarUrl;
-  if (!contact.avatarOverrideUrl) {
-    contact.avatarSource = entry.avatarSource;
-    contact.avatarFocus = entry.avatarFocus;
-  }
-  contact.sourceAvatarUrl = entry.avatarUrl;
-  contact.accent = entry.accent;
-  contact.messagingStyle = { ...entry.messagingStyle };
-  contact.source = { ...contact.source, description: entry.identityBrief, bankId: entry.id };
-  contact.updatedAt = now;
-  return contact;
-}
-function removeNpcBankEntry(bank, bankId, now) {
-  const before = bank.entries.length;
-  bank.entries = bank.entries.filter((entry) => entry.id !== bankId);
-  for (const group of bank.groups)
-    group.memberIds = group.memberIds.filter((id) => id !== bankId);
-  if (bank.entries.length === before)
-    return false;
-  bank.updatedAt = now;
-  return true;
 }
 
 // src/domain/actors.ts
@@ -1896,40 +1553,6 @@ function promoteDiscoveredActor(state, actorId, now, makeId) {
   return contact;
 }
 
-// src/domain/notifications.ts
-function routesShareDestination(leftInput, rightInput) {
-  const left = normalizePocketRoute(leftInput);
-  const right = normalizePocketRoute(rightInput);
-  if (left.app !== right.app)
-    return false;
-  if (left.app === "messages" && right.app === "messages") {
-    return Boolean(left.conversationId && right.conversationId && left.conversationId === right.conversationId);
-  }
-  if (left.app === "trackers" && right.app === "trackers") {
-    return Boolean(left.trackerId && right.trackerId && left.trackerId === right.trackerId);
-  }
-  return left.app !== "home" && left.app !== "notifications";
-}
-function destinationIsVisible(open, current, target) {
-  return Boolean(open && current && routesShareDestination(current, target));
-}
-function markNotificationRead(notifications, notificationId) {
-  const entry = notifications.find((item) => item.id === notificationId);
-  if (entry)
-    entry.read = true;
-}
-function dismissNotification(notifications, notificationId, at) {
-  const entry = notifications.find((item) => item.id === notificationId);
-  if (entry)
-    entry.dismissedAt = at;
-}
-function clearNotifications(notifications, mode, at) {
-  for (const entry of notifications) {
-    if (!entry.dismissedAt && (mode === "all" || entry.read))
-      entry.dismissedAt = at;
-  }
-}
-
 // src/domain/device.ts
 function pocketPersonaActorId(state) {
   const persisted = typeof state.pocketPersonaActorId === "string" ? state.pocketPersonaActorId.trim() : "";
@@ -1986,6 +1609,1118 @@ function notificationBelongsToDevice(state, deviceOwnerActorId, targetOwnerActor
   return (targetOwnerActorId || pocketPersonaActorId(state)) === owner;
 }
 
+// src/backend/references.ts
+function compact(value, max) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+function availabilityCopy(conversation) {
+  if (conversation.availability.state === "local")
+    return "The direct conversation is currently local, but this reference itself does not establish anyone\u2019s presence.";
+  if (conversation.availability.state === "arriving")
+    return "The conversation says a participant is arriving; only explicit scene state may establish physical presence.";
+  if (conversation.availability.state === "paused")
+    return `The remote conversation is paused (${conversation.availability.reason}).`;
+  return "This is a remote phone conversation.";
+}
+function createPocketReference(input) {
+  const { state, conversation, scope, createdAt, makeId } = input;
+  const selected = new Set((input.selectedMessageIds || []).slice(0, 12));
+  const sourceMessages = scope === "selected_messages" ? conversation.messages.filter((message) => selected.has(message.id)).slice(-8) : conversation.messages.slice(scope === "recent_messages" ? -6 : -8);
+  const messages = sourceMessages.flatMap((message) => message.sender === "system" ? [] : [{
+    messageId: message.id,
+    format: message.callTurn ? undefined : message.format,
+    sender: message.sender,
+    senderActorId: message.senderActorId,
+    senderContactId: message.senderContactId,
+    senderName: compact(message.senderName || (message.sender === "persona" ? state.pocketPersona.displayName : "Participant"), 120),
+    text: compact(message.text, 420),
+    createdAt: message.createdAt
+  }]);
+  const participants = conversationDeviceActorIds(state, conversation).slice(0, 16).flatMap((actorId) => {
+    const actor = resolvePocketActor(state, actorId);
+    if (!actor)
+      return [];
+    return [{
+      actorId,
+      contactId: actor.contact?.id,
+      name: compact(actor.name, 120),
+      role: compact(actor.role, 100),
+      identityBrief: compact(actor.identityBrief, 180)
+    }];
+  });
+  const kind = conversation.kind === "group" ? "Group chat" : "Direct message";
+  const participantNames = participants.map((entry) => entry.name).join(", ") || "Unknown participants";
+  return {
+    id: makeId("reference"),
+    chatId: state.chatId,
+    characterId: state.characterId,
+    sourceApp: "messages",
+    conversationId: conversation.id,
+    conversationTitle: compact(conversation.title || participantNames, 120) || "Pocket conversation",
+    conversationKind: conversation.kind,
+    scope,
+    visibility: "context",
+    participants,
+    snapshot: compact(`${kind} with ${participantNames}. ${availabilityCopy(conversation)}`, 600),
+    messages,
+    createdAt,
+    status: "armed"
+  };
+}
+function serializePocketReference(reference, maxChars = 2200) {
+  const budget = Math.max(1200, Math.min(3000, maxChars));
+  const participantNames = compact(reference.participants.map((entry) => entry.name).join(", "), 360) || "Unknown participants";
+  const identityRows = reference.participants.slice(0, 8).map((entry) => {
+    const detail = [entry.role, entry.identityBrief].filter(Boolean).join(" \u2014 ");
+    return detail ? `- ${entry.name}: ${detail}` : `- ${entry.name}`;
+  });
+  const messageRows = reference.messages.map((message) => `${message.senderName}${message.format === "voice" ? " [voice message transcript]" : ""}: ${JSON.stringify(compact(message.text, 360))}`);
+  const fixedStart = [
+    "=== POCKET USER REFERENCE \u2014 THIS TURN ===",
+    `referenceId: ${reference.id}`,
+    `source: messages/${reference.conversationId}`,
+    `scope: ${reference.scope}`,
+    `Conversation: ${reference.conversationTitle}`,
+    `Participants: ${participantNames}`,
+    "",
+    `Pocket context: ${compact(reference.snapshot, 320)}`
+  ];
+  const fixedEnd = [
+    "",
+    "This is phone/social context explicitly attached by the user for this roleplay turn. It does not hand off the conversation, change channel ownership, or establish that any participant is physically present.",
+    "Use it only to understand the user\u2019s roleplay message. Do not assume a scene actor saw, heard, or knows the phone content unless the user\u2019s narration establishes that.",
+    "=== END POCKET USER REFERENCE ==="
+  ];
+  const render = () => [
+    ...fixedStart,
+    ...identityRows.length ? ["", "Participant context:", ...identityRows] : [],
+    "",
+    "Referenced phone messages:",
+    ...messageRows,
+    ...fixedEnd
+  ].join(`
+`);
+  let serialized = render();
+  while (serialized.length > budget && identityRows.length > 2) {
+    identityRows.pop();
+    serialized = render();
+  }
+  while (serialized.length > budget && messageRows.length > 1) {
+    messageRows.shift();
+    serialized = render();
+  }
+  if (serialized.length <= budget)
+    return serialized;
+  const ending = `
+${fixedEnd.join(`
+`)}`;
+  const beginning = [...fixedStart, "", "Referenced phone messages:", messageRows.at(-1) || "(No referenced message text was available.)"].join(`
+`);
+  return `${beginning.slice(0, Math.max(0, budget - ending.length)).trimEnd()}${ending}`;
+}
+function referenceForGeneration(state, generationId) {
+  return state.references.find((reference) => reference.status === "injected" && reference.injectedGenerationId === generationId);
+}
+function latestArmedReference(state) {
+  return [...state.references].reverse().find((reference) => reference.status === "armed");
+}
+
+// src/domain/call-availability.ts
+function callAvailability(contact, conversation) {
+  const reason = conversation?.availability.state === "paused" ? conversation.availability.reason : conversation?.availability.state === "local" ? conversation.availability.resumePauseReason : conversation?.pause?.reason;
+  if (reason === "busy")
+    return "Busy";
+  if (reason === "away" || reason === "sleeping")
+    return "Away";
+  return contact.presence.inScene ? "Here" : "Away";
+}
+function callAvailabilityContext(contact, conversation) {
+  return [
+    `Contact status: ${callAvailability(contact, conversation)}.`,
+    `Physical location: ${contact.presence.inScene ? "in the same scene as the caller" : "away from the caller\u2019s scene"}. Here/Away describe location, not guaranteed phone availability.`,
+    `Phone conversation availability: ${JSON.stringify(conversation.availability)}.`,
+    conversation.pause ? `Conversation pause: ${conversation.pause.reason}.` : "",
+    `Remote communication eligible: ${contact.messagingPolicy.remoteEligible}.`,
+    contact.sceneNote ? `Current activity / scene note: ${contact.sceneNote}` : ""
+  ].filter(Boolean).join(`
+`);
+}
+
+// src/backend/calls.ts
+function clean5(value, max) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function callExpressions(character) {
+  const entries = new Map;
+  const add = (mappings, prefix = "") => {
+    if (!mappings || typeof mappings !== "object" || Array.isArray(mappings))
+      return;
+    for (const [label, imageId] of Object.entries(mappings)) {
+      const key = `${prefix}${label}`;
+      if (!label.trim() || key.length > 80 || typeof imageId !== "string" || !imageId)
+        continue;
+      if (entries.size >= 100)
+        return;
+      entries.set(key, `/api/v1/images/${encodeURIComponent(imageId)}`);
+    }
+  };
+  add(character?.extensions?.expressions?.mappings);
+  const groups = character?.extensions?.expression_groups;
+  if (groups && typeof groups === "object" && !Array.isArray(groups)) {
+    for (const [name, mappings] of Object.entries(groups))
+      add(mappings, `${name}: `);
+  }
+  return Object.fromEntries(entries);
+}
+function normalizeCallReply(raw, expressions) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const text = clean5(value.message, 4000);
+  if (!text)
+    throw new Error("The character did not return spoken dialogue. Try again.");
+  return {
+    text,
+    expression: typeof value.expression === "string" && Object.hasOwn(expressions, value.expression) ? value.expression : Object.keys(expressions)[0] || "",
+    choices: [...new Set((Array.isArray(value.choices) ? value.choices : []).map((row) => clean5(row, 180)).filter(Boolean))].slice(0, 3),
+    end: value.end === true,
+    ...clean5(value.scene, 600) ? { scene: clean5(value.scene, 600) } : {}
+  };
+}
+function normalizeCallDecision(raw, expressions) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const decision = value.decision === undefined ? "answer" : value.decision;
+  if (!["answer", "reject", "ignore"].includes(decision))
+    throw new Error("The character did not decide whether to answer. Try again.");
+  const follow = value.followUp;
+  const followUp = follow && (follow.when === "now" || follow.when === "later") && clean5(follow.text, 1000) ? { when: follow.when, text: clean5(follow.text, 1000), status: "pending", availabilityKey: "" } : undefined;
+  return { decision, reply: decision === "answer" ? normalizeCallReply(value, expressions) : undefined, followUp };
+}
+
+class PocketCalls {
+  host;
+  flights = new Map;
+  followUpFlights = new Set;
+  incomingFlights = new Set;
+  constructor(host) {
+    this.host = host;
+  }
+  key(input, userId) {
+    return `${userId || "_"}:${input.chatId}:${input.characterId}`;
+  }
+  conversation(state, input) {
+    const conversation = state.conversations.find((row) => row.id === input.conversationId);
+    if (!conversation || conversation.kind !== "direct" || !conversation.includesPocketPersona)
+      throw new Error("Choose a direct conversation on your Pocket Persona\u2019s phone.");
+    if (input.deviceOwnerActorId && input.deviceOwnerActorId !== pocketPersonaActorId(state))
+      throw new Error("Calls are unavailable while inspecting another phone.");
+    return conversation;
+  }
+  marker(conversation, callId, allowRinging = false) {
+    const marker = conversation.messages.filter((row) => row.call?.callId === callId && row.candidateCommitState !== "provisional").at(-1)?.call;
+    if (!marker || marker.status !== "connected" && !(allowRinging && marker.status === "ringing"))
+      throw new Error("This call has ended or has not been answered. Start a new call.");
+    return marker;
+  }
+  async handle(type, input, userId) {
+    if (type === "lumiphone:call_camera") {
+      await this.camera(input, userId);
+      return;
+    }
+    if (type === "lumiphone:call_decline" || type === "lumiphone:call_ignore") {
+      await this.end({ ...input, declined: type === "lumiphone:call_decline", ignored: type === "lumiphone:call_ignore" }, userId);
+      return;
+    }
+    if (type === "lumiphone:call_end") {
+      await this.end(input, userId);
+      return;
+    }
+    const scope = this.key(input, userId);
+    if (this.flights.has(scope))
+      throw new Error("Wait for the current call reply or end the call.");
+    const abort = new AbortController;
+    this.flights.set(scope, abort);
+    const timer = setTimeout(() => abort.abort(new Error("Call reply timed out. Try again.")), 120000);
+    try {
+      let state = await this.host.load(input.chatId, input.characterId, userId);
+      let conversation = this.conversation(state, input);
+      const preferences = await this.host.preferences?.(userId);
+      if (type === "lumiphone:call_accept") {
+        const incoming = this.marker(conversation, clean5(input.callId, 180), true);
+        if (incoming.direction !== "incoming" || incoming.status !== "ringing" || !incoming.incomingOpening)
+          throw new Error("This incoming call has ended or is unavailable.");
+        if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === "off") {
+          await this.end({ ...input, declined: true }, userId);
+          return;
+        }
+      }
+      const actor = conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)).find((row) => row && row.kind !== "persona");
+      if (!actor)
+        throw new Error("This call\u2019s contact is unavailable.");
+      const contact = this.host.contact(actor), profile = await this.host.profile(contact, userId);
+      abort.signal.throwIfAborted();
+      const character = contact.source.kind === "character" ? await this.host.character(contact.source.characterId, userId) : null;
+      const expressions = callExpressions(character);
+      const mode = input.mode === "video" ? "video" : "voice";
+      let callId = clean5(input.callId, 180);
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        abort.signal.throwIfAborted();
+        state = await this.host.load(input.chatId, input.characterId, userId);
+        conversation = this.conversation(state, input);
+        if (type === "lumiphone:call_start") {
+          const activeCalls = new Map(state.conversations.flatMap((row) => row.messages).filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
+          const retry = callId && conversation.messages.find((row) => row.call?.callId === callId && row.call.status === "ringing");
+          if (!retry) {
+            if ([...activeCalls.values()].some((row) => row.status === "connected" || row.status === "ringing"))
+              throw new Error("Resume or end the current call first.");
+            callId = this.host.id("call");
+            conversation.messages.push({
+              id: this.host.id("msg"),
+              sender: "persona",
+              senderAccent: state.pocketPersona.accent,
+              senderActorId: pocketPersonaActorId(state),
+              senderName: state.pocketPersona.displayName || "You",
+              text: "Calling\u2026",
+              createdAt: this.host.timestamp(state),
+              read: true,
+              status: "read",
+              call: { callId, status: "ringing", speakerphone: false, mode, interactive: true, direction: "outgoing", personaCamera: mode === "video" ? input.personaCamera !== false : undefined }
+            });
+          }
+        } else
+          this.marker(conversation, callId, type === "lumiphone:call_resume" || type === "lumiphone:call_accept");
+        const spoken = clean5(input.text, 4000);
+        if (type === "lumiphone:call_reply" && spoken && !conversation.messages.some((row) => row.callTurn?.callId === callId && row.generation?.requestId === input.requestId && row.sender === "persona")) {
+          const message = {
+            id: this.host.id("msg"),
+            sender: "persona",
+            senderAccent: state.pocketPersona.accent,
+            senderActorId: pocketPersonaActorId(state),
+            senderName: state.pocketPersona.displayName || "You",
+            recipientActorIds: [actor.actorId],
+            text: spoken,
+            callTurn: { callId },
+            createdAt: this.host.timestamp(state),
+            read: true,
+            status: "read",
+            generation: { requestId: input.requestId }
+          };
+          conversation.messages.push(message);
+          this.host.remember(state, conversation, message);
+        }
+        conversation.updatedAt = new Date().toISOString();
+        await this.host.save(state, userId);
+      });
+      const marker = this.marker(conversation, callId, true);
+      const ringing = marker.status === "ringing";
+      const video = marker.mode === "video" && Object.keys(expressions).length > 0;
+      const turns = conversation.messages.filter((row) => row.callTurn?.callId === callId);
+      if (ringing && marker.direction === "incoming" && type !== "lumiphone:call_accept") {
+        this.host.send({ type: "lumiphone:call_incoming", requestId: input.requestId, chatId: state.chatId, characterId: state.characterId, conversationId: conversation.id, callId, contactId: contact.id, name: actor.name, mode: marker.mode || "voice" }, userId);
+        return;
+      }
+      const briefScenes = ringing && preferences?.briefCallScenes === true && preferences.roleplayContextMode !== "off";
+      const ready = () => this.host.send({
+        type: "lumiphone:call_ready",
+        requestId: input.requestId,
+        chatId: state.chatId,
+        characterId: state.characterId,
+        conversationId: conversation.id,
+        callId,
+        name: actor.name,
+        actorId: actor.actorId,
+        mode: marker.mode || mode,
+        video,
+        expressions,
+        turns,
+        personaCamera: marker.personaCamera !== false
+      }, userId);
+      if (ringing)
+        this.host.send({ type: "lumiphone:call_ringing", requestId: input.requestId, chatId: state.chatId, characterId: state.characterId, callId, name: actor.name }, userId);
+      else
+        ready();
+      if (type === "lumiphone:call_resume" && !ringing)
+        return;
+      const completed = turns.find((row) => row.sender === "contact" && row.generation?.requestId === input.requestId);
+      if (completed) {
+        this.host.send({ type: "lumiphone:call_turn", requestId: input.requestId, callId, message: completed }, userId);
+        return;
+      }
+      const background = await this.host.background(state, contact, { ...conversation, messages: conversation.messages.filter((row) => row.callTurn?.callId !== callId && row.call?.callId !== callId) }, userId);
+      const messages = [
+        { role: "system", content: `You are ${actor.name} ${ringing ? "receiving" : "on a live"} ${marker.mode === "video" ? "video" : "phone"} call with ${state.pocketPersona.displayName || "the player"}. Speak only as this contact. Never speak for the player or invent their answers. This is remote spoken dialogue, not texting and not physical presence. Do not emit Pocket tools/tags. Return strict JSON: {${ringing ? '"decision":"answer|reject|ignore",' : ""}"message":"spoken dialogue only when answered","expression":"expression label","choices":["short optional player reply", "another reply"],"end":false,"followUp":null}. ${ringing ? "Decide whether to answer using your personality, relationship, current activity, status and story. Here/Away are physical location, not hard phone availability rules. Busy or Away can answer, decline, or ignore. You may pick up briefly and speak quietly (e.g. you are busy and will talk later), then hang up with end=true. reject means decline; ignore means no answer. Both must have empty message/choices and end=false: no speech happened. No answer alone is valid; never force an excuse or follow-up." : ""} Keep each spoken turn brief, natural and in character. Offer 2\u20133 meaningful short player replies unless hanging up; these are suggestions only, never spoken or committed until selected. end=true only if you actually say goodbye and hang up. Optional followUp={"when":"now|later","text":"a short discreet text"} ONLY when you choose to send a separate text and it fits your circumstances. now means feasible now; later waits for your activity/status to change and another feasibility check. Leave null to send nothing. Do not reveal private activity to the caller unless you actually say or text it. ${video ? `If answered, video is working. Choose ONLY one of these expression labels: ${Object.keys(expressions).join(", ")}.` : marker.mode === "video" ? "If answered, the webcam does not work. In your FIRST spoken turn, invent a short believable in-character reason for the broken webcam, then continue by voice. Never mention expression assets, cards, sprites, programming, or UI." : "This is an audio-only phone call."}
+CALL AVAILABILITY
+${callAvailabilityContext(contact, conversation)}
+CHARACTER IDENTITY
+${profile.description}
+${profile.personality}
+${profile.behavior}
+POCKET CONTINUITY (reference only; call ownership stays with the two named participants)
+${background}` },
+        ...turns.slice(-24).map((row) => ({ role: row.sender === "persona" ? "user" : "assistant", content: row.text })),
+        { role: "user", content: ringing ? "[Call control: incoming call. Decide whether to answer, reject, or ignore. Only greet the caller if you answer.]" : "[Call control: respond to the last spoken turn. If it was yours, continue briefly without inventing player speech.]" }
+      ];
+      messages[0].content += `
+PLAYER CAMERA
+${marker.mode !== "video" ? "Audio only: you cannot see the caller." : marker.personaCamera === false ? "The caller\u2019s persona camera is hidden. You cannot see their face, body, gestures, or surroundings. Do not infer visual facts from spoken text." : "The caller\u2019s persona camera is shown. You may refer only to their established RP appearance and explicitly narrated visible actions. No real webcam or human image is provided."}
+BRIEF PICKUP SCENES
+${briefScenes ? 'Opt-in enabled. If your current situation fits, you may answer briefly with scene="a small audible slice of your current life (visible too only if video works)", then message="your spoken realization/apology that you are busy and goodbye", end=true, choices=[]. Ground it in current RP context; do not create a major offscreen event or speak for the player. Scene is background context, not narration to read aloud. This is optional, not every call.' : "Disabled. Do not return a scene snippet. Normal brief busy dialogue is still allowed."}`;
+      const opening = ringing && marker.direction === "incoming" && type === "lumiphone:call_accept" ? marker.incomingOpening : undefined;
+      const raw = opening ? { decision: "answer", message: opening.text, scene: opening.scene, expression: opening.expression, choices: [], end: true } : await this.host.generate(input.requestId, messages, abort.signal, userId);
+      abort.signal.throwIfAborted();
+      const decision = normalizeCallDecision(ringing ? raw : { ...raw, decision: "answer" }, expressions);
+      const reply = decision.reply;
+      if (reply?.scene && !briefScenes && !opening)
+        delete reply.scene;
+      if (reply?.scene) {
+        reply.end = true;
+        reply.choices = [];
+      }
+      const availabilityKey = decision.followUp ? await this.availabilityKey(state, contact, conversation, userId) : "";
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        abort.signal.throwIfAborted();
+        const latest = await this.host.load(input.chatId, input.characterId, userId), thread = this.conversation(latest, input);
+        const live = this.marker(thread, callId, ringing);
+        if (ringing) {
+          const attempt = thread.messages.find((row) => row.call === live);
+          live.status = decision.decision === "answer" ? "connected" : "missed";
+          live.outcome = decision.decision === "reject" ? "declined" : decision.decision === "ignore" ? "ignored" : undefined;
+          delete live.incomingOpening;
+          attempt.text = callSummary(live);
+        }
+        if (decision.followUp)
+          live.followUp = { ...decision.followUp, availabilityKey };
+        if (!reply) {
+          this.attachReference(latest, thread, callId);
+          await this.host.save(latest, userId);
+          await this.host.publish(latest, userId);
+          this.host.send({ type: "lumiphone:call_result", requestId: input.requestId, chatId: latest.chatId, characterId: latest.characterId, callId, name: actor.name, outcome: live.outcome, summary: callSummary(live) }, userId);
+          return;
+        }
+        const message = {
+          id: this.host.id("msg"),
+          sender: "contact",
+          senderAccent: actor.accent,
+          senderActorId: actor.actorId,
+          senderContactId: actor.contact?.id,
+          senderName: actor.name,
+          recipientActorIds: [pocketPersonaActorId(latest)],
+          text: reply.text,
+          format: "voice",
+          callTurn: { callId, expression: reply.expression, choices: reply.choices, scene: reply.scene },
+          createdAt: this.host.timestamp(latest),
+          read: true,
+          status: "read",
+          generation: { requestId: input.requestId }
+        };
+        thread.messages.push(message);
+        thread.messages = thread.messages.slice(-240);
+        thread.updatedAt = message.createdAt;
+        if (reply.end)
+          thread.messages.push({
+            id: this.host.id("msg"),
+            sender: "contact",
+            senderAccent: actor.accent,
+            senderActorId: actor.actorId,
+            senderName: actor.name,
+            text: "Call ended",
+            call: { ...live, followUp: live.followUp && { ...live.followUp }, status: "ended" },
+            createdAt: message.createdAt,
+            read: true,
+            status: "read"
+          });
+        this.host.remember(latest, thread, message);
+        this.attachReference(latest, thread, callId);
+        await this.host.save(latest, userId);
+        await this.host.publish(latest, userId);
+        if (ringing)
+          ready();
+        this.host.send({ type: "lumiphone:call_turn", requestId: input.requestId, callId, message, ended: reply.end }, userId);
+      });
+    } finally {
+      clearTimeout(timer);
+      if (this.flights.get(scope) === abort)
+        this.flights.delete(scope);
+    }
+  }
+  attachReference(state, conversation, callId) {
+    const referenceId = `call_reference_${callId}`;
+    const existing = state.references.find((row) => row.id.startsWith(referenceId) && (row.status === "armed" || row.status === "failed"));
+    const call = conversation.messages.filter((row) => row.call?.callId === callId).at(-1)?.call;
+    const spoken = conversation.messages.filter((row) => row.callTurn?.callId === callId || row.callCamera?.callId === callId);
+    const reference = createPocketReference({ state, conversation: { ...conversation, messages: spoken.length ? spoken : conversation.messages.filter((row) => row.call?.callId === callId).slice(-1) }, scope: "conversation", createdAt: new Date().toISOString(), makeId: () => `call_reference_${callId}` });
+    reference.snapshot = `Spoken ${call?.mode === "video" ? "video" : "phone"} call transcript. Call ID: ${callId}. Call state: ${call?.status || "connected"}. ${call?.status === "ended" ? "The call is already ended in Pocket; do not recreate its end action." : "The call is still connected."} These lines already happened as speech, not text messages. Only the call participants heard them; this does not establish physical presence. ${reference.snapshot}`.slice(0, 600);
+    if (call?.mode === "video")
+      reference.snapshot = `Persona camera: ${call.personaCamera === false ? "hidden; the NPC cannot see the persona" : "shown; only established RP visuals are available"}. Camera control entries are not spoken dialogue. ${reference.snapshot}`.slice(0, 600);
+    for (const message of reference.messages) {
+      const source = spoken.find((row) => row.id === message.messageId);
+      if (source?.callTurn?.scene)
+        message.text = `[Call background: ${source.callTurn.scene}] ${message.text}`.slice(0, 420);
+    }
+    if (!spoken.length)
+      reference.snapshot = `Phone call attempt. Call ID: ${callId}. Outcome: ${call ? callSummary(call) : "No answer"}. Technical call history only: no connection or spoken exchange occurred. Do not invent dialogue, a private reason, or knowledge of the recipient\u2019s activity. The caller only knows this outcome. This does not establish physical presence.`;
+    if (!reference.messages.length)
+      return;
+    if (existing)
+      Object.assign(existing, reference);
+    else {
+      if (state.references.some((row) => row.id === reference.id))
+        reference.id = `${referenceId}_${this.host.id("part")}`;
+      state.references.push(reference);
+      state.references = state.references.slice(-24);
+    }
+  }
+  async end(input, userId) {
+    this.flights.get(this.key(input, userId))?.abort();
+    await this.host.lock(input.chatId, input.characterId, async () => {
+      const state = await this.host.load(input.chatId, input.characterId, userId), conversation = this.conversation(state, input);
+      const prior = conversation.messages.filter((row) => input.callId ? row.call?.callId === input.callId : row.call?.interactive).at(-1)?.call;
+      if (!prior)
+        return;
+      if (prior.status === "connected" || prior.status === "ringing") {
+        if (prior.status === "ringing") {
+          prior.status = input.declined || input.ignored ? "missed" : "ended";
+          prior.outcome = input.declined ? "declined" : input.ignored ? "ignored" : "cancelled";
+          delete prior.incomingOpening;
+          conversation.messages.find((row) => row.call === prior).text = callSummary(prior);
+        } else {
+          conversation.messages.push({
+            id: this.host.id("msg"),
+            sender: "persona",
+            senderAccent: state.pocketPersona.accent,
+            senderActorId: pocketPersonaActorId(state),
+            senderName: state.pocketPersona.displayName || "You",
+            text: "Call ended",
+            call: { ...prior, status: "ended" },
+            createdAt: this.host.timestamp(state),
+            read: true,
+            status: "read"
+          });
+        }
+        this.attachReference(state, conversation, prior.callId);
+        await this.host.save(state, userId);
+        await this.host.publish(state, userId);
+      }
+      this.host.send({ type: "lumiphone:call_ended", callId: prior.callId, requestId: input.requestId }, userId);
+    });
+  }
+  async camera(input, userId) {
+    await this.host.lock(input.chatId, input.characterId, async () => {
+      if (this.flights.has(this.key(input, userId)))
+        throw new Error("Wait for the current spoken reply before changing camera visibility.");
+      const state = await this.host.load(input.chatId, input.characterId, userId), conversation = this.conversation(state, input);
+      const marker = this.marker(conversation, clean5(input.callId, 180));
+      if (marker.mode !== "video" || typeof input.visible !== "boolean")
+        throw new Error("Camera visibility is available only during a video call.");
+      if (marker.personaCamera !== input.visible) {
+        marker.personaCamera = input.visible;
+        conversation.messages.push({
+          id: this.host.id("msg"),
+          sender: "persona",
+          senderName: state.pocketPersona.displayName || "You",
+          senderActorId: pocketPersonaActorId(state),
+          senderAccent: state.pocketPersona.accent,
+          text: `[Call camera ${input.visible ? "shown" : "hidden"}]`,
+          callCamera: { callId: marker.callId, visible: input.visible },
+          createdAt: this.host.timestamp(state),
+          read: true,
+          status: "read"
+        });
+        this.attachReference(state, conversation, marker.callId);
+        await this.host.save(state, userId);
+        await this.host.publish(state, userId);
+      }
+      this.host.send({ type: "lumiphone:call_camera", requestId: input.requestId, callId: marker.callId, visible: marker.personaCamera !== false }, userId);
+    });
+  }
+  async offerIncoming(input, userId) {
+    input = { ...input, sourceKey: clean5(input.sourceKey, 1600) };
+    const preferences = await this.host.preferences?.(userId), scope = this.key(input, userId);
+    if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === "off" || !input.seed || !clean5(input.sourceKey, 1600) || this.incomingFlights.has(scope))
+      return;
+    this.incomingFlights.add(scope);
+    try {
+      let state = await this.host.load(input.chatId, input.characterId, userId);
+      if (state.callSceneCheck?.sourceKey === input.sourceKey)
+        return;
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        state = await this.host.load(input.chatId, input.characterId, userId);
+        let changed = false;
+        for (const conversation of state.conversations)
+          for (const message of conversation.messages) {
+            const call = message.call;
+            if (call?.interactive && call.direction === "incoming" && call.status === "ringing") {
+              call.status = "missed";
+              call.outcome = "ignored";
+              delete call.incomingOpening;
+              message.text = callSummary(call);
+              this.attachReference(state, conversation, call.callId);
+              changed = true;
+              this.host.send({ type: "lumiphone:call_ended", callId: call.callId }, userId);
+            }
+          }
+        if (changed) {
+          await this.host.save(state, userId);
+          await this.host.publish(state, userId);
+        }
+      });
+      const active = new Map(state.conversations.flatMap((row) => row.messages).filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
+      if ([...active.values()].some((row) => row.status === "ringing" || row.status === "connected"))
+        return;
+      const lastOfferRevision = state.callSceneCheck?.lastOfferRevision ?? -10;
+      let reserved = false;
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        state = await this.host.load(input.chatId, input.characterId, userId);
+        if (state.callSceneCheck?.sourceKey === input.sourceKey)
+          return;
+        state.callSceneCheck = { sourceKey: input.sourceKey, lastOfferRevision };
+        await this.host.save(state, userId);
+        reserved = true;
+      });
+      if (!reserved || (state.stateRevision || 0) - lastOfferRevision < 3)
+        return;
+      const contacts = state.contacts.filter((row) => row.generationPolicy.relevant && row.messagingPolicy.remoteEligible).slice(0, 6);
+      if (!contacts.length)
+        return;
+      const candidates = await Promise.all(contacts.map(async (contact) => {
+        const profile = await this.host.profile(contact, userId);
+        const conversation = state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(contact.id)) || { id: "", kind: "direct", title: contact.name, messages: [], availability: { state: "remote" }, participantActorIds: [contact.id], participantContactIds: [contact.id], includesPocketPersona: true, unread: 0, createdAt: "", updatedAt: "" };
+        return { contactId: contact.id, name: contact.name, identity: profile.description, personality: profile.personality, behavior: profile.behavior, context: (await this.host.background(state, contact, conversation, userId)).slice(0, 3000) };
+      }));
+      const controller = new AbortController, timer = setTimeout(() => controller.abort(), 60000);
+      let raw;
+      try {
+        raw = await this.host.generate(`incoming_call_${this.host.id("scene")}`, [{ role: "system", content: `Optional slice-of-life phone call. The player opted in to occasional incoming calls after RP turns. Prefer no call unless current character activity naturally supports a brief accidental or distracted pickup. Choose ONE contact from the supplied candidates, or none. Return JSON {"decision":"none|call","contactId":"candidate id","scene":"short audible background moment from their current life","message":"ONLY this NPC\u2019s spoken words: realizes the call, apologizes, says busy, and goodbye"}. The phone remains silent until the player accepts. No major new event, player speech/actions, secrets from another actor\u2019s private context, or fabricated established facts. Ordinary minor incidental details are allowed. This is always a short audio call that ends after this single NPC turn.
+${JSON.stringify(candidates)}` }, { role: "user", content: "Does this RP moment fit one brief incoming call? None is a valid choice." }], controller.signal, userId);
+        controller.signal.throwIfAborted();
+      } finally {
+        clearTimeout(timer);
+      }
+      if (raw?.decision !== "call")
+        return;
+      const contact = contacts.find((row) => row.id === raw.contactId), opening = clean5(raw.message, 2000), scene = clean5(raw.scene, 600);
+      if (!contact || !opening || !scene)
+        return;
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        const latest = await this.host.load(input.chatId, input.characterId, userId);
+        const currentPreferences = await this.host.preferences?.(userId);
+        if (!currentPreferences?.incomingCallScenes || currentPreferences.roleplayContextMode === "off" || latest.callSceneCheck?.sourceKey !== input.sourceKey || latest.lastReconciliation?.sourceKey && clean5(latest.lastReconciliation.sourceKey, 1600) !== input.sourceKey)
+          return;
+        const latestActive = new Map(latest.conversations.flatMap((row) => row.messages).filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
+        if ([...latestActive.values()].some((row) => row.status === "ringing" || row.status === "connected") || !latest.contacts.some((row) => row.id === contact.id))
+          return;
+        const conversation = ensureDirectConversation(latest, contact.id, this.host.timestamp(latest), (prefix) => this.host.id(prefix)), callId = this.host.id("call");
+        conversation.messages.push({
+          id: this.host.id("msg"),
+          sender: "contact",
+          senderName: contact.name,
+          senderActorId: contact.id,
+          senderContactId: contact.id,
+          senderAccent: contact.accent,
+          text: "Incoming phone call",
+          createdAt: this.host.timestamp(latest),
+          read: true,
+          status: "read",
+          call: { callId, status: "ringing", speakerphone: false, mode: "voice", interactive: true, direction: "incoming", incomingOpening: { text: opening, scene, expression: "" } }
+        });
+        latest.callSceneCheck = { sourceKey: input.sourceKey, lastOfferRevision: latest.stateRevision || 0 };
+        await this.host.save(latest, userId);
+        await this.host.publish(latest, userId);
+        this.host.send({ type: "lumiphone:call_incoming", chatId: latest.chatId, characterId: latest.characterId, conversationId: conversation.id, callId, contactId: contact.id, name: contact.name, mode: "voice" }, userId);
+      });
+    } finally {
+      this.incomingFlights.delete(scope);
+    }
+  }
+  async availabilityKey(state, contact, conversation, userId) {
+    return (this.host.availabilityKey ? await this.host.availabilityKey(state, contact, conversation, userId) : callAvailabilityContext(contact, conversation)).slice(0, 4000);
+  }
+  async processFollowUps(input, userId) {
+    const scope = this.key(input, userId);
+    if (!this.host.sendText || this.followUpFlights.has(scope))
+      return;
+    this.followUpFlights.add(scope);
+    try {
+      const state = await this.host.load(input.chatId, input.characterId, userId);
+      for (const conversation of state.conversations.filter((row) => row.kind === "direct" && row.includesPocketPersona)) {
+        const latestCalls = new Map(conversation.messages.filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
+        for (const call of latestCalls.values()) {
+          const follow = call.followUp;
+          if (!follow || follow.status !== "pending" || call.status === "ringing")
+            continue;
+          const actor = conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)).find((row) => row && row.kind !== "persona");
+          if (!actor)
+            continue;
+          const contact = this.host.contact(actor), availabilityKey = await this.availabilityKey(state, contact, conversation, userId);
+          if (follow.when === "later" && availabilityKey === follow.availabilityKey)
+            continue;
+          let message = follow.text, status = "sent";
+          if (follow.when === "later") {
+            const profile = await this.host.profile(contact, userId), background = await this.host.background(state, contact, conversation, userId);
+            const controller = new AbortController, timer = setTimeout(() => controller.abort(), 60000);
+            try {
+              const raw = await this.host.generate(`call_followup_check_${call.callId}_${this.host.id("check")}`, [{ role: "system", content: `You are ${actor.name}. After a phone call you considered texting ${state.pocketPersona.displayName || "the caller"} later. Decide whether it is feasible and in character NOW. No text is obligatory. Return strict JSON {"decision":"send|wait|cancel","message":"short discreet text only if send"}. Preserve current story timing; do not invent a new event or user response. Refresh the text for current circumstances instead of sending a stale excuse.
+${profile.description}
+${profile.personality}
+${profile.behavior}
+${callAvailabilityContext(contact, conversation)}
+${background}` }, { role: "user", content: `Earlier optional text: ${JSON.stringify(follow.text)}. Call outcome: ${callSummary(call)}. Can you discreetly text now?` }], controller.signal, userId);
+              controller.signal.throwIfAborted();
+              if (raw?.decision === "send" && clean5(raw.message, 1000))
+                message = clean5(raw.message, 1000);
+              else if (raw?.decision === "cancel")
+                status = "cancelled";
+              else
+                status = "pending";
+            } finally {
+              clearTimeout(timer);
+            }
+          }
+          if (status === "sent")
+            await this.host.sendText({ chatId: state.chatId, characterId: state.characterId, conversationId: conversation.id, actorId: actor.actorId, text: message, requestId: `call_followup_${call.callId}` }, userId);
+          await this.host.lock(input.chatId, input.characterId, async () => {
+            const latest = await this.host.load(input.chatId, input.characterId, userId);
+            const thread = latest.conversations.find((row) => row.id === conversation.id);
+            for (const row of thread?.messages || [])
+              if (row.call?.callId === call.callId && row.call.followUp)
+                Object.assign(row.call.followUp, { status, availabilityKey });
+            await this.host.save(latest, userId);
+          });
+        }
+      }
+    } finally {
+      this.followUpFlights.delete(scope);
+    }
+  }
+}
+
+// src/domain/clock-label.ts
+var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
+function clockDayPart(value) {
+  if (typeof value !== "string")
+    return "";
+  const key = value.trim().toLowerCase().replace(/[_-]/g, " ");
+  const match = [...CLOCK_DAY_PART_KEYS].sort((a, b) => b.length - a.length).find((part) => key === part.replaceAll("_", " ") || key.startsWith(part.replaceAll("_", " ") + ","));
+  return match || "";
+}
+function clockLabel(value, dayPart) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const key = clockDayPart(dayPart) || clockDayPart(raw);
+  if (key) {
+    const label = key.replaceAll("_", " ");
+    return raw.toLowerCase() === label ? raw : label[0].toUpperCase() + label.slice(1);
+  }
+  if (/^(?:[01]?\d|2[0-3]):[0-5]\d(?:\s*[AP]M)?$/i.test(raw) || /^[+-]?\d{1,4} minutes?$/.test(raw))
+    return raw;
+  return "";
+}
+
+// src/domain/projection.ts
+var MODEL_CONTEXT_BUDGET = 5600;
+function safeTime(value) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+function serializeWithinBudget(value, budget = MODEL_CONTEXT_BUDGET) {
+  let serialized = JSON.stringify(value);
+  if (serialized.length <= budget)
+    return serialized;
+  const compact = { ...value };
+  const shrinkOrder = ["contacts", "pinnedNotes", "upcoming", "trackers"];
+  for (const key of shrinkOrder) {
+    const entries = Array.isArray(compact[key]) ? compact[key] : [];
+    while (entries.length && serialized.length > budget) {
+      entries.pop();
+      serialized = JSON.stringify(compact);
+    }
+  }
+  if (serialized.length <= budget)
+    return serialized;
+  const fallback = JSON.stringify({ roleplayNow: String(value.roleplayNow || "").slice(0, Math.max(0, budget - 24)), truncated: true });
+  if (fallback.length <= budget)
+    return fallback;
+  return "{}";
+}
+function projectedRoleplayTime(state) {
+  if (state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" && state.roleplayClockLabel) {
+    return state.roleplayClockLabel;
+  }
+  return state.roleplayNow;
+}
+function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
+  const contacts = state.contacts.filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned || contact.relationship === "close").slice(0, 12).map((contact) => ({
+    id: contact.id.slice(0, 180),
+    name: contact.name.slice(0, 120),
+    role: contact.role.slice(0, 120),
+    source: contact.source.kind,
+    relationship: contact.relationship,
+    inScene: contact.presence.inScene,
+    pinned: contact.contextPolicy.pinned,
+    identityBrief: (contact.identityBrief || contact.description || "").slice(0, 360),
+    sceneNote: (contact.sceneNote || "").slice(0, 240)
+  }));
+  const discoveredActors = state.discoveredActors || [];
+  const knownContactIds = new Set(discoveredActors.map((actor) => actor.promotedContactId).filter(Boolean));
+  for (const actor of discoveredActors.filter((entry) => entry.relationship === "close" && !knownContactIds.has(entry.promotedContactId)).slice(0, Math.max(0, 12 - contacts.length))) {
+    contacts.push({
+      id: actor.id.slice(0, 180),
+      name: actor.displayName.slice(0, 120),
+      role: "Discovered actor",
+      source: "discovered",
+      relationship: "close",
+      inScene: false,
+      pinned: false,
+      identityBrief: "",
+      sceneNote: ""
+    });
+  }
+  const trackers = state.trackers.filter((tracker) => tracker.visibleToModel).slice(0, 12).map((tracker) => {
+    const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
+    const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
+    const band = tracker.kind === "state" ? "" : trackerBand(tracker)?.label || "";
+    return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}${tracker.updateMode === "model" && tracker.allowModelWrite && tracker.modelPrompt ? ` \xB7 Update guidance: ${JSON.stringify(tracker.modelPrompt.slice(0, 2000))}` : ""}`;
+  });
+  const upcoming = state.events.filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
+  return serializeWithinBudget({
+    roleplayNow: projectedRoleplayTime(state),
+    roleplayClock: {
+      source: state.roleplayClockSource || "legacy",
+      precision: state.roleplayClockPrecision || "unknown",
+      label: state.roleplayClockLabel || ""
+    },
+    stateRevision: state.stateRevision || 0,
+    weather: {
+      location: state.weather.location.slice(0, 160),
+      condition: state.weather.condition.slice(0, 120),
+      temperature: state.weather.temperature,
+      unit: state.weather.unit,
+      details: state.weather.details.slice(0, 300)
+    },
+    trackers,
+    upcoming,
+    pinnedNotes: state.notes.filter((note) => note.pinned).slice(0, 5).map((note) => `${note.title.slice(0, 120)}: ${note.body.slice(0, 320)}`),
+    contacts
+  }, budget);
+}
+
+// src/domain/navigation.ts
+var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings"]);
+function shortId(value) {
+  if (typeof value !== "string")
+    return;
+  const clean = value.trim().slice(0, 180);
+  return clean || undefined;
+}
+function normalizePocketRoute(value, fallback = { app: "home" }) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return fallback;
+  const raw = value;
+  const app = typeof raw.app === "string" && APPS.has(raw.app) ? raw.app : fallback.app;
+  if (app === "messages")
+    return {
+      app,
+      conversationId: shortId(raw.conversationId),
+      contactId: shortId(raw.contactId),
+      messageId: shortId(raw.messageId),
+      view: raw.view === "new-group" || raw.view === "group-editor" || raw.view === "group-detail" || raw.view === "thread" ? raw.view : undefined
+    };
+  if (app === "contacts")
+    return {
+      app,
+      contactId: shortId(raw.contactId),
+      groupId: shortId(raw.groupId),
+      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "calls", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
+    };
+  if (app === "trackers")
+    return {
+      app,
+      trackerId: shortId(raw.trackerId),
+      view: raw.view === "config" ? "config" : raw.view === "detail" ? "detail" : undefined
+    };
+  if (app === "calendar")
+    return { app, eventId: shortId(raw.eventId) };
+  if (app === "notes")
+    return { app, noteId: shortId(raw.noteId) };
+  if (app === "gallery")
+    return { app, imageId: shortId(raw.imageId) };
+  if (app === "settings")
+    return { app, section: shortId(raw.section) };
+  if (app === "camera")
+    return { app, contactId: shortId(raw.contactId), ...raw.draft === true ? { draft: true } : {} };
+  if (app === "weather" || app === "notifications" || app === "home")
+    return { app };
+  return fallback;
+}
+function legacyActionRoute(app, action) {
+  const id = shortId(action);
+  if (app === "messages")
+    return { app, contactId: id };
+  if (app === "contacts")
+    return { app, contactId: id, view: id ? "detail" : "list" };
+  if (app === "trackers")
+    return { app, trackerId: id, view: id ? "detail" : undefined };
+  if (app === "calendar")
+    return { app, eventId: id };
+  if (app === "notes")
+    return { app, noteId: id };
+  if (app === "gallery")
+    return { app, imageId: id };
+  if (app === "settings")
+    return { app, section: id };
+  return { app };
+}
+
+// src/domain/contact-groups.ts
+function normalizeContactGroups(value, validIds, now) {
+  const ids = new Set(validIds), seen = new Set;
+  return (Array.isArray(value) ? value : []).slice(0, 80).flatMap((raw) => {
+    if (!raw || typeof raw !== "object")
+      return [];
+    const id = typeof raw.id === "string" ? raw.id.trim().slice(0, 180) : "";
+    const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 120) : "";
+    if (!id || !name || seen.has(id))
+      return [];
+    seen.add(id);
+    return [{ id, name, memberIds: [...new Set((Array.isArray(raw.memberIds) ? raw.memberIds : []).filter((id) => typeof id === "string" && ids.has(id)))], bankGroupId: typeof raw.bankGroupId === "string" ? raw.bankGroupId.slice(0, 180) : undefined, createdAt: Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : now, updatedAt: Number.isFinite(Date.parse(raw.updatedAt)) ? raw.updatedAt : now }];
+  });
+}
+function saveContactGroup(groups, input, validIds, now, makeId) {
+  const name = input.name.trim().slice(0, 120);
+  if (!name)
+    throw new Error("Give the group a name.");
+  const memberIds = [...new Set(input.memberIds)];
+  if (!memberIds.length)
+    throw new Error("Choose at least one member.");
+  if (memberIds.some((id) => !validIds.includes(id)))
+    throw new Error("A selected member no longer exists. Refresh the group.");
+  const existing = input.id ? groups.find((group) => group.id === input.id) : undefined;
+  if (input.id && !existing)
+    throw new Error("That group no longer exists.");
+  const group = { id: existing?.id || makeId("cast"), name, memberIds, bankGroupId: input.bankGroupId || existing?.bankGroupId, createdAt: existing?.createdAt || now, updatedAt: now };
+  if (!existing && groups.length >= 80)
+    throw new Error("The group limit has been reached.");
+  if (existing)
+    Object.assign(existing, group);
+  else
+    groups.push(group);
+  return group;
+}
+
+// src/domain/npc-bank.ts
+var NPC_BANK_VERSION = 2;
+var NPC_BANK_PATH = "device/npc-bank.json";
+var MAX_NPC_BANK_ENTRIES = 240;
+function record5(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean6(value, max) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+function percentage2(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
+}
+function phoneProfile(value) {
+  if (!record5(value))
+    return;
+  const personality = clean6(value.personality, 600);
+  const appearance = clean6(value.appearance, 360);
+  const textingStyle = clean6(value.textingStyle, 600);
+  return personality || appearance || textingStyle ? { personality, appearance, textingStyle } : undefined;
+}
+function timestamp2(value, fallback) {
+  const candidate = clean6(value, 40);
+  return Number.isFinite(Date.parse(candidate)) ? candidate : fallback;
+}
+function accent(value, fallback = "#8b7dff") {
+  const candidate = clean6(value, 20);
+  return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : fallback;
+}
+function normalizeNpcBankName(value) {
+  return clean6(value, 120).replace(/\s+/g, " ").toLocaleLowerCase();
+}
+function emptyNpcBank(now = new Date().toISOString()) {
+  return { version: NPC_BANK_VERSION, entries: [], groups: [], updatedAt: now };
+}
+function isFutureNpcBank(value) {
+  return record5(value) && Number(value.version) > NPC_BANK_VERSION;
+}
+function normalizeNpcBank(value, now = new Date().toISOString()) {
+  if (!record5(value) || isFutureNpcBank(value))
+    return emptyNpcBank(now);
+  const seen = new Set;
+  const entries = (Array.isArray(value.entries) ? value.entries : []).slice(0, MAX_NPC_BANK_ENTRIES).flatMap((raw) => {
+    if (!record5(raw))
+      return [];
+    const name = clean6(raw.name, 120).replace(/\s+/g, " ");
+    const normalizedName = normalizeNpcBankName(name);
+    const entryId = clean6(raw.id, 180);
+    if (!name || !normalizedName || !entryId || seen.has(entryId))
+      return [];
+    seen.add(entryId);
+    const aliases = [...new Set((Array.isArray(raw.aliases) ? raw.aliases : []).map((item) => clean6(item, 120).replace(/\s+/g, " ")).filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24);
+    return [{
+      id: entryId,
+      name,
+      normalizedName,
+      aliases,
+      role: clean6(raw.role, 120) || "Pocket NPC",
+      identityBrief: clean6(raw.identityBrief ?? raw.description, 1200),
+      phoneProfile: phoneProfile(raw.phoneProfile),
+      avatarUrl: clean6(raw.avatarUrl, 2000),
+      avatarSource: normalizeImageSource(raw.avatarSource) || normalizeImageSource({ kind: "url", url: raw.avatarUrl }),
+      avatarFocus: normalizeAvatarFocus(raw.avatarFocus),
+      accent: accent(raw.accent),
+      messagingStyle: {
+        talkativeness: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.talkativeness : undefined, 50),
+        fragmentation: percentage2(record5(raw.messagingStyle) ? raw.messagingStyle.fragmentation : undefined, 35)
+      },
+      tags: [...new Set((Array.isArray(raw.tags) ? raw.tags : []).map((item) => clean6(item, 80)).filter(Boolean))].slice(0, 24),
+      createdAt: timestamp2(raw.createdAt, now),
+      updatedAt: timestamp2(raw.updatedAt, now)
+    }];
+  });
+  return { version: NPC_BANK_VERSION, entries, groups: normalizeContactGroups(value.groups, entries.map((entry) => entry.id), now), updatedAt: timestamp2(value.updatedAt, now) };
+}
+function findNpcBankMatch(bank, name) {
+  const normalized = normalizeNpcBankName(name);
+  if (!normalized)
+    return null;
+  const matches = bank.entries.filter((entry) => entry.normalizedName === normalized || entry.aliases.some((alias) => normalizeNpcBankName(alias) === normalized));
+  return matches.length === 1 ? matches[0] : null;
+}
+function upsertNpcBankFromContact(bank, contact, now, makeId) {
+  if (contact.source.kind !== "npc")
+    throw new Error("Only Pocket NPC contacts can be saved to NPC Bank.");
+  const sourceBankId = contact.source.bankId || "";
+  const byId = sourceBankId ? bank.entries.find((entry) => entry.id === sourceBankId) : undefined;
+  const byName = findNpcBankMatch(bank, contact.name);
+  const existing = byId || byName || undefined;
+  if (!existing && bank.entries.length >= MAX_NPC_BANK_ENTRIES)
+    throw new Error("The NPC Bank is full. Remove an unused profile before saving another.");
+  const name = contact.name.trim().replace(/\s+/g, " ").slice(0, 120);
+  if (!name)
+    throw new Error("NPC Bank entries need a name.");
+  const previousName = existing?.name || "";
+  const aliases = [...new Set([
+    ...existing?.aliases || [],
+    ...previousName && normalizeNpcBankName(previousName) !== normalizeNpcBankName(name) ? [previousName] : []
+  ].map((item) => item.trim()).filter(Boolean))].slice(0, 24);
+  const entry = {
+    id: existing?.id || makeId("npcbank"),
+    name,
+    normalizedName: normalizeNpcBankName(name),
+    aliases,
+    role: contact.role || "Pocket NPC",
+    identityBrief: contact.identityBrief || contact.description || "",
+    phoneProfile: contact.phoneProfile ? { ...contact.phoneProfile } : undefined,
+    avatarUrl: contact.avatarOverrideUrl || contact.sourceAvatarUrl || contact.avatarUrl || "",
+    avatarSource: contact.avatarSource || normalizeImageSource({ kind: "url", url: contact.sourceAvatarUrl || contact.avatarUrl }),
+    avatarFocus: contact.avatarFocus,
+    accent: accent(contact.accent),
+    messagingStyle: {
+      talkativeness: percentage2(contact.messagingStyle?.talkativeness, 50),
+      fragmentation: percentage2(contact.messagingStyle?.fragmentation, 35)
+    },
+    tags: existing?.tags || [],
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+  bank.entries = [entry, ...bank.entries.filter((item) => item.id !== entry.id)].slice(0, MAX_NPC_BANK_ENTRIES);
+  bank.updatedAt = now;
+  return entry;
+}
+function contactFromNpcBank(entry, now, makeId) {
+  return {
+    id: makeId("contact"),
+    name: entry.name,
+    role: entry.role || "Pocket NPC",
+    description: entry.identityBrief,
+    identityBrief: entry.identityBrief,
+    phoneProfile: entry.phoneProfile ? { ...entry.phoneProfile } : undefined,
+    sceneNote: "",
+    avatarUrl: entry.avatarUrl,
+    sourceAvatarUrl: entry.avatarUrl,
+    avatarOverrideUrl: "",
+    avatarSource: entry.avatarSource,
+    avatarFocus: entry.avatarFocus,
+    accent: entry.accent,
+    sourceAccent: "",
+    colorMode: "pocket",
+    source: { kind: "npc", origin: "manual", description: entry.identityBrief, bankId: entry.id },
+    relationship: "background",
+    presence: { inScene: false, lastSceneAt: "" },
+    contextPolicy: { pinned: false },
+    generationPolicy: { relevant: true },
+    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: "", lastInitiatedRoleplayAt: "" },
+    messagingStyle: { ...entry.messagingStyle },
+    createdAt: now,
+    updatedAt: now
+  };
+}
+function applyNpcBankProfile(contact, entry, now) {
+  if (contact.source.kind !== "npc")
+    return contact;
+  contact.name = entry.name;
+  contact.role = entry.role || contact.role;
+  contact.description = entry.identityBrief;
+  contact.identityBrief = entry.identityBrief;
+  contact.phoneProfile = entry.phoneProfile ? { ...entry.phoneProfile } : contact.phoneProfile;
+  contact.avatarUrl = entry.avatarUrl;
+  if (!contact.avatarOverrideUrl) {
+    contact.avatarSource = entry.avatarSource;
+    contact.avatarFocus = entry.avatarFocus;
+  }
+  contact.sourceAvatarUrl = entry.avatarUrl;
+  contact.accent = entry.accent;
+  contact.messagingStyle = { ...entry.messagingStyle };
+  contact.source = { ...contact.source, description: entry.identityBrief, bankId: entry.id };
+  contact.updatedAt = now;
+  return contact;
+}
+function removeNpcBankEntry(bank, bankId, now) {
+  const before = bank.entries.length;
+  bank.entries = bank.entries.filter((entry) => entry.id !== bankId);
+  for (const group of bank.groups)
+    group.memberIds = group.memberIds.filter((id) => id !== bankId);
+  if (bank.entries.length === before)
+    return false;
+  bank.updatedAt = now;
+  return true;
+}
+
+// src/domain/notifications.ts
+function routesShareDestination(leftInput, rightInput) {
+  const left = normalizePocketRoute(leftInput);
+  const right = normalizePocketRoute(rightInput);
+  if (left.app !== right.app)
+    return false;
+  if (left.app === "messages" && right.app === "messages") {
+    return Boolean(left.conversationId && right.conversationId && left.conversationId === right.conversationId);
+  }
+  if (left.app === "trackers" && right.app === "trackers") {
+    return Boolean(left.trackerId && right.trackerId && left.trackerId === right.trackerId);
+  }
+  return left.app !== "home" && left.app !== "notifications";
+}
+function destinationIsVisible(open, current, target) {
+  return Boolean(open && current && routesShareDestination(current, target));
+}
+function markNotificationRead(notifications, notificationId) {
+  const entry = notifications.find((item) => item.id === notificationId);
+  if (entry)
+    entry.read = true;
+}
+function dismissNotification(notifications, notificationId, at) {
+  const entry = notifications.find((item) => item.id === notificationId);
+  if (entry)
+    entry.dismissedAt = at;
+}
+function clearNotifications(notifications, mode, at) {
+  for (const entry of notifications) {
+    if (!entry.dismissedAt && (mode === "all" || entry.read))
+      entry.dismissedAt = at;
+  }
+}
+
 // src/domain/messaging.ts
 function ambientEligibleContacts(contacts) {
   return contacts.filter((contact) => contact.messagingPolicy.remoteEligible && (!contact.presence.inScene || contact.messagingPolicy.allowAmbientInScene));
@@ -2010,7 +2745,7 @@ function shouldTakeAmbientOpportunity(frequency, random = Math.random()) {
 
 // src/domain/actor-memory.ts
 var MAX_ACTOR_MEMORIES = 160;
-function clean6(value, max = 4000) {
+function clean7(value, max = 4000) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function record6(value) {
@@ -2019,7 +2754,7 @@ function record6(value) {
 function stringList(value, max = 24) {
   if (!Array.isArray(value))
     return [];
-  return [...new Set(value.map((entry) => clean6(entry, 180)).filter(Boolean))].slice(0, max);
+  return [...new Set(value.map((entry) => clean7(entry, 180)).filter(Boolean))].slice(0, max);
 }
 function nameKey(value) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -2030,18 +2765,18 @@ function normalizeActorMemories(value) {
   const rows = value.slice(-MAX_ACTOR_MEMORIES).flatMap((item) => {
     if (!record6(item))
       return [];
-    const id = clean6(item.id, 180);
-    const messageId = clean6(item.messageId, 180);
-    const conversationId = clean6(item.conversationId, 180);
-    const text = clean6(item.text, 700);
-    const speakerActorId = clean6(item.speakerActorId, 180);
-    const speakerName = clean6(item.speakerName, 120);
+    const id = clean7(item.id, 180);
+    const messageId = clean7(item.messageId, 180);
+    const conversationId = clean7(item.conversationId, 180);
+    const text = clean7(item.text, 700);
+    const speakerActorId = clean7(item.speakerActorId, 180);
+    const speakerName = clean7(item.speakerName, 120);
     if (!id || !messageId || !conversationId || !text || !speakerActorId || !speakerName)
       return [];
     return [{
       id,
       conversationId,
-      conversationTitle: clean6(item.conversationTitle, 120) || "Pocket conversation",
+      conversationTitle: clean7(item.conversationTitle, 120) || "Pocket conversation",
       conversationKind: item.conversationKind === "group" ? "group" : "direct",
       messageId,
       speakerActorId,
@@ -2049,7 +2784,7 @@ function normalizeActorMemories(value) {
       text,
       knownByActorIds: stringList(item.knownByActorIds),
       knownByNames: stringList(item.knownByNames),
-      createdAt: clean6(item.createdAt, 80)
+      createdAt: clean7(item.createdAt, 80)
     }];
   });
   const byMessage = new Map;
@@ -2066,7 +2801,7 @@ function upsertActorMemory(current, entry) {
   return next.slice(-MAX_ACTOR_MEMORIES);
 }
 function removeActorMemoryByMessageId(current, messageId) {
-  const target = clean6(messageId, 180);
+  const target = clean7(messageId, 180);
   return target ? current.filter((item) => item.messageId !== target) : current;
 }
 function actorCanRecall(entry, actorIds, actorNames) {
@@ -2075,9 +2810,9 @@ function actorCanRecall(entry, actorIds, actorNames) {
   return entry.knownByNames.some((name) => actorNames.has(nameKey(name)));
 }
 function memoryRows(memories, options) {
-  const actorIds = new Set(options.actorIds.map((entry) => clean6(entry, 180)).filter(Boolean));
+  const actorIds = new Set(options.actorIds.map((entry) => clean7(entry, 180)).filter(Boolean));
   const actorNames = new Set(options.actorNames.map(nameKey).filter(Boolean));
-  const exclude = clean6(options.excludeConversationId, 180);
+  const exclude = clean7(options.excludeConversationId, 180);
   return memories.filter((entry) => (!exclude || entry.conversationId !== exclude) && actorCanRecall(entry, actorIds, actorNames)).slice(-(options.maxRows ?? 10));
 }
 function formatRows(rows, maxChars) {
@@ -2098,7 +2833,7 @@ function actorPhoneMemoryContext(memories, options) {
   if (!rows.length)
     return "";
   const body = formatRows(rows, Math.max(400, (options.maxChars ?? 2600) - 260));
-  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean6(options.actorName, 120) || "THIS SPEAKER"}
+  return `ACTOR PHONE MEMORY \u2014 PRIVATE TO ${clean7(options.actorName, 120) || "THIS SPEAKER"}
 These are earlier Pocket messages this actor personally had access to in OTHER threads.
 They are memory, not current-thread messages. Do not pretend they happened in this thread.
 ${body}`.slice(0, options.maxChars ?? 2600);
@@ -2602,7 +3337,7 @@ class AppReviews {
 
 // src/domain/identity-profiles.ts
 var IDENTITY_PROFILES_PATH = "identity-profiles.json";
-var compact = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var compact2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
 function normalizeIdentityProfiles(value) {
   const raw = value;
   if (raw?.version && raw.version > 1)
@@ -2611,19 +3346,19 @@ function normalizeIdentityProfiles(value) {
   for (const item of Array.isArray(raw?.entries) ? raw.entries : []) {
     if (!item || !["persona", "character"].includes(item.kind))
       continue;
-    const id = compact(item.id, 180), name = compact(item.name, 120);
+    const id = compact2(item.id, 180), name = compact2(item.name, 120);
     if (!id || !name || entries.some((entry) => entry.id === id))
       continue;
     entries.push({
       id,
       kind: item.kind,
-      sourceId: compact(item.sourceId, 180),
+      sourceId: compact2(item.sourceId, 180),
       name,
-      pronouns: compact(item.pronouns, 120),
-      role: compact(item.role, 120),
-      identityBrief: compact(item.identityBrief, 1200),
-      phoneProfile: { personality: compact(item.phoneProfile?.personality, 600), appearance: compact(item.phoneProfile?.appearance, 360), textingStyle: compact(item.phoneProfile?.textingStyle, 600) },
-      updatedAt: compact(item.updatedAt, 80)
+      pronouns: compact2(item.pronouns, 120),
+      role: compact2(item.role, 120),
+      identityBrief: compact2(item.identityBrief, 1200),
+      phoneProfile: { personality: compact2(item.phoneProfile?.personality, 600), appearance: compact2(item.phoneProfile?.appearance, 360), textingStyle: compact2(item.phoneProfile?.textingStyle, 600) },
+      updatedAt: compact2(item.updatedAt, 80)
     });
   }
   return { version: 1, entries: entries.slice(-100) };
@@ -2659,7 +3394,7 @@ function applyIdentityProfile(target, profile) {
 
 // src/backend/roleplay-context.ts
 var BUDGETS = { actor: 1200, scene: 1800, thread: 6000, recent: 3200, story: 2400, total: 10500 };
-function clean7(value, max) {
+function clean8(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 function roleplayTimeLabel(state) {
@@ -2738,13 +3473,13 @@ function currentChannelLines(state, contact, conversation) {
 }
 function threadLine(state, conversation, message) {
   const persona = state.pocketPersona.displayName || "You";
-  const sender = message.sender === "persona" ? persona : message.senderName || "Pocket";
+  const sender = `${message.sender === "persona" ? persona : message.senderName || "Pocket"}${message.callTurn ? " [spoken on call]" : message.format === "voice" ? " [voice message transcript]" : ""}`;
   if (conversation.kind !== "group" || message.sender !== "contact")
-    return `${sender}: ${clean7(message.text, 520)}`;
+    return `${sender}: ${clean8(message.text, 520)}`;
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds]);
   const senderId = message.senderActorId || message.senderContactId || "";
   const former = Boolean(senderId && !currentIds.has(senderId));
-  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean7(message.text, 520)}`;
+  return `${sender}${former ? " [former participant; historical only]" : ""}: ${clean8(message.text, 520)}`;
 }
 function trimBlock(lines, budget) {
   return lines.filter(Boolean).join(`
@@ -2757,11 +3492,11 @@ async function assemblePocketContext(options) {
   const hostMessages = includeRoleplayBackground && options.getMessages ? await options.getMessages().catch(() => []) : [];
   const authoritative = hostMessages.at(-1);
   const authoritativeLatest = authoritative ? {
-    id: clean7(authoritative.id, 180),
+    id: clean8(authoritative.id, 180),
     index: messageIndex(authoritative, hostMessages.length - 1),
     excerpt: sanitizeNarrativeContent(authoritative.content, 180)
   } : { id: "", index: -1, excerpt: "" };
-  const actorIdentity = clean7(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
+  const actorIdentity = clean8(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor);
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1400);
   const scene = trimBlock(sceneLines(state), BUDGETS.scene);
   const includePhoneThread = options.includePhoneThread !== false;
@@ -2771,14 +3506,14 @@ async function assemblePocketContext(options) {
   const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
-    const anchor = clean7(message.id, 180);
+    const anchor = clean8(message.id, 180);
     const source = anchor ? ` [${anchor} #${messageIndex(message, hostMessages.length - selectedRecent.length + index)}]` : "";
     return `${role}${source}: ${sanitizeNarrativeContent(message.content, 520)}`;
   }).filter((line) => !line.endsWith(": "));
   const recent = trimBlock(recentLines, BUDGETS.recent);
   const includedMessage = selectedRecent.at(-1);
   const includedLatest = includedMessage ? {
-    id: clean7(includedMessage.id, 180),
+    id: clean8(includedMessage.id, 180),
     index: messageIndex(includedMessage, hostMessages.length - 1),
     excerpt: sanitizeNarrativeContent(includedMessage.content, 180)
   } : { id: "", index: -1, excerpt: "" };
@@ -2833,13 +3568,13 @@ ${channel}` : "";
 // src/backend/continuity.ts
 var PAUSE_REASONS = new Set(["ended", "busy", "away", "sleeping", "unknown"]);
 var LOCAL_REASONS = new Set(["in_scene", "arrived", "took_action", "continued_in_person"]);
-function compact2(value, max) {
+function compact3(value, max) {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
 }
 function conversationTailSnapshot(conversation, createdAt) {
   const recent = conversation.messages.slice(-6);
   return {
-    text: recent.map((message) => `${message.senderName}: ${compact2(message.text, 360)}`).join(`
+    text: recent.map((message) => `${message.senderName}: ${compact3(message.text, 360)}`).join(`
 `).slice(0, 2400),
     recentMessageIds: recent.map((message) => message.id),
     updatedAt: createdAt
@@ -3003,7 +3738,7 @@ function relayIdFromMessages(messages) {
   return "";
 }
 function relayLatestExchange(conversation) {
-  return conversation.messages.slice(-3).map((message) => `${message.senderName}: ${compact2(message.text, 520)}`).join(`
+  return conversation.messages.slice(-3).map((message) => `${message.senderName}: ${compact3(message.text, 520)}`).join(`
 `).slice(0, 1800);
 }
 function relayForGeneration(state, generationId) {
@@ -3268,121 +4003,6 @@ function jevSourceKey(value) {
   for (let index = 0;index < serialized.length; index++)
     hash = Math.imul(hash ^ serialized.charCodeAt(index), 16777619);
   return `tracker-judge-v2:${serialized.length}:${(hash >>> 0).toString(16)}`;
-}
-
-// src/backend/references.ts
-function compact3(value, max) {
-  return value.replace(/\s+/g, " ").trim().slice(0, max);
-}
-function availabilityCopy(conversation) {
-  if (conversation.availability.state === "local")
-    return "The direct conversation is currently local, but this reference itself does not establish anyone\u2019s presence.";
-  if (conversation.availability.state === "arriving")
-    return "The conversation says a participant is arriving; only explicit scene state may establish physical presence.";
-  if (conversation.availability.state === "paused")
-    return `The remote conversation is paused (${conversation.availability.reason}).`;
-  return "This is a remote phone conversation.";
-}
-function createPocketReference(input) {
-  const { state, conversation, scope, createdAt, makeId } = input;
-  const selected = new Set((input.selectedMessageIds || []).slice(0, 12));
-  const sourceMessages = scope === "selected_messages" ? conversation.messages.filter((message) => selected.has(message.id)).slice(-8) : conversation.messages.slice(scope === "recent_messages" ? -6 : -8);
-  const messages = sourceMessages.flatMap((message) => message.sender === "system" ? [] : [{
-    messageId: message.id,
-    sender: message.sender,
-    senderActorId: message.senderActorId,
-    senderContactId: message.senderContactId,
-    senderName: compact3(message.senderName || (message.sender === "persona" ? state.pocketPersona.displayName : "Participant"), 120),
-    text: compact3(message.text, 420),
-    createdAt: message.createdAt
-  }]);
-  const participants = conversationDeviceActorIds(state, conversation).slice(0, 16).flatMap((actorId) => {
-    const actor = resolvePocketActor(state, actorId);
-    if (!actor)
-      return [];
-    return [{
-      actorId,
-      contactId: actor.contact?.id,
-      name: compact3(actor.name, 120),
-      role: compact3(actor.role, 100),
-      identityBrief: compact3(actor.identityBrief, 180)
-    }];
-  });
-  const kind = conversation.kind === "group" ? "Group chat" : "Direct message";
-  const participantNames = participants.map((entry) => entry.name).join(", ") || "Unknown participants";
-  return {
-    id: makeId("reference"),
-    chatId: state.chatId,
-    characterId: state.characterId,
-    sourceApp: "messages",
-    conversationId: conversation.id,
-    conversationTitle: compact3(conversation.title || participantNames, 120) || "Pocket conversation",
-    conversationKind: conversation.kind,
-    scope,
-    visibility: "context",
-    participants,
-    snapshot: compact3(`${kind} with ${participantNames}. ${availabilityCopy(conversation)}`, 600),
-    messages,
-    createdAt,
-    status: "armed"
-  };
-}
-function serializePocketReference(reference, maxChars = 2200) {
-  const budget = Math.max(1200, Math.min(3000, maxChars));
-  const participantNames = compact3(reference.participants.map((entry) => entry.name).join(", "), 360) || "Unknown participants";
-  const identityRows = reference.participants.slice(0, 8).map((entry) => {
-    const detail = [entry.role, entry.identityBrief].filter(Boolean).join(" \u2014 ");
-    return detail ? `- ${entry.name}: ${detail}` : `- ${entry.name}`;
-  });
-  const messageRows = reference.messages.map((message) => `${message.senderName}: ${JSON.stringify(compact3(message.text, 360))}`);
-  const fixedStart = [
-    "=== POCKET USER REFERENCE \u2014 THIS TURN ===",
-    `referenceId: ${reference.id}`,
-    `source: messages/${reference.conversationId}`,
-    `scope: ${reference.scope}`,
-    `Conversation: ${reference.conversationTitle}`,
-    `Participants: ${participantNames}`,
-    "",
-    `Pocket context: ${compact3(reference.snapshot, 320)}`
-  ];
-  const fixedEnd = [
-    "",
-    "This is phone/social context explicitly attached by the user for this roleplay turn. It does not hand off the conversation, change channel ownership, or establish that any participant is physically present.",
-    "Use it only to understand the user\u2019s roleplay message. Do not assume a scene actor saw, heard, or knows the phone content unless the user\u2019s narration establishes that.",
-    "=== END POCKET USER REFERENCE ==="
-  ];
-  const render = () => [
-    ...fixedStart,
-    ...identityRows.length ? ["", "Participant context:", ...identityRows] : [],
-    "",
-    "Referenced phone messages:",
-    ...messageRows,
-    ...fixedEnd
-  ].join(`
-`);
-  let serialized = render();
-  while (serialized.length > budget && identityRows.length > 2) {
-    identityRows.pop();
-    serialized = render();
-  }
-  while (serialized.length > budget && messageRows.length > 1) {
-    messageRows.shift();
-    serialized = render();
-  }
-  if (serialized.length <= budget)
-    return serialized;
-  const ending = `
-${fixedEnd.join(`
-`)}`;
-  const beginning = [...fixedStart, "", "Referenced phone messages:", messageRows.at(-1) || "(No referenced message text was available.)"].join(`
-`);
-  return `${beginning.slice(0, Math.max(0, budget - ending.length)).trimEnd()}${ending}`;
-}
-function referenceForGeneration(state, generationId) {
-  return state.references.find((reference) => reference.status === "injected" && reference.injectedGenerationId === generationId);
-}
-function latestArmedReference(state) {
-  return [...state.references].reverse().find((reference) => reference.status === "armed");
 }
 
 // src/backend.ts
@@ -3683,6 +4303,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         conversationTitle: text2(presentation?.conversationTitle, 120) || undefined,
         call: normalizeCallMarker(presentation?.call),
         format: voiceMessage(presentation?.format) ? "voice" : undefined,
+        voiceTranscript: voiceMessage(presentation?.format) ? text2(presentation?.voiceTranscript, 12000) || undefined : undefined,
         storyAt: text2(presentation?.storyAt, 80) || undefined,
         storyTimeLabel: text2(presentation?.storyTimeLabel, 160) || undefined,
         storyTimezoneOffsetMinutes: typeof presentation?.storyTimezoneOffsetMinutes === "number" && Number.isFinite(presentation.storyTimezoneOffsetMinutes) && Math.abs(presentation.storyTimezoneOffsetMinutes) <= 840 ? presentation.storyTimezoneOffsetMinutes : undefined,
@@ -3849,6 +4470,7 @@ function normalizeState(value, chatId, characterId, characterName) {
         senderActorId: text2(message.senderActorId, 180) || text2(message.senderContactId, 180) || undefined,
         senderContactId: text2(message.senderContactId, 180) || undefined,
         senderName: text2(message.senderName, 120) || (message.sender === "contact" ? "Participant" : "Persona"),
+        format: voiceMessage(message.format) ? "voice" : undefined,
         text: body,
         createdAt: text2(message.createdAt, 40) || nowIso()
       }];
@@ -3992,6 +4614,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     roleplayClockLabel: value.roleplayClockPrecision === "exact" || value.roleplayClockSource === "manual" ? text2(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    callSceneCheck: normalizeCallSceneCheck(value.callSceneCheck),
     hostSwipeSelections,
     hostClockBaselines,
     candidateClocks,
@@ -4709,6 +5332,8 @@ async function sendState(state, userId, reason = "refresh", open = false) {
       contact.avatarUrl = image.url;
   }));
   send({ type: "lumiphone:state", state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId);
+  if (reason !== "state_reconciled" && state.conversations.some((thread) => thread.messages.some((row) => row.call?.followUp?.status === "pending")))
+    liveCalls.processFollowUps({ chatId: state.chatId, characterId: state.characterId }, userId).catch((error) => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`));
 }
 function viewKey(userId) {
   return userId || "_default";
@@ -4987,6 +5612,7 @@ function upsertContact(state, contact, preserveCustomization = true) {
   const existing = state.contacts.find((entry) => entry.id === contact.id || contact.source.kind !== "npc" && contactSourceKey(entry.source) === sourceKey || contact.source.kind === "npc" && entry.source.kind === "npc" && contact.source.sceneKey && entry.source.sceneKey === contact.source.sceneKey);
   if (existing) {
     const preserved = preserveCustomization ? {
+      id: existing.id,
       createdAt: existing.createdAt,
       accent: existing.accent,
       contextPolicy: existing.contextPolicy,
@@ -4995,6 +5621,7 @@ function upsertContact(state, contact, preserveCustomization = true) {
       sourceAccent: contact.sourceAccent || existing.sourceAccent,
       avatarSource: existing.avatarSource,
       avatarFocus: existing.avatarFocus,
+      voicePlayback: existing.voicePlayback,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
@@ -6528,6 +7155,11 @@ ${recentNarrative}`
       }
     });
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId });
+    if (state.conversations.some((thread) => thread.messages.some((row) => row.call?.followUp?.status === "pending")))
+      liveCalls.processFollowUps({ chatId, characterId }, userId).catch((error) => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`));
+    const callPreferences = await loadPreferences(userId);
+    if (callPreferences.incomingCallScenes && callPreferences.roleplayContextMode !== "off")
+      liveCalls.offerIncoming({ chatId, characterId, sourceKey, seed }, userId).catch((error) => spindle.log.warn(`Pocket incoming call skipped: ${error instanceof Error ? error.message : String(error)}`));
     return seed;
   })();
   narrativeSeedFlights.set(flightKey, flight);
@@ -8003,7 +8635,7 @@ async function applyAction(input, userId, source = "model") {
         }, command);
     } else if (action === "message" || action === "call") {
       const call = action === "call" ? normalizeCallMarker({ ...payload, callId: text2(payload.callId, 180) || (payload.status !== "ended" ? id("call") : "") }) : undefined;
-      if (action === "call" && !call)
+      if (action === "call" && (!call || call.status === "ringing"))
         throw new Error("A call needs status connected, ended, or missed. Ending a call requires its callId.");
       if (action === "call" && payload.durationSeconds !== undefined && (typeof payload.durationSeconds !== "number" || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds < 0 || payload.durationSeconds > 86400))
         throw new Error("Use an explicit duration in seconds, up to one day, or omit it.");
@@ -8111,7 +8743,7 @@ async function applyAction(input, userId, source = "model") {
         senderName: sender === "persona" ? state.pocketPersona.displayName || "You" : sender === "system" ? "Pocket" : senderActor.name,
         senderAccent: sender === "contact" ? senderActor.accent : state.pocketPersona.accent,
         text: messageText,
-        format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? "voice" : undefined,
+        format: !call && (source === "user" || preferences.voiceMessages !== false) && voiceMessage(payload.format) ? "voice" : undefined,
         createdAt: phoneMessageTimestamp(state),
         read: personaRead,
         call,
@@ -8181,6 +8813,7 @@ async function applyAction(input, userId, source = "model") {
             conversationTitle: conversation.title,
             format: message.format,
             call,
+            voiceTranscript: message.format === "voice" ? message.text : undefined,
             ...snapshotActivityClock(state)
           },
           source: { messageId: text2(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id }
@@ -8453,6 +9086,17 @@ async function handleFrontend(payload, userId) {
   try {
     const context = await resolveContext(payload, userId);
     switch (payload.type) {
+      case "lumiphone:call_start":
+      case "lumiphone:call_resume":
+      case "lumiphone:call_accept":
+      case "lumiphone:call_decline":
+      case "lumiphone:call_ignore":
+      case "lumiphone:call_camera":
+      case "lumiphone:call_reply":
+      case "lumiphone:call_end": {
+        await liveCalls.handle(String(payload.type), { ...payload, ...context }, userId);
+        break;
+      }
       case "lumiphone:get_debug_prompt": {
         const state = await loadState(context.chatId, context.characterId, userId);
         const conversationId = text2(payload.conversationId, 180);
@@ -9812,6 +10456,54 @@ ${projectPhoneContext(state)}` };
   }, 70);
 }
 spindle.frontendCapabilities.declare("message_tag_interceptor");
+var liveCalls = new PocketCalls({
+  preferences: loadPreferences,
+  load: loadState,
+  save: saveState,
+  lock: (chatId, characterId, action) => withStateLock(stateKey(chatId, characterId), action),
+  publish: (state, userId) => sendState(state, userId, "call"),
+  send,
+  id,
+  timestamp: phoneMessageTimestamp,
+  contact: (actor) => actorAsGenerationContact(actor, nowIso()),
+  profile: resolveContactProfile,
+  character: async (characterId, userId) => spindle.characters.get(characterId, userId),
+  background: async (state, contact, conversation, userId) => {
+    const preferences = await loadPreferences(userId);
+    const persona = await resolveGenerationPocketPersona(state, userId);
+    const assembled = await assemblePocketContext({
+      state: { ...state, pocketPersona: persona },
+      contact,
+      conversation,
+      preferences,
+      actorIdentity: pocketContactPhoneBrief(contact, await resolveContactProfile(contact, userId)),
+      getMessages: spindle.permissions.has("chat_mutation") ? () => spindle.chat.getMessages(state.chatId) : undefined,
+      includePhoneThread: true,
+      includeRoleplayBackground: false
+    });
+    const seed = preferences.roleplayContextMode === "off" ? null : await loadNarrativeSeed(state.chatId, state.characterId, userId);
+    const continuity = narrativeSeedContext(seed, contact.name, [contact.name, persona.displayName || "You"]);
+    const memory = actorPhoneMemoryContext(state.actorMemories, { actorIds: [contact.id], actorNames: [contact.name], actorName: contact.name, excludeConversationId: conversation.id, maxChars: 2600 });
+    return [assembled.text, continuity, memory].filter(Boolean).join(`
+
+`);
+  },
+  generate: async (requestId, messages, signal, userId) => {
+    if (!spindle.permissions.has("generation"))
+      throw new Error("Enable Pocket\u2019s Generation permission to make calls.");
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, "call-reply", requestId, { type: "quiet", messages, signal, userId, parameters: { temperature: 0.8, max_tokens: 900 } }, userId);
+    return parseGeneratedObject(response.content);
+  },
+  remember: rememberPhoneMessage,
+  availabilityKey: async (state, contact, conversation, userId) => {
+    const seed = await loadNarrativeSeed(state.chatId, state.characterId, userId);
+    const actor = seed?.actors.find((row) => normalizeActorName(row.name) === normalizeActorName(contact.name));
+    return JSON.stringify({ presence: contact.presence.inScene, activity: contact.sceneNote, availability: conversation.availability, pause: conversation.pause?.reason, actor: actor && { status: actor.status, activity: actor.activity, location: actor.location, presence: actor.presence }, roleplayNow: state.roleplayNow });
+  },
+  sendText: async (input, userId) => {
+    await applyAction({ chatId: input.chatId, characterId: input.characterId, requestId: input.requestId, action: "message", payload: { conversationId: input.conversationId, speaker: { actorId: input.actorId }, text: input.text } }, userId, "model");
+  }
+});
 spindle.onFrontendMessage(handleFrontend);
 function pocketArtifactTag(activityId, action) {
   const value = text2(activityId, 180);

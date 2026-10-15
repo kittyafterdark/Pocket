@@ -76,6 +76,7 @@ function sequence(group: PhoneSequenceEntry[], open: (activity: PocketActivity, 
     const notifications = document.createElement('div'); notifications.className = 'pocket-phone-notifications'
     const notification = phone.querySelector('.pocket-phone-notification')!
     notification.replaceWith(notifications); notifications.append(notification)
+    const voice = phone.querySelector('.lp-voice-message'); if (voice) notifications.append(voice)
   }
   const destination = lock ? phone.querySelector('.pocket-phone-notifications')! : target
   const selector = lock ? '.pocket-phone-notification' : '.pocket-phone-message'
@@ -83,6 +84,7 @@ function sequence(group: PhoneSequenceEntry[], open: (activity: PocketActivity, 
   for (const entry of group.slice(1)) {
     const extra = buildPhoneScreen(entry.activity, route => open(entry.activity, route), entry.options)
     for (const row of extra?.querySelectorAll(selector) || []) destination.append(row)
+    if (lock) { const voice = extra?.querySelector('.lp-voice-message'); if (voice) destination.append(voice) }
   }
   if (delivery) destination.append(delivery)
   const steps = [...phone.querySelectorAll<HTMLElement>(selector)]

@@ -52,9 +52,40 @@ async function synthesizeVoiceMessage(connectionId, text, signal, options) {
   return blob;
 }
 
+// src/frontend/components/choir-bridge.ts
+function choirBridge() {
+  const bridge = globalThis.__CHOIR_API__;
+  return bridge?.version === 1 && bridge.isAvailable() ? bridge : undefined;
+}
+function choirVoiceProfiles() {
+  try {
+    return choirBridge()?.getVoiceProfiles?.().filter((row) => row.speaker && row.voice && !row.excluded) || [];
+  } catch {
+    return [];
+  }
+}
+
 // src/frontend/components/voice-message.ts
+function setPlaybackButton(button, playing) {
+  const label = (playing ? button.dataset.voiceStopLabel : button.dataset.voicePlayLabel) || "▶ Play voice message";
+  if (button.dataset.voiceIcon === "true") {
+    button.innerHTML = playing ? '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/></svg>';
+  } else
+    button.textContent = label;
+  const accessibleLabel = `${label.replace(/^[▶■]\s*/, "")} from ${button.dataset.voiceSender}`;
+  button.setAttribute("aria-label", accessibleLabel);
+  button.title = accessibleLabel;
+  button.setAttribute("aria-pressed", String(playing));
+}
+
 class VoiceMessagePlayer {
+  static current;
+  views = new Map;
   active;
+  stopIfDetached() {
+    if (this.active && !this.active.button.isConnected)
+      this.stop();
+  }
   stop() {
     if (!this.active)
       return;
@@ -76,36 +107,83 @@ class VoiceMessagePlayer {
       URL.revokeObjectURL(url);
     if (status)
       status.textContent = "";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-pressed", "false");
+    setPlaybackButton(button, false);
   }
-  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions) {
+  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions, kind = "message", choir) {
+    const playLabel = kind === "call" ? "▶ Replay spoken turn" : "▶ Play voice message";
+    const stopLabel = kind === "call" ? "■ Stop speech" : "■ Stop voice message";
+    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind, choir]);
+    if (message.id && this.views.get(message.id)?.signature === signature)
+      return this.views.get(message.id).element;
     const container = document.createElement("div");
     container.className = "lp-voice-message";
+    container.addEventListener("click", (event) => event.stopPropagation());
     const button = document.createElement("button");
     button.type = "button";
     button.className = "lp-voice-play";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-label", `Play voice message from ${message.senderName}`);
-    button.setAttribute("aria-pressed", "false");
+    button.dataset.voicePlayLabel = playLabel;
+    button.dataset.voiceStopLabel = stopLabel;
+    button.dataset.voiceSender = message.senderName;
+    button.dataset.voiceIcon = String(kind === "call");
+    setPlaybackButton(button, false);
     const status = document.createElement("span");
     status.className = "lp-voice-status";
     status.setAttribute("role", "status");
     const supported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-    button.disabled = !enabled || !supported && !connectionId;
+    button.disabled = !enabled || !supported && !connectionId && !choir?.useChoir;
+    button.hidden = !enabled;
     if (button.disabled)
       status.textContent = enabled ? "Speech playback unavailable in this browser." : "Voice playback is disabled in Settings.";
     button.addEventListener("click", () => {
+      if (VoiceMessagePlayer.current && VoiceMessagePlayer.current !== this)
+        VoiceMessagePlayer.current.stop();
+      VoiceMessagePlayer.current = this;
       const same = this.active?.button === button;
       this.stop();
       if (same)
         return;
+      if (choir?.useChoir) {
+        const bridge = choirBridge();
+        if (!bridge?.playVoiceMessage) {
+          status.textContent = bridge ? "This Choir version does not support Pocket voice playback." : "Choir is unavailable. Enable it or choose another voice source.";
+          return;
+        }
+        const active = { button, status, abort: new AbortController };
+        this.active = active;
+        setPlaybackButton(button, true);
+        status.textContent = "Preparing speech with Choir…";
+        active.timer = setTimeout(() => {
+          if (this.active === active) {
+            this.stop();
+            status.textContent = "Choir playback timed out. Try again.";
+          }
+        }, 90000);
+        bridge.playVoiceMessage({ text: message.text, speaker: choir.speaker, signal: active.abort.signal, onStatus: (update) => {
+          if (this.active === active)
+            status.textContent = update.kind === "loading" ? "Preparing speech with Choir…" : "";
+        } }).then((result) => {
+          if (this.active !== active)
+            return;
+          this.stop();
+          if (!result.played) {
+            status.textContent = "No Choir voice is enabled for this speaker.";
+            return;
+          }
+          container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-ended"));
+        }).catch((error) => {
+          if (this.active !== active)
+            return;
+          this.stop();
+          status.textContent = error instanceof Error ? error.message : "Choir playback failed.";
+          container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-error"));
+        });
+        return;
+      }
       if (connectionId) {
         const active = { button, status, abort: new AbortController };
         this.active = active;
-        button.textContent = "■ Stop voice message";
-        button.setAttribute("aria-pressed", "true");
-        status.textContent = "Preparing voice message…";
+        setPlaybackButton(button, true);
+        status.textContent = kind === "call" ? "Preparing speech…" : "Preparing voice message…";
         active.timer = setTimeout(() => {
           if (this.active === active) {
             this.stop();
@@ -119,13 +197,16 @@ class VoiceMessagePlayer {
           active.url = URL.createObjectURL(blob);
           active.audio = new window.Audio(active.url);
           active.audio.onended = () => {
-            if (this.active === active)
+            if (this.active === active) {
               this.stop();
+              container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-ended"));
+            }
           };
           active.audio.onerror = () => {
             if (this.active === active) {
               this.stop();
               status.textContent = "Could not play the generated audio. The transcript is available below.";
+              container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-error"));
             }
           };
           await active.audio.play();
@@ -136,6 +217,7 @@ class VoiceMessagePlayer {
             return;
           this.stop();
           status.textContent = error instanceof Error ? error.message : "TTS playback failed. The transcript is available below.";
+          container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-error"));
         });
         return;
       }
@@ -153,19 +235,21 @@ class VoiceMessagePlayer {
       }
       this.active = { button, utterance };
       status.textContent = "";
-      button.textContent = "■ Stop voice message";
-      button.setAttribute("aria-pressed", "true");
+      setPlaybackButton(button, true);
       const finish = () => {
         if (this.active?.utterance === utterance) {
           this.active = undefined;
-          button.textContent = "▶ Play voice message";
-          button.setAttribute("aria-pressed", "false");
+          setPlaybackButton(button, false);
         }
       };
-      utterance.onend = finish;
+      utterance.onend = () => {
+        finish();
+        container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-ended"));
+      };
       utterance.onerror = () => {
         finish();
         status.textContent = "Could not play this voice message. The transcript is available below.";
+        container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-error"));
       };
       try {
         window.speechSynthesis.speak(utterance);
@@ -182,8 +266,551 @@ class VoiceMessagePlayer {
     text.textContent = message.text;
     transcript.append(title, text);
     container.append(button, status, transcript);
+    if (message.id) {
+      this.views.set(message.id, { signature, element: container });
+      if (this.views.size > 300)
+        this.views.delete(this.views.keys().next().value);
+    }
     return container;
   }
+}
+
+// src/frontend/components/live-call.ts
+var STYLES = `
+.lp-live-call{position:absolute;inset:0;z-index:70;display:flex;flex-direction:column;gap:12px;padding:22px 16px 28px;background:#050609;color:#faf9ff;border-radius:inherit;overflow-y:auto;overflow-x:hidden;min-width:0;box-sizing:border-box;font:14px/1.5 system-ui,sans-serif;overscroll-behavior:contain}
+.lp-live-call *{box-sizing:border-box}.lp-live-call> *{min-width:0}.lp-live-call button,.lp-live-call textarea,.lp-live-call select{font:inherit;color:inherit;background:#23232e;border:1px solid #5e5c70;border-radius:12px;padding:10px;min-height:44px;min-width:0;max-width:100%}.lp-live-call button{cursor:pointer}.lp-live-call button:disabled{opacity:.5;cursor:default}.lp-live-call button:focus-visible,.lp-live-call textarea:focus-visible,.lp-live-call select:focus-visible{outline:2px solid #c4adff;outline-offset:2px}
+.lp-call-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:4px 0 8px;background:#050609}.lp-call-header .lp-call-hangup{flex-shrink:0}
+.lp-call-stage[data-video=false]{flex:0 0 auto;min-height:0}
+.lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;overflow-wrap:anywhere}.lp-call-caption-text{white-space:pre-wrap;max-height:calc(45vh - 60px);overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0;overflow-wrap:anywhere}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px;overflow-wrap:anywhere}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left;overflow-wrap:anywhere}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;flex-shrink:0;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:6px}.lp-call-mode select{width:100%;text-overflow:ellipsis}.lp-call-mode.lp-call-reply-mode{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;font-size:12px}.lp-live-call .lp-call-reply-mode select{min-height:36px;padding:6px 8px;font-size:12px}.lp-call-playback{margin-top:4px}.lp-call-playback .lp-voice-message{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;gap:8px;width:100%}.lp-call-playback .lp-voice-play{grid-column:2;grid-row:1;display:grid;place-items:center;width:44px;height:44px;padding:10px;border:0;border-radius:50%;background:transparent}.lp-call-playback .lp-voice-play:hover{background:#ffffff16}.lp-call-playback .lp-voice-play svg{display:block;width:20px;height:20px}.lp-call-playback .lp-voice-status{grid-column:1;grid-row:1;font-size:11px;white-space:normal;overflow-wrap:anywhere}.lp-call-playback .lp-voice-status:empty,.lp-call-error:empty{display:none}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-error{color:#ffc6d3;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.lp-call-status:empty{display:none}.lp-call-controls{gap:8px;font-size:12px}.lp-call-controls .lp-call-mode{gap:4px;font-size:12px}.lp-call-controls .lp-call-mode>span{font-size:11px}.lp-call-controls button,.lp-call-controls select,.lp-call-controls textarea{font-size:12px;padding:8px;min-height:36px;border-radius:10px}.lp-call-controls textarea{min-height:64px}.lp-live-call>details{font-size:12px}
+.lp-call-speech{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px;min-width:0}.lp-call-speech .lp-call-mode select,.lp-call-speech button{font-size:11px;min-height:32px;padding:6px 8px}.lp-call-speech button{white-space:nowrap}
+.lp-call-playback{margin-top:2px}.lp-call-playback .lp-voice-message{grid-template-columns:minmax(0,1fr) 28px;gap:6px}.lp-call-playback .lp-voice-play{width:28px;height:28px;min-height:28px;padding:4px}
+.lp-live-call .lp-call-camera{font-size:11px;min-height:32px;padding:6px 10px;align-self:flex-end}.lp-call-scene{font-size:12px;color:#c4bed3;font-style:italic;margin-bottom:10px;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-offer{display:flex;gap:8px;flex-wrap:wrap}.lp-call-offer button{flex:1}.lp-call-offer button:first-child{background:#245d49}
+`;
+function element(tag, className = "", text = "") {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+class LiveCallUi {
+  host;
+  root;
+  scope;
+  callId = "";
+  requests = new Map;
+  session;
+  generation = 0;
+  returnFocus;
+  caption;
+  image;
+  stage;
+  status;
+  error;
+  choices;
+  playback;
+  input;
+  retry;
+  record;
+  speechProvider;
+  controls;
+  hangup;
+  finished = false;
+  incoming = false;
+  awaitingAnswer = false;
+  offer;
+  scene;
+  camera;
+  cameraVisible = true;
+  cameraRequest = "";
+  ready = false;
+  busy = false;
+  mode = "voice";
+  expressions = {};
+  current;
+  history = [];
+  voiceOperation = 0;
+  constructor(host) {
+    this.host = host;
+  }
+  get active() {
+    return Boolean(this.root);
+  }
+  start(scope, mode, callId = "", incomingName = "") {
+    if (this.root) {
+      this.root.focus();
+      return;
+    }
+    this.scope = scope;
+    this.mode = mode;
+    this.callId = callId;
+    this.ready = false;
+    this.finished = false;
+    this.current = undefined;
+    this.history = [];
+    this.expressions = {};
+    this.incoming = Boolean(incomingName);
+    this.awaitingAnswer = this.incoming;
+    this.cameraVisible = true;
+    this.cameraRequest = "";
+    this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    this.root = element("section", "lp-live-call");
+    this.root.tabIndex = -1;
+    this.root.setAttribute("role", "dialog");
+    this.root.setAttribute("aria-modal", "true");
+    this.root.setAttribute("aria-label", mode === "video" ? "Pocket video call" : "Pocket phone call");
+    const style = element("style");
+    style.textContent = STYLES;
+    const title = element("h2", "lp-call-title", mode === "video" ? "Video call" : "Phone call");
+    title.dataset.callTitle = "true";
+    const header = element("div", "lp-call-header");
+    const hangup = element("button", "lp-call-hangup", "End call");
+    hangup.type = "button";
+    hangup.addEventListener("click", () => this.close());
+    this.hangup = hangup;
+    header.append(title, hangup);
+    this.camera = element("button", "lp-call-camera", "Hide my camera");
+    this.camera.type = "button";
+    this.camera.hidden = mode !== "video";
+    this.camera.disabled = true;
+    this.camera.setAttribute("aria-label", "Hide my persona camera");
+    this.camera.setAttribute("aria-pressed", "true");
+    this.camera.addEventListener("click", () => {
+      if (!this.ready || this.busy || this.finished || !this.scope || this.cameraRequest)
+        return;
+      this.camera.disabled = true;
+      const id = this.host.send("lumiphone:call_camera", { ...this.scope, callId: this.callId, visible: !this.cameraVisible });
+      this.cameraRequest = id;
+      this.requests.set(id, "lumiphone:call_camera");
+      this.setBusy(false);
+    });
+    this.status = element("div", "lp-call-status");
+    this.status.setAttribute("role", "status");
+    this.stage = element("div", "lp-call-stage");
+    this.image = element("img");
+    this.image.hidden = true;
+    this.image.alt = "Character expression";
+    this.image.addEventListener("error", () => {
+      if (this.stage)
+        this.stage.dataset.video = "false";
+      if (this.image)
+        this.image.hidden = true;
+      if (this.status)
+        this.status.textContent = "Video interrupted · voice call continues";
+    });
+    const bubble = element("div", "lp-call-caption");
+    this.scene = element("div", "lp-call-scene");
+    this.scene.hidden = true;
+    this.caption = element("div", "lp-call-caption-text", "Waiting for the character to answer…");
+    this.caption.setAttribute("aria-live", "polite");
+    this.playback = element("div", "lp-call-playback");
+    bubble.append(this.scene, this.caption, this.playback);
+    this.stage.append(this.image, bubble);
+    this.error = element("div", "lp-call-error");
+    this.error.setAttribute("role", "alert");
+    this.controls = element("div", "lp-call-controls");
+    this.controls.hidden = true;
+    const modeLabel = element("label", "lp-call-mode lp-call-reply-mode");
+    modeLabel.append(element("span", "", "Reply with"));
+    const selector = element("select");
+    selector.setAttribute("aria-label", "Call reply method");
+    for (const [value, text] of [["vn", "Suggested replies"], ["type", "Type a reply"], ["stt", "Speech to text"]]) {
+      const option = element("option", "", text);
+      option.value = value;
+      selector.append(option);
+    }
+    this.choices = element("div", "lp-call-choices");
+    this.input = element("textarea", "lp-call-input");
+    this.input.placeholder = "Your spoken reply…";
+    this.input.setAttribute("aria-label", "Your call reply");
+    this.input.maxLength = 4000;
+    this.record = element("button", "", "Start microphone");
+    this.record.type = "button";
+    this.record.disabled = !this.host.speech;
+    if (!this.host.speech)
+      this.record.title = "Speech to text needs a host with the speech API and Pocket’s Media permission.";
+    this.record.addEventListener("click", () => this.recordSpeech());
+    const speechRow = element("div", "lp-call-speech");
+    const providerLabel = element("label", "lp-call-mode");
+    providerLabel.append(element("span", "", "Speech provider"));
+    this.speechProvider = element("select");
+    this.speechProvider.setAttribute("aria-label", "Call speech provider");
+    const automatic = element("option", "", "Voice & Speech setting");
+    automatic.value = "";
+    this.speechProvider.append(automatic);
+    const providers = this.host.speech?.listProviders?.() || [];
+    for (const provider of providers) {
+      const option = element("option", "", `${provider.name}${provider.onDevice && !/\bon (?:this )?device\b/i.test(provider.name) ? " · on device" : ""}`);
+      option.value = provider.id;
+      option.disabled = !provider.available;
+      this.speechProvider.append(option);
+    }
+    if (providers.some((row) => row.id === "whistle" && row.available))
+      this.speechProvider.value = "whistle";
+    providerLabel.append(this.speechProvider);
+    speechRow.append(providerLabel, this.record);
+    const send = element("button", "", "Say this");
+    send.type = "button";
+    send.addEventListener("click", () => this.reply(this.input.value));
+    this.input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        send.click();
+      }
+    });
+    const switchMode = () => {
+      this.cancelSpeech();
+      this.choices.hidden = selector.value !== "vn";
+      this.input.hidden = selector.value === "vn";
+      send.hidden = selector.value === "vn";
+      speechRow.hidden = selector.value !== "stt";
+    };
+    selector.addEventListener("change", switchMode);
+    modeLabel.append(selector);
+    switchMode();
+    this.controls.append(modeLabel, this.choices, speechRow, this.input, send);
+    this.retry = element("button", "", "Retry reply");
+    this.retry.type = "button";
+    this.retry.hidden = true;
+    this.retry.addEventListener("click", () => {
+      if (this.finished) {
+        this.finished = false;
+        this.incoming = false;
+        this.callId = "";
+        this.history = [];
+        this.current = undefined;
+        this.refreshHistory();
+        this.hangup.textContent = "End call";
+        this.caption.textContent = "Waiting for the character to answer…";
+      }
+      this.request(this.ready ? "lumiphone:call_reply" : this.incoming ? "lumiphone:call_accept" : "lumiphone:call_start", {});
+    });
+    this.offer = element("div", "lp-call-offer");
+    this.offer.hidden = true;
+    const accept = element("button", "", "Answer");
+    accept.type = "button";
+    accept.addEventListener("click", () => {
+      if (!this.awaitingAnswer || this.busy)
+        return;
+      this.awaitingAnswer = false;
+      this.offer.hidden = true;
+      this.hangup.textContent = "End call";
+      this.request("lumiphone:call_accept", {});
+    });
+    const ignore = element("button", "", "Ignore");
+    ignore.type = "button";
+    ignore.addEventListener("click", () => {
+      if (this.scope && this.awaitingAnswer)
+        this.host.send("lumiphone:call_ignore", { ...this.scope, callId: this.callId });
+      this.close(false);
+    });
+    this.offer.append(accept, ignore);
+    const transcript = element("details");
+    transcript.append(element("summary", "", "Call transcript"));
+    const history = element("div", "lp-call-history");
+    history.dataset.callHistory = "true";
+    transcript.append(history);
+    this.root.append(style, header, this.camera, this.status, this.stage, this.error, this.retry, this.offer, this.controls, transcript);
+    this.root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        this.close();
+        return;
+      }
+      if (event.key === "Tab") {
+        const controls = [...this.root.querySelectorAll("button:not(:disabled),textarea,select,summary")].filter((node) => !node.hidden && node.getClientRects().length);
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === this.root)) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    });
+    this.host.root.append(this.root);
+    this.root.focus();
+    if (incomingName)
+      this.showIncoming(incomingName);
+    else
+      this.request(callId ? "lumiphone:call_resume" : "lumiphone:call_start", {});
+  }
+  showIncoming(name) {
+    this.incoming = true;
+    this.awaitingAnswer = true;
+    this.setBusy(false);
+    this.ready = false;
+    this.root.querySelector("[data-call-title]").textContent = name;
+    this.hangup.textContent = "Decline";
+    this.caption.textContent = "Incoming call";
+    this.offer.hidden = false;
+    this.controls.hidden = true;
+    this.camera.hidden = true;
+    this.stage.dataset.video = "false";
+    this.image.hidden = true;
+  }
+  request(type, payload) {
+    if (!this.scope || !this.root || this.busy)
+      return;
+    this.busy = true;
+    this.error.textContent = "";
+    this.retry.hidden = true;
+    this.setBusy(true);
+    const id = this.host.send(type, { ...this.scope, callId: this.callId, mode: this.mode, personaCamera: this.cameraVisible, ...payload });
+    this.requests.set(id, type);
+  }
+  setBusy(value) {
+    this.busy = value;
+    if (this.camera)
+      this.camera.disabled = value || !this.ready || this.finished || Boolean(this.cameraRequest);
+    for (const control of this.controls?.querySelectorAll("button,textarea") || [])
+      control.disabled = value || !this.ready || Boolean(this.cameraRequest) || control === this.record && !this.host.speech;
+    if (this.status)
+      this.status.textContent = value && this.ready ? "Listening for a reply…" : "";
+  }
+  receive(payload) {
+    if (!this.root || !this.scope)
+      return;
+    if (payload.type === "lumiphone:call_incoming" && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId && payload.callId === this.callId) {
+      this.showIncoming(payload.name);
+      return;
+    }
+    if (payload.type === "lumiphone:call_camera" && payload.requestId === this.cameraRequest && payload.callId === this.callId) {
+      this.cameraVisible = payload.visible !== false;
+      this.cameraRequest = "";
+      this.requests.delete(payload.requestId);
+      this.camera.textContent = this.cameraVisible ? "Hide my camera" : "Show my camera";
+      this.camera.setAttribute("aria-label", this.cameraVisible ? "Hide my persona camera" : "Show my persona camera");
+      this.camera.setAttribute("aria-pressed", String(this.cameraVisible));
+      this.camera.disabled = this.busy || this.finished;
+      this.setBusy(this.busy);
+      return;
+    }
+    if (payload.type === "lumiphone:error" && payload.requestId === this.cameraRequest) {
+      this.error.textContent = payload.error;
+      this.cameraRequest = "";
+      this.requests.delete(payload.requestId);
+      this.setBusy(this.busy);
+      return;
+    }
+    if (payload.type === "lumiphone:error" && this.requests.has(payload.requestId)) {
+      this.error.textContent = payload.error;
+      this.retry.hidden = false;
+      this.setBusy(false);
+      return;
+    }
+    if ((payload.type === "lumiphone:call_ringing" || payload.type === "lumiphone:call_result") && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
+      this.callId = payload.callId;
+      this.ready = false;
+      this.controls.hidden = true;
+      this.stage.dataset.video = "false";
+      this.image.hidden = true;
+      this.root.querySelector("[data-call-title]").textContent = payload.name;
+      this.playback.replaceChildren();
+      this.host.player.stop();
+      this.cancelSpeech();
+      this.caption.textContent = payload.type === "lumiphone:call_ringing" ? "Calling…" : payload.outcome === "declined" ? "Call declined" : "No answer";
+      if (payload.type === "lumiphone:call_result") {
+        this.finished = true;
+        this.setBusy(false);
+        this.hangup.textContent = "Close";
+        this.retry.textContent = "Call again";
+        this.retry.hidden = false;
+      }
+      return;
+    }
+    if (payload.type === "lumiphone:call_ready" && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
+      this.callId = payload.callId;
+      this.ready = true;
+      this.expressions = payload.video ? payload.expressions : {};
+      this.stage.dataset.video = String(Boolean(payload.video));
+      this.awaitingAnswer = false;
+      this.offer.hidden = true;
+      this.mode = payload.mode || this.mode;
+      this.cameraVisible = payload.personaCamera !== false;
+      this.camera.hidden = this.mode !== "video";
+      this.camera.textContent = this.cameraVisible ? "Hide my camera" : "Show my camera";
+      this.camera.setAttribute("aria-label", this.cameraVisible ? "Hide my persona camera" : "Show my persona camera");
+      this.camera.setAttribute("aria-pressed", String(this.cameraVisible));
+      this.hangup.textContent = "End call";
+      this.controls.hidden = false;
+      this.retry.textContent = "Retry reply";
+      this.root.querySelector("[data-call-title]").textContent = payload.name;
+      this.image.alt = `${payload.name}’s expression`;
+      this.history = payload.turns || [];
+      this.refreshHistory();
+      const last = [...this.history].reverse().find((row) => row.sender === "contact");
+      if (this.requests.get(payload.requestId) === "lumiphone:call_resume") {
+        this.setBusy(false);
+        if (last)
+          this.showTurn(last, false);
+        else {
+          this.caption.textContent = "Connected. Choose Retry reply to hear the character.";
+          this.retry.hidden = false;
+        }
+      }
+      return;
+    }
+    if (payload.callId !== this.callId)
+      return;
+    if (payload.type === "lumiphone:call_turn" && this.requests.has(payload.requestId)) {
+      if (!this.history.some((row) => row.id === payload.message.id))
+        this.history.push(payload.message);
+      this.refreshHistory();
+      this.setBusy(false);
+      this.showTurn(payload.message, true, payload.ended === true);
+    }
+    if (payload.type === "lumiphone:call_ended")
+      this.close(false);
+  }
+  refreshHistory() {
+    const history = this.root?.querySelector("[data-call-history]");
+    if (history)
+      history.textContent = this.history.map((row) => `${row.callTurn?.scene ? `[Call background: ${row.callTurn.scene}]
+` : ""}${row.senderName}: ${row.text}`).join(`
+
+`);
+  }
+  showTurn(message, autoplay, ended = false) {
+    this.current = message;
+    this.caption.textContent = message.text;
+    this.scene.textContent = message.callTurn?.scene || "";
+    this.scene.hidden = !message.callTurn?.scene;
+    const image = this.expressions[message.callTurn?.expression || ""] || Object.values(this.expressions)[0];
+    this.image.hidden = !image;
+    if (image)
+      this.image.src = image;
+    const preferences = this.host.preferences();
+    const player = this.host.renderVoice ? this.host.renderVoice({ ...message, id: `call:${message.id}` }) : this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ""], "call");
+    this.playback.replaceChildren(player);
+    this.choices.replaceChildren();
+    for (const choice of message.callTurn?.choices || []) {
+      const button = element("button", "", choice);
+      button.type = "button";
+      button.addEventListener("click", () => this.reply(choice));
+      this.choices.append(button);
+    }
+    if (!this.choices.childElementCount) {
+      const type = element("button", "", "Write your reply");
+      type.addEventListener("click", () => {
+        const selector = this.root.querySelector("select");
+        selector.value = "type";
+        selector.dispatchEvent(new Event("change"));
+        this.input.focus();
+      });
+      this.choices.append(type);
+    }
+    if (ended) {
+      this.finished = true;
+      this.ready = false;
+      this.controls.hidden = true;
+      this.camera.disabled = true;
+      this.status.textContent = "The character said goodbye";
+      player.addEventListener("pocket-voice-ended", () => this.close(), { once: true });
+    }
+    if (autoplay)
+      queueMicrotask(() => {
+        if (this.root && this.current?.id === message.id)
+          player.querySelector("button")?.click();
+      });
+  }
+  reply(text) {
+    const spoken = text.trim();
+    if (!spoken || this.busy || !this.ready || this.cameraRequest)
+      return;
+    this.cancelSpeech();
+    this.host.player.stop();
+    this.input.value = "";
+    this.history.push({ id: `local:${Date.now()}`, text: spoken, sender: "persona", senderName: "You", senderAccent: "", createdAt: "", read: true, status: "read" });
+    this.refreshHistory();
+    this.request("lumiphone:call_reply", { text: spoken });
+  }
+  recordSpeech() {
+    if (this.session) {
+      this.record.disabled = true;
+      this.session.stop().catch((error) => {
+        if (this.error)
+          this.error.textContent = error.message;
+      });
+      return;
+    }
+    if (!this.host.speech || this.busy || !this.ready || this.finished)
+      return;
+    this.host.player.stop();
+    const token = ++this.voiceOperation;
+    try {
+      const session = this.host.speech.start({ provider: this.speechProvider?.value || undefined, continuous: true, onStatus: (status) => {
+        if (token === this.voiceOperation && this.status)
+          this.status.textContent = `Microphone · ${status.phase}`;
+      } });
+      this.session = session;
+      this.record.textContent = "Stop microphone";
+      session.ready.catch(() => {});
+      session.result.then((result) => {
+        if (token === this.voiceOperation && this.input)
+          this.input.value = result.text;
+      }).catch((error) => {
+        if (token === this.voiceOperation && this.error && error.name !== "AbortError")
+          this.error.textContent = error.message;
+      }).finally(() => {
+        if (token !== this.voiceOperation)
+          return;
+        this.session = undefined;
+        if (this.record) {
+          this.record.textContent = "Start microphone";
+          this.record.disabled = false;
+        }
+        if (this.status)
+          this.status.textContent = "Review your transcript, then choose Say this";
+      });
+    } catch (error) {
+      this.error.textContent = error instanceof Error ? error.message : "Could not start the microphone.";
+    }
+  }
+  cancelSpeech() {
+    ++this.voiceOperation;
+    this.session?.cancel();
+    this.session = undefined;
+    if (this.record) {
+      this.record.textContent = "Start microphone";
+      this.record.disabled = !this.host.speech;
+    }
+    if (this.ready && !this.busy && this.status)
+      this.status.textContent = "";
+  }
+  close(notify = true) {
+    if (!this.root)
+      return;
+    if (notify && this.scope && !this.finished)
+      this.host.send(this.awaitingAnswer ? "lumiphone:call_decline" : "lumiphone:call_end", { ...this.scope, callId: this.callId });
+    this.cancelSpeech();
+    this.host.player.stop();
+    this.root.remove();
+    this.root = undefined;
+    this.scope = undefined;
+    this.requests.clear();
+    this.busy = false;
+    ++this.generation;
+    this.returnFocus?.focus();
+    this.returnFocus = undefined;
+  }
+}
+
+// src/domain/voice-playback.ts
+function resolveVoicePlayback(preferences, message, contact, kind = "message") {
+  const personal = contact?.voicePlayback;
+  const custom = personal?.source === "custom";
+  const connectionId = custom ? personal.connectionId || "" : preferences.ttsConnectionId || "";
+  return {
+    enabled: kind === "call" || (message.sender === "persona" ? preferences.readOwnVoiceMessages !== false : preferences.voiceMessages !== false),
+    voiceURI: custom ? personal.voiceURI || "" : preferences.ttsVoiceURI || "",
+    connectionId,
+    options: custom ? { voice: personal.voice, model: personal.model } : preferences.ttsConnectionOptions?.[connectionId],
+    choir: { useChoir: personal?.source === "choir" || !custom && preferences.voicePlaybackProvider === "choir", speaker: personal?.choirSpeaker || message.senderName }
+  };
 }
 
 // src/domain/clock-label.ts
@@ -681,6 +1308,10 @@ function defaultPreferences() {
     ttsVoiceURI: "",
     ttsConnectionId: "",
     ttsConnectionOptions: {},
+    voicePlaybackProvider: "pocket",
+    readOwnVoiceMessages: true,
+    briefCallScenes: false,
+    incomingCallScenes: false,
     theme: "midnight",
     colors: themePalette("midnight"),
     homeWallpaper: defaultWallpaper(),
@@ -750,7 +1381,7 @@ function normalizePreferences(value) {
     const item = record2(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "call-reply", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -803,6 +1434,10 @@ function normalizePreferences(value) {
     theme,
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
+    voicePlaybackProvider: raw.voicePlaybackProvider === "choir" ? "choir" : "pocket",
+    readOwnVoiceMessages: bool(raw.readOwnVoiceMessages, true),
+    briefCallScenes: bool(raw.briefCallScenes, false),
+    incomingCallScenes: bool(raw.incomingCallScenes, false),
     ttsConnectionId: text(raw.ttsConnectionId, "", 180),
     ttsConnectionOptions: Object.fromEntries(Object.entries(record2(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record2(value).voice, "", 500), model: text(record2(value).model, "", 500) }])),
     colors: palette,
@@ -887,7 +1522,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
       app,
       contactId: shortId(raw.contactId),
       groupId: shortId(raw.groupId),
-      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
+      view: ["detail", "config", "import", "quick-gen", "new", "draft", "list", "calls", "groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(String(raw.view)) ? raw.view : undefined
     };
   if (app === "trackers")
     return {
@@ -912,7 +1547,8 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
 
 // src/domain/phone-events.ts
 function callSummary(call) {
-  return `${call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call"}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
+  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? call.direction === "incoming" ? "Incoming phone call" : "Calling…" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
+  return `${label}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
 }
 
 // src/domain/contacts.ts
@@ -1531,18 +2167,18 @@ function wallpaperImageControl(label, target, wallpaper, resolved, host) {
 }
 
 // src/frontend/components/tts-settings.ts
-function ttsSettings(getSettings, commit, onCleanup) {
+function ttsSettings(getSettings, commit, onCleanup, labelPrefix = "Voice message") {
   const panel = el("div");
   const connection = el("select", "lp-select");
-  connection.setAttribute("aria-label", "Voice message TTS connection");
+  connection.setAttribute("aria-label", `${labelPrefix} TTS connection`);
   const status = el("p", "lp-copy", "Loading Lumiverse TTS connections…");
   const provider = el("div"), browser = el("div");
   const models = el("select", "lp-select");
-  models.setAttribute("aria-label", "Voice message TTS model");
+  models.setAttribute("aria-label", `${labelPrefix} TTS model`);
   const voices = el("select", "lp-select");
-  voices.setAttribute("aria-label", "Voice message provider voice");
+  voices.setAttribute("aria-label", `${labelPrefix} provider voice`);
   const browserVoices = el("select", "lp-select");
-  browserVoices.setAttribute("aria-label", "Voice message TTS voice");
+  browserVoices.setAttribute("aria-label", `${labelPrefix} TTS voice`);
   let connections = [], disposed = false, request;
   const abort = new AbortController;
   onCleanup?.(() => {
@@ -2130,6 +2766,28 @@ function messages(host) {
     next.voiceMessages = value;
   }), "Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS."));
   voice.append(ttsSettings(() => settings, commit, host.onCleanup));
+  voice.append(toggle("Play my voice-message transcripts", settings.readOwnVoiceMessages !== false, (value) => commit((next) => {
+    next.readOwnVoiceMessages = value;
+  }), "Show a Play button on voice messages you send. Your transcript stays readable when this is off."));
+  const playback = el("select", "lp-select");
+  playback.setAttribute("aria-label", "Voice playback provider");
+  for (const [value, label] of [["pocket", "Pocket TTS"], ["choir", "Choir · saved character voices"]]) {
+    const row = el("option", "", label);
+    row.value = value;
+    playback.append(row);
+  }
+  playback.value = settings.voicePlaybackProvider || "pocket";
+  playback.addEventListener("change", () => commit((next) => {
+    next.voicePlaybackProvider = playback.value;
+  }));
+  voice.append(fieldBlock("Read voices with", playback), el("p", "lp-copy", "Contact voice settings can override this choice. Choir needs an enabled voice for the named speaker."));
+  const calls = el("section", "lp-card lp-settings-section");
+  calls.append(el("div", "lp-eyebrow", "Call scenes"), toggle("Brief pickups from busy characters", settings.briefCallScenes === true, (value) => commit((next) => {
+    next.briefCallScenes = value;
+  }), "With roleplay context, a character may let you catch a small moment of their life, apologize, and hang up."), toggle("Incoming slice-of-life calls", settings.incomingCallScenes === true, (value) => commit((next) => {
+    next.incomingCallScenes = value;
+  }), "After a roleplay turn, a character may call unexpectedly. You choose whether to answer. These brief calls are occasional and use current story context."));
+  content.append(calls);
   content.append(voice);
   const replies = el("section", "lp-card lp-settings-section");
   replies.append(el("div", "lp-eyebrow", "Reply behavior"), toggle("Decide on a reply after user DMs", settings.autoReplyAfterSend, (value) => commit((next) => {
@@ -3874,6 +4532,8 @@ function renderMessagesView(host) {
       bubble.classList.add("lp-call-history");
       bubble.dataset.callStatus = message.call.status;
     }
+    if (message.callTurn)
+      bubble.append(el("span", "lp-bubble-time", "Spoken on call"));
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId);
     bubble.dataset.sender = direction === "outbound" ? "persona" : message.sender === "system" ? "system" : "contact";
     const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === "contact" ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || "") : null;
@@ -4081,6 +4741,27 @@ function renderMessagesView(host) {
   textarea.addEventListener("blur", () => host.composerState(conversation.id, false));
   const submit = host.iconButton("send", "Send message");
   submit.type = "submit";
+  const composeOptions = el("div", "lp-compose-options");
+  const formatLabel = el("label", "lp-compose-format");
+  const voiceFormat = el("input");
+  voiceFormat.type = "checkbox";
+  voiceFormat.checked = host.draftFormat === "voice";
+  voiceFormat.setAttribute("aria-label", "Send as voice message");
+  formatLabel.append(voiceFormat, el("span", "", "Voice message"));
+  composeOptions.append(formatLabel);
+  const updateFormat = () => {
+    formatLabel.dataset.selected = String(voiceFormat.checked);
+    textarea.placeholder = voiceFormat.checked ? "Voice message transcript…" : "Message…";
+    textarea.setAttribute("aria-label", voiceFormat.checked ? "Voice message transcript" : "Message text");
+    const label = voiceFormat.checked ? "Send voice message" : "Send message";
+    submit.setAttribute("aria-label", label);
+    submit.title = label;
+  };
+  voiceFormat.addEventListener("change", () => {
+    host.updateDraftFormat(conversation.id, voiceFormat.checked ? "voice" : "text");
+    updateFormat();
+  });
+  updateFormat();
   textarea.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing)
       return;
@@ -4093,15 +4774,18 @@ function renderMessagesView(host) {
     const message = inputValue(textarea);
     if (!message)
       return;
-    host.send("lumiphone:action", { action: "message", payload: { conversationId: conversation.id, text: message, sender: "persona", explicitRemoteOverride: host.manualOverride } });
+    host.send("lumiphone:action", { action: "message", payload: { conversationId: conversation.id, text: message, sender: "persona", ...voiceFormat.checked ? { format: "voice" } : {}, explicitRemoteOverride: host.manualOverride } });
     textarea.value = "";
     host.updateDraft(conversation.id, "");
+    voiceFormat.checked = false;
+    host.updateDraftFormat(conversation.id, "text");
+    updateFormat();
     resizeComposer();
   });
   const composerStack = el("div", "lp-compose-stack");
   if (conversation.kind === "group")
     composerStack.appendChild(speakerMenu);
-  composerStack.appendChild(compose);
+  composerStack.append(composeOptions, compose);
   page.append(bubbles, composerStack);
   requestAnimationFrame(() => {
     resizeComposer();
@@ -4326,6 +5010,97 @@ function renderContactGroups(host) {
   return page;
 }
 
+// src/domain/call-availability.ts
+function callAvailability(contact, conversation) {
+  const reason = conversation?.availability.state === "paused" ? conversation.availability.reason : conversation?.availability.state === "local" ? conversation.availability.resumePauseReason : conversation?.pause?.reason;
+  if (reason === "busy")
+    return "Busy";
+  if (reason === "away" || reason === "sleeping")
+    return "Away";
+  return contact.presence.inScene ? "Here" : "Away";
+}
+
+// src/frontend/components/contact-voice.ts
+function contactVoiceSettings(initial, name, onCleanup) {
+  let voice = structuredClone(initial || { source: "default" });
+  const root = el("section", "lp-card"), source = el("select", "lp-select"), speaker = el("select", "lp-select");
+  for (const [value, label] of [["default", "Pocket default"], ["custom", "Choose a voice"], ["choir", "Use Choir voice"]]) {
+    const row = el("option", "", label);
+    row.value = value;
+    source.append(row);
+  }
+  source.setAttribute("aria-label", "Contact voice source");
+  speaker.setAttribute("aria-label", "Contact Choir speaker");
+  const custom = el("div"), choir = el("div"), status = el("p", "lp-copy"), copy = button("Copy voice from Choir", "lp-button lp-button-quiet");
+  let cleanups = [];
+  const stopCustom = () => {
+    for (const cleanup of cleanups.splice(0))
+      cleanup();
+  };
+  const refreshSpeakers = () => {
+    const profiles = choirVoiceProfiles(), selected = voice.choirSpeaker || name;
+    choir.hidden = voice.source !== "choir" && profiles.length === 0;
+    speaker.replaceChildren();
+    for (const profile of profiles) {
+      const row = el("option", "", `${profile.speaker} · ${profile.voice}`);
+      row.value = profile.speaker;
+      speaker.append(row);
+    }
+    if (!profiles.some((row) => row.speaker === selected)) {
+      const saved = el("option", "", `${selected} · choose its voice in Choir`);
+      saved.value = selected;
+      speaker.append(saved);
+    }
+    speaker.value = selected;
+    copy.disabled = !profiles.some((row) => row.speaker === selected);
+    const bridge = choirBridge();
+    status.textContent = bridge?.playVoiceMessage ? "Choir uses this speaker’s current voice and delivery settings." : bridge ? "This Choir version does not support Pocket voices." : "Enable Choir to use or copy its saved voices.";
+  };
+  const render = () => {
+    source.value = voice.source;
+    custom.hidden = voice.source !== "custom";
+    stopCustom();
+    custom.replaceChildren();
+    if (voice.source === "custom") {
+      let settings = { ...defaultPreferences(), ttsVoiceURI: voice.voiceURI || "", ttsConnectionId: voice.connectionId || "", ttsConnectionOptions: voice.connectionId ? { [voice.connectionId]: { voice: voice.voice, model: voice.model } } : {} };
+      custom.append(ttsSettings(() => settings, (mutate) => {
+        mutate(settings);
+        const selected = settings.ttsConnectionOptions?.[settings.ttsConnectionId || ""];
+        voice = { ...voice, source: "custom", connectionId: settings.ttsConnectionId, voiceURI: settings.ttsVoiceURI, voice: selected?.voice, model: selected?.model };
+      }, (cleanup) => cleanups.push(cleanup), "Contact"));
+    }
+    refreshSpeakers();
+  };
+  source.addEventListener("change", () => {
+    voice.source = source.value;
+    render();
+  });
+  speaker.addEventListener("change", () => {
+    voice.choirSpeaker = speaker.value;
+    refreshSpeakers();
+  });
+  copy.addEventListener("click", () => {
+    const profile = choirVoiceProfiles().find((row) => row.speaker === speaker.value);
+    if (!profile)
+      return;
+    voice = profile.route.startsWith("native:") ? { source: "custom", connectionId: profile.route.slice(7), voice: profile.voice, model: profile.model, choirSpeaker: profile.speaker } : { source: "choir", choirSpeaker: profile.speaker };
+    render();
+    status.textContent = voice.source === "custom" ? `Copied ${profile.speaker}’s voice. Save the contact to keep it.` : "This voice uses Choir’s provider. Save the contact to keep it linked.";
+  });
+  const available = () => refreshSpeakers();
+  window.addEventListener("choir-available-v1", available);
+  window.addEventListener("choir-unavailable-v1", available);
+  onCleanup?.(() => {
+    stopCustom();
+    window.removeEventListener("choir-available-v1", available);
+    window.removeEventListener("choir-unavailable-v1", available);
+  });
+  choir.append(fieldBlock("Choir speaker", speaker));
+  root.append(el("div", "lp-eyebrow", "Voice"), fieldBlock("Voice source", source), custom, choir, copy, status);
+  render();
+  return { element: root, value: () => structuredClone(voice) };
+}
+
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
@@ -4389,6 +5164,7 @@ function contactEditor(host, contact, draft = null) {
   sceneNote.placeholder = "Current scene note — temporary state, objective, or reason they are here";
   sceneNote.maxLength = 600;
   sceneNote.value = contact?.sceneNote || "";
+  const voice = contactVoiceSettings(contact?.voicePlayback, contact?.name || draft?.name || "Character", host.onCleanup);
   const accent = el("input", "lp-color-input");
   accent.type = "color";
   accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || "") ? contact?.accent || draft.accent : "#8b7dff";
@@ -4499,6 +5275,7 @@ function contactEditor(host, contact, draft = null) {
         appearance: appearance.value.trim(),
         textingStyle: textingStyle.value.trim()
       },
+      voicePlayback: voice.value(),
       sceneNote: sceneNote.value.trim(),
       accent: accent.value,
       colorMode: colorMode.value,
@@ -4519,7 +5296,7 @@ function contactEditor(host, contact, draft = null) {
   };
   if (photoCard)
     content.appendChild(photoCard);
-  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), voice.element, colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.source.kind === "character")
       content.append(identityProfileControls(host.identityProfiles || [], "character", contact.id, host.send, () => ({ name: name.value, role: role.value, identityBrief: description.value, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })));
@@ -4772,7 +5549,70 @@ function quickGenerateView(host) {
     footer.append(el("p", "lp-warning", "Enable text generation in Settings to generate an NPC."));
   return page;
 }
+function communicationActions(host, contact, includeMessage = true) {
+  const communication = el("div", "lp-contact-communication");
+  communication.setAttribute("role", "group");
+  communication.setAttribute("aria-label", `Contact ${contact.name}`);
+  const action = (icon, label, callback) => {
+    const control = host.iconButton(icon, includeMessage ? label : `${label} ${contact.name}`);
+    control.className = "lp-button lp-contact-communication-action";
+    control.append(el("span", "", label));
+    control.addEventListener("click", callback);
+    communication.append(control);
+    return control;
+  };
+  if (includeMessage)
+    action("messages", "Message", () => host.openDirect(contact.id));
+  if (host.startCall) {
+    const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id;
+    const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
+    const activeCall = conversation?.messages.filter((row) => row.call?.interactive).at(-1)?.call;
+    const connected = activeCall?.status === "connected" || activeCall?.status === "ringing";
+    const call = action("call", connected ? activeCall.direction === "incoming" && activeCall.status === "ringing" ? "Answer call" : "Resume call" : "Call", () => host.startCall(contact.id, connected ? activeCall.mode || "voice" : "voice", connected ? activeCall.callId : undefined));
+    call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || !connected && !host.capabilities?.generation);
+    if (!connected) {
+      const video = action("video", "Video call", () => host.startCall(contact.id, "video"));
+      video.disabled = call.disabled;
+    }
+    if (host.readOnlyDevice)
+      communication.append(el("p", "lp-copy lp-contact-call-hint", "Switch to your Persona’s phone to call."));
+    else if (!connected && !host.capabilities?.generation)
+      communication.append(el("p", "lp-copy lp-contact-call-hint", "Connect a generation model to start a call."));
+  }
+  return communication;
+}
+function phoneView(host) {
+  const { page, content } = host.page("Phone", "Choose someone to call", { label: "Add", callback: () => host.select("", "import"), enabled: !host.readOnlyDevice });
+  const search = el("input", "lp-input");
+  search.type = "search";
+  search.placeholder = "Who would you like to call?";
+  search.setAttribute("aria-label", "Search contacts to call");
+  const list = el("div", "lp-call-contact-list");
+  const noMatches = host.empty(host.state.contacts.length ? "No matching contacts" : "No contacts yet", host.state.contacts.length ? "Try another name." : "Add someone to Contacts to make your first call.");
+  noMatches.classList.add("lp-call-empty");
+  const renderList = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    const contacts = [...host.state.contacts].filter((contact) => `${contact.name} ${contact.role}`.toLocaleLowerCase().includes(query)).sort((a, b) => a.name.localeCompare(b.name));
+    list.replaceChildren();
+    for (const contact of contacts) {
+      const card = el("section", "lp-card lp-call-contact");
+      const identity = el("div", "lp-row");
+      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id;
+      const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
+      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: [contact.role, callAvailability(contact, conversation)].filter(Boolean).join(" · ") }));
+      card.append(identity, communicationActions(host, contact, false));
+      list.append(card);
+    }
+    noMatches.hidden = contacts.length > 0;
+  };
+  search.addEventListener("input", renderList);
+  renderList();
+  content.append(search, list, noMatches);
+  return page;
+}
 function renderContactsView(host) {
+  if (host.selectedView === "calls")
+    return phoneView(host);
   if (["groups", "group-config", "bank", "cast-config", "cast-import", "bank-entry"].includes(host.selectedView))
     return renderContactGroups(host);
   if (host.selectedView === "quick-gen")
@@ -4792,6 +5632,7 @@ function renderContactsView(host) {
     const { page, content } = host.page(contact.name, contact.role, { label: "Edit", callback: () => host.select(contact.id, "config") });
     const hero = el("div", "lp-card lp-contact-detail");
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || "No compact identity brief.", prominent: true, centered: true }));
+    hero.append(communicationActions(host, contact));
     if (contact.sceneNote)
       hero.append(el("p", "lp-scene-note", contact.sceneNote));
     const phoneProfile = contact.phoneProfile;
@@ -4821,8 +5662,6 @@ function renderContactsView(host) {
       presenceControls.appendChild(choice);
     }
     presence.append(presenceControls, el("p", "lp-copy", "Correct their location now. Later story updates can change it."));
-    const message = button("Message");
-    message.addEventListener("click", () => host.openDirect(contact.id));
     content.prepend(hero);
     content.append(presence);
     if (contact.source.kind === "npc") {
@@ -4851,7 +5690,6 @@ function renderContactsView(host) {
         content.appendChild(progress);
       }
     }
-    content.append(message);
     return page;
   }
   const { page, content } = host.page("Contacts", `${host.state.contacts.length} people`, { label: "Add", callback: () => host.select("", "import") });
@@ -5359,10 +6197,13 @@ function buildPhoneScreen(activity, openRoute, options) {
     const body = node("span", "pocket-phone-notification-body");
     body.append(portrait(presentation.senderName || "?", options.avatarUrl));
     const copy = node("span", "pocket-phone-notification-content");
-    copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", `${presentation.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`));
+    const preview = node("span", "pocket-phone-notification-copy", `${presentation.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`);
+    copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), preview);
     body.append(copy);
     notification.append(app, body);
     screen.append(lockHero, notification, node("span", "pocket-phone-home-indicator"));
+    if (presentation.format === "voice" && options.renderVoiceMessage)
+      screen.append(options.renderVoiceMessage({ id: activity.source?.messageId || (activity.route.app === "messages" ? activity.route.messageId : undefined), text: activity.summary || "", senderName: presentation.senderName || "Contact", senderActorId: presentation.senderActorId }));
   } else if (type === "call") {
     screen.classList.add("pocket-phone-call");
     screen.dataset.callStatus = presentation.call.status;
@@ -5390,7 +6231,7 @@ function buildPhoneScreen(activity, openRoute, options) {
     thread.tabIndex = 0;
     thread.setAttribute("role", "region");
     thread.setAttribute("aria-label", `${title} conversation`);
-    const messages = type === "group" ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || "", direction: "sent" }];
+    const messages = type === "group" ? presentation.batchMessages || [] : [{ messageId: activity.source?.messageId || (activity.route.app === "messages" ? activity.route.messageId : undefined), senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || "", direction: "sent" }];
     for (const [index, message] of messages.entries()) {
       const row = node("div", "pocket-phone-message");
       row.dataset.direction = message.direction;
@@ -5408,6 +6249,8 @@ function buildPhoneScreen(activity, openRoute, options) {
         content.append(node("span", "pocket-phone-bubble", `${message.format === "voice" ? "▶ Voice message · " : ""}${message.text}`));
         row.append(content);
       }
+      if (message.format === "voice" && options.renderVoiceMessage)
+        row.querySelector(".pocket-phone-bubble")?.replaceChildren(options.renderVoiceMessage({ ...message, id: message.messageId }));
       thread.append(row);
     }
     if (type === "chat")
@@ -6460,6 +7303,20 @@ ${pocket_inline_redesign_default}
 `;
 var INLINE_STYLES = INLINE_BASE_STYLES + INLINE_FINISH_STYLES;
 
+// src/frontend/components/voice-message-styles.ts
+var VOICE_MESSAGE_STYLES = `
+.lp-voice-message,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-message { display:grid; gap:8px; min-width:0; }
+.lp-voice-play,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-play { display:block; min-height:44px; padding:9px 12px; border:1px solid currentColor; border-radius:10px; color:inherit; background:transparent; font:inherit; cursor:pointer; text-align:left; }
+.lp-voice-play:focus-visible,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-play:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
+.lp-voice-play:disabled,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-play:disabled { opacity:.6; cursor:default; }
+.lp-voice-status,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-status { font-size:11px; }
+.lp-voice-status:empty,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-status:empty { display:none; }
+.lp-voice-transcript,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-transcript { font-size:12px; }
+.lp-voice-transcript summary,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-transcript summary { cursor:pointer; }
+.lp-voice-transcript p,.pocket-inline-frame[data-pocket-ui="true"] .lp-voice-transcript p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock .lp-voice-message { margin:12px 20px; }
+`;
+
 // src/frontend/components/activity-shadow.ts
 var sheets = new WeakMap;
 var ISOLATED_STYLES = `
@@ -6473,6 +7330,7 @@ var ISOLATED_STYLES = `
 }
 :host::before, :host::after { content: none !important; display: none !important; }
 ${INLINE_STYLES}
+${VOICE_MESSAGE_STYLES}
 `;
 function isolatedActivity(content) {
   const island = document.createElement("pocket-inline-ui");
@@ -6568,12 +7426,14 @@ function connector(group, open) {
   heading.setAttribute("aria-label", `Open ${heading.textContent} in Pocket`);
   heading.addEventListener("click", () => open(group.at(-1).activity));
   section.append(heading);
-  for (const { activity } of group) {
+  for (const { activity, options } of group) {
     const batch = activity.presentation?.batchMessages;
-    const messages = batch?.length ? batch : [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === "sent" ? "sent" : "received", text: activity.summary || "", messageId: "" }];
+    const messages = batch?.length ? batch : [{ senderName: activity.presentation?.senderName || activity.title, senderActorId: activity.presentation?.senderActorId, direction: activity.presentation?.kind === "sent" ? "sent" : "received", text: activity.summary || "", format: activity.presentation?.format, messageId: activity.route.app === "messages" ? activity.route.messageId || "" : "" }];
     for (const message of messages) {
-      const row = document.createElement("button");
-      row.type = "button";
+      const voice = message.format === "voice" && options.renderVoiceMessage;
+      const row = document.createElement(voice ? "div" : "button");
+      if (row.tagName === "BUTTON")
+        row.type = "button";
       row.className = "pocket-connector-row";
       row.dataset.direction = message.direction;
       row.dataset.pocketConnectorActivity = activity.id;
@@ -6583,9 +7443,12 @@ function connector(group, open) {
       const body = document.createElement("span");
       body.className = "pocket-connector-copy";
       body.textContent = message.text;
+      if (voice)
+        body.replaceChildren(options.renderVoiceMessage({ ...message, id: message.messageId }));
       row.append(sender, body);
       row.setAttribute("aria-label", `Open ${message.senderName}'s ${activity.kind === "call" ? "call" : "message"} in Pocket`);
-      row.addEventListener("click", () => open(message.messageId && activity.route.app === "messages" ? { ...activity, route: { ...activity.route, messageId: message.messageId } } : activity));
+      if (!voice)
+        row.addEventListener("click", () => open(message.messageId && activity.route.app === "messages" ? { ...activity, route: { ...activity.route, messageId: message.messageId } } : activity));
       section.append(row);
     }
   }
@@ -6708,8 +7571,10 @@ function buildBatchArtifact(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (presentation?.kind !== "batch" || !presentation.batchMessages?.length)
     return null;
-  const primary = document.createElement("button");
-  primary.type = "button";
+  const interactiveVoice = Boolean(options.renderVoiceMessage && presentation.batchMessages.some((row) => row.format === "voice"));
+  const primary = document.createElement(interactiveVoice ? "div" : "button");
+  if (primary.tagName === "BUTTON")
+    primary.type = "button";
   primary.className = "pocket-inline-artifact pocket-inline-chat-transcript";
   primary.dataset.kind = "batch";
   const header = document.createElement("span");
@@ -6737,14 +7602,24 @@ function buildBatchArtifact(activity, openRoute, options) {
     sender.textContent = item.senderName;
     const bubble = document.createElement("span");
     bubble.className = "pocket-inline-transcript-bubble";
-    bubble.textContent = `${item.format === "voice" ? "▶ Voice message · " : ""}${item.text}`;
+    if (item.format === "voice" && options.renderVoiceMessage)
+      bubble.append(options.renderVoiceMessage({ ...item, id: item.messageId }));
+    else
+      bubble.textContent = `${item.format === "voice" ? "▶ Voice message · " : ""}${item.text}`;
     content.append(sender, bubble);
     row.append(avatar2(item.senderName, options.avatars?.[item.senderActorId || ""]), content);
     transcript.appendChild(row);
   }
   primary.appendChild(transcript);
   primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title || "group chat"} in Pocket`);
-  primary.addEventListener("click", () => openRoute(activity.route));
+  if (interactiveVoice) {
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "Open conversation";
+    open.addEventListener("click", () => openRoute(activity.route));
+    primary.append(open);
+  } else
+    primary.addEventListener("click", () => openRoute(activity.route));
   const group = document.createElement("div");
   group.className = "pocket-inline-batch";
   group.append(primary);
@@ -6770,13 +7645,17 @@ function buildMessageArtifact(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (!presentation || !["sent", "received", "observed"].includes(presentation.kind))
     return null;
-  const primary = document.createElement("button");
-  primary.type = "button";
+  const interactiveVoice = Boolean(presentation.format === "voice" && options.renderVoiceMessage);
+  const primary = document.createElement(interactiveVoice ? "div" : "button");
+  if (primary.tagName === "BUTTON")
+    primary.type = "button";
   primary.className = "pocket-inline-artifact";
   primary.dataset.kind = presentation.kind;
   const copy = document.createElement("span");
   copy.className = "pocket-inline-artifact-copy";
   copy.textContent = `${activity.presentation?.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`;
+  if (presentation.format === "voice" && options.renderVoiceMessage)
+    copy.replaceChildren(options.renderVoiceMessage({ id: activity.source?.messageId || activity.route.app === "messages" && activity.route.messageId || undefined, text: activity.summary || "", senderName: presentation.senderName || activity.title, senderActorId: presentation.senderActorId }));
   if (presentation.call) {
     primary.classList.add("pocket-inline-call");
     primary.dataset.callStatus = presentation.call.status;
@@ -6828,7 +7707,14 @@ function buildMessageArtifact(activity, openRoute, options) {
     primary.append(body);
   }
   primary.setAttribute("aria-label", `Open ${presentation.kind === "observed" ? `${observedDeviceLine(activity)} · ` : ""}${presentation.conversationTitle || activity.title} in Pocket`);
-  primary.addEventListener("click", () => openRoute(activity.route));
+  if (interactiveVoice) {
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "Open in Pocket";
+    open.addEventListener("click", () => openRoute(activity.route));
+    primary.append(open);
+  } else
+    primary.addEventListener("click", () => openRoute(activity.route));
   return frameArtifact(primary, activity, options);
 }
 function buildActivityStack(activity, openRoute, options = {}) {
@@ -6985,6 +7871,9 @@ function sequence(group, open) {
     const notification = phone.querySelector(".pocket-phone-notification");
     notification.replaceWith(notifications);
     notifications.append(notification);
+    const voice = phone.querySelector(".lp-voice-message");
+    if (voice)
+      notifications.append(voice);
   }
   const destination = lock ? phone.querySelector(".pocket-phone-notifications") : target;
   const selector = lock ? ".pocket-phone-notification" : ".pocket-phone-message";
@@ -6993,6 +7882,11 @@ function sequence(group, open) {
     const extra = buildPhoneScreen(entry.activity, (route) => open(entry.activity, route), entry.options);
     for (const row of extra?.querySelectorAll(selector) || [])
       destination.append(row);
+    if (lock) {
+      const voice = extra?.querySelector(".lp-voice-message");
+      if (voice)
+        destination.append(voice);
+    }
   }
   if (delivery)
     destination.append(delivery);
@@ -7230,6 +8124,8 @@ function pocketSurfaceId() {
   return requestId("pocket_surface").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 var ICONS2 = {
+  video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="14" height="14" rx="3"/><path d="m16 9 6-4v14l-6-4Z"/></svg>',
+  call: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1Z"/></svg>',
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9.5a1.5 1.5 0 0 1-1.5 1.5h-5v-6H10v6H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
   messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.6A8 8 0 1 1 20.5 11.5Z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></svg>',
   contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>',
@@ -7248,6 +8144,7 @@ var ICONS2 = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>'
 };
 var APP_META = [
+  { app: "contacts", label: "Phone", icon: "call", dock: true, route: { app: "contacts", view: "calls" } },
   { app: "messages", label: "Messages", icon: "messages", dock: true },
   { app: "camera", label: "Camera", icon: "camera", dock: true },
   { app: "gallery", label: "Gallery", icon: "gallery", dock: true },
@@ -7272,6 +8169,7 @@ function iconButton(name, label) {
 
 class PocketController {
   voicePlayer = new VoiceMessagePlayer;
+  liveCall;
   ctx;
   surfaceId = pocketSurfaceId();
   cleanups = [];
@@ -7366,7 +8264,9 @@ class PocketController {
   cameraBusy = false;
   cameraRequestId = "";
   messageRequests = new Map;
+  contactCallRequests = new Map;
   messageDrafts = new Map;
+  voiceMessageDrafts = new Set;
   groupSpeakerSelections = new Map;
   manualMessageOverrides = new Set;
   focusedHandoffRelays = new Set;
@@ -7462,6 +8362,15 @@ class PocketController {
     this.customStyle = document.createElement("style");
     this.customStyle.dataset.pocketCustomCss = "true";
     this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle);
+    this.liveCall = new LiveCallUi({
+      root: this.shell,
+      player: this.voicePlayer,
+      preferences: () => this.preferences,
+      renderVoice: (message) => this.renderVoice(message, "call"),
+      send: (type, payload) => this.send(type, payload),
+      speech: ctx.stt,
+      roleplay: () => this.close()
+    });
     this.syncSurfaceIdentity();
     this.launcher.addEventListener("pointerdown", (event) => {
       this.launcherPointer = { x: event.clientX, y: event.clientY };
@@ -7500,6 +8409,7 @@ class PocketController {
     this.refresh();
   }
   destroy() {
+    this.liveCall.close();
     this.voicePlayer.stop();
     this.setupModalDismiss?.();
     this.destroyed = true;
@@ -7569,6 +8479,8 @@ class PocketController {
     this.installInlineArtifactObserver();
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
+      this.liveCall.close();
+      this.voicePlayer.stop();
       this.setupModalDismiss?.();
       this.settledOperationRequests.clear();
       this.operations.clear();
@@ -8210,6 +9122,15 @@ class PocketController {
   onBackend(payload) {
     if (!payload || typeof payload !== "object" || typeof payload.type !== "string")
       return;
+    this.liveCall.receive(payload);
+    if (payload.type === "lumiphone:call_incoming" && !this.liveCall.active && this.state) {
+      const active = this.ctx.getActiveChat();
+      if (active.chatId !== payload.chatId || active.characterId !== payload.characterId || this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state) || !this.preferences.incomingCallScenes)
+        return;
+      this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" });
+      this.liveCall.start({ chatId: payload.chatId, characterId: payload.characterId, conversationId: payload.conversationId, deviceOwnerActorId: pocketPersonaActorId(this.state) }, payload.mode || "voice", payload.callId, payload.name);
+      return;
+    }
     if (payload.type === "lumiphone:state" && payload.state) {
       const active = this.ctx.getActiveChat();
       if (active.chatId && payload.state.chatId !== active.chatId)
@@ -8547,6 +9468,17 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:conversation_opened" && payload.conversationId) {
+      const call = this.contactCallRequests.get(payload.requestId);
+      if (call) {
+        this.contactCallRequests.delete(payload.requestId);
+        const active = this.activeContext();
+        const samePage = this.selectedContactView === call.view && (call.view === "calls" || this.selectedContactId === call.contactId);
+        if (this.expanded && this.currentApp === "contacts" && samePage && active.chatId === call.chatId && active.characterId === call.characterId && this.currentDeviceOwnerActorId() === call.deviceOwnerActorId) {
+          this.liveCall.start({ chatId: call.chatId, characterId: call.characterId, deviceOwnerActorId: call.deviceOwnerActorId, conversationId: payload.conversationId }, call.mode);
+        }
+        this.render(false);
+        return;
+      }
       if (payload.requestId === this.groupSaveRequest) {
         this.groupDrafts.delete(this.groupSaveDraftKey);
         this.groupSaveRequest = "";
@@ -8682,6 +9614,7 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      this.contactCallRequests.delete(payload.requestId);
       if (payload.requestId === this.galleryRequestId)
         this.galleryLoading = false;
       if (payload.requestId === this.trackerMutationRequest)
@@ -8949,6 +9882,7 @@ class PocketController {
     });
   }
   close() {
+    this.liveCall.close();
     this.voicePlayer.stop();
     if (!this.widget && !this.dockPanel && !this.mobileWidget)
       return;
@@ -8978,6 +9912,11 @@ class PocketController {
   openApp(app) {
     this.openPocket({ app });
   }
+  renderVoice(message, kind = "message") {
+    const contact = this.state ? resolvePocketActor(this.state, message.senderActorId || "")?.contact || this.state.contacts.find((row) => row.name === message.senderName) : undefined;
+    const playback = resolveVoicePlayback(this.preferences, { sender: message.sender || "contact", senderName: message.senderName }, contact, kind);
+    return this.voicePlayer.render(message, playback.voiceURI, playback.enabled, playback.connectionId, playback.options, kind, playback.choir);
+  }
   inlineOptions(activity) {
     if (!this.state)
       return {};
@@ -8998,6 +9937,13 @@ class PocketController {
       backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text,
       surfaceColor: appearance.colors.surface,
+      voicePlaybackKey: JSON.stringify([this.preferences.voiceMessages, this.preferences.readOwnVoiceMessages, this.preferences.voicePlaybackProvider, this.preferences.ttsVoiceURI, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions, this.state.contacts.map((row) => [row.id, row.voicePlayback])]),
+      renderVoiceMessage: (message) => {
+        const routeMessageId = activity.route.app === "messages" ? activity.route.messageId : undefined;
+        const canonical = this.state?.conversations.flatMap((row) => row.messages).find((row) => row.id === message.id) || this.state?.conversations.flatMap((row) => row.messages).find((row) => row.id === routeMessageId);
+        const full = canonical || { ...message, text: activity.presentation?.voiceTranscript || message.text };
+        return this.renderVoice({ ...full, sender: canonical?.sender || (activity.presentation?.kind === "sent" ? "persona" : "contact"), id: `inline:${activity.id}:${message.id || "voice"}` });
+      },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map((row) => [row.senderActorId || "", resolvePocketActor(this.state, row.senderActorId || "")?.avatarUrl || ""]))
     };
@@ -9308,6 +10254,7 @@ class PocketController {
       view.addEventListener("animationend", () => view.removeAttribute("data-animate"), { once: true });
     }
     this.screen.replaceChildren(view);
+    requestAnimationFrame(() => this.voicePlayer.stopIfDetached());
     if (!transition)
       requestAnimationFrame(() => {
         view.scrollTop = oldViewScroll;
@@ -9416,20 +10363,19 @@ class PocketController {
     const box = el("span", `lp-app-icon-box lp-icon-${meta.icon}`);
     box.appendChild(icon2(meta.icon));
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
-    const unread = meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
+    const unread = meta.route ? 0 : meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
     if (unread)
       box.appendChild(el("span", "lp-app-dot", unread > 99 ? "99+" : String(unread)));
     node.append(box, el("span", "lp-app-label", meta.label));
-    node.addEventListener("click", () => this.openApp(meta.app));
+    node.addEventListener("click", () => meta.route ? this.openPocket(meta.route) : this.openApp(meta.app));
     return node;
   }
   renderMessages() {
-    this.viewCleanups.push(() => this.voicePlayer.stop());
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
     return renderMessagesView({
       state: this.state,
       selectedConversationId: this.selectedConversationId,
-      renderVoiceMessage: (message) => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]),
+      renderVoiceMessage: (message) => this.renderVoice(message),
       deviceOwnerActorId: owner,
       readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
@@ -9455,11 +10401,19 @@ class PocketController {
       busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || "auto",
       draft: this.messageDrafts.get(this.selectedConversationId) || "",
+      draftFormat: this.voiceMessageDrafts.has(`${this.state.chatId}:${this.state.characterId}:${this.selectedConversationId}`) ? "voice" : "text",
       updateDraft: (conversationId, value) => {
         if (value)
           this.messageDrafts.set(conversationId, value);
         else
           this.messageDrafts.delete(conversationId);
+      },
+      updateDraftFormat: (conversationId, value) => {
+        const key = `${this.state.chatId}:${this.state.characterId}:${conversationId}`;
+        if (value === "voice")
+          this.voiceMessageDrafts.add(key);
+        else
+          this.voiceMessageDrafts.delete(key);
       },
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       empty: (title, copy) => this.empty("messages", title, copy),
@@ -9859,6 +10813,11 @@ ${body}`;
         this.render(false);
       },
       openDirect: (contactId) => this.send("lumiphone:open_direct", { contactId }),
+      iconButton,
+      readOnlyDevice: this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state),
+      isCallPending: (contactId) => [...this.contactCallRequests.values()].some((call) => call.chatId === this.state.chatId && call.characterId === this.state.characterId && call.contactId === contactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
+      startCall: (contactId, mode, callId) => this.startContactCall(contactId, mode, callId),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       uploadPhoto: (contactId) => {
         this.uploadAvatarPhoto(contactId);
@@ -9877,6 +10836,25 @@ ${body}`;
       },
       showError: (message) => this.showError(message)
     });
+  }
+  startContactCall(contactId, mode, callId) {
+    if (!this.state || this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state) || !callId && !this.caps?.generation)
+      return;
+    const actorId = resolvePocketActor(this.state, contactId)?.actorId;
+    if (!actorId)
+      return;
+    const scope = { chatId: this.state.chatId, characterId: this.state.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId() };
+    const conversation = this.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
+    if (conversation) {
+      const marker = callId ? conversation.messages.filter((row) => row.call?.callId === callId).at(-1)?.call : undefined;
+      this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId, marker?.status === "ringing" && marker.direction === "incoming" ? this.state.contacts.find((row) => row.id === contactId)?.name : undefined);
+      return;
+    }
+    if ([...this.contactCallRequests.values()].some((call) => call.contactId === contactId && call.chatId === scope.chatId && call.characterId === scope.characterId && call.deviceOwnerActorId === scope.deviceOwnerActorId))
+      return;
+    const requestId = this.send("lumiphone:open_direct", { contactId });
+    this.contactCallRequests.set(requestId, { ...scope, contactId, mode, view: this.selectedContactView });
+    this.render(false);
   }
   async uploadAvatarPhoto(contactId = "__draft__") {
     const context = this.activeContext(), draft = this.npcDraft;
@@ -11202,6 +12180,17 @@ ${SURFACE_TOKENS}
   .lumiphone-shell .lp-nav-title { white-space:normal; overflow-wrap:anywhere; font-size:15px; line-height:1.2; text-wrap:balance; }
   .lumiphone-shell .lp-nav-subtitle { font-size:10px; line-height:1.35; margin-top:4px; }
   .lumiphone-shell .lp-nav-action { min-width:0; min-height:var(--lp-touch); font-size:12px; overflow-wrap:anywhere; }
+  .lp-contact-communication { display:flex; flex-wrap:wrap; gap:8px; width:100%; margin-top:8px; }
+  .lumiphone-shell .lp-contact-communication-action { display:flex; flex:1 1 0; min-width:0; flex-direction:column; align-items:center; justify-content:center; gap:7px; min-height:70px; padding:10px 5px; font-size:12px; line-height:1.3; }
+  .lp-contact-communication-action > span:first-child { display:flex; }
+  .lp-contact-communication-action svg { width:20px; height:20px; stroke-width:1.8; }
+  .lp-contact-call-hint { flex-basis:100%; margin:0; }
+  .lp-call-contact-list { display:grid; gap:12px; }
+  .lp-call-empty[hidden] { display:none; }
+  .lp-call-contact { display:grid; gap:6px; }
+  .lp-icon-call { background:linear-gradient(145deg,#4ee580,#12aa4b); }
+  .lumiphone-shell .lp-home-dock .lp-app-icon { min-height:44px; }
+  .lumiphone-shell .lp-home-dock .lp-app-icon-box { width:min(calc(44px * var(--pocket-ui-scale,1)),100%); height:auto; aspect-ratio:1; }
   .lumiphone-shell .lp-content { gap:var(--lp-space-3); padding:var(--lp-space-4); padding-bottom:calc(28px + env(safe-area-inset-bottom,0px)); }
   .lumiphone-shell .lp-card { border:0; border-radius:var(--lp-radius); box-shadow:none; padding:var(--lp-space-4); background:color-mix(in srgb,var(--lp-text) 5%,var(--lp-surface)); }
   .lumiphone-shell .lp-title { font-size:var(--pocket-font-md); }
@@ -11326,19 +12315,6 @@ ${SURFACE_TOKENS}
     .lumiphone-shell .lp-row { flex-wrap:wrap; }
   }
   @media (prefers-reduced-motion:reduce) { .lumiphone-shell * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
-`;
-
-// src/frontend/components/voice-message-styles.ts
-var VOICE_MESSAGE_STYLES = `
-.lp-voice-message { display:grid; gap:8px; min-width:0; }
-.lp-voice-play { padding:9px 12px; border:1px solid currentColor; border-radius:10px; color:inherit; background:transparent; font:inherit; cursor:pointer; text-align:left; }
-.lp-voice-play:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
-.lp-voice-play:disabled { opacity:.6; cursor:default; }
-.lp-voice-status { font-size:11px; }
-.lp-voice-status:empty { display:none; }
-.lp-voice-transcript { font-size:12px; }
-.lp-voice-transcript summary { cursor:pointer; }
-.lp-voice-transcript p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
 `;
 
 // src/styles.ts
@@ -11500,7 +12476,7 @@ var PHONE_STYLES = `
   .lp-app-icon-box svg { width:27px; height:27px; stroke-width:1.7; }
   .lp-app-label { max-width:76px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; font-weight:600; text-shadow:0 1px 6px rgba(0,0,0,.65); }
   .lp-app-dot { position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 4px; display:grid; place-items:center; border:2px solid rgba(22,17,35,.9); border-radius:99px; background:#ff4164; font-size:9px; font-weight:850; }
-  .lp-home-dock { margin-top:auto; min-height:74px; padding:10px; border:1px solid rgba(255,255,255,.18); border-radius:24px; background:rgba(15,13,24,.28); backdrop-filter:blur(24px) saturate(1.3); display:grid; grid-template-columns:repeat(4,1fr); align-items:center; }
+  .lp-home-dock { margin-top:auto; min-height:74px; padding:10px; border:1px solid rgba(255,255,255,.18); border-radius:24px; background:rgba(15,13,24,.28); backdrop-filter:blur(24px) saturate(1.3); display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; align-items:center; }
   .lp-home-dock .lp-app-icon-box { width:50px; height:50px; }
   .lp-home-dock .lp-app-label { display:none; }
   .lp-home-activity { margin:12px 0; display:grid; gap:5px; }
@@ -11631,6 +12607,10 @@ var PHONE_STYLES = `
   .lp-typing-dots i:nth-child(2) { animation-delay:.14s; }
   .lp-typing-dots i:nth-child(3) { animation-delay:.28s; }
   .lp-compose-stack { border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
+  .lp-compose-options { display:flex; align-items:center; padding:4px 9px 0; min-width:0; }
+  .lp-compose-format { display:inline-flex; align-items:center; gap:6px; min-height:24px; color:var(--lp-muted); font-size:var(--pocket-font-xs); cursor:pointer; }
+  .lp-compose-format[data-selected="true"] { color:var(--lp-accent); }
+  .lp-compose-format input { width:13px; height:13px; min-height:0; margin:0; accent-color:var(--lp-accent); }
   .lp-compose { padding:8px 9px 10px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:end; }
   .lp-speaker-menu { position:relative; padding:5px 9px 0; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
   .lp-speaker-menu summary { width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--lp-border); border-radius:99px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; list-style:none; }

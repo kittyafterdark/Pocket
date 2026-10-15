@@ -26,7 +26,9 @@ export interface MessagesViewHost {
   busyConversations: Map<string, { speakerContactId: string; phase: 'checking' | 'pending' }>
   selectedGroupSpeakerId: string
   draft: string
+  draftFormat: 'text' | 'voice'
   updateDraft(conversationId: string, value: string): void
+  updateDraftFormat(conversationId: string, value: 'text' | 'voice'): void
   page(title: string, subtitle?: string, action?: PageAction): Page
   empty(title: string, copy: string): HTMLDivElement
   iconButton(name: string, label: string): HTMLButtonElement
@@ -466,6 +468,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
     if (message.call) { bubble.classList.add('lp-call-history'); bubble.dataset.callStatus = message.call.status }
+    if (message.callTurn) bubble.append(el('span', 'lp-bubble-time', 'Spoken on call'))
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId)
     bubble.dataset.sender = direction === 'outbound' ? 'persona' : message.sender === 'system' ? 'system' : 'contact'
     const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === 'contact' ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || '') : null
@@ -638,6 +641,21 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   textarea.addEventListener('blur', () => host.composerState(conversation.id, false))
   const submit = host.iconButton('send', 'Send message')
   submit.type = 'submit'
+  const composeOptions = el('div', 'lp-compose-options')
+  const formatLabel = el('label', 'lp-compose-format')
+  const voiceFormat = el('input'); voiceFormat.type = 'checkbox'; voiceFormat.checked = host.draftFormat === 'voice'
+  voiceFormat.setAttribute('aria-label', 'Send as voice message')
+  formatLabel.append(voiceFormat, el('span', '', 'Voice message'))
+  composeOptions.append(formatLabel)
+  const updateFormat = () => {
+    formatLabel.dataset.selected = String(voiceFormat.checked)
+    textarea.placeholder = voiceFormat.checked ? 'Voice message transcript…' : 'Message…'
+    textarea.setAttribute('aria-label', voiceFormat.checked ? 'Voice message transcript' : 'Message text')
+    const label = voiceFormat.checked ? 'Send voice message' : 'Send message'
+    submit.setAttribute('aria-label', label); submit.title = label
+  }
+  voiceFormat.addEventListener('change', () => { host.updateDraftFormat(conversation.id, voiceFormat.checked ? 'voice' : 'text'); updateFormat() })
+  updateFormat()
   textarea.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
     event.preventDefault()
@@ -648,14 +666,15 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     event.preventDefault()
     const message = inputValue(textarea)
     if (!message) return
-    host.send('lumiphone:action', { action: 'message', payload: { conversationId: conversation.id, text: message, sender: 'persona', explicitRemoteOverride: host.manualOverride } })
+    host.send('lumiphone:action', { action: 'message', payload: { conversationId: conversation.id, text: message, sender: 'persona', ...(voiceFormat.checked ? { format: 'voice' } : {}), explicitRemoteOverride: host.manualOverride } })
     textarea.value = ''
     host.updateDraft(conversation.id, '')
+    voiceFormat.checked = false; host.updateDraftFormat(conversation.id, 'text'); updateFormat()
     resizeComposer()
   })
   const composerStack = el('div', 'lp-compose-stack')
   if (conversation.kind === 'group') composerStack.appendChild(speakerMenu)
-  composerStack.appendChild(compose)
+  composerStack.append(composeOptions, compose)
   page.append(bubbles, composerStack)
   requestAnimationFrame(() => {
     resizeComposer()

@@ -159,7 +159,7 @@ export const PHONE_STYLES = `
   .lp-app-icon-box svg { width:27px; height:27px; stroke-width:1.7; }
   .lp-app-label { max-width:76px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; font-weight:600; text-shadow:0 1px 6px rgba(0,0,0,.65); }
   .lp-app-dot { position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 4px; display:grid; place-items:center; border:2px solid rgba(22,17,35,.9); border-radius:99px; background:#ff4164; font-size:9px; font-weight:850; }
-  .lp-home-dock { margin-top:auto; min-height:74px; padding:10px; border:1px solid rgba(255,255,255,.18); border-radius:24px; background:rgba(15,13,24,.28); backdrop-filter:blur(24px) saturate(1.3); display:grid; grid-template-columns:repeat(4,1fr); align-items:center; }
+  .lp-home-dock { margin-top:auto; min-height:74px; padding:10px; border:1px solid rgba(255,255,255,.18); border-radius:24px; background:rgba(15,13,24,.28); backdrop-filter:blur(24px) saturate(1.3); display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; align-items:center; }
   .lp-home-dock .lp-app-icon-box { width:50px; height:50px; }
   .lp-home-dock .lp-app-label { display:none; }
   .lp-home-activity { margin:12px 0; display:grid; gap:5px; }
@@ -290,6 +290,10 @@ export const PHONE_STYLES = `
   .lp-typing-dots i:nth-child(2) { animation-delay:.14s; }
   .lp-typing-dots i:nth-child(3) { animation-delay:.28s; }
   .lp-compose-stack { border-top:1px solid var(--lp-border); background:color-mix(in srgb,var(--lp-bg) 90%,transparent); backdrop-filter:blur(18px); }
+  .lp-compose-options { display:flex; align-items:center; padding:4px 9px 0; min-width:0; }
+  .lp-compose-format { display:inline-flex; align-items:center; gap:6px; min-height:24px; color:var(--lp-muted); font-size:var(--pocket-font-xs); cursor:pointer; }
+  .lp-compose-format[data-selected="true"] { color:var(--lp-accent); }
+  .lp-compose-format input { width:13px; height:13px; min-height:0; margin:0; accent-color:var(--lp-accent); }
   .lp-compose { padding:8px 9px 10px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:end; }
   .lp-speaker-menu { position:relative; padding:5px 9px 0; color:var(--lp-muted); font-size:var(--pocket-font-xs); }
   .lp-speaker-menu summary { width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--lp-border); border-radius:99px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; list-style:none; }

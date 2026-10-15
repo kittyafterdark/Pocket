@@ -1,0 +1,249 @@
+import type { DevicePreferences, PhoneMessage } from '../../types.js'
+import { VoiceMessagePlayer } from './voice-message.js'
+
+type SpeechSession = { ready: Promise<void>; result: Promise<{ text: string }>; stop(): Promise<unknown>; cancel(): void }
+type SpeechApi = {
+  listProviders?(): Array<{ id: string; name: string; available: boolean; onDevice?: boolean }>
+  start(options?: { provider?: string; continuous?: boolean; onStatus?(status: { phase: string }): void }): SpeechSession
+}
+interface CallUiHost {
+  root: HTMLElement
+  player: VoiceMessagePlayer
+  renderVoice?(message: PhoneMessage): HTMLElement
+  preferences(): DevicePreferences
+  send(type: string, payload: Record<string, unknown>): string
+  speech?: SpeechApi
+  roleplay(): void
+}
+const STYLES = `
+.lp-live-call{position:absolute;inset:0;z-index:70;display:flex;flex-direction:column;gap:12px;padding:22px 16px 28px;background:#050609;color:#faf9ff;border-radius:inherit;overflow-y:auto;overflow-x:hidden;min-width:0;box-sizing:border-box;font:14px/1.5 system-ui,sans-serif;overscroll-behavior:contain}
+.lp-live-call *{box-sizing:border-box}.lp-live-call> *{min-width:0}.lp-live-call button,.lp-live-call textarea,.lp-live-call select{font:inherit;color:inherit;background:#23232e;border:1px solid #5e5c70;border-radius:12px;padding:10px;min-height:44px;min-width:0;max-width:100%}.lp-live-call button{cursor:pointer}.lp-live-call button:disabled{opacity:.5;cursor:default}.lp-live-call button:focus-visible,.lp-live-call textarea:focus-visible,.lp-live-call select:focus-visible{outline:2px solid #c4adff;outline-offset:2px}
+.lp-call-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:4px 0 8px;background:#050609}.lp-call-header .lp-call-hangup{flex-shrink:0}
+.lp-call-stage[data-video=false]{flex:0 0 auto;min-height:0}
+.lp-call-stage{position:relative;min-height:160px;flex:1;display:flex;align-items:flex-end;justify-content:center;border-radius:18px;background:radial-gradient(ellipse at top,#242236,#08090e 70%);overflow:hidden}.lp-call-stage[data-video=true]{min-height:220px}.lp-call-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}.lp-call-caption{position:relative;z-index:1;width:100%;padding:18px;background:#08090eea;overflow-wrap:anywhere}.lp-call-caption-text{white-space:pre-wrap;max-height:calc(45vh - 60px);overflow:auto}.lp-call-stage[data-video=true] .lp-call-caption{margin:12px;width:calc(100% - 24px);border:1px solid #6a607a;border-radius:16px;background:#15121deb}.lp-call-title{font-size:22px;margin:0;overflow-wrap:anywhere}.lp-call-status{font-size:12px;color:#c4bed3;min-height:20px;overflow-wrap:anywhere}.lp-call-input{width:100%;resize:vertical;min-height:72px}.lp-call-choices{display:flex;gap:8px;flex-wrap:wrap}.lp-call-choices button{flex:1 1 100%;text-align:left;overflow-wrap:anywhere}.lp-live-call .lp-call-hangup{background:#a92d49;border-color:#d65a74}.lp-call-controls{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;flex-shrink:0;gap:10px}.lp-call-controls [hidden],.lp-live-call [hidden]{display:none!important}.lp-live-call .lp-voice-transcript{display:none}.lp-call-mode{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:6px}.lp-call-mode select{width:100%;text-overflow:ellipsis}.lp-call-mode.lp-call-reply-mode{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;font-size:12px}.lp-live-call .lp-call-reply-mode select{min-height:36px;padding:6px 8px;font-size:12px}.lp-call-playback{margin-top:4px}.lp-call-playback .lp-voice-message{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;gap:8px;width:100%}.lp-call-playback .lp-voice-play{grid-column:2;grid-row:1;display:grid;place-items:center;width:44px;height:44px;padding:10px;border:0;border-radius:50%;background:transparent}.lp-call-playback .lp-voice-play:hover{background:#ffffff16}.lp-call-playback .lp-voice-play svg{display:block;width:20px;height:20px}.lp-call-playback .lp-voice-status{grid-column:1;grid-row:1;font-size:11px;white-space:normal;overflow-wrap:anywhere}.lp-call-playback .lp-voice-status:empty,.lp-call-error:empty{display:none}.lp-call-history{font-size:12px;color:#d2c9e1;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-error{color:#ffc6d3;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-reply{color:#c1afd9;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.lp-call-status:empty{display:none}.lp-call-controls{gap:8px;font-size:12px}.lp-call-controls .lp-call-mode{gap:4px;font-size:12px}.lp-call-controls .lp-call-mode>span{font-size:11px}.lp-call-controls button,.lp-call-controls select,.lp-call-controls textarea{font-size:12px;padding:8px;min-height:36px;border-radius:10px}.lp-call-controls textarea{min-height:64px}.lp-live-call>details{font-size:12px}
+.lp-call-speech{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px;min-width:0}.lp-call-speech .lp-call-mode select,.lp-call-speech button{font-size:11px;min-height:32px;padding:6px 8px}.lp-call-speech button{white-space:nowrap}
+.lp-call-playback{margin-top:2px}.lp-call-playback .lp-voice-message{grid-template-columns:minmax(0,1fr) 28px;gap:6px}.lp-call-playback .lp-voice-play{width:28px;height:28px;min-height:28px;padding:4px}
+.lp-live-call .lp-call-camera{font-size:11px;min-height:32px;padding:6px 10px;align-self:flex-end}.lp-call-scene{font-size:12px;color:#c4bed3;font-style:italic;margin-bottom:10px;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-offer{display:flex;gap:8px;flex-wrap:wrap}.lp-call-offer button{flex:1}.lp-call-offer button:first-child{background:#245d49}
+`
+function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag); node.className = className; node.textContent = text; return node
+}
+export class LiveCallUi {
+  private root?: HTMLElement
+  private scope?: { chatId: string; characterId: string; conversationId: string; deviceOwnerActorId: string }
+  private callId = ''
+  private requests = new Map<string, string>()
+  private session?: SpeechSession
+  private generation = 0
+  private returnFocus?: HTMLElement
+  private caption?: HTMLElement
+  private image?: HTMLImageElement
+  private stage?: HTMLElement
+  private status?: HTMLElement
+  private error?: HTMLElement
+  private choices?: HTMLElement
+  private playback?: HTMLElement
+  private input?: HTMLTextAreaElement
+  private retry?: HTMLButtonElement
+  private record?: HTMLButtonElement
+  private speechProvider?: HTMLSelectElement
+  private controls?: HTMLElement
+  private hangup?: HTMLButtonElement
+  private finished = false
+  private incoming = false
+  private awaitingAnswer = false
+  private offer?: HTMLElement
+  private scene?: HTMLElement
+  private camera?: HTMLButtonElement
+  private cameraVisible = true
+  private cameraRequest = ''
+  private ready = false
+  private busy = false
+  private mode: 'voice' | 'video' = 'voice'
+  private expressions: Record<string, string> = {}
+  private current?: PhoneMessage
+  private history: PhoneMessage[] = []
+  private voiceOperation = 0
+  constructor(private host: CallUiHost) {}
+  get active(): boolean { return Boolean(this.root) }
+  start(scope: NonNullable<LiveCallUi['scope']>, mode: 'voice' | 'video', callId = '', incomingName = ''): void {
+    if (this.root) { this.root.focus(); return }
+    this.scope = scope; this.mode = mode; this.callId = callId; this.ready = false; this.finished = false; this.current = undefined; this.history = []; this.expressions = {}
+    this.incoming = Boolean(incomingName); this.awaitingAnswer = this.incoming; this.cameraVisible = true; this.cameraRequest = ''
+    this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    this.root = element('section', 'lp-live-call'); this.root.tabIndex = -1; this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', mode === 'video' ? 'Pocket video call' : 'Pocket phone call')
+    const style = element('style'); style.textContent = STYLES
+    const title = element('h2', 'lp-call-title', mode === 'video' ? 'Video call' : 'Phone call'); title.dataset.callTitle = 'true'
+    const header = element('div', 'lp-call-header')
+    const hangup = element('button', 'lp-call-hangup', 'End call'); hangup.type = 'button'; hangup.addEventListener('click', () => this.close())
+    this.hangup = hangup
+    header.append(title, hangup)
+    this.camera = element('button', 'lp-call-camera', 'Hide my camera'); this.camera.type = 'button'; this.camera.hidden = mode !== 'video'; this.camera.disabled = true; this.camera.setAttribute('aria-label', 'Hide my persona camera'); this.camera.setAttribute('aria-pressed', 'true')
+    this.camera.addEventListener('click', () => {
+      if (!this.ready || this.busy || this.finished || !this.scope || this.cameraRequest) return
+      this.camera!.disabled = true
+      const id = this.host.send('lumiphone:call_camera', { ...this.scope, callId: this.callId, visible: !this.cameraVisible }); this.cameraRequest = id; this.requests.set(id, 'lumiphone:call_camera')
+      this.setBusy(false)
+    })
+    this.status = element('div', 'lp-call-status'); this.status.setAttribute('role', 'status')
+    this.stage = element('div', 'lp-call-stage'); this.image = element('img'); this.image.hidden = true; this.image.alt = 'Character expression'
+    this.image.addEventListener('error', () => { if (this.stage) this.stage.dataset.video = 'false'; if (this.image) this.image.hidden = true; if (this.status) this.status.textContent = 'Video interrupted · voice call continues' })
+    const bubble = element('div', 'lp-call-caption')
+    this.scene = element('div', 'lp-call-scene'); this.scene.hidden = true
+    this.caption = element('div', 'lp-call-caption-text', 'Waiting for the character to answer…'); this.caption.setAttribute('aria-live', 'polite')
+    this.playback = element('div', 'lp-call-playback'); bubble.append(this.scene, this.caption, this.playback); this.stage.append(this.image, bubble)
+    this.error = element('div', 'lp-call-error'); this.error.setAttribute('role', 'alert')
+    this.controls = element('div', 'lp-call-controls'); this.controls.hidden = true
+    const modeLabel = element('label', 'lp-call-mode lp-call-reply-mode')
+    modeLabel.append(element('span', '', 'Reply with'))
+    const selector = element('select'); selector.setAttribute('aria-label', 'Call reply method')
+    for (const [value, text] of [['vn', 'Suggested replies'], ['type', 'Type a reply'], ['stt', 'Speech to text']]) { const option = element('option', '', text); option.value = value; selector.append(option) }
+    this.choices = element('div', 'lp-call-choices')
+    this.input = element('textarea', 'lp-call-input'); this.input.placeholder = 'Your spoken reply…'; this.input.setAttribute('aria-label', 'Your call reply'); this.input.maxLength = 4000
+    this.record = element('button', '', 'Start microphone'); this.record.type = 'button'
+    this.record.disabled = !this.host.speech
+    if (!this.host.speech) this.record.title = 'Speech to text needs a host with the speech API and Pocket’s Media permission.'
+    this.record.addEventListener('click', () => this.recordSpeech())
+    const speechRow = element('div', 'lp-call-speech')
+    const providerLabel = element('label', 'lp-call-mode')
+    providerLabel.append(element('span', '', 'Speech provider'))
+    this.speechProvider = element('select'); this.speechProvider.setAttribute('aria-label', 'Call speech provider')
+    const automatic = element('option', '', 'Voice & Speech setting'); automatic.value = ''; this.speechProvider.append(automatic)
+    const providers = this.host.speech?.listProviders?.() || []
+    for (const provider of providers) { const option = element('option', '', `${provider.name}${provider.onDevice && !/\bon (?:this )?device\b/i.test(provider.name) ? ' · on device' : ''}`); option.value = provider.id; option.disabled = !provider.available; this.speechProvider.append(option) }
+    if (providers.some(row => row.id === 'whistle' && row.available)) this.speechProvider.value = 'whistle'
+    providerLabel.append(this.speechProvider)
+    speechRow.append(providerLabel, this.record)
+    const send = element('button', '', 'Say this'); send.type = 'button'; send.addEventListener('click', () => this.reply(this.input!.value))
+    this.input.addEventListener('keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send.click() } })
+    const switchMode = () => { this.cancelSpeech(); this.choices!.hidden = selector.value !== 'vn'; this.input!.hidden = selector.value === 'vn'; send.hidden = selector.value === 'vn'; speechRow.hidden = selector.value !== 'stt' }
+    selector.addEventListener('change', switchMode); modeLabel.append(selector); switchMode()
+    this.controls.append(modeLabel, this.choices, speechRow, this.input, send)
+    this.retry = element('button', '', 'Retry reply'); this.retry.type = 'button'; this.retry.hidden = true; this.retry.addEventListener('click', () => {
+      if (this.finished) { this.finished = false; this.incoming = false; this.callId = ''; this.history = []; this.current = undefined; this.refreshHistory(); this.hangup!.textContent = 'End call'; this.caption!.textContent = 'Waiting for the character to answer…' }
+      this.request(this.ready ? 'lumiphone:call_reply' : this.incoming ? 'lumiphone:call_accept' : 'lumiphone:call_start', {})
+    })
+    this.offer = element('div', 'lp-call-offer'); this.offer.hidden = true
+    const accept = element('button', '', 'Answer'); accept.type = 'button'; accept.addEventListener('click', () => { if (!this.awaitingAnswer || this.busy) return; this.awaitingAnswer = false; this.offer!.hidden = true; this.hangup!.textContent = 'End call'; this.request('lumiphone:call_accept', {}) })
+    const ignore = element('button', '', 'Ignore'); ignore.type = 'button'; ignore.addEventListener('click', () => { if (this.scope && this.awaitingAnswer) this.host.send('lumiphone:call_ignore', { ...this.scope, callId: this.callId }); this.close(false) })
+    this.offer.append(accept, ignore)
+    const transcript = element('details'); transcript.append(element('summary', '', 'Call transcript')); const history = element('div', 'lp-call-history'); history.dataset.callHistory = 'true'; transcript.append(history)
+    this.root.append(style, header, this.camera, this.status, this.stage, this.error, this.retry, this.offer, this.controls, transcript)
+    this.root.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.close(); return }
+      if (event.key === 'Tab') {
+        const controls = [...this.root!.querySelectorAll<HTMLElement>('button:not(:disabled),textarea,select,summary')].filter(node => !node.hidden && node.getClientRects().length)
+        const first = controls[0], last = controls.at(-1)
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === this.root)) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
+    })
+    this.host.root.append(this.root); this.root.focus()
+    if (incomingName) this.showIncoming(incomingName)
+    else this.request(callId ? 'lumiphone:call_resume' : 'lumiphone:call_start', {})
+  }
+  private showIncoming(name: string): void {
+    this.incoming = true; this.awaitingAnswer = true; this.setBusy(false); this.ready = false
+    this.root!.querySelector('[data-call-title]')!.textContent = name; this.hangup!.textContent = 'Decline'
+    this.caption!.textContent = 'Incoming call'; this.offer!.hidden = false; this.controls!.hidden = true; this.camera!.hidden = true; this.stage!.dataset.video = 'false'; this.image!.hidden = true
+  }
+  private request(type: string, payload: Record<string, unknown>): void {
+    if (!this.scope || !this.root || this.busy) return
+    this.busy = true; this.error!.textContent = ''; this.retry!.hidden = true; this.setBusy(true)
+    const id = this.host.send(type, { ...this.scope, callId: this.callId, mode: this.mode, personaCamera: this.cameraVisible, ...payload }); this.requests.set(id, type)
+  }
+  private setBusy(value: boolean): void {
+    this.busy = value
+    if (this.camera) this.camera.disabled = value || !this.ready || this.finished || Boolean(this.cameraRequest)
+    for (const control of this.controls?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button,textarea') || []) control.disabled = value || !this.ready || Boolean(this.cameraRequest) || (control === this.record && !this.host.speech)
+    if (this.status) this.status.textContent = value && this.ready ? 'Listening for a reply…' : ''
+  }
+  receive(payload: Record<string, any>): void {
+    if (!this.root || !this.scope) return
+    if (payload.type === 'lumiphone:call_incoming' && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId && payload.callId === this.callId) { this.showIncoming(payload.name); return }
+    if (payload.type === 'lumiphone:call_camera' && payload.requestId === this.cameraRequest && payload.callId === this.callId) {
+      this.cameraVisible = payload.visible !== false; this.cameraRequest = ''; this.requests.delete(payload.requestId)
+      this.camera!.textContent = this.cameraVisible ? 'Hide my camera' : 'Show my camera'; this.camera!.setAttribute('aria-label', this.cameraVisible ? 'Hide my persona camera' : 'Show my persona camera'); this.camera!.setAttribute('aria-pressed', String(this.cameraVisible)); this.camera!.disabled = this.busy || this.finished
+      this.setBusy(this.busy); return
+    }
+    if (payload.type === 'lumiphone:error' && payload.requestId === this.cameraRequest) { this.error!.textContent = payload.error; this.cameraRequest = ''; this.requests.delete(payload.requestId); this.setBusy(this.busy); return }
+    if (payload.type === 'lumiphone:error' && this.requests.has(payload.requestId)) { this.error!.textContent = payload.error; this.retry!.hidden = false; this.setBusy(false); return }
+    if ((payload.type === 'lumiphone:call_ringing' || payload.type === 'lumiphone:call_result') && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
+      this.callId = payload.callId; this.ready = false; this.controls!.hidden = true; this.stage!.dataset.video = 'false'; this.image!.hidden = true
+      this.root.querySelector('[data-call-title]')!.textContent = payload.name
+      this.playback!.replaceChildren(); this.host.player.stop(); this.cancelSpeech()
+      this.caption!.textContent = payload.type === 'lumiphone:call_ringing' ? 'Calling…' : payload.outcome === 'declined' ? 'Call declined' : 'No answer'
+      if (payload.type === 'lumiphone:call_result') {
+        this.finished = true; this.setBusy(false); this.hangup!.textContent = 'Close'; this.retry!.textContent = 'Call again'; this.retry!.hidden = false
+      }
+      return
+    }
+    if (payload.type === 'lumiphone:call_ready' && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
+      this.callId = payload.callId; this.ready = true; this.expressions = payload.video ? payload.expressions : {}; this.stage!.dataset.video = String(Boolean(payload.video))
+      this.awaitingAnswer = false; this.offer!.hidden = true; this.mode = payload.mode || this.mode; this.cameraVisible = payload.personaCamera !== false
+      this.camera!.hidden = this.mode !== 'video'; this.camera!.textContent = this.cameraVisible ? 'Hide my camera' : 'Show my camera'; this.camera!.setAttribute('aria-label', this.cameraVisible ? 'Hide my persona camera' : 'Show my persona camera'); this.camera!.setAttribute('aria-pressed', String(this.cameraVisible)); this.hangup!.textContent = 'End call'
+      this.controls!.hidden = false; this.retry!.textContent = 'Retry reply'
+      this.root.querySelector('[data-call-title]')!.textContent = payload.name
+      this.image!.alt = `${payload.name}’s expression`
+      this.history = payload.turns || []
+      this.refreshHistory()
+      const last = [...this.history].reverse().find(row => row.sender === 'contact')
+      if (this.requests.get(payload.requestId) === 'lumiphone:call_resume') {
+        this.setBusy(false)
+        if (last) this.showTurn(last, false)
+        else { this.caption!.textContent = 'Connected. Choose Retry reply to hear the character.'; this.retry!.hidden = false }
+      }
+      return
+    }
+    if (payload.callId !== this.callId) return
+    if (payload.type === 'lumiphone:call_turn' && this.requests.has(payload.requestId)) {
+      if (!this.history.some(row => row.id === payload.message.id)) this.history.push(payload.message)
+      this.refreshHistory(); this.setBusy(false); this.showTurn(payload.message, true, payload.ended === true)
+    }
+    if (payload.type === 'lumiphone:call_ended') this.close(false)
+  }
+  private refreshHistory(): void { const history = this.root?.querySelector('[data-call-history]'); if (history) history.textContent = this.history.map(row => `${row.callTurn?.scene ? `[Call background: ${row.callTurn.scene}]\n` : ''}${row.senderName}: ${row.text}`).join('\n\n') }
+  private showTurn(message: PhoneMessage, autoplay: boolean, ended = false): void {
+    this.current = message; this.caption!.textContent = message.text
+    this.scene!.textContent = message.callTurn?.scene || ''; this.scene!.hidden = !message.callTurn?.scene
+    const image = this.expressions[message.callTurn?.expression || ''] || Object.values(this.expressions)[0]
+    this.image!.hidden = !image; if (image) this.image!.src = image
+    const preferences = this.host.preferences()
+    // Calls are explicitly started by the player and always speak; the separate voice-message setting does not mute calls.
+    const player = this.host.renderVoice ? this.host.renderVoice({ ...message, id: `call:${message.id}` }) : this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ''], 'call')
+    this.playback!.replaceChildren(player)
+    this.choices!.replaceChildren()
+    for (const choice of message.callTurn?.choices || []) { const button = element('button', '', choice); button.type = 'button'; button.addEventListener('click', () => this.reply(choice)); this.choices!.append(button) }
+    if (!this.choices!.childElementCount) { const type = element('button', '', 'Write your reply'); type.addEventListener('click', () => { const selector = this.root!.querySelector('select')!; selector.value = 'type'; selector.dispatchEvent(new Event('change')); this.input!.focus() }); this.choices!.append(type) }
+    if (ended) { this.finished = true; this.ready = false; this.controls!.hidden = true; this.camera!.disabled = true; this.status!.textContent = 'The character said goodbye'; player.addEventListener('pocket-voice-ended', () => this.close(), { once: true }) }
+    if (autoplay) queueMicrotask(() => { if (this.root && this.current?.id === message.id) player.querySelector<HTMLButtonElement>('button')?.click() })
+  }
+  private reply(text: string): void {
+    const spoken = text.trim(); if (!spoken || this.busy || !this.ready || this.cameraRequest) return
+    this.cancelSpeech(); this.host.player.stop(); this.input!.value = ''
+    this.history.push({ id: `local:${Date.now()}`, text: spoken, sender: 'persona', senderName: 'You', senderAccent: '', createdAt: '', read: true, status: 'read' }); this.refreshHistory()
+    this.request('lumiphone:call_reply', { text: spoken })
+  }
+  private recordSpeech(): void {
+    if (this.session) { this.record!.disabled = true; void this.session.stop().catch(error => { if (this.error) this.error.textContent = error.message }); return }
+    if (!this.host.speech || this.busy || !this.ready || this.finished) return
+    this.host.player.stop(); const token = ++this.voiceOperation
+    try {
+      const session = this.host.speech.start({ provider: this.speechProvider?.value || undefined, continuous: true, onStatus: status => { if (token === this.voiceOperation && this.status) this.status.textContent = `Microphone · ${status.phase}` } })
+      this.session = session; this.record!.textContent = 'Stop microphone'
+      void session.ready.catch(() => {})
+      void session.result.then(result => { if (token === this.voiceOperation && this.input) this.input.value = result.text }).catch(error => { if (token === this.voiceOperation && this.error && error.name !== 'AbortError') this.error.textContent = error.message }).finally(() => {
+        if (token !== this.voiceOperation) return
+        this.session = undefined; if (this.record) { this.record.textContent = 'Start microphone'; this.record.disabled = false }; if (this.status) this.status.textContent = 'Review your transcript, then choose Say this'
+      })
+    } catch (error) { this.error!.textContent = error instanceof Error ? error.message : 'Could not start the microphone.' }
+  }
+  private cancelSpeech(): void { ++this.voiceOperation; this.session?.cancel(); this.session = undefined; if (this.record) { this.record.textContent = 'Start microphone'; this.record.disabled = !this.host.speech }; if (this.ready && !this.busy && this.status) this.status.textContent = '' }
+  close(notify = true): void {
+    if (!this.root) return
+    if (notify && this.scope && !this.finished) this.host.send(this.awaitingAnswer ? 'lumiphone:call_decline' : 'lumiphone:call_end', { ...this.scope, callId: this.callId })
+    this.cancelSpeech(); this.host.player.stop(); this.root.remove(); this.root = undefined; this.scope = undefined; this.requests.clear(); this.busy = false; ++this.generation
+    this.returnFocus?.focus(); this.returnFocus = undefined
+  }
+}

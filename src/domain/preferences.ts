@@ -110,6 +110,10 @@ export function defaultPreferences(): DevicePreferences {
     ttsVoiceURI: '',
     ttsConnectionId: '',
     ttsConnectionOptions: {},
+    voicePlaybackProvider: 'pocket',
+    readOwnVoiceMessages: true,
+    briefCallScenes: false,
+    incomingCallScenes: false,
     theme: 'midnight',
     colors: themePalette('midnight'),
     homeWallpaper: defaultWallpaper(),
@@ -186,7 +190,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const item = record(entry)
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
-    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge'])
+    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'call-reply', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge'])
     if (!requestId || !tasks.has(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{
@@ -234,6 +238,10 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     theme,
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, '', 500),
+    voicePlaybackProvider: raw.voicePlaybackProvider === 'choir' ? 'choir' : 'pocket',
+    readOwnVoiceMessages: bool(raw.readOwnVoiceMessages, true),
+    briefCallScenes: bool(raw.briefCallScenes, false),
+    incomingCallScenes: bool(raw.incomingCallScenes, false),
     ttsConnectionId: text(raw.ttsConnectionId, '', 180),
     ttsConnectionOptions: Object.fromEntries(Object.entries(record(raw.ttsConnectionOptions)).slice(0, 100)
       .filter(([id]) => id.length <= 180 && !['__proto__', 'constructor', 'prototype'].includes(id))

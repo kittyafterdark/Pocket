@@ -23,7 +23,7 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
     app,
     contactId: shortId(raw.contactId),
     groupId: shortId(raw.groupId),
-    view: ['detail', 'config', 'import', 'quick-gen', 'new', 'draft', 'list', 'groups', 'group-config', 'bank', 'cast-config', 'cast-import', 'bank-entry'].includes(String(raw.view)) ? raw.view as Extract<PocketRoute, { app: 'contacts' }>['view'] : undefined,
+    view: ['detail', 'config', 'import', 'quick-gen', 'new', 'draft', 'list', 'calls', 'groups', 'group-config', 'bank', 'cast-config', 'cast-import', 'bank-entry'].includes(String(raw.view)) ? raw.view as Extract<PocketRoute, { app: 'contacts' }>['view'] : undefined,
   }
   if (app === 'trackers') return {
     app,

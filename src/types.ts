@@ -17,7 +17,7 @@ export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 export type PocketRoute =
   | { app: 'home' }
   | { app: 'messages'; conversationId?: string; contactId?: string; messageId?: string; view?: 'thread' | 'new-group' | 'group-editor' | 'group-detail' }
-  | { app: 'contacts'; contactId?: string; groupId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' | 'groups' | 'group-config' | 'bank' | 'cast-config' | 'cast-import' | 'bank-entry' }
+  | { app: 'contacts'; contactId?: string; groupId?: string; view?: 'list' | 'calls' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' | 'groups' | 'group-config' | 'bank' | 'cast-config' | 'cast-import' | 'bank-entry' }
   | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
   | { app: 'calendar'; eventId?: string }
   | { app: 'notes'; noteId?: string }
@@ -114,7 +114,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'call-reply' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -213,6 +213,10 @@ export interface DevicePreferences {
   ttsVoiceURI?: string
   ttsConnectionId?: string
   ttsConnectionOptions?: Record<string, { voice?: string; model?: string }>
+  voicePlaybackProvider?: 'pocket' | 'choir'
+  readOwnVoiceMessages?: boolean
+  briefCallScenes?: boolean
+  incomingCallScenes?: boolean
   theme: PhoneTheme
   colors: PhonePalette
   homeWallpaper: PocketWallpaper
@@ -308,6 +312,9 @@ export interface PocketCandidateClockSnapshot extends PocketRoleplayClockSnapsho
 export interface PhoneMessage {
   format?: 'voice'
   call?: PocketCallMarker
+  /** Spoken call dialogue, distinct from an asynchronous voice message. */
+  callTurn?: { callId: string; expression?: string; choices?: string[]; scene?: string }
+  callCamera?: { callId: string; visible: boolean }
   id: string
   sender: 'persona' | 'contact' | 'system'
   /** Generic Pocket actor identity. Contact ids remain valid actor ids. Persona messages also carry the canonical Pocket Persona actor id. */
@@ -484,7 +491,17 @@ export interface PocketContactDraft {
   avatarFocus?: { x: number; y: number }
 }
 
+export interface PocketVoice {
+  source: 'default' | 'custom' | 'choir'
+  choirSpeaker?: string
+  voiceURI?: string
+  connectionId?: string
+  voice?: string
+  model?: string
+}
+
 export interface PocketContact {
+  voicePlayback?: PocketVoice
   id: string
   name: string
   role: string
@@ -680,6 +697,7 @@ export interface PocketReferenceParticipant {
 
 export interface PocketReferenceMessage {
   messageId: string
+  format?: 'voice'
   sender: 'persona' | 'contact'
   senderContactId?: string
   senderActorId?: string
@@ -841,6 +859,8 @@ export interface PocketActivityBatchMessage {
 }
 export interface PocketActivityPresentation {
   format?: 'voice'
+  /** Full transcript for replay after the bounded conversation tail is pruned. */
+  voiceTranscript?: string
   kind: PocketActivityPresentationKind
   senderActorId?: string
   recipientActorIds?: string[]
@@ -855,10 +875,18 @@ export interface PocketActivityPresentation {
 }
 
 export interface PocketCallMarker {
+  direction?: 'incoming' | 'outgoing'
+  personaCamera?: boolean
+  incomingOpening?: { text: string; scene: string; expression: string }
+  /** Optional character-chosen text after a call; later texts wait for a story/status change. */
+  followUp?: { when: 'now' | 'later'; text: string; status: 'pending' | 'sent' | 'cancelled'; availabilityKey: string }
   callId: string
-  status: 'connected' | 'ended' | 'missed'
+  status: 'ringing' | 'connected' | 'ended' | 'missed'
+  outcome?: 'declined' | 'ignored' | 'cancelled'
   speakerphone: boolean
   durationSeconds?: number
+  mode?: 'voice' | 'video'
+  interactive?: boolean
 }
 
 export interface PocketActivity {
@@ -902,6 +930,7 @@ export interface PocketStateReconciliation {
   domains: PocketReconciliationDomain[]
 }
 export interface PhoneState {
+  callSceneCheck?: { sourceKey: string; lastOfferRevision: number }
   version: 11
   chatId: string
   characterId: string

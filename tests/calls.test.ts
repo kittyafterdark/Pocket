@@ -1,0 +1,459 @@
+import { expect, test } from 'bun:test'
+import { JSDOM } from 'jsdom'
+import { PocketCalls, normalizeCallReply, normalizeCallDecision, type CallHost } from '../src/backend/calls.js'
+import { callAvailability } from '../src/domain/call-availability.js'
+import { normalizeCallSceneCheck } from '../src/domain/phone-events.js'
+import { normalizeContactCollections, ensureDirectConversation } from '../src/domain/contacts.js'
+import { actorAsGenerationContact } from '../src/domain/actors.js'
+import { serializePocketReference } from '../src/backend/references.js'
+import type { PhoneState, PocketActivity } from '../src/types.js'
+import { VoiceMessagePlayer } from '../src/frontend/components/voice-message.js'
+import { LiveCallUi } from '../src/frontend/components/live-call.js'
+import { defaultPreferences } from '../src/domain/preferences.js'
+import { buildPhoneScreen } from '../src/frontend/phone-screen.js'
+import { refreshActivityConnectors } from '../src/frontend/components/activity-connectors.js'
+
+const now = '2026-10-14T18:00:00.000Z'
+function fixture(expressions: Record<string, string> = {}, expressionGroups: Record<string, Record<string, string>> = {}) {
+  let sequence = 0
+  const makeId = (prefix: string) => `${prefix}_${++sequence}`
+  const collections = normalizeContactCollections({ contacts: [{ id: 'alice', name: 'Alice', source: { kind: 'character', characterId: 'alice-card' } }] }, { characterId: 'narrator', characterName: 'Narrator', now, makeId, personaActorId: 'persona' })
+  const conversation = ensureDirectConversation(collections, 'alice', now, makeId)
+  let state = { version: 11, chatId: 'chat', characterId: 'narrator', roleplayNow: now, ...collections, discoveredActors: [], pocketPersonaActorId: 'persona', pocketPersona: { displayName: 'Player', accent: '#fff' }, references: [], actorMemories: [] } as unknown as PhoneState
+  const sent: any[] = [], prompts: Array<Array<{ role: string; content: string }>> = []
+  let generate: CallHost['generate'] = async (_id, messages) => { prompts.push(messages); return { message: 'Hello there.', expression: 'happy', choices: ['Hello!', 'How are you?'] } }
+  let lock = Promise.resolve()
+  const host: CallHost = {
+    load: async () => structuredClone(state), save: async value => { state = structuredClone(value) },
+    lock: (_chatId, _characterId, action) => { const next = lock.catch(() => {}).then(action); lock = next.then(() => {}, () => {}); return next },
+    publish: async () => {}, send: payload => sent.push(payload), id: makeId, timestamp: () => now,
+    contact: actor => actorAsGenerationContact(actor, now), profile: async contact => ({ name: contact.name, description: 'A patient friend.', personality: 'Kind.', behavior: '' }),
+    character: async () => ({ extensions: { expressions: { mappings: expressions }, expression_groups: expressionGroups } }), background: async () => 'The player is at home.',
+    generate: (...args) => generate(...args), remember: () => {},
+  }
+  const calls = new PocketCalls(host), input = { chatId: 'chat', characterId: 'narrator', conversationId: conversation.id, deviceOwnerActorId: 'persona', requestId: 'start', mode: 'video' }
+  return { calls, host, input, sent, prompts, state: () => state, generation: (next: CallHost['generate']) => { generate = next }, callId: () => sent.find(row => row.type === 'lumiphone:call_ringing')?.callId }
+}
+
+test('brief pickup scenes require opt-in and RP context, stay separate from speech and end the call', async () => {
+  for (const enabled of [false, true]) {
+    const f = fixture(), prefs = { ...defaultPreferences(), briefCallScenes: enabled }
+    f.host.preferences = async () => prefs
+    f.generation(async (_id, messages) => { f.prompts.push(messages); return { decision: 'answer', scene: 'A kettle whistles in the background.', message: 'Oh, sorry. I’m busy cooking. Talk later, bye.', choices: ['Wait'], end: false } })
+    await f.calls.handle('lumiphone:call_start', { ...f.input, mode: 'voice' })
+    const turn = f.state().conversations[0].messages.find(row => row.callTurn)!
+    expect(turn.text).not.toContain('kettle')
+    expect(Boolean(turn.callTurn?.scene)).toBe(enabled)
+    expect(f.sent.at(-1).ended).toBe(enabled)
+    if (enabled) {
+      expect(turn.callTurn?.choices).toEqual([])
+      expect(serializePocketReference(f.state().references[0])).toContain('Call background: A kettle')
+    }
+  }
+  const off = fixture(); off.host.preferences = async () => ({ ...defaultPreferences(), roleplayContextMode: 'off', briefCallScenes: true })
+  off.generation(async () => ({ message: 'Hi.', scene: 'Unwanted scene.' }))
+  await off.calls.handle('lumiphone:call_start', off.input)
+  expect(off.state().conversations[0].messages.at(-1)?.callTurn?.scene).toBeUndefined()
+})
+
+const incomingSource = { chatId: 'chat', characterId: 'narrator', sourceKey: 'rp1', seed: 'Alice is preparing dinner.' }
+function incomingFixture() {
+  const f = fixture(); f.host.preferences = async () => ({ ...defaultPreferences(), incomingCallScenes: true })
+  f.generation(async (_id, messages) => { f.prompts.push(messages); return { decision: 'call', contactId: 'alice', scene: 'A kettle whistles.', message: 'Oh! Sorry, I’m busy. Talk later, bye.' } })
+  return f
+}
+
+test('incoming scenes are opt-in, deduplicated and silent until accepted; resume cannot auto-answer', async () => {
+  const disabled = fixture(); await disabled.calls.offerIncoming(incomingSource); expect(disabled.prompts).toHaveLength(0)
+  disabled.host.preferences = async () => ({ ...defaultPreferences(), incomingCallScenes: true, roleplayContextMode: 'off' })
+  await disabled.calls.offerIncoming(incomingSource); expect(disabled.prompts).toHaveLength(0)
+  const f = incomingFixture()
+  await Promise.all([f.calls.offerIncoming(incomingSource), f.calls.offerIncoming(incomingSource)])
+  const offered = f.sent.find(row => row.type === 'lumiphone:call_incoming')!
+  expect(offered).toBeDefined(); expect(f.prompts).toHaveLength(1)
+  expect(f.state().conversations[0].messages).toHaveLength(1); expect(f.state().references).toHaveLength(0)
+  const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+  expect(normalized.conversations[0].messages[0].call?.incomingOpening?.scene).toContain('kettle')
+  await f.calls.handle('lumiphone:call_resume', { ...f.input, mode: 'voice', requestId: 'resume', callId: offered.callId })
+  expect(f.sent.at(-1).type).toBe('lumiphone:call_incoming'); expect(f.prompts).toHaveLength(1)
+  await f.calls.handle('lumiphone:call_accept', { ...f.input, mode: 'voice', requestId: 'answer', callId: offered.callId })
+  expect(f.sent.at(-1)).toMatchObject({ type: 'lumiphone:call_turn', ended: true, message: { text: 'Oh! Sorry, I’m busy. Talk later, bye.' } })
+  expect(f.prompts).toHaveLength(1)
+  expect(f.state().conversations[0].messages[0].call?.incomingOpening).toBeUndefined()
+  expect(serializePocketReference(f.state().references[0])).toContain('Call background: A kettle')
+  await f.calls.offerIncoming(incomingSource); expect(f.prompts).toHaveLength(1)
+})
+
+test('declined, ignored and expired incoming calls never commit their private scene or words', async () => {
+  for (const action of ['lumiphone:call_decline', 'lumiphone:call_ignore', 'expired', 'disabled']) {
+    const f = incomingFixture(); await f.calls.offerIncoming(incomingSource)
+    const callId = f.sent.find(row => row.type === 'lumiphone:call_incoming')!.callId
+    if (action === 'expired') await f.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp2' })
+    else if (action === 'disabled') { f.host.preferences = async () => defaultPreferences(); await f.calls.handle('lumiphone:call_accept', { ...f.input, callId }) }
+    else await f.calls.handle(action, { ...f.input, callId })
+    expect(f.state().conversations[0].messages[0].call).toMatchObject({ status: 'missed', outcome: action === 'lumiphone:call_decline' || action === 'disabled' ? 'declined' : 'ignored' })
+    expect(f.state().conversations[0].messages[0].call?.incomingOpening).toBeUndefined()
+    const serialized = serializePocketReference(f.state().references[0]); expect(serialized).toContain('no connection or spoken exchange')
+    expect(serialized).not.toContain('kettle'); expect(serialized).not.toContain('Sorry')
+    await expect(f.calls.handle('lumiphone:call_accept', { ...f.input, callId })).rejects.toThrow('has ended')
+  }
+})
+
+test('incoming offers suppress stale generation after another RP turn and respect cooldown', async () => {
+  const f = incomingFixture(); let resolve!: (raw: any) => void, reached!: () => void
+  const started = new Promise<void>(r => reached = r)
+  f.generation(async () => { reached(); return new Promise(r => resolve = r) })
+  const pending = f.calls.offerIncoming(incomingSource); await started
+  f.state().lastReconciliation = { sourceKey: 'rp2' } as any
+  resolve({ decision: 'call', contactId: 'alice', scene: 'Stale background.', message: 'Stale words.' }); await pending
+  expect(f.sent).toHaveLength(0)
+  const cooldown = incomingFixture(); await cooldown.calls.offerIncoming(incomingSource)
+  await cooldown.calls.handle('lumiphone:call_ignore', { ...cooldown.input, callId: cooldown.sent[0].callId })
+  await cooldown.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp2' }); expect(cooldown.prompts).toHaveLength(1)
+  cooldown.state().stateRevision = 3
+  await cooldown.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp3' }); expect(cooldown.prompts).toHaveLength(2)
+})
+
+test('incoming source identity survives storage normalization with realistic multi-message RP keys', async () => {
+  const f = incomingFixture(), source = { ...incomingSource, sourceKey: `v4:${'message-id::assistant:current scene context. '.repeat(24)}` }
+  const load = f.host.load
+  f.host.load = async (...args) => { const state = await load(...args); state.callSceneCheck = normalizeCallSceneCheck(state.callSceneCheck); return state }
+  f.state().lastReconciliation = { sourceKey: source.sourceKey } as any
+  await f.calls.offerIncoming(source)
+  expect(f.sent.at(-1)?.type).toBe('lumiphone:call_incoming')
+  await f.calls.offerIncoming(source); expect(f.prompts).toHaveLength(1)
+})
+
+test('persona camera visibility persists, appears in RP references and governs the next spoken reply', async () => {
+  const f = fixture({ neutral: 'image' }); await f.calls.handle('lumiphone:call_start', f.input)
+  await f.calls.handle('lumiphone:call_camera', { ...f.input, callId: f.callId(), requestId: 'hide', visible: false })
+  expect(f.sent.at(-1)).toMatchObject({ type: 'lumiphone:call_camera', visible: false })
+  expect(serializePocketReference(f.state().references[0])).toContain('Persona camera: hidden')
+  const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+  expect(normalized.conversations[0].messages[0].call?.personaCamera).toBe(false)
+  expect(normalized.conversations[0].messages.at(-1)?.callCamera).toMatchObject({ visible: false })
+  await f.calls.handle('lumiphone:call_reply', { ...f.input, callId: f.callId(), requestId: 'hidden-reply', text: 'Can you see me?' })
+  expect(f.prompts.at(-1)![0].content).toContain('cannot see their face, body, gestures, or surroundings')
+  await f.calls.handle('lumiphone:call_resume', { ...f.input, callId: f.callId(), requestId: 'resume' }); expect(f.sent.at(-1).personaCamera).toBe(false)
+  await f.calls.handle('lumiphone:call_camera', { ...f.input, callId: f.callId(), visible: true })
+  expect(serializePocketReference(f.state().references[0])).toContain('Persona camera: shown')
+  const audio = fixture(); await audio.calls.handle('lumiphone:call_start', { ...audio.input, mode: 'voice' })
+  await expect(audio.calls.handle('lumiphone:call_camera', { ...audio.input, callId: audio.callId(), visible: false })).rejects.toThrow('only during a video call')
+})
+
+test('incoming UI offers Answer/Ignore before speech and a goodbye reads dialogue without its scene', async () => domFixture(async dom => {
+  const sent: any[] = [], spoken: any[] = []
+  Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: (turn: any) => spoken.push(turn), cancel() {} }, SpeechSynthesisUtterance: class { constructor(public text: string) {} } })
+  const ui = new LiveCallUi({ root: document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {}, send(type, payload) { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId } })
+  const scope = { chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }
+  ui.start(scope, 'voice', 'incoming', 'Alice')
+  expect(sent).toHaveLength(0); expect(spoken).toHaveLength(0)
+  const answer = [...document.querySelectorAll('button')].find(row => row.textContent === 'Answer')!; answer.click()
+  expect(sent.at(-1).type).toBe('lumiphone:call_accept')
+  ui.receive({ ...scope, type: 'lumiphone:call_ready', requestId: 'r0', callId: 'incoming', name: 'Alice', mode: 'voice', turns: [] })
+  ui.receive({ type: 'lumiphone:call_turn', requestId: 'r0', callId: 'incoming', ended: true, message: { id: 'opening', sender: 'contact', senderName: 'Alice', text: 'Sorry, busy. Bye.', callTurn: { callId: 'incoming', scene: 'The kettle whistles.', choices: [] } } })
+  await Promise.resolve(); expect(spoken[0].text).toBe('Sorry, busy. Bye.')
+  expect(document.querySelector('.lp-call-scene')!.textContent).toContain('kettle')
+  expect(document.querySelector<HTMLElement>('.lp-call-controls')!.hidden).toBe(true)
+  spoken[0].onend(); expect(ui.active).toBe(false)
+  expect(sent).toHaveLength(1)
+  ui.start(scope, 'voice', 'ignored', 'Alice'); [...document.querySelectorAll('button')].find(row => row.textContent === 'Ignore')!.click()
+  expect(sent.at(-1).type).toBe('lumiphone:call_ignore'); expect(ui.active).toBe(false); expect(spoken).toHaveLength(1)
+}))
+
+test('video camera button waits for acknowledgement before allowing another reply and never opens hardware', async () => domFixture(async dom => {
+  const sent: any[] = []
+  const ui = new LiveCallUi({ root: document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {}, send(type, payload) { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId } })
+  const scope = { chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }
+  ui.start(scope, 'video', 'video')
+  ui.receive({ ...scope, type: 'lumiphone:call_ready', requestId: 'r0', callId: 'video', name: 'Alice', mode: 'video', video: true, expressions: {}, turns: [], personaCamera: true })
+  const camera = document.querySelector<HTMLButtonElement>('[aria-label="Hide my persona camera"]')!; camera.click()
+  expect(sent.at(-1)).toMatchObject({ type: 'lumiphone:call_camera', visible: false }); expect(camera.disabled).toBe(true)
+  expect(document.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(true)
+  ui.receive({ type: 'lumiphone:call_camera', requestId: 'r1', callId: 'video', visible: false })
+  expect(camera.getAttribute('aria-label')).toBe('Show my persona camera'); expect(camera.disabled).toBe(false)
+  expect(document.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(false)
+  ui.close()
+}))
+
+test('video requires the linked card’s expression pack and uses only its labels', async () => {
+  const video = fixture({ neutral: 'image-neutral', happy: 'image-happy' })
+  await video.calls.handle('lumiphone:call_start', video.input, 'user')
+  expect(video.sent.find(row => row.type === 'lumiphone:call_ready')).toMatchObject({ video: true, expressions: { happy: '/api/v1/images/image-happy' } })
+  expect(video.prompts[0][0].content).toContain('video is working')
+  expect(video.state().conversations[0].messages.at(-1)?.callTurn).toMatchObject({ expression: 'happy' })
+  expect(normalizeCallReply({ message: 'Safe text', expression: 'https://evil', choices: ['x', 'x', 42] }, { neutral: 'image' })).toEqual({ text: 'Safe text', expression: 'neutral', choices: ['x'], end: false })
+  const audio = fixture()
+  await audio.calls.handle('lumiphone:call_start', audio.input)
+  expect(audio.sent.find(row => row.type === 'lumiphone:call_ready').video).toBe(false)
+  expect(audio.prompts[0][0].content).toContain('invent a short believable in-character reason')
+})
+
+test('video supports grouped expression packs with unambiguous character labels', async () => {
+  const f = fixture({}, { Alice: { neutral: 'alice-neutral' }, Bob: { happy: 'bob-happy' } })
+  f.generation(async (_id, messages) => { f.prompts.push(messages); return { message: 'Hello from Bob.', expression: 'Bob: happy', choices: ['Hello Bob!'] } })
+  await f.calls.handle('lumiphone:call_start', f.input)
+  expect(f.sent.find(row => row.type === 'lumiphone:call_ready')).toMatchObject({ video: true, expressions: { 'Alice: neutral': '/api/v1/images/alice-neutral', 'Bob: happy': '/api/v1/images/bob-happy' } })
+  expect(f.prompts[0][0].content).toContain('Alice: neutral, Bob: happy')
+  expect(f.state().conversations[0].messages.at(-1)?.callTurn?.expression).toBe('Bob: happy')
+})
+
+test('call turns persist as spoken dialogue and arm a bounded RP reference without creating user speech from choices', async () => {
+  const f = fixture()
+  await f.calls.handle('lumiphone:call_start', { ...f.input, mode: 'voice' })
+  expect(f.state().conversations[0].messages.filter(row => row.sender === 'persona' && row.callTurn)).toHaveLength(0)
+  await f.calls.handle('lumiphone:call_reply', { ...f.input, requestId: 'reply-1', callId: f.callId(), text: 'I am glad you called.' })
+  const reference = f.state().references[0]
+  expect(reference.status).toBe('armed')
+  const serialized = serializePocketReference(reference)
+  expect(serialized).toContain('Spoken phone call transcript')
+  expect(serialized).toContain('Call state: connected')
+  expect(serialized).toContain(`Call ID: ${f.callId()}`)
+  expect(serialized).toContain('I am glad you called.')
+  expect(serialized).toContain('does not hand off')
+  expect(serialized.length).toBeLessThanOrEqual(2200)
+  await f.calls.handle('lumiphone:call_end', { ...f.input, callId: f.callId() })
+  expect(f.state().conversations[0].messages.at(-1)?.call?.status).toBe('ended')
+  expect(serializePocketReference(f.state().references[0])).toContain('Call state: ended')
+  expect(serializePocketReference(f.state().references[0])).toContain('do not recreate its end action')
+  await expect(f.calls.handle('lumiphone:call_reply', { ...f.input, requestId: 'late', callId: f.callId(), text: 'Late' })).rejects.toThrow('has ended')
+})
+
+test('ending during generation suppresses late answers while preserving already spoken words', async () => {
+  const f = fixture()
+  await f.calls.handle('lumiphone:call_start', f.input)
+  let deliver!: (value: unknown) => void, reached!: () => void
+  const started = new Promise<void>(resolve => { reached = resolve })
+  f.generation(async () => { reached(); return new Promise(resolve => { deliver = resolve }) })
+  const pending = f.calls.handle('lumiphone:call_reply', { ...f.input, callId: f.callId(), requestId: 'slow', text: 'Can you hear me?' })
+  const outcome = pending.catch(error => error)
+  await started
+  await f.calls.handle('lumiphone:call_end', { ...f.input, callId: f.callId() })
+  deliver({ message: 'This stale response must never arrive.' })
+  expect((await outcome).name).toBe('AbortError')
+  const messages = f.state().conversations[0].messages
+  expect(messages.some(row => row.text === 'Can you hear me?')).toBe(true)
+  expect(messages.some(row => row.text.includes('stale response'))).toBe(false)
+  expect(messages.at(-1)?.call?.status).toBe('ended')
+})
+
+test('retries deduplicate completed turns and resume uses persisted history without another generation', async () => {
+  const f = fixture()
+  await f.calls.handle('lumiphone:call_start', f.input)
+  const request = { ...f.input, callId: f.callId(), requestId: 'reply', text: 'Hello again.' }
+  await f.calls.handle('lumiphone:call_reply', request)
+  const count = f.state().conversations[0].messages.length
+  await f.calls.handle('lumiphone:call_reply', request)
+  expect(f.state().conversations[0].messages).toHaveLength(count)
+  expect(f.prompts).toHaveLength(2)
+  await f.calls.handle('lumiphone:call_resume', { ...f.input, callId: f.callId(), requestId: 'resume' })
+  expect(f.prompts).toHaveLength(2)
+  expect(f.sent.at(-1).turns).toHaveLength(3)
+  const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+  expect(normalized.conversations[0].messages.at(-1)?.callTurn?.choices).toEqual(['Hello!', 'How are you?'])
+})
+
+test('inspection and group calls fail before generating or changing state', async () => {
+  const f = fixture()
+  await expect(f.calls.handle('lumiphone:call_start', { ...f.input, deviceOwnerActorId: 'alice' })).rejects.toThrow('inspecting')
+  f.state().conversations[0].kind = 'group'
+  await expect(f.calls.handle('lumiphone:call_start', f.input)).rejects.toThrow('direct conversation')
+  expect(f.prompts).toHaveLength(0)
+  expect(f.state().conversations[0].messages).toHaveLength(0)
+})
+
+async function domFixture(run: (dom: JSDOM) => Promise<void>) {
+  const dom = new JSDOM('<body><main></main></body>', { url: 'http://localhost/' })
+  const bindings = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Event: dom.window.Event }
+  const saved = new Map(Object.keys(bindings).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  Object.entries(bindings).forEach(([key, value]) => Object.defineProperty(globalThis, key, { value, writable: true, configurable: true }))
+  try { await run(dom) } finally { for (const [key, value] of saved) { if (value) Object.defineProperty(globalThis, key, value); else delete (globalThis as any)[key] }; dom.window.close() }
+}
+
+test('Busy/Away influence the answer decision; declines and ignored calls never fabricate speech', async () => {
+  for (const decision of ['reject', 'ignore'] as const) {
+    const f = fixture()
+    f.state().contacts.find(row => row.id === 'alice')!.sceneNote = 'Working in a noisy kitchen.'
+    f.state().conversations[0].availability = { state: 'paused', reason: 'busy', changedAt: now }
+    expect(callAvailability(f.state().contacts.find(row => row.id === 'alice')!, f.state().conversations[0])).toBe('Busy')
+    f.generation(async (_id, messages) => { f.prompts.push(messages); return { decision, message: 'Discard this unspoken excuse', choices: ['Discard'], end: true } })
+    await f.calls.handle('lumiphone:call_start', f.input)
+    expect(f.prompts[0][0].content).toContain('Working in a noisy kitchen.')
+    expect(f.prompts[0][0].content).toContain('Contact status: Busy')
+    expect(f.sent[0].type).toBe('lumiphone:call_ringing')
+    expect(f.sent.some(row => row.type === 'lumiphone:call_ready' || row.type === 'lumiphone:call_turn')).toBe(false)
+    expect(f.sent.at(-1)).toMatchObject({ type: 'lumiphone:call_result', outcome: decision === 'reject' ? 'declined' : 'ignored' })
+    expect(f.state().conversations[0].messages).toHaveLength(1)
+    expect(f.state().conversations[0].messages[0].call?.status).toBe('missed')
+    const reference = serializePocketReference(f.state().references[0])
+    expect(reference).toContain('no connection or spoken exchange occurred')
+    expect(reference).not.toContain('Discard this')
+    const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+    expect(normalized.conversations[0].messages[0].call?.outcome).toBe(decision === 'reject' ? 'declined' : 'ignored')
+    expect(() => normalizeCallDecision({ decision: 'maybe' }, {})).toThrow('did not decide')
+  }
+})
+
+test('a Busy contact can pick up briefly and hang up; Away can still answer normally', async () => {
+  const f = fixture()
+  f.state().conversations[0].availability = { state: 'paused', reason: 'busy', changedAt: now }
+  f.generation(async () => ({ decision: 'answer', message: 'I’m busy. Talk to you later, bye.', end: true }))
+  await f.calls.handle('lumiphone:call_start', { ...f.input, mode: 'voice' })
+  expect(f.sent.map(row => row.type)).toEqual(['lumiphone:call_ringing', 'lumiphone:call_ready', 'lumiphone:call_turn'])
+  expect(f.sent.at(-1)).toMatchObject({ ended: true, message: { format: 'voice' } })
+  expect(f.state().conversations[0].messages.at(-1)?.call?.status).toBe('ended')
+  const away = fixture()
+  expect(callAvailability(away.state().contacts.find(row => row.id === 'alice')!, away.state().conversations[0])).toBe('Away')
+  await away.calls.handle('lumiphone:call_start', away.input)
+  expect(away.sent.some(row => row.type === 'lumiphone:call_ready')).toBe(true)
+})
+
+test('cancelling while ringing prevents a late pickup and records a silent cancelled attempt', async () => {
+  const f = fixture()
+  let deliver!: (value: unknown) => void, reached!: () => void
+  const started = new Promise<void>(resolve => { reached = resolve })
+  f.generation(async () => { reached(); return new Promise(resolve => { deliver = resolve }) })
+  const pending = f.calls.handle('lumiphone:call_start', f.input).catch(error => error)
+  await started
+  expect(f.state().conversations[0].messages[0].call?.status).toBe('ringing')
+  await f.calls.end({ ...f.input, callId: f.callId() })
+  deliver({ decision: 'answer', message: 'Too late.' })
+  expect((await pending).name).toBe('AbortError')
+  expect(f.state().conversations[0].messages).toHaveLength(1)
+  expect(f.state().conversations[0].messages[0].call).toMatchObject({ status: 'ended', outcome: 'cancelled' })
+  expect(f.sent.some(row => row.type === 'lumiphone:call_ready')).toBe(false)
+  expect(serializePocketReference(f.state().references[0])).toContain('Call cancelled')
+})
+
+test('a failed answer can retry or resume the persisted ringing attempt without duplicating it', async () => {
+  const f = fixture()
+  f.generation(async () => { throw new Error('Temporary model failure') })
+  await expect(f.calls.handle('lumiphone:call_start', f.input)).rejects.toThrow('Temporary')
+  const callId = f.callId()
+  const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+  expect(normalized.conversations[0].messages[0].call?.status).toBe('ringing')
+  f.generation(async () => ({ decision: 'answer', message: 'Hello after retry.' }))
+  await f.calls.handle('lumiphone:call_resume', { ...f.input, callId, requestId: 'resume-ring' })
+  expect(f.state().conversations[0].messages.filter(row => row.call)).toHaveLength(1)
+  expect(f.state().conversations[0].messages[0].call).toMatchObject({ callId, status: 'connected' })
+})
+
+test('texts are optional, delivered once, and deferred until changed availability permits them', async () => {
+  const f = fixture(), texts: string[] = []
+  f.host.sendText = async input => { texts.push(input.text) }
+  f.generation(async () => ({ decision: 'ignore', followUp: { when: 'later', text: 'Busy, I’ll text later.' } }))
+  await f.calls.handle('lumiphone:call_start', f.input)
+  await f.calls.processFollowUps(f.input)
+  expect(texts).toHaveLength(0)
+  let checks = 0
+  f.generation(async () => { checks++; return checks === 1 ? { decision: 'wait' } : { decision: 'send', message: 'I’m free now. What did you need?' } })
+  f.state().contacts.find(row => row.id === 'alice')!.sceneNote = 'Still working, but saw the call.'
+  await f.calls.processFollowUps(f.input)
+  await f.calls.processFollowUps(f.input)
+  expect(checks).toBe(1); expect(texts).toHaveLength(0)
+  f.state().contacts.find(row => row.id === 'alice')!.sceneNote = 'Finished work.'
+  await Promise.all([f.calls.processFollowUps(f.input), f.calls.processFollowUps(f.input)])
+  await f.calls.processFollowUps(f.input)
+  expect(checks).toBe(2); expect(texts).toEqual(['I’m free now. What did you need?'])
+  expect(f.state().conversations[0].messages[0].call?.followUp?.status).toBe('sent')
+  const immediate = fixture()
+  immediate.host.sendText = async input => { texts.push(input.text) }
+  immediate.generation(async () => ({ decision: 'reject', followUp: { when: 'now', text: 'Can’t talk; text me.' } }))
+  await immediate.calls.handle('lumiphone:call_start', immediate.input)
+  await immediate.calls.processFollowUps(immediate.input)
+  await immediate.calls.processFollowUps(immediate.input)
+  expect(texts).toEqual(['I’m free now. What did you need?', 'Can’t talk; text me.'])
+  const silent = fixture()
+  silent.host.sendText = async () => { throw new Error('No text should be sent') }
+  silent.generation(async () => ({ decision: 'ignore' }))
+  await silent.calls.handle('lumiphone:call_start', silent.input)
+  await silent.calls.processFollowUps(silent.input)
+})
+test('call controls offer VN, typed and STT replies; microphone results need review and late results are discarded', async () => domFixture(async dom => {
+  const sent: any[] = [], spoken: any[] = []; let resolveSpeech!: (value: { text: string }) => void, cancelled = false, speechOptions: any
+  Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: (value: any) => spoken.push(value), cancel() {} }, SpeechSynthesisUtterance: class { constructor(public text: string) {} } })
+  const ui = new LiveCallUi({ root: dom.window.document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {},
+    send: (type, payload) => { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId },
+    speech: { listProviders: () => [{ id: 'whistle', name: 'Whistle (on this device)', onDevice: true, available: true }, { id: 'remote', name: 'Remote provider', available: false }],
+      start: options => { speechOptions = options; return { ready: Promise.resolve(), result: new Promise(resolve => { resolveSpeech = resolve }), stop: async () => {}, cancel: () => { cancelled = true } } } } })
+  ui.start({ chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }, 'video')
+  ui.receive({ type: 'lumiphone:call_ready', requestId: 'r0', chatId: 'chat', characterId: 'card', callId: 'call', name: 'Alice', video: true, expressions: { happy: '/api/v1/images/happy' }, turns: [] })
+  const message: any = { id: 'turn', text: 'Hello!', senderName: 'Alice', callTurn: { callId: 'call', expression: 'happy', choices: ['Hi!'] } }
+  ui.receive({ type: 'lumiphone:call_turn', requestId: 'r0', callId: 'call', message })
+  await Promise.resolve()
+  expect(spoken[0].text).toBe('Hello!')
+  expect(dom.window.document.querySelector('.lp-call-caption-text')?.textContent).toBe('Hello!')
+  const replay = dom.window.document.querySelector<HTMLButtonElement>('.lp-call-caption .lp-voice-play')!
+  expect(replay.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+  expect(replay.textContent).toBe('')
+  expect(replay.getAttribute('aria-label')).toBe('Stop speech from Alice')
+  spoken[0].onend()
+  expect(replay.getAttribute('aria-label')).toBe('Replay spoken turn from Alice')
+  replay.click(); expect(spoken).toHaveLength(2)
+  expect(replay.getAttribute('aria-pressed')).toBe('true')
+  replay.click(); expect(replay.getAttribute('aria-pressed')).toBe('false')
+  expect(replay.querySelector('svg')).toBeTruthy()
+  const selector = dom.window.document.querySelector('select')!
+  expect([...selector.options].map(row => row.value)).toEqual(['vn', 'type', 'stt'])
+  selector.value = 'stt'; selector.dispatchEvent(new dom.window.Event('change'))
+  const provider = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Call speech provider"]')!
+  expect(provider.value).toBe('whistle')
+  expect(provider.selectedOptions[0].textContent).toBe('Whistle (on this device)')
+  expect(provider.querySelector<HTMLOptionElement>('option[value="remote"]')!.disabled).toBe(true)
+  const record = [...dom.window.document.querySelectorAll('button')].find(row => row.textContent === 'Start microphone')!
+  record.click(); resolveSpeech({ text: 'My speech' }); await new Promise(resolve => setTimeout(resolve, 0))
+  expect(speechOptions).toMatchObject({ provider: 'whistle', continuous: true })
+  expect(dom.window.document.querySelector('textarea')?.value).toBe('My speech')
+  expect(sent).toHaveLength(1)
+  record.click(); ui.close(); resolveSpeech({ text: 'late' }); await Promise.resolve()
+  expect(cancelled).toBe(true); expect(dom.window.document.querySelector('[role=dialog]')).toBeNull()
+  expect(sent.at(-1).type).toBe('lumiphone:call_end')
+}))
+
+test('ringing and missed call UI has no reply/microphone/playback, and another attempt can answer', async () => domFixture(async dom => {
+  const sent: any[] = []; let speech = 0, microphone = 0
+  Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: () => { speech++ }, cancel() {} }, SpeechSynthesisUtterance: class { constructor(public text: string) {} } })
+  const ui = new LiveCallUi({ root: dom.window.document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {},
+    send: (type, payload) => { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId },
+    speech: { start: () => { microphone++; throw new Error('Unanswered calls cannot record') } } })
+  ui.start({ chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }, 'video')
+  expect(dom.window.document.querySelector<HTMLElement>('.lp-call-controls')!.hidden).toBe(true)
+  const scope = { chatId: 'chat', characterId: 'card', requestId: 'r0', callId: 'missed', name: 'Alice' }
+  ui.receive({ type: 'lumiphone:call_ringing', ...scope })
+  expect(dom.window.document.querySelector('.lp-call-caption-text')!.textContent).toBe('Calling…')
+  ui.receive({ type: 'lumiphone:call_result', ...scope, outcome: 'ignored' })
+  expect(dom.window.document.querySelector('.lp-call-caption-text')!.textContent).toBe('No answer')
+  expect(dom.window.document.querySelector('.lp-voice-play')).toBeNull()
+  expect(dom.window.document.querySelector<HTMLElement>('.lp-call-controls')!.hidden).toBe(true)
+  expect(speech).toBe(0); expect(microphone).toBe(0)
+  const again = [...dom.window.document.querySelectorAll('button')].find(row => row.textContent === 'Call again')!
+  again.click()
+  expect(sent.at(-1)).toMatchObject({ type: 'lumiphone:call_start', mode: 'video', callId: '' })
+  ui.receive({ type: 'lumiphone:call_ringing', ...scope, requestId: 'r1', callId: 'answered' })
+  ui.receive({ type: 'lumiphone:call_ready', ...scope, requestId: 'r1', callId: 'answered', video: false, turns: [] })
+  ui.receive({ type: 'lumiphone:call_turn', requestId: 'r1', callId: 'answered', message: { id: 'new-turn', sender: 'contact', senderName: 'Alice', text: 'Hello now.', callTurn: { callId: 'answered', choices: ['Hi'] } } })
+  await Promise.resolve()
+  expect(speech).toBe(1)
+  expect(dom.window.document.querySelector<HTMLElement>('.lp-call-controls')!.hidden).toBe(false)
+  ui.close()
+}))
+
+test('inline phone and merged cards mount real voice controls without nested buttons or automatic playback', async () => domFixture(async dom => {
+  let plays = 0
+  Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: () => { plays++ }, cancel() {} }, SpeechSynthesisUtterance: class { constructor(public text: string) {} } })
+  const player = new VoiceMessagePlayer(), activity: PocketActivity = { id: 'a', kind: 'message', title: 'Alice', summary: 'Hello inline', scope: { chatId: 'chat', characterId: 'card' }, route: { app: 'messages', conversationId: 'dm', messageId: 'voice' }, createdAt: now,
+    presentation: { kind: 'sent', senderName: 'Alice', format: 'voice' } }
+  const options = { appearance: 'phone' as const, renderVoiceMessage: (message: any) => player.render(message) }
+  const phone = buildPhoneScreen(activity, () => {}, options)!
+  let opened = 0
+  phone.addEventListener('click', () => { opened++ })
+  dom.window.document.body.append(phone)
+  expect(plays).toBe(0); expect(phone.querySelector('button button')).toBeNull()
+  phone.querySelector<HTMLButtonElement>('.lp-voice-play')!.click(); expect(plays).toBe(1); expect(opened).toBe(0)
+  phone.querySelector<HTMLElement>('.lp-voice-transcript summary')!.click(); expect(opened).toBe(0)
+  const host = dom.window.document.createElement('div'); dom.window.document.body.append(host)
+  refreshActivityConnectors([{ host, activity, options, owner: 'persona' }], () => {})
+  expect(host.querySelector('pocket-inline-ui')?.shadowRoot?.querySelector('.lp-voice-play')).toBeTruthy()
+  expect(host.querySelector('pocket-inline-ui')?.shadowRoot?.querySelector('button button')).toBeNull()
+  player.stop()
+}))

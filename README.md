@@ -29,6 +29,24 @@ Each visible phone now has two explicit frontend identities. Its logical device 
 
 ## Model integration
 
+### Phone and video calls
+
+On your Pocket Persona’s home screen, press the green **Phone** button beside **Messages** in the bottom dock, find a contact, and choose **Call** or **Video call**. The same actions are also available in **Contacts → a contact**, alongside **Message**. You can call even before a message thread exists. Connected calls offer **Resume call**. Calls use the same saved Playback TTS connection, model, and voice as voice messages. A call speaks each character turn automatically and keeps its text visible. **Reply with** switches between short suggested replies (visual novel style), a typed reply, and speech to text. Dictation fills the reply box for review; **Say this** commits it. The microphone starts only when you choose **Start microphone** and stops on cancel, hangup, phone close, or chat switch.
+
+Video uses only expression images on the contact’s linked Character Card, including grouped packs for multi-character cards. The reply model selects from that card’s expression labels. If no linked card has expressions, the character gives an in-world reason for a faulty webcam and continues by voice on a black screen. A failed expression image also falls back to the audio layout. NPC/Council contacts without a card can make audio calls.
+
+Speech to text uses Lumiverse’s optional host speech API. It defaults to local Whistle when available; **Speech provider** also offers the host’s Voice & Speech setting and other available providers. Pocket requests the **Media** permission for this feature; approve it in Extensions before using the microphone. Older hosts can still use typed and suggested replies. A small sound button at the bottom-right of the spoken bubble replays the turn and becomes a Stop button during playback. The compact reply selector sits beside **Reply with** below the bubble. Transcripts remain readable after a speech failure.
+
+Call markers and spoken turns persist in the conversation. **Resume call** restores an interrupted session without regenerating or automatically replaying history. Each answered exchange arms a bounded spoken-call reference for the next normal roleplay turn, using Pocket’s existing retryable reference lifecycle. It explicitly distinguishes spoken dialogue from text messages and keeps knowledge with the participants; a remote call does not establish physical presence. Call dialogue never starts the asynchronous DM reply scheduler. An ended call rejects stale or late generation results.
+
+Here, Away, Busy, current activity, personality, and relationship guide whether the character answers, declines, or ignores a call. Busy and Away do not automatically block an answer. An unanswered attempt records only its outcome, with no invented speech. The character may send a discreet text immediately or consider one after a later story/status change; no timer forces a follow-up.
+
+**Settings → Messages → Call scenes** provides two independent options, both off by default: **Brief pickups from busy characters** for outgoing calls and **Incoming slice-of-life calls** after new roleplay turns. These require roleplay context. An incoming offer stays silent until you choose **Answer**, with **Ignore** and **Decline** also available. Repeated refreshes cannot offer the same scene again, and stale offers expire when the story advances. Background snippets appear separately from the spoken caption; TTS reads the dialogue, and answered scenes are relayed to roleplay.
+
+During video calls, **Hide my camera / Show my camera** controls the player persona’s visibility in roleplay. The NPC’s next reply and the saved call reference respect that state. This control does not access a real webcam.
+
+Voice-message Play/Stop and expandable transcripts also work directly in roleplay cards, merged exchanges, group batches, and full-phone presentations. All surfaces share exclusive playback, keep the complete canonical transcript when available, and preserve playback controls during state refreshes.
+
 ### Character voice messages
 
 Characters can send voice messages through `message` and individual `message_batch` rows by adding `"format":"voice"`; `text` contains the spoken transcript. Generated direct and group replies can choose the same format. For example:
@@ -38,6 +56,12 @@ Characters can send voice messages through `message` and individual `message_bat
 ```
 
 Open the message in Pocket and tap **Play voice message**, or expand **Voice message transcript** to read it. Playback never starts automatically. Settings → Messages → **Playback TTS** lets you choose a saved Lumiverse TTS connection or installed browser voices. Choose a **TTS model** and **TTS voice** from that provider's lists, or keep the connection defaults. Pocket remembers these choices separately for each connection and does not modify the host connection profile. On Play, Pocket sends the transcript and chosen overrides through Lumiverse's signed-in TTS API while provider credentials stay in the host. Generated audio is held only for playback and released on completion, Stop, or closing Pocket. Hosts without that API can still use browser voices.
+
+To send your own voice message, enable **Voice message** above the text composer and type its spoken transcript. Sending stores it as a playable voice message with that transcript, using the same TTS player as incoming messages. The choice stays with the current draft through updates or navigation and resets to ordinary text after sending. It works in direct and group conversations, independently of **Allow character voice messages**. Pocket context and attached roleplay references identify it as a voice-message transcript.
+
+**Play my voice-message transcripts** independently controls playback of your sent voice messages while keeping their exact text readable. Turning it off does not mute calls. **Contacts → character → Edit → Voice** can override the default playback voice with a browser/provider voice or a linked Choir speaker. Reimporting that contact preserves its identity and saved voice.
+
+**Settings → Messages → Read voices with** can optionally select Choir’s saved character voices for messages and calls. This requires a compatible Choir frontend bridge (`__CHOIR_API__`, version 1, with `getVoiceProfiles` and `playVoiceMessage`); unmodified Choir 1.1.6-staging.24 does not expose these Pocket-specific methods. The companion Choir change is separate from Pocket. Pocket reports missing support rather than substituting another speaker’s voice. With compatible Choir, **Copy voice from Choir** copies a native connection/model/voice into the contact; voices requiring Choir’s own provider stay linked. No provider credentials are copied. Pocket TTS and browser playback remain available without Choir.
 
 Settings can disable new character voice messages and playback or choose a browser voice. Browser automatic selection follows the app language and assigns a consistent voice by character identity on the current device; available languages depend on the browser/OS. Choose a Lumiverse TTS connection when the needed language is not installed. Transcripts remain readable when speech is unsupported or fails, without silently switching a failed connection to a browser voice. Voice messages persist as transcripts and format markers, with no API keys, audio URLs, or generated audio files saved in Pocket. Browser voices may use the platform's speech service.
 

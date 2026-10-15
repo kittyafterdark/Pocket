@@ -3,6 +3,9 @@ import { renderContactGroups } from './contact-groups.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
+import { callAvailability } from '../../domain/call-availability.js'
+import { contactVoiceSettings } from '../components/contact-voice.js'
+import { conversationActorIds, resolvePocketActor } from '../../domain/actors.js'
 import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
@@ -12,6 +15,7 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export type ContactView = NonNullable<Extract<PocketRoute, { app: 'contacts' }>['view']>
 
 export interface ContactsViewHost {
+  onCleanup?(cleanup: () => void): void
   identityProfiles?: IdentityProfile[]
   state: PhoneState
   selectedContactId: string
@@ -37,6 +41,10 @@ export interface ContactsViewHost {
   select(contactId: string, view?: ContactView, replace?: boolean): void
   restorePreviousNpcDraft(): void
   openDirect(contactId: string): void
+  iconButton(name: string, label: string): HTMLButtonElement
+  readOnlyDevice?: boolean
+  isCallPending?(contactId: string): boolean
+  startCall?(contactId: string, mode: 'voice' | 'video', callId?: string): void
   choosePhoto(contactId?: string): void
   uploadPhoto(contactId?: string): void
   generatePhoto(contactId: string): void
@@ -78,6 +86,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   const appearance = el('textarea', 'lp-textarea'); appearance.placeholder = 'Minimal appearance — only a few recognizable details'; appearance.maxLength = 360; appearance.value = phoneProfile.appearance
   const textingStyle = el('textarea', 'lp-textarea'); textingStyle.placeholder = 'Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, fragmentation…'; textingStyle.maxLength = 600; textingStyle.value = phoneProfile.textingStyle
   const sceneNote = el('textarea', 'lp-textarea'); sceneNote.placeholder = 'Current scene note — temporary state, objective, or reason they are here'; sceneNote.maxLength = 600; sceneNote.value = contact?.sceneNote || ''
+  const voice = contactVoiceSettings(contact?.voicePlayback, contact?.name || draft?.name || 'Character', host.onCleanup)
   const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || '') ? (contact?.accent || draft!.accent) : '#8b7dff'
   const colorRow = controlRow('Contact color', accent)
   const colorMode = el('select', 'lp-select')
@@ -143,7 +152,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
         personality: personality.value.trim(),
         appearance: appearance.value.trim(),
         textingStyle: textingStyle.value.trim(),
-      }, sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
+      }, voicePlayback: voice.value(), sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
       relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
       contextPolicy: { pinned: pinned.checked },
@@ -167,6 +176,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     fieldBlock('Minimal appearance', appearance, 'Only recognizable details worth occasional reference in texts.'),
     fieldBlock('Texting quirks', textingStyle, 'Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm.'),
     fieldBlock('Current scene note', sceneNote, 'Temporary state, objective, or reason they are here.'),
+    voice.element,
     colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow,
     sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow,
   )
@@ -385,7 +395,65 @@ function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
   return page
 }
 
+function communicationActions(host: ContactsViewHost, contact: PocketContact, includeMessage = true): HTMLDivElement {
+  const communication = el('div', 'lp-contact-communication')
+  communication.setAttribute('role', 'group')
+  communication.setAttribute('aria-label', `Contact ${contact.name}`)
+  const action = (icon: string, label: string, callback: () => void) => {
+    const control = host.iconButton(icon, includeMessage ? label : `${label} ${contact.name}`)
+    control.className = 'lp-button lp-contact-communication-action'
+    control.append(el('span', '', label))
+    control.addEventListener('click', callback)
+    communication.append(control)
+    return control
+  }
+  if (includeMessage) action('messages', 'Message', () => host.openDirect(contact.id))
+  if (host.startCall) {
+    const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
+    const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
+    const activeCall = conversation?.messages.filter(row => row.call?.interactive).at(-1)?.call
+    const connected = activeCall?.status === 'connected' || activeCall?.status === 'ringing'
+    const call = action('call', connected ? activeCall.direction === 'incoming' && activeCall.status === 'ringing' ? 'Answer call' : 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
+    call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || (!connected && !host.capabilities?.generation))
+    if (!connected) {
+      const video = action('video', 'Video call', () => host.startCall!(contact.id, 'video'))
+      video.disabled = call.disabled
+    }
+    if (host.readOnlyDevice) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Switch to your Persona’s phone to call.'))
+    else if (!connected && !host.capabilities?.generation) communication.append(el('p', 'lp-copy lp-contact-call-hint', 'Connect a generation model to start a call.'))
+  }
+  return communication
+}
+
+function phoneView(host: ContactsViewHost): HTMLDivElement {
+  const { page, content } = host.page('Phone', 'Choose someone to call', { label: 'Add', callback: () => host.select('', 'import'), enabled: !host.readOnlyDevice })
+  const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = 'Who would you like to call?'; search.setAttribute('aria-label', 'Search contacts to call')
+  const list = el('div', 'lp-call-contact-list')
+  const noMatches = host.empty(host.state.contacts.length ? 'No matching contacts' : 'No contacts yet', host.state.contacts.length ? 'Try another name.' : 'Add someone to Contacts to make your first call.')
+  noMatches.classList.add('lp-call-empty')
+  const renderList = () => {
+    const query = search.value.trim().toLocaleLowerCase()
+    const contacts = [...host.state.contacts].filter(contact => `${contact.name} ${contact.role}`.toLocaleLowerCase().includes(query)).sort((a, b) => a.name.localeCompare(b.name))
+    list.replaceChildren()
+    for (const contact of contacts) {
+      const card = el('section', 'lp-card lp-call-contact')
+      const identity = el('div', 'lp-row')
+      const actorId = resolvePocketActor(host.state, contact.id)?.actorId || contact.id
+      const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
+      identity.append(avatar(contact), identityBlock({ name: contact.name, meta: [contact.role, callAvailability(contact, conversation)].filter(Boolean).join(' · ') }))
+      card.append(identity, communicationActions(host, contact, false))
+      list.append(card)
+    }
+    noMatches.hidden = contacts.length > 0
+  }
+  search.addEventListener('input', renderList)
+  renderList()
+  content.append(search, list, noMatches)
+  return page
+}
+
 export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
+  if (host.selectedView === 'calls') return phoneView(host)
   if (['groups', 'group-config', 'bank', 'cast-config', 'cast-import', 'bank-entry'].includes(host.selectedView)) return renderContactGroups(host)
   if (host.selectedView === 'quick-gen') return quickGenerateView(host)
   const contact = host.state.contacts.find((entry) => entry.id === host.selectedContactId) || null
@@ -397,6 +465,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     const { page, content } = host.page(contact.name, contact.role, { label: 'Edit', callback: () => host.select(contact.id, 'config') })
     const hero = el('div', 'lp-card lp-contact-detail')
     hero.append(avatar(contact), identityBlock({ name: contact.name, description: contact.identityBrief || contact.description || 'No compact identity brief.', prominent: true, centered: true }))
+    hero.append(communicationActions(host, contact))
     if (contact.sceneNote) hero.append(el('p', 'lp-scene-note', contact.sceneNote))
     const phoneProfile = contact.phoneProfile
     if (phoneProfile && (phoneProfile.personality || phoneProfile.appearance || phoneProfile.textingStyle)) {
@@ -426,8 +495,6 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
       presenceControls.appendChild(choice)
     }
     presence.append(presenceControls, el('p', 'lp-copy', 'Correct their location now. Later story updates can change it.'))
-    const message = button('Message')
-    message.addEventListener('click', () => host.openDirect(contact.id))
     content.prepend(hero); content.append(presence)
     if (contact.source.kind === 'npc') {
       const bankId = contact.source.bankId
@@ -453,7 +520,6 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
         const progressMessage = el('strong', '', profileOperation.message); progressMessage.dataset.operationMessage = 'true'; progress.append(el('span', 'lp-indeterminate'), progressMessage); content.appendChild(progress)
       }
     }
-    content.append(message)
     return page
   }
 

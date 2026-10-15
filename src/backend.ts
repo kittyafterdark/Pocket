@@ -1,5 +1,6 @@
 import { GALLERY_PAGE_SIZE, galleryOffset } from './domain/gallery-page.js'
 import { voiceMessage } from './domain/voice.js'
+import { PocketCalls } from './backend/calls.js'
 import type {
   CalendarEvent,
   GalleryResult,
@@ -40,7 +41,7 @@ import type {
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
 import { clockDayPart, clockLabel, CLOCK_DAY_PART_KEYS } from './domain/clock-label.js'
 import { projectPhoneContext } from './domain/projection.js'
-import { assertPersonaAuthorship, callSummary, normalizeCallMarker } from './domain/phone-events.js'
+import { assertPersonaAuthorship, callSummary, normalizeCallMarker, normalizeCallSceneCheck } from './domain/phone-events.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, setTrackerClockPaused, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
 import { contactAccent, contactSourceKey, ensureDirectConversation, normalizeAvatarFocus, normalizeContactCollections, normalizePocketContact, stableContactAccent } from './domain/contacts.js'
@@ -370,6 +371,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
         conversationTitle: text(presentation?.conversationTitle, 120) || undefined,
         call: normalizeCallMarker(presentation?.call),
         format: voiceMessage(presentation?.format) ? 'voice' : undefined,
+        voiceTranscript: voiceMessage(presentation?.format) ? text(presentation?.voiceTranscript, 12_000) || undefined : undefined,
         storyAt: text(presentation?.storyAt, 80) || undefined,
         storyTimeLabel: text(presentation?.storyTimeLabel, 160) || undefined,
         storyTimezoneOffsetMinutes: typeof presentation?.storyTimezoneOffsetMinutes === 'number' && Number.isFinite(presentation.storyTimezoneOffsetMinutes) && Math.abs(presentation.storyTimezoneOffsetMinutes) <= 840 ? presentation.storyTimezoneOffsetMinutes : undefined,
@@ -509,6 +511,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
         senderActorId: text(message.senderActorId, 180) || text(message.senderContactId, 180) || undefined,
         senderContactId: text(message.senderContactId, 180) || undefined,
         senderName: text(message.senderName, 120) || (message.sender === 'contact' ? 'Participant' : 'Persona'),
+        format: voiceMessage(message.format) ? 'voice' as const : undefined,
         text: body,
         createdAt: text(message.createdAt, 40) || nowIso(),
       }]
@@ -631,6 +634,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayClockLabel: value.roleplayClockPrecision === 'exact' || value.roleplayClockSource === 'manual' ? text(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    callSceneCheck: normalizeCallSceneCheck(value.callSceneCheck),
     hostSwipeSelections,
     hostClockBaselines,
     candidateClocks,
@@ -1282,6 +1286,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
     else contact.avatarUrl = image.url
   }))
   send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, capabilities: capabilities(), generation, swarmProfile, activePersona, reason, open }, userId)
+  if (reason !== 'state_reconciled' && state.conversations.some(thread => thread.messages.some(row => row.call?.followUp?.status === 'pending'))) void liveCalls.processFollowUps({ chatId: state.chatId, characterId: state.characterId }, userId).catch(error => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`))
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -1571,9 +1576,10 @@ function upsertContact(state: PhoneState, contact: PocketContact, preserveCustom
   ))
   if (existing) {
     const preserved = preserveCustomization ? {
-      createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy,
+      id: existing.id, createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy,
       avatarOverrideUrl: existing.avatarOverrideUrl, colorMode: existing.colorMode, sourceAccent: contact.sourceAccent || existing.sourceAccent,
       avatarSource: existing.avatarSource, avatarFocus: existing.avatarFocus,
+      voicePlayback: existing.voicePlayback,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
@@ -3125,6 +3131,9 @@ ${recentNarrative}`,
       }
     })
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
+    if (state.conversations.some(thread => thread.messages.some(row => row.call?.followUp?.status === 'pending'))) void liveCalls.processFollowUps({ chatId, characterId }, userId).catch(error => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`))
+    const callPreferences = await loadPreferences(userId)
+    if (callPreferences.incomingCallScenes && callPreferences.roleplayContextMode !== 'off') void liveCalls.offerIncoming({ chatId, characterId, sourceKey, seed }, userId).catch(error => spindle.log.warn(`Pocket incoming call skipped: ${error instanceof Error ? error.message : String(error)}`))
 
     return seed
   })()
@@ -4373,7 +4382,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       }, command)
     } else if (action === 'message' || action === 'call') {
       const call = action === 'call' ? normalizeCallMarker({ ...payload, callId: text(payload.callId, 180) || (payload.status !== 'ended' ? id('call') : '') }) : undefined
-      if (action === 'call' && !call) throw new Error('A call needs status connected, ended, or missed. Ending a call requires its callId.')
+      if (action === 'call' && (!call || call.status === 'ringing')) throw new Error('A call needs status connected, ended, or missed. Ending a call requires its callId.')
       if (action === 'call' && payload.durationSeconds !== undefined && (typeof payload.durationSeconds !== 'number' || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds < 0 || payload.durationSeconds > 86_400)) throw new Error('Use an explicit duration in seconds, up to one day, or omit it.')
       let messageText = call ? callSummary(call) : text(payload.text ?? payload.message ?? payload.content, 12_000)
       if (!messageText) throw new Error('A phone message needs text.')
@@ -4475,7 +4484,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         senderContactId: senderContact?.id,
         senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
         senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
-        text: messageText, format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), read: personaRead,
+        text: messageText, format: !call && (source === 'user' || preferences.voiceMessages !== false) && voiceMessage(payload.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), read: personaRead,
         call,
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
         origin: actionOrigin,
@@ -4533,6 +4542,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           senderName: message.senderName, recipientNames, conversationTitle: conversation.title,
           format: message.format,
           call,
+          voiceTranscript: message.format === 'voice' ? message.text : undefined,
           ...snapshotActivityClock(state),
         },
         source: { messageId: text(input.messageId, 180) || actionOrigin?.hostMessageId || undefined, contactId: senderContact?.id, conversationId: conversation.id },
@@ -4757,6 +4767,17 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
   try {
     const context = await resolveContext(payload, userId)
     switch (payload.type) {
+      case 'lumiphone:call_start':
+      case 'lumiphone:call_resume':
+      case 'lumiphone:call_accept':
+      case 'lumiphone:call_decline':
+      case 'lumiphone:call_ignore':
+      case 'lumiphone:call_camera':
+      case 'lumiphone:call_reply':
+      case 'lumiphone:call_end': {
+        await liveCalls.handle(String(payload.type), { ...payload, ...context }, userId)
+        break
+      }
       case 'lumiphone:get_debug_prompt': {
         const state = await loadState(context.chatId, context.characterId, userId)
         const conversationId = text(payload.conversationId, 180)
@@ -5957,6 +5978,39 @@ function ensureInterceptor(): void {
 }
 
 spindle.frontendCapabilities.declare('message_tag_interceptor')
+const liveCalls = new PocketCalls({
+  preferences: loadPreferences,
+  load: loadState, save: saveState, lock: (chatId, characterId, action) => withStateLock(stateKey(chatId, characterId), action), publish: (state, userId) => sendState(state, userId, 'call'),
+  send, id, timestamp: phoneMessageTimestamp, contact: actor => actorAsGenerationContact(actor, nowIso()), profile: resolveContactProfile,
+  character: async (characterId, userId) => (spindle.characters.get as any)(characterId, userId),
+  background: async (state, contact, conversation, userId) => {
+    const preferences = await loadPreferences(userId)
+    const persona = await resolveGenerationPocketPersona(state, userId)
+    const assembled = await assemblePocketContext({ state: { ...state, pocketPersona: persona }, contact, conversation,
+      preferences, actorIdentity: pocketContactPhoneBrief(contact, await resolveContactProfile(contact, userId)),
+      getMessages: spindle.permissions.has('chat_mutation') ? () => spindle.chat.getMessages(state.chatId) : undefined,
+      includePhoneThread: true, includeRoleplayBackground: false })
+    const seed = preferences.roleplayContextMode === 'off' ? null : await loadNarrativeSeed(state.chatId, state.characterId, userId)
+    const continuity = narrativeSeedContext(seed, contact.name, [contact.name, persona.displayName || 'You'])
+    const memory = actorPhoneMemoryContext(state.actorMemories, { actorIds: [contact.id], actorNames: [contact.name], actorName: contact.name, excludeConversationId: conversation.id, maxChars: 2_600 })
+    return [assembled.text, continuity, memory].filter(Boolean).join('\n\n')
+  },
+  generate: async (requestId, messages, signal, userId) => {
+    if (!spindle.permissions.has('generation')) throw new Error('Enable Pocket’s Generation permission to make calls.')
+    const response = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, 'call-reply', requestId,
+      { type: 'quiet', messages, signal, userId, parameters: { temperature: 0.8, max_tokens: 900 } }, userId)
+    return parseGeneratedObject(response.content)
+  },
+  remember: rememberPhoneMessage,
+  availabilityKey: async (state, contact, conversation, userId) => {
+    const seed = await loadNarrativeSeed(state.chatId, state.characterId, userId)
+    const actor = seed?.actors.find(row => normalizeActorName(row.name) === normalizeActorName(contact.name))
+    return JSON.stringify({ presence: contact.presence.inScene, activity: contact.sceneNote, availability: conversation.availability, pause: conversation.pause?.reason, actor: actor && { status: actor.status, activity: actor.activity, location: actor.location, presence: actor.presence }, roleplayNow: state.roleplayNow })
+  },
+  sendText: async (input, userId) => {
+    await applyAction({ chatId: input.chatId, characterId: input.characterId, requestId: input.requestId, action: 'message', payload: { conversationId: input.conversationId, speaker: { actorId: input.actorId }, text: input.text } }, userId, 'model')
+  },
+})
 spindle.onFrontendMessage(handleFrontend)
 function pocketArtifactTag(activityId: unknown, action: unknown): string | undefined {
   const value = text(activityId, 180)
