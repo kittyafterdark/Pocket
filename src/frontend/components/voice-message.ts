@@ -59,7 +59,10 @@ export class VoiceMessagePlayer {
       if (same) return
       if (choir?.useChoir) {
         const bridge = choirBridge()
-        if (!bridge?.playVoiceMessage) { status.textContent = 'Choir is unavailable. Enable it or choose Pocket playback in Settings.'; return }
+        if (!bridge?.playVoiceMessage) {
+          status.textContent = bridge ? 'This Choir version does not support Pocket voice playback.' : 'Choir is unavailable. Enable it or choose another voice source.'
+          return
+        }
         const active = { button, status, abort: new AbortController() } as NonNullable<VoiceMessagePlayer['active']>
         this.active = active; setPlaybackButton(button, true); status.textContent = 'Preparing speech with Choir…'
         active.timer = setTimeout(() => { if (this.active === active) { this.stop(); status.textContent = 'Choir playback timed out. Try again.' } }, 90_000)

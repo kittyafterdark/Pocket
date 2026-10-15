@@ -145,7 +145,7 @@ class VoiceMessagePlayer {
       if (choir?.useChoir) {
         const bridge = choirBridge();
         if (!bridge?.playVoiceMessage) {
-          status.textContent = "Choir is unavailable. Enable it or choose Pocket playback in Settings.";
+          status.textContent = bridge ? "This Choir version does not support Pocket voice playback." : "Choir is unavailable. Enable it or choose another voice source.";
           return;
         }
         const active = { button, status, abort: new AbortController };
@@ -5053,7 +5053,8 @@ function contactVoiceSettings(initial, name, onCleanup) {
     }
     speaker.value = selected;
     copy.disabled = !profiles.some((row) => row.speaker === selected);
-    status.textContent = choirBridge()?.playVoiceMessage ? "Choir uses this speaker’s current voice and delivery settings." : "Enable Choir to use or copy its saved voices.";
+    const bridge = choirBridge();
+    status.textContent = bridge?.playVoiceMessage ? "Choir uses this speaker’s current voice and delivery settings." : bridge ? "This Choir version does not support Pocket voices." : "Enable Choir to use or copy its saved voices.";
   };
   const render = () => {
     source.value = voice.source;

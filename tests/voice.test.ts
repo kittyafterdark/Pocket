@@ -49,6 +49,9 @@ test('Choir voice messages use the exact transcript and speaker, cancel exclusiv
     first.querySelector<HTMLButtonElement>('button')!.click(); pending[2].resolve({ played: 1 }); await new Promise(resolve => setTimeout(resolve, 0)); expect(ended).toBe(1)
     delete (globalThis as any).__CHOIR_API__; first.querySelector<HTMLButtonElement>('button')!.click()
     expect(first.querySelector('[role=status]')!.textContent).toContain('Choir is unavailable')
+    ;(globalThis as any).__CHOIR_API__ = { version: 1, isAvailable: () => true }
+    first.querySelector<HTMLButtonElement>('button')!.click()
+    expect(first.querySelector('[role=status]')!.textContent).toContain('This Choir version does not support Pocket voice playback')
     player.stop()
   } finally { Object.assign(globalThis, { window: old.window, document: old.document, __CHOIR_API__: old.bridge }); dom.window.close() }
 })
@@ -67,6 +70,10 @@ test('contacts can copy a native Choir voice or keep a Choir provider linked wit
     speaker.value = 'Bob'; speaker.dispatchEvent(new dom.window.Event('change')); copy.click()
     expect(view.value()).toEqual({ source: 'choir', choirSpeaker: 'Bob' })
     expect(view.element.textContent).toContain('Save the contact')
+    ;(globalThis as any).__CHOIR_API__ = { version: 1, isAvailable: () => true }
+    dom.window.dispatchEvent(new dom.window.Event('choir-available-v1'))
+    expect(view.element.textContent).toContain('This Choir version does not support Pocket voices')
+    expect(copy.disabled).toBe(true)
   } finally { cleanups.forEach(fn => fn()); Object.assign(globalThis, { document: old.document, window: old.window, fetch: old.fetch, __CHOIR_API__: old.bridge }); dom.window.close() }
 })
 

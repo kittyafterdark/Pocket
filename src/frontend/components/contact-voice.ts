@@ -20,7 +20,8 @@ export function contactVoiceSettings(initial: PocketVoice | undefined, name: str
     for (const profile of profiles) { const row = el('option', '', `${profile.speaker} · ${profile.voice}`); row.value = profile.speaker; speaker.append(row) }
     if (!profiles.some(row => row.speaker === selected)) { const saved = el('option', '', `${selected} · choose its voice in Choir`); saved.value = selected; speaker.append(saved) }
     speaker.value = selected; copy.disabled = !profiles.some(row => row.speaker === selected)
-    status.textContent = choirBridge()?.playVoiceMessage ? 'Choir uses this speaker’s current voice and delivery settings.' : 'Enable Choir to use or copy its saved voices.'
+    const bridge = choirBridge()
+    status.textContent = bridge?.playVoiceMessage ? 'Choir uses this speaker’s current voice and delivery settings.' : bridge ? 'This Choir version does not support Pocket voices.' : 'Enable Choir to use or copy its saved voices.'
   }
   const render = () => {
     source.value = voice.source; custom.hidden = voice.source !== 'custom'; stopCustom(); custom.replaceChildren()
