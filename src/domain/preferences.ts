@@ -110,6 +110,10 @@ export function defaultPreferences(): DevicePreferences {
     ttsVoiceURI: '',
     ttsConnectionId: '',
     ttsConnectionOptions: {},
+    voicePlaybackProvider: 'pocket',
+    readOwnVoiceMessages: true,
+    briefCallScenes: false,
+    incomingCallScenes: false,
     theme: 'midnight',
     colors: themePalette('midnight'),
     homeWallpaper: defaultWallpaper(),
@@ -234,6 +238,10 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     theme,
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, '', 500),
+    voicePlaybackProvider: raw.voicePlaybackProvider === 'choir' ? 'choir' : 'pocket',
+    readOwnVoiceMessages: bool(raw.readOwnVoiceMessages, true),
+    briefCallScenes: bool(raw.briefCallScenes, false),
+    incomingCallScenes: bool(raw.incomingCallScenes, false),
     ttsConnectionId: text(raw.ttsConnectionId, '', 180),
     ttsConnectionOptions: Object.fromEntries(Object.entries(record(raw.ttsConnectionOptions)).slice(0, 100)
       .filter(([id]) => id.length <= 180 && !['__proto__', 'constructor', 'prototype'].includes(id))

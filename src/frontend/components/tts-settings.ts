@@ -3,14 +3,14 @@ import { el } from '../shared.js'
 import { fieldBlock } from './ui.js'
 import { listTtsChoices, listTtsConnections, type TtsChoice, type TtsConnection } from './tts-connection.js'
 
-export function ttsSettings(getSettings: () => DevicePreferences, commit: (mutate: (next: DevicePreferences) => void) => void, onCleanup?: (cleanup: () => void) => void): HTMLElement {
+export function ttsSettings(getSettings: () => DevicePreferences, commit: (mutate: (next: DevicePreferences) => void) => void, onCleanup?: (cleanup: () => void) => void, labelPrefix = 'Voice message'): HTMLElement {
   const panel = el('div')
-  const connection = el('select', 'lp-select'); connection.setAttribute('aria-label', 'Voice message TTS connection')
+  const connection = el('select', 'lp-select'); connection.setAttribute('aria-label', `${labelPrefix} TTS connection`)
   const status = el('p', 'lp-copy', 'Loading Lumiverse TTS connections…')
   const provider = el('div'), browser = el('div')
-  const models = el('select', 'lp-select'); models.setAttribute('aria-label', 'Voice message TTS model')
-  const voices = el('select', 'lp-select'); voices.setAttribute('aria-label', 'Voice message provider voice')
-  const browserVoices = el('select', 'lp-select'); browserVoices.setAttribute('aria-label', 'Voice message TTS voice')
+  const models = el('select', 'lp-select'); models.setAttribute('aria-label', `${labelPrefix} TTS model`)
+  const voices = el('select', 'lp-select'); voices.setAttribute('aria-label', `${labelPrefix} provider voice`)
+  const browserVoices = el('select', 'lp-select'); browserVoices.setAttribute('aria-label', `${labelPrefix} TTS voice`)
   let connections: TtsConnection[] = [], disposed = false, request: AbortController | undefined
   const abort = new AbortController()
   onCleanup?.(() => { disposed = true; abort.abort(); request?.abort() })

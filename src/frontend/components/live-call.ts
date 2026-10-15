@@ -9,6 +9,7 @@ type SpeechApi = {
 interface CallUiHost {
   root: HTMLElement
   player: VoiceMessagePlayer
+  renderVoice?(message: PhoneMessage): HTMLElement
   preferences(): DevicePreferences
   send(type: string, payload: Record<string, unknown>): string
   speech?: SpeechApi
@@ -23,6 +24,7 @@ const STYLES = `
 .lp-call-status:empty{display:none}.lp-call-controls{gap:8px;font-size:12px}.lp-call-controls .lp-call-mode{gap:4px;font-size:12px}.lp-call-controls .lp-call-mode>span{font-size:11px}.lp-call-controls button,.lp-call-controls select,.lp-call-controls textarea{font-size:12px;padding:8px;min-height:36px;border-radius:10px}.lp-call-controls textarea{min-height:64px}.lp-live-call>details{font-size:12px}
 .lp-call-speech{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px;min-width:0}.lp-call-speech .lp-call-mode select,.lp-call-speech button{font-size:11px;min-height:32px;padding:6px 8px}.lp-call-speech button{white-space:nowrap}
 .lp-call-playback{margin-top:2px}.lp-call-playback .lp-voice-message{grid-template-columns:minmax(0,1fr) 28px;gap:6px}.lp-call-playback .lp-voice-play{width:28px;height:28px;min-height:28px;padding:4px}
+.lp-live-call .lp-call-camera{font-size:11px;min-height:32px;padding:6px 10px;align-self:flex-end}.lp-call-scene{font-size:12px;color:#c4bed3;font-style:italic;margin-bottom:10px;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-offer{display:flex;gap:8px;flex-wrap:wrap}.lp-call-offer button{flex:1}.lp-call-offer button:first-child{background:#245d49}
 `
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.className = className; node.textContent = text; return node
@@ -49,6 +51,13 @@ export class LiveCallUi {
   private controls?: HTMLElement
   private hangup?: HTMLButtonElement
   private finished = false
+  private incoming = false
+  private awaitingAnswer = false
+  private offer?: HTMLElement
+  private scene?: HTMLElement
+  private camera?: HTMLButtonElement
+  private cameraVisible = true
+  private cameraRequest = ''
   private ready = false
   private busy = false
   private mode: 'voice' | 'video' = 'voice'
@@ -58,9 +67,10 @@ export class LiveCallUi {
   private voiceOperation = 0
   constructor(private host: CallUiHost) {}
   get active(): boolean { return Boolean(this.root) }
-  start(scope: NonNullable<LiveCallUi['scope']>, mode: 'voice' | 'video', callId = ''): void {
+  start(scope: NonNullable<LiveCallUi['scope']>, mode: 'voice' | 'video', callId = '', incomingName = ''): void {
     if (this.root) { this.root.focus(); return }
     this.scope = scope; this.mode = mode; this.callId = callId; this.ready = false; this.finished = false; this.current = undefined; this.history = []; this.expressions = {}
+    this.incoming = Boolean(incomingName); this.awaitingAnswer = this.incoming; this.cameraVisible = true; this.cameraRequest = ''
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     this.root = element('section', 'lp-live-call'); this.root.tabIndex = -1; this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', mode === 'video' ? 'Pocket video call' : 'Pocket phone call')
     const style = element('style'); style.textContent = STYLES
@@ -69,12 +79,20 @@ export class LiveCallUi {
     const hangup = element('button', 'lp-call-hangup', 'End call'); hangup.type = 'button'; hangup.addEventListener('click', () => this.close())
     this.hangup = hangup
     header.append(title, hangup)
+    this.camera = element('button', 'lp-call-camera', 'Hide my camera'); this.camera.type = 'button'; this.camera.hidden = mode !== 'video'; this.camera.disabled = true; this.camera.setAttribute('aria-label', 'Hide my persona camera'); this.camera.setAttribute('aria-pressed', 'true')
+    this.camera.addEventListener('click', () => {
+      if (!this.ready || this.busy || this.finished || !this.scope || this.cameraRequest) return
+      this.camera!.disabled = true
+      const id = this.host.send('lumiphone:call_camera', { ...this.scope, callId: this.callId, visible: !this.cameraVisible }); this.cameraRequest = id; this.requests.set(id, 'lumiphone:call_camera')
+      this.setBusy(false)
+    })
     this.status = element('div', 'lp-call-status'); this.status.setAttribute('role', 'status')
     this.stage = element('div', 'lp-call-stage'); this.image = element('img'); this.image.hidden = true; this.image.alt = 'Character expression'
     this.image.addEventListener('error', () => { if (this.stage) this.stage.dataset.video = 'false'; if (this.image) this.image.hidden = true; if (this.status) this.status.textContent = 'Video interrupted · voice call continues' })
     const bubble = element('div', 'lp-call-caption')
+    this.scene = element('div', 'lp-call-scene'); this.scene.hidden = true
     this.caption = element('div', 'lp-call-caption-text', 'Waiting for the character to answer…'); this.caption.setAttribute('aria-live', 'polite')
-    this.playback = element('div', 'lp-call-playback'); bubble.append(this.caption, this.playback); this.stage.append(this.image, bubble)
+    this.playback = element('div', 'lp-call-playback'); bubble.append(this.scene, this.caption, this.playback); this.stage.append(this.image, bubble)
     this.error = element('div', 'lp-call-error'); this.error.setAttribute('role', 'alert')
     this.controls = element('div', 'lp-call-controls'); this.controls.hidden = true
     const modeLabel = element('label', 'lp-call-mode lp-call-reply-mode')
@@ -103,11 +121,15 @@ export class LiveCallUi {
     selector.addEventListener('change', switchMode); modeLabel.append(selector); switchMode()
     this.controls.append(modeLabel, this.choices, speechRow, this.input, send)
     this.retry = element('button', '', 'Retry reply'); this.retry.type = 'button'; this.retry.hidden = true; this.retry.addEventListener('click', () => {
-      if (this.finished) { this.finished = false; this.callId = ''; this.history = []; this.current = undefined; this.refreshHistory(); this.hangup!.textContent = 'End call'; this.caption!.textContent = 'Waiting for the character to answer…' }
-      this.request(this.ready ? 'lumiphone:call_reply' : 'lumiphone:call_start', {})
+      if (this.finished) { this.finished = false; this.incoming = false; this.callId = ''; this.history = []; this.current = undefined; this.refreshHistory(); this.hangup!.textContent = 'End call'; this.caption!.textContent = 'Waiting for the character to answer…' }
+      this.request(this.ready ? 'lumiphone:call_reply' : this.incoming ? 'lumiphone:call_accept' : 'lumiphone:call_start', {})
     })
+    this.offer = element('div', 'lp-call-offer'); this.offer.hidden = true
+    const accept = element('button', '', 'Answer'); accept.type = 'button'; accept.addEventListener('click', () => { if (!this.awaitingAnswer || this.busy) return; this.awaitingAnswer = false; this.offer!.hidden = true; this.hangup!.textContent = 'End call'; this.request('lumiphone:call_accept', {}) })
+    const ignore = element('button', '', 'Ignore'); ignore.type = 'button'; ignore.addEventListener('click', () => { if (this.scope && this.awaitingAnswer) this.host.send('lumiphone:call_ignore', { ...this.scope, callId: this.callId }); this.close(false) })
+    this.offer.append(accept, ignore)
     const transcript = element('details'); transcript.append(element('summary', '', 'Call transcript')); const history = element('div', 'lp-call-history'); history.dataset.callHistory = 'true'; transcript.append(history)
-    this.root.append(style, header, this.status, this.stage, this.error, this.retry, this.controls, transcript)
+    this.root.append(style, header, this.camera, this.status, this.stage, this.error, this.retry, this.offer, this.controls, transcript)
     this.root.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.close(); return }
       if (event.key === 'Tab') {
@@ -118,20 +140,34 @@ export class LiveCallUi {
       }
     })
     this.host.root.append(this.root); this.root.focus()
-    this.request(callId ? 'lumiphone:call_resume' : 'lumiphone:call_start', {})
+    if (incomingName) this.showIncoming(incomingName)
+    else this.request(callId ? 'lumiphone:call_resume' : 'lumiphone:call_start', {})
+  }
+  private showIncoming(name: string): void {
+    this.incoming = true; this.awaitingAnswer = true; this.setBusy(false); this.ready = false
+    this.root!.querySelector('[data-call-title]')!.textContent = name; this.hangup!.textContent = 'Decline'
+    this.caption!.textContent = 'Incoming call'; this.offer!.hidden = false; this.controls!.hidden = true; this.camera!.hidden = true; this.stage!.dataset.video = 'false'; this.image!.hidden = true
   }
   private request(type: string, payload: Record<string, unknown>): void {
     if (!this.scope || !this.root || this.busy) return
     this.busy = true; this.error!.textContent = ''; this.retry!.hidden = true; this.setBusy(true)
-    const id = this.host.send(type, { ...this.scope, callId: this.callId, mode: this.mode, ...payload }); this.requests.set(id, type)
+    const id = this.host.send(type, { ...this.scope, callId: this.callId, mode: this.mode, personaCamera: this.cameraVisible, ...payload }); this.requests.set(id, type)
   }
   private setBusy(value: boolean): void {
     this.busy = value
-    for (const control of this.controls?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button,textarea') || []) control.disabled = value || !this.ready || (control === this.record && !this.host.speech)
+    if (this.camera) this.camera.disabled = value || !this.ready || this.finished || Boolean(this.cameraRequest)
+    for (const control of this.controls?.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button,textarea') || []) control.disabled = value || !this.ready || Boolean(this.cameraRequest) || (control === this.record && !this.host.speech)
     if (this.status) this.status.textContent = value && this.ready ? 'Listening for a reply…' : ''
   }
   receive(payload: Record<string, any>): void {
     if (!this.root || !this.scope) return
+    if (payload.type === 'lumiphone:call_incoming' && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId && payload.callId === this.callId) { this.showIncoming(payload.name); return }
+    if (payload.type === 'lumiphone:call_camera' && payload.requestId === this.cameraRequest && payload.callId === this.callId) {
+      this.cameraVisible = payload.visible !== false; this.cameraRequest = ''; this.requests.delete(payload.requestId)
+      this.camera!.textContent = this.cameraVisible ? 'Hide my camera' : 'Show my camera'; this.camera!.setAttribute('aria-label', this.cameraVisible ? 'Hide my persona camera' : 'Show my persona camera'); this.camera!.setAttribute('aria-pressed', String(this.cameraVisible)); this.camera!.disabled = this.busy || this.finished
+      this.setBusy(this.busy); return
+    }
+    if (payload.type === 'lumiphone:error' && payload.requestId === this.cameraRequest) { this.error!.textContent = payload.error; this.cameraRequest = ''; this.requests.delete(payload.requestId); this.setBusy(this.busy); return }
     if (payload.type === 'lumiphone:error' && this.requests.has(payload.requestId)) { this.error!.textContent = payload.error; this.retry!.hidden = false; this.setBusy(false); return }
     if ((payload.type === 'lumiphone:call_ringing' || payload.type === 'lumiphone:call_result') && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
       this.callId = payload.callId; this.ready = false; this.controls!.hidden = true; this.stage!.dataset.video = 'false'; this.image!.hidden = true
@@ -145,6 +181,8 @@ export class LiveCallUi {
     }
     if (payload.type === 'lumiphone:call_ready' && this.requests.has(payload.requestId) && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId) {
       this.callId = payload.callId; this.ready = true; this.expressions = payload.video ? payload.expressions : {}; this.stage!.dataset.video = String(Boolean(payload.video))
+      this.awaitingAnswer = false; this.offer!.hidden = true; this.mode = payload.mode || this.mode; this.cameraVisible = payload.personaCamera !== false
+      this.camera!.hidden = this.mode !== 'video'; this.camera!.textContent = this.cameraVisible ? 'Hide my camera' : 'Show my camera'; this.camera!.setAttribute('aria-label', this.cameraVisible ? 'Hide my persona camera' : 'Show my persona camera'); this.camera!.setAttribute('aria-pressed', String(this.cameraVisible)); this.hangup!.textContent = 'End call'
       this.controls!.hidden = false; this.retry!.textContent = 'Retry reply'
       this.root.querySelector('[data-call-title]')!.textContent = payload.name
       this.image!.alt = `${payload.name}’s expression`
@@ -165,23 +203,24 @@ export class LiveCallUi {
     }
     if (payload.type === 'lumiphone:call_ended') this.close(false)
   }
-  private refreshHistory(): void { const history = this.root?.querySelector('[data-call-history]'); if (history) history.textContent = this.history.map(row => `${row.senderName}: ${row.text}`).join('\n\n') }
+  private refreshHistory(): void { const history = this.root?.querySelector('[data-call-history]'); if (history) history.textContent = this.history.map(row => `${row.callTurn?.scene ? `[Call background: ${row.callTurn.scene}]\n` : ''}${row.senderName}: ${row.text}`).join('\n\n') }
   private showTurn(message: PhoneMessage, autoplay: boolean, ended = false): void {
     this.current = message; this.caption!.textContent = message.text
+    this.scene!.textContent = message.callTurn?.scene || ''; this.scene!.hidden = !message.callTurn?.scene
     const image = this.expressions[message.callTurn?.expression || ''] || Object.values(this.expressions)[0]
     this.image!.hidden = !image; if (image) this.image!.src = image
     const preferences = this.host.preferences()
     // Calls are explicitly started by the player and always speak; the separate voice-message setting does not mute calls.
-    const player = this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ''], 'call')
+    const player = this.host.renderVoice ? this.host.renderVoice({ ...message, id: `call:${message.id}` }) : this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ''], 'call')
     this.playback!.replaceChildren(player)
     this.choices!.replaceChildren()
     for (const choice of message.callTurn?.choices || []) { const button = element('button', '', choice); button.type = 'button'; button.addEventListener('click', () => this.reply(choice)); this.choices!.append(button) }
     if (!this.choices!.childElementCount) { const type = element('button', '', 'Write your reply'); type.addEventListener('click', () => { const selector = this.root!.querySelector('select')!; selector.value = 'type'; selector.dispatchEvent(new Event('change')); this.input!.focus() }); this.choices!.append(type) }
-    if (ended) { this.controls!.hidden = true; this.status!.textContent = 'The character said goodbye'; player.addEventListener('pocket-voice-ended', () => this.close(), { once: true }) }
+    if (ended) { this.finished = true; this.ready = false; this.controls!.hidden = true; this.camera!.disabled = true; this.status!.textContent = 'The character said goodbye'; player.addEventListener('pocket-voice-ended', () => this.close(), { once: true }) }
     if (autoplay) queueMicrotask(() => { if (this.root && this.current?.id === message.id) player.querySelector<HTMLButtonElement>('button')?.click() })
   }
   private reply(text: string): void {
-    const spoken = text.trim(); if (!spoken || this.busy || !this.ready) return
+    const spoken = text.trim(); if (!spoken || this.busy || !this.ready || this.cameraRequest) return
     this.cancelSpeech(); this.host.player.stop(); this.input!.value = ''
     this.history.push({ id: `local:${Date.now()}`, text: spoken, sender: 'persona', senderName: 'You', senderAccent: '', createdAt: '', read: true, status: 'read' }); this.refreshHistory()
     this.request('lumiphone:call_reply', { text: spoken })
@@ -203,7 +242,7 @@ export class LiveCallUi {
   private cancelSpeech(): void { ++this.voiceOperation; this.session?.cancel(); this.session = undefined; if (this.record) { this.record.textContent = 'Start microphone'; this.record.disabled = !this.host.speech }; if (this.ready && !this.busy && this.status) this.status.textContent = '' }
   close(notify = true): void {
     if (!this.root) return
-    if (notify && this.scope && !this.finished) this.host.send('lumiphone:call_end', { ...this.scope, callId: this.callId })
+    if (notify && this.scope && !this.finished) this.host.send(this.awaitingAnswer ? 'lumiphone:call_decline' : 'lumiphone:call_end', { ...this.scope, callId: this.callId })
     this.cancelSpeech(); this.host.player.stop(); this.root.remove(); this.root = undefined; this.scope = undefined; this.requests.clear(); this.busy = false; ++this.generation
     this.returnFocus?.focus(); this.returnFocus = undefined
   }

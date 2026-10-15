@@ -1,6 +1,7 @@
 import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
 import { VoiceMessagePlayer } from './components/voice-message.js'
 import { LiveCallUi } from './components/live-call.js'
+import { resolveVoicePlayback } from '../domain/voice-playback.js'
 import type {
   CalendarEvent,
   DevicePreferences,
@@ -8,6 +9,7 @@ import type {
   PhoneApp,
   PhoneCapabilities,
   PhoneNote,
+  PhoneMessage,
   PhoneNotification,
   PocketGenerationInfo,
   PocketContextDiagnostics,
@@ -317,6 +319,7 @@ class PocketController {
     this.customStyle.dataset.pocketCustomCss = 'true'
     this.shell.append(status, this.syncIndicator, this.screen, homebar, this.alert, this.customStyle)
     this.liveCall = new LiveCallUi({ root: this.shell, player: this.voicePlayer, preferences: () => this.preferences,
+      renderVoice: message => this.renderVoice(message, 'call'),
       send: (type, payload) => this.send(type, payload), speech: (ctx as any).stt, roleplay: () => this.close() })
     this.syncSurfaceIdentity()
     this.launcher.addEventListener('pointerdown', (event) => { this.launcherPointer = { x: event.clientX, y: event.clientY } })
@@ -1035,6 +1038,13 @@ class PocketController {
   private onBackend(payload: BackendPayload): void {
     if (!payload || typeof payload !== 'object' || typeof payload.type !== 'string') return
     this.liveCall.receive(payload)
+    if (payload.type === 'lumiphone:call_incoming' && !this.liveCall.active && this.state) {
+      const active = this.ctx.getActiveChat()
+      if (active.chatId !== payload.chatId || active.characterId !== payload.characterId || this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state) || !this.preferences.incomingCallScenes) return
+      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' })
+      this.liveCall.start({ chatId: payload.chatId, characterId: payload.characterId, conversationId: payload.conversationId, deviceOwnerActorId: pocketPersonaActorId(this.state) }, payload.mode || 'voice', payload.callId, payload.name)
+      return
+    }
     if (payload.type === 'lumiphone:state' && payload.state) {
       const active = this.ctx.getActiveChat()
       if (active.chatId && payload.state.chatId !== active.chatId) return
@@ -1686,6 +1696,12 @@ class PocketController {
     this.openPocket({ app } as PocketRoute)
   }
 
+  private renderVoice(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string; sender?: PhoneMessage['sender'] }, kind: 'message' | 'call' = 'message'): HTMLElement {
+    const contact = this.state ? resolvePocketActor(this.state, message.senderActorId || '')?.contact || this.state.contacts.find(row => row.name === message.senderName) : undefined
+    const playback = resolveVoicePlayback(this.preferences, { sender: message.sender || 'contact', senderName: message.senderName }, contact, kind)
+    return this.voicePlayer.render(message, playback.voiceURI, playback.enabled, playback.connectionId, playback.options, kind, playback.choir)
+  }
+
   private inlineOptions(activity: PocketActivity): ActivityRenderOptions {
     if (!this.state) return {}
     const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId())
@@ -1698,13 +1714,13 @@ class PocketController {
     return { appearance: this.preferences.inlineAppearance || 'cards', reducedMotion: this.preferences.reducedMotion || this.preferences.animation === 'none', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
       backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
-      voicePlaybackKey: JSON.stringify([this.preferences.voiceMessages, this.preferences.ttsVoiceURI, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions]),
+      voicePlaybackKey: JSON.stringify([this.preferences.voiceMessages, this.preferences.readOwnVoiceMessages, this.preferences.voicePlaybackProvider, this.preferences.ttsVoiceURI, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions, this.state.contacts.map(row => [row.id, row.voicePlayback])]),
       renderVoiceMessage: message => {
         const routeMessageId = activity.route.app === 'messages' ? activity.route.messageId : undefined
         const canonical = this.state?.conversations.flatMap(row => row.messages).find(row => row.id === message.id)
           || this.state?.conversations.flatMap(row => row.messages).find(row => row.id === routeMessageId)
         const full = canonical || { ...message, text: activity.presentation?.voiceTranscript || message.text }
-        return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || 'voice'}` }, this.preferences.ttsVoiceURI, canonical?.sender === 'persona' || activity.presentation?.kind === 'sent' || this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ''])
+        return this.renderVoice({ ...full, sender: canonical?.sender || (activity.presentation?.kind === 'sent' ? 'persona' : 'contact'), id: `inline:${activity.id}:${message.id || 'voice'}` })
       },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map(row => [row.senderActorId || '', resolvePocketActor(this.state!, row.senderActorId || '')?.avatarUrl || ''])) }
@@ -2111,7 +2127,7 @@ class PocketController {
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     return renderMessagesView({
       state: this.state!, selectedConversationId: this.selectedConversationId,
-      renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, message.sender === 'persona' || this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
+      renderVoiceMessage: message => this.renderVoice(message),
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
       selectedMessageId: this.selectedMessageId,
       selectedView: this.selectedConversationView,
@@ -2470,6 +2486,7 @@ class PocketController {
       iconButton,
       readOnlyDevice: this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state!),
       isCallPending: contactId => [...this.contactCallRequests.values()].some(call => call.chatId === this.state!.chatId && call.characterId === this.state!.characterId && call.contactId === contactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
+      onCleanup: cleanup => this.viewCleanups.push(cleanup),
       startCall: (contactId, mode, callId) => this.startContactCall(contactId, mode, callId),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       uploadPhoto: (contactId) => { void this.uploadAvatarPhoto(contactId) },
@@ -2491,7 +2508,10 @@ class PocketController {
     if (!actorId) return
     const scope = { chatId: this.state.chatId, characterId: this.state.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId() }
     const conversation = this.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
-    if (conversation) { this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId); return }
+    if (conversation) {
+      const marker = callId ? conversation.messages.filter(row => row.call?.callId === callId).at(-1)?.call : undefined
+      this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId, marker?.status === 'ringing' && marker.direction === 'incoming' ? this.state.contacts.find(row => row.id === contactId)?.name : undefined); return
+    }
     if ([...this.contactCallRequests.values()].some(call => call.contactId === contactId && call.chatId === scope.chatId && call.characterId === scope.characterId && call.deviceOwnerActorId === scope.deviceOwnerActorId)) return
     const requestId = this.send('lumiphone:open_direct', { contactId })
     this.contactCallRequests.set(requestId, { ...scope, contactId, mode, view: this.selectedContactView })

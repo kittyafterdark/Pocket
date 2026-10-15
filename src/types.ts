@@ -213,6 +213,10 @@ export interface DevicePreferences {
   ttsVoiceURI?: string
   ttsConnectionId?: string
   ttsConnectionOptions?: Record<string, { voice?: string; model?: string }>
+  voicePlaybackProvider?: 'pocket' | 'choir'
+  readOwnVoiceMessages?: boolean
+  briefCallScenes?: boolean
+  incomingCallScenes?: boolean
   theme: PhoneTheme
   colors: PhonePalette
   homeWallpaper: PocketWallpaper
@@ -309,7 +313,8 @@ export interface PhoneMessage {
   format?: 'voice'
   call?: PocketCallMarker
   /** Spoken call dialogue, distinct from an asynchronous voice message. */
-  callTurn?: { callId: string; expression?: string; choices?: string[] }
+  callTurn?: { callId: string; expression?: string; choices?: string[]; scene?: string }
+  callCamera?: { callId: string; visible: boolean }
   id: string
   sender: 'persona' | 'contact' | 'system'
   /** Generic Pocket actor identity. Contact ids remain valid actor ids. Persona messages also carry the canonical Pocket Persona actor id. */
@@ -486,7 +491,17 @@ export interface PocketContactDraft {
   avatarFocus?: { x: number; y: number }
 }
 
+export interface PocketVoice {
+  source: 'default' | 'custom' | 'choir'
+  choirSpeaker?: string
+  voiceURI?: string
+  connectionId?: string
+  voice?: string
+  model?: string
+}
+
 export interface PocketContact {
+  voicePlayback?: PocketVoice
   id: string
   name: string
   role: string
@@ -860,6 +875,9 @@ export interface PocketActivityPresentation {
 }
 
 export interface PocketCallMarker {
+  direction?: 'incoming' | 'outgoing'
+  personaCamera?: boolean
+  incomingOpening?: { text: string; scene: string; expression: string }
   /** Optional character-chosen text after a call; later texts wait for a story/status change. */
   followUp?: { when: 'now' | 'later'; text: string; status: 'pending' | 'sent' | 'cancelled'; availabilityKey: string }
   callId: string
@@ -912,6 +930,7 @@ export interface PocketStateReconciliation {
   domains: PocketReconciliationDomain[]
 }
 export interface PhoneState {
+  callSceneCheck?: { sourceKey: string; lastOfferRevision: number }
   version: 11
   chatId: string
   characterId: string

@@ -34,6 +34,137 @@ function fixture(expressions: Record<string, string> = {}, expressionGroups: Rec
   return { calls, host, input, sent, prompts, state: () => state, generation: (next: CallHost['generate']) => { generate = next }, callId: () => sent.find(row => row.type === 'lumiphone:call_ringing')?.callId }
 }
 
+test('brief pickup scenes require opt-in and RP context, stay separate from speech and end the call', async () => {
+  for (const enabled of [false, true]) {
+    const f = fixture(), prefs = { ...defaultPreferences(), briefCallScenes: enabled }
+    f.host.preferences = async () => prefs
+    f.generation(async (_id, messages) => { f.prompts.push(messages); return { decision: 'answer', scene: 'A kettle whistles in the background.', message: 'Oh, sorry. I’m busy cooking. Talk later, bye.', choices: ['Wait'], end: false } })
+    await f.calls.handle('lumiphone:call_start', { ...f.input, mode: 'voice' })
+    const turn = f.state().conversations[0].messages.find(row => row.callTurn)!
+    expect(turn.text).not.toContain('kettle')
+    expect(Boolean(turn.callTurn?.scene)).toBe(enabled)
+    expect(f.sent.at(-1).ended).toBe(enabled)
+    if (enabled) {
+      expect(turn.callTurn?.choices).toEqual([])
+      expect(serializePocketReference(f.state().references[0])).toContain('Call background: A kettle')
+    }
+  }
+  const off = fixture(); off.host.preferences = async () => ({ ...defaultPreferences(), roleplayContextMode: 'off', briefCallScenes: true })
+  off.generation(async () => ({ message: 'Hi.', scene: 'Unwanted scene.' }))
+  await off.calls.handle('lumiphone:call_start', off.input)
+  expect(off.state().conversations[0].messages.at(-1)?.callTurn?.scene).toBeUndefined()
+})
+
+const incomingSource = { chatId: 'chat', characterId: 'narrator', sourceKey: 'rp1', seed: 'Alice is preparing dinner.' }
+function incomingFixture() {
+  const f = fixture(); f.host.preferences = async () => ({ ...defaultPreferences(), incomingCallScenes: true })
+  f.generation(async (_id, messages) => { f.prompts.push(messages); return { decision: 'call', contactId: 'alice', scene: 'A kettle whistles.', message: 'Oh! Sorry, I’m busy. Talk later, bye.' } })
+  return f
+}
+
+test('incoming scenes are opt-in, deduplicated and silent until accepted; resume cannot auto-answer', async () => {
+  const disabled = fixture(); await disabled.calls.offerIncoming(incomingSource); expect(disabled.prompts).toHaveLength(0)
+  disabled.host.preferences = async () => ({ ...defaultPreferences(), incomingCallScenes: true, roleplayContextMode: 'off' })
+  await disabled.calls.offerIncoming(incomingSource); expect(disabled.prompts).toHaveLength(0)
+  const f = incomingFixture()
+  await Promise.all([f.calls.offerIncoming(incomingSource), f.calls.offerIncoming(incomingSource)])
+  const offered = f.sent.find(row => row.type === 'lumiphone:call_incoming')!
+  expect(offered).toBeDefined(); expect(f.prompts).toHaveLength(1)
+  expect(f.state().conversations[0].messages).toHaveLength(1); expect(f.state().references).toHaveLength(0)
+  const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+  expect(normalized.conversations[0].messages[0].call?.incomingOpening?.scene).toContain('kettle')
+  await f.calls.handle('lumiphone:call_resume', { ...f.input, mode: 'voice', requestId: 'resume', callId: offered.callId })
+  expect(f.sent.at(-1).type).toBe('lumiphone:call_incoming'); expect(f.prompts).toHaveLength(1)
+  await f.calls.handle('lumiphone:call_accept', { ...f.input, mode: 'voice', requestId: 'answer', callId: offered.callId })
+  expect(f.sent.at(-1)).toMatchObject({ type: 'lumiphone:call_turn', ended: true, message: { text: 'Oh! Sorry, I’m busy. Talk later, bye.' } })
+  expect(f.prompts).toHaveLength(1)
+  expect(f.state().conversations[0].messages[0].call?.incomingOpening).toBeUndefined()
+  expect(serializePocketReference(f.state().references[0])).toContain('Call background: A kettle')
+  await f.calls.offerIncoming(incomingSource); expect(f.prompts).toHaveLength(1)
+})
+
+test('declined, ignored and expired incoming calls never commit their private scene or words', async () => {
+  for (const action of ['lumiphone:call_decline', 'lumiphone:call_ignore', 'expired', 'disabled']) {
+    const f = incomingFixture(); await f.calls.offerIncoming(incomingSource)
+    const callId = f.sent.find(row => row.type === 'lumiphone:call_incoming')!.callId
+    if (action === 'expired') await f.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp2' })
+    else if (action === 'disabled') { f.host.preferences = async () => defaultPreferences(); await f.calls.handle('lumiphone:call_accept', { ...f.input, callId }) }
+    else await f.calls.handle(action, { ...f.input, callId })
+    expect(f.state().conversations[0].messages[0].call).toMatchObject({ status: 'missed', outcome: action === 'lumiphone:call_decline' || action === 'disabled' ? 'declined' : 'ignored' })
+    expect(f.state().conversations[0].messages[0].call?.incomingOpening).toBeUndefined()
+    const serialized = serializePocketReference(f.state().references[0]); expect(serialized).toContain('no connection or spoken exchange')
+    expect(serialized).not.toContain('kettle'); expect(serialized).not.toContain('Sorry')
+    await expect(f.calls.handle('lumiphone:call_accept', { ...f.input, callId })).rejects.toThrow('has ended')
+  }
+})
+
+test('incoming offers suppress stale generation after another RP turn and respect cooldown', async () => {
+  const f = incomingFixture(); let resolve!: (raw: any) => void, reached!: () => void
+  const started = new Promise<void>(r => reached = r)
+  f.generation(async () => { reached(); return new Promise(r => resolve = r) })
+  const pending = f.calls.offerIncoming(incomingSource); await started
+  f.state().lastReconciliation = { sourceKey: 'rp2' } as any
+  resolve({ decision: 'call', contactId: 'alice', scene: 'Stale background.', message: 'Stale words.' }); await pending
+  expect(f.sent).toHaveLength(0)
+  const cooldown = incomingFixture(); await cooldown.calls.offerIncoming(incomingSource)
+  await cooldown.calls.handle('lumiphone:call_ignore', { ...cooldown.input, callId: cooldown.sent[0].callId })
+  await cooldown.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp2' }); expect(cooldown.prompts).toHaveLength(1)
+  cooldown.state().stateRevision = 3
+  await cooldown.calls.offerIncoming({ ...incomingSource, sourceKey: 'rp3' }); expect(cooldown.prompts).toHaveLength(2)
+})
+
+test('persona camera visibility persists, appears in RP references and governs the next spoken reply', async () => {
+  const f = fixture({ neutral: 'image' }); await f.calls.handle('lumiphone:call_start', f.input)
+  await f.calls.handle('lumiphone:call_camera', { ...f.input, callId: f.callId(), requestId: 'hide', visible: false })
+  expect(f.sent.at(-1)).toMatchObject({ type: 'lumiphone:call_camera', visible: false })
+  expect(serializePocketReference(f.state().references[0])).toContain('Persona camera: hidden')
+  const normalized = normalizeContactCollections(f.state(), { characterId: 'narrator', characterName: 'Narrator', now, makeId: prefix => prefix, personaActorId: 'persona' })
+  expect(normalized.conversations[0].messages[0].call?.personaCamera).toBe(false)
+  expect(normalized.conversations[0].messages.at(-1)?.callCamera).toMatchObject({ visible: false })
+  await f.calls.handle('lumiphone:call_reply', { ...f.input, callId: f.callId(), requestId: 'hidden-reply', text: 'Can you see me?' })
+  expect(f.prompts.at(-1)![0].content).toContain('cannot see their face, body, gestures, or surroundings')
+  await f.calls.handle('lumiphone:call_resume', { ...f.input, callId: f.callId(), requestId: 'resume' }); expect(f.sent.at(-1).personaCamera).toBe(false)
+  await f.calls.handle('lumiphone:call_camera', { ...f.input, callId: f.callId(), visible: true })
+  expect(serializePocketReference(f.state().references[0])).toContain('Persona camera: shown')
+  const audio = fixture(); await audio.calls.handle('lumiphone:call_start', { ...audio.input, mode: 'voice' })
+  await expect(audio.calls.handle('lumiphone:call_camera', { ...audio.input, callId: audio.callId(), visible: false })).rejects.toThrow('only during a video call')
+})
+
+test('incoming UI offers Answer/Ignore before speech and a goodbye reads dialogue without its scene', async () => domFixture(async dom => {
+  const sent: any[] = [], spoken: any[] = []
+  Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: (turn: any) => spoken.push(turn), cancel() {} }, SpeechSynthesisUtterance: class { constructor(public text: string) {} } })
+  const ui = new LiveCallUi({ root: document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {}, send(type, payload) { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId } })
+  const scope = { chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }
+  ui.start(scope, 'voice', 'incoming', 'Alice')
+  expect(sent).toHaveLength(0); expect(spoken).toHaveLength(0)
+  const answer = [...document.querySelectorAll('button')].find(row => row.textContent === 'Answer')!; answer.click()
+  expect(sent.at(-1).type).toBe('lumiphone:call_accept')
+  ui.receive({ ...scope, type: 'lumiphone:call_ready', requestId: 'r0', callId: 'incoming', name: 'Alice', mode: 'voice', turns: [] })
+  ui.receive({ type: 'lumiphone:call_turn', requestId: 'r0', callId: 'incoming', ended: true, message: { id: 'opening', sender: 'contact', senderName: 'Alice', text: 'Sorry, busy. Bye.', callTurn: { callId: 'incoming', scene: 'The kettle whistles.', choices: [] } } })
+  await Promise.resolve(); expect(spoken[0].text).toBe('Sorry, busy. Bye.')
+  expect(document.querySelector('.lp-call-scene')!.textContent).toContain('kettle')
+  expect(document.querySelector<HTMLElement>('.lp-call-controls')!.hidden).toBe(true)
+  spoken[0].onend(); expect(ui.active).toBe(false)
+  expect(sent).toHaveLength(1)
+  ui.start(scope, 'voice', 'ignored', 'Alice'); [...document.querySelectorAll('button')].find(row => row.textContent === 'Ignore')!.click()
+  expect(sent.at(-1).type).toBe('lumiphone:call_ignore'); expect(ui.active).toBe(false); expect(spoken).toHaveLength(1)
+}))
+
+test('video camera button waits for acknowledgement before allowing another reply and never opens hardware', async () => domFixture(async dom => {
+  const sent: any[] = []
+  const ui = new LiveCallUi({ root: document.querySelector('main')!, preferences: defaultPreferences, player: new VoiceMessagePlayer(), roleplay() {}, send(type, payload) { const requestId = `r${sent.length}`; sent.push({ type, ...payload, requestId }); return requestId } })
+  const scope = { chatId: 'chat', characterId: 'card', conversationId: 'dm', deviceOwnerActorId: 'persona' }
+  ui.start(scope, 'video', 'video')
+  ui.receive({ ...scope, type: 'lumiphone:call_ready', requestId: 'r0', callId: 'video', name: 'Alice', mode: 'video', video: true, expressions: {}, turns: [], personaCamera: true })
+  const camera = document.querySelector<HTMLButtonElement>('[aria-label="Hide my persona camera"]')!; camera.click()
+  expect(sent.at(-1)).toMatchObject({ type: 'lumiphone:call_camera', visible: false }); expect(camera.disabled).toBe(true)
+  expect(document.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(true)
+  ui.receive({ type: 'lumiphone:call_camera', requestId: 'r1', callId: 'video', visible: false })
+  expect(camera.getAttribute('aria-label')).toBe('Show my persona camera'); expect(camera.disabled).toBe(false)
+  expect(document.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(false)
+  ui.close()
+}))
+
 test('video requires the linked card’s expression pack and uses only its labels', async () => {
   const video = fixture({ neutral: 'image-neutral', happy: 'image-happy' })
   await video.calls.handle('lumiphone:call_start', video.input, 'user')

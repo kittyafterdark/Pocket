@@ -52,6 +52,19 @@ async function synthesizeVoiceMessage(connectionId, text, signal, options) {
   return blob;
 }
 
+// src/frontend/components/choir-bridge.ts
+function choirBridge() {
+  const bridge = globalThis.__CHOIR_API__;
+  return bridge?.version === 1 && bridge.isAvailable() ? bridge : undefined;
+}
+function choirVoiceProfiles() {
+  try {
+    return choirBridge()?.getVoiceProfiles?.().filter((row) => row.speaker && row.voice && !row.excluded) || [];
+  } catch {
+    return [];
+  }
+}
+
 // src/frontend/components/voice-message.ts
 function setPlaybackButton(button, playing) {
   const label = (playing ? button.dataset.voiceStopLabel : button.dataset.voicePlayLabel) || "▶ Play voice message";
@@ -96,10 +109,10 @@ class VoiceMessagePlayer {
       status.textContent = "";
     setPlaybackButton(button, false);
   }
-  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions, kind = "message") {
+  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions, kind = "message", choir) {
     const playLabel = kind === "call" ? "▶ Replay spoken turn" : "▶ Play voice message";
     const stopLabel = kind === "call" ? "■ Stop speech" : "■ Stop voice message";
-    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind]);
+    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind, choir]);
     if (message.id && this.views.get(message.id)?.signature === signature)
       return this.views.get(message.id).element;
     const container = document.createElement("div");
@@ -117,7 +130,8 @@ class VoiceMessagePlayer {
     status.className = "lp-voice-status";
     status.setAttribute("role", "status");
     const supported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-    button.disabled = !enabled || !supported && !connectionId;
+    button.disabled = !enabled || !supported && !connectionId && !choir?.useChoir;
+    button.hidden = !enabled;
     if (button.disabled)
       status.textContent = enabled ? "Speech playback unavailable in this browser." : "Voice playback is disabled in Settings.";
     button.addEventListener("click", () => {
@@ -128,6 +142,43 @@ class VoiceMessagePlayer {
       this.stop();
       if (same)
         return;
+      if (choir?.useChoir) {
+        const bridge = choirBridge();
+        if (!bridge?.playVoiceMessage) {
+          status.textContent = "Choir is unavailable. Enable it or choose Pocket playback in Settings.";
+          return;
+        }
+        const active = { button, status, abort: new AbortController };
+        this.active = active;
+        setPlaybackButton(button, true);
+        status.textContent = "Preparing speech with Choir…";
+        active.timer = setTimeout(() => {
+          if (this.active === active) {
+            this.stop();
+            status.textContent = "Choir playback timed out. Try again.";
+          }
+        }, 90000);
+        bridge.playVoiceMessage({ text: message.text, speaker: choir.speaker, signal: active.abort.signal, onStatus: (update) => {
+          if (this.active === active)
+            status.textContent = update.kind === "loading" ? "Preparing speech with Choir…" : "";
+        } }).then((result) => {
+          if (this.active !== active)
+            return;
+          this.stop();
+          if (!result.played) {
+            status.textContent = "No Choir voice is enabled for this speaker.";
+            return;
+          }
+          container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-ended"));
+        }).catch((error) => {
+          if (this.active !== active)
+            return;
+          this.stop();
+          status.textContent = error instanceof Error ? error.message : "Choir playback failed.";
+          container.dispatchEvent(new container.ownerDocument.defaultView.Event("pocket-voice-error"));
+        });
+        return;
+      }
       if (connectionId) {
         const active = { button, status, abort: new AbortController };
         this.active = active;
@@ -234,6 +285,7 @@ var STYLES = `
 .lp-call-status:empty{display:none}.lp-call-controls{gap:8px;font-size:12px}.lp-call-controls .lp-call-mode{gap:4px;font-size:12px}.lp-call-controls .lp-call-mode>span{font-size:11px}.lp-call-controls button,.lp-call-controls select,.lp-call-controls textarea{font-size:12px;padding:8px;min-height:36px;border-radius:10px}.lp-call-controls textarea{min-height:64px}.lp-live-call>details{font-size:12px}
 .lp-call-speech{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px;min-width:0}.lp-call-speech .lp-call-mode select,.lp-call-speech button{font-size:11px;min-height:32px;padding:6px 8px}.lp-call-speech button{white-space:nowrap}
 .lp-call-playback{margin-top:2px}.lp-call-playback .lp-voice-message{grid-template-columns:minmax(0,1fr) 28px;gap:6px}.lp-call-playback .lp-voice-play{width:28px;height:28px;min-height:28px;padding:4px}
+.lp-live-call .lp-call-camera{font-size:11px;min-height:32px;padding:6px 10px;align-self:flex-end}.lp-call-scene{font-size:12px;color:#c4bed3;font-style:italic;margin-bottom:10px;white-space:pre-wrap;overflow-wrap:anywhere}.lp-call-offer{display:flex;gap:8px;flex-wrap:wrap}.lp-call-offer button{flex:1}.lp-call-offer button:first-child{background:#245d49}
 `;
 function element(tag, className = "", text = "") {
   const node = document.createElement(tag);
@@ -265,6 +317,13 @@ class LiveCallUi {
   controls;
   hangup;
   finished = false;
+  incoming = false;
+  awaitingAnswer = false;
+  offer;
+  scene;
+  camera;
+  cameraVisible = true;
+  cameraRequest = "";
   ready = false;
   busy = false;
   mode = "voice";
@@ -278,7 +337,7 @@ class LiveCallUi {
   get active() {
     return Boolean(this.root);
   }
-  start(scope, mode, callId = "") {
+  start(scope, mode, callId = "", incomingName = "") {
     if (this.root) {
       this.root.focus();
       return;
@@ -291,6 +350,10 @@ class LiveCallUi {
     this.current = undefined;
     this.history = [];
     this.expressions = {};
+    this.incoming = Boolean(incomingName);
+    this.awaitingAnswer = this.incoming;
+    this.cameraVisible = true;
+    this.cameraRequest = "";
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     this.root = element("section", "lp-live-call");
     this.root.tabIndex = -1;
@@ -307,6 +370,21 @@ class LiveCallUi {
     hangup.addEventListener("click", () => this.close());
     this.hangup = hangup;
     header.append(title, hangup);
+    this.camera = element("button", "lp-call-camera", "Hide my camera");
+    this.camera.type = "button";
+    this.camera.hidden = mode !== "video";
+    this.camera.disabled = true;
+    this.camera.setAttribute("aria-label", "Hide my persona camera");
+    this.camera.setAttribute("aria-pressed", "true");
+    this.camera.addEventListener("click", () => {
+      if (!this.ready || this.busy || this.finished || !this.scope || this.cameraRequest)
+        return;
+      this.camera.disabled = true;
+      const id = this.host.send("lumiphone:call_camera", { ...this.scope, callId: this.callId, visible: !this.cameraVisible });
+      this.cameraRequest = id;
+      this.requests.set(id, "lumiphone:call_camera");
+      this.setBusy(false);
+    });
     this.status = element("div", "lp-call-status");
     this.status.setAttribute("role", "status");
     this.stage = element("div", "lp-call-stage");
@@ -322,10 +400,12 @@ class LiveCallUi {
         this.status.textContent = "Video interrupted · voice call continues";
     });
     const bubble = element("div", "lp-call-caption");
+    this.scene = element("div", "lp-call-scene");
+    this.scene.hidden = true;
     this.caption = element("div", "lp-call-caption-text", "Waiting for the character to answer…");
     this.caption.setAttribute("aria-live", "polite");
     this.playback = element("div", "lp-call-playback");
-    bubble.append(this.caption, this.playback);
+    bubble.append(this.scene, this.caption, this.playback);
     this.stage.append(this.image, bubble);
     this.error = element("div", "lp-call-error");
     this.error.setAttribute("role", "alert");
@@ -396,6 +476,7 @@ class LiveCallUi {
     this.retry.addEventListener("click", () => {
       if (this.finished) {
         this.finished = false;
+        this.incoming = false;
         this.callId = "";
         this.history = [];
         this.current = undefined;
@@ -403,14 +484,34 @@ class LiveCallUi {
         this.hangup.textContent = "End call";
         this.caption.textContent = "Waiting for the character to answer…";
       }
-      this.request(this.ready ? "lumiphone:call_reply" : "lumiphone:call_start", {});
+      this.request(this.ready ? "lumiphone:call_reply" : this.incoming ? "lumiphone:call_accept" : "lumiphone:call_start", {});
     });
+    this.offer = element("div", "lp-call-offer");
+    this.offer.hidden = true;
+    const accept = element("button", "", "Answer");
+    accept.type = "button";
+    accept.addEventListener("click", () => {
+      if (!this.awaitingAnswer || this.busy)
+        return;
+      this.awaitingAnswer = false;
+      this.offer.hidden = true;
+      this.hangup.textContent = "End call";
+      this.request("lumiphone:call_accept", {});
+    });
+    const ignore = element("button", "", "Ignore");
+    ignore.type = "button";
+    ignore.addEventListener("click", () => {
+      if (this.scope && this.awaitingAnswer)
+        this.host.send("lumiphone:call_ignore", { ...this.scope, callId: this.callId });
+      this.close(false);
+    });
+    this.offer.append(accept, ignore);
     const transcript = element("details");
     transcript.append(element("summary", "", "Call transcript"));
     const history = element("div", "lp-call-history");
     history.dataset.callHistory = "true";
     transcript.append(history);
-    this.root.append(style, header, this.status, this.stage, this.error, this.retry, this.controls, transcript);
+    this.root.append(style, header, this.camera, this.status, this.stage, this.error, this.retry, this.offer, this.controls, transcript);
     this.root.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -432,7 +533,24 @@ class LiveCallUi {
     });
     this.host.root.append(this.root);
     this.root.focus();
-    this.request(callId ? "lumiphone:call_resume" : "lumiphone:call_start", {});
+    if (incomingName)
+      this.showIncoming(incomingName);
+    else
+      this.request(callId ? "lumiphone:call_resume" : "lumiphone:call_start", {});
+  }
+  showIncoming(name) {
+    this.incoming = true;
+    this.awaitingAnswer = true;
+    this.setBusy(false);
+    this.ready = false;
+    this.root.querySelector("[data-call-title]").textContent = name;
+    this.hangup.textContent = "Decline";
+    this.caption.textContent = "Incoming call";
+    this.offer.hidden = false;
+    this.controls.hidden = true;
+    this.camera.hidden = true;
+    this.stage.dataset.video = "false";
+    this.image.hidden = true;
   }
   request(type, payload) {
     if (!this.scope || !this.root || this.busy)
@@ -441,19 +559,43 @@ class LiveCallUi {
     this.error.textContent = "";
     this.retry.hidden = true;
     this.setBusy(true);
-    const id = this.host.send(type, { ...this.scope, callId: this.callId, mode: this.mode, ...payload });
+    const id = this.host.send(type, { ...this.scope, callId: this.callId, mode: this.mode, personaCamera: this.cameraVisible, ...payload });
     this.requests.set(id, type);
   }
   setBusy(value) {
     this.busy = value;
+    if (this.camera)
+      this.camera.disabled = value || !this.ready || this.finished || Boolean(this.cameraRequest);
     for (const control of this.controls?.querySelectorAll("button,textarea") || [])
-      control.disabled = value || !this.ready || control === this.record && !this.host.speech;
+      control.disabled = value || !this.ready || Boolean(this.cameraRequest) || control === this.record && !this.host.speech;
     if (this.status)
       this.status.textContent = value && this.ready ? "Listening for a reply…" : "";
   }
   receive(payload) {
     if (!this.root || !this.scope)
       return;
+    if (payload.type === "lumiphone:call_incoming" && payload.chatId === this.scope.chatId && payload.characterId === this.scope.characterId && payload.callId === this.callId) {
+      this.showIncoming(payload.name);
+      return;
+    }
+    if (payload.type === "lumiphone:call_camera" && payload.requestId === this.cameraRequest && payload.callId === this.callId) {
+      this.cameraVisible = payload.visible !== false;
+      this.cameraRequest = "";
+      this.requests.delete(payload.requestId);
+      this.camera.textContent = this.cameraVisible ? "Hide my camera" : "Show my camera";
+      this.camera.setAttribute("aria-label", this.cameraVisible ? "Hide my persona camera" : "Show my persona camera");
+      this.camera.setAttribute("aria-pressed", String(this.cameraVisible));
+      this.camera.disabled = this.busy || this.finished;
+      this.setBusy(this.busy);
+      return;
+    }
+    if (payload.type === "lumiphone:error" && payload.requestId === this.cameraRequest) {
+      this.error.textContent = payload.error;
+      this.cameraRequest = "";
+      this.requests.delete(payload.requestId);
+      this.setBusy(this.busy);
+      return;
+    }
     if (payload.type === "lumiphone:error" && this.requests.has(payload.requestId)) {
       this.error.textContent = payload.error;
       this.retry.hidden = false;
@@ -485,6 +627,15 @@ class LiveCallUi {
       this.ready = true;
       this.expressions = payload.video ? payload.expressions : {};
       this.stage.dataset.video = String(Boolean(payload.video));
+      this.awaitingAnswer = false;
+      this.offer.hidden = true;
+      this.mode = payload.mode || this.mode;
+      this.cameraVisible = payload.personaCamera !== false;
+      this.camera.hidden = this.mode !== "video";
+      this.camera.textContent = this.cameraVisible ? "Hide my camera" : "Show my camera";
+      this.camera.setAttribute("aria-label", this.cameraVisible ? "Hide my persona camera" : "Show my persona camera");
+      this.camera.setAttribute("aria-pressed", String(this.cameraVisible));
+      this.hangup.textContent = "End call";
       this.controls.hidden = false;
       this.retry.textContent = "Retry reply";
       this.root.querySelector("[data-call-title]").textContent = payload.name;
@@ -518,19 +669,22 @@ class LiveCallUi {
   refreshHistory() {
     const history = this.root?.querySelector("[data-call-history]");
     if (history)
-      history.textContent = this.history.map((row) => `${row.senderName}: ${row.text}`).join(`
+      history.textContent = this.history.map((row) => `${row.callTurn?.scene ? `[Call background: ${row.callTurn.scene}]
+` : ""}${row.senderName}: ${row.text}`).join(`
 
 `);
   }
   showTurn(message, autoplay, ended = false) {
     this.current = message;
     this.caption.textContent = message.text;
+    this.scene.textContent = message.callTurn?.scene || "";
+    this.scene.hidden = !message.callTurn?.scene;
     const image = this.expressions[message.callTurn?.expression || ""] || Object.values(this.expressions)[0];
     this.image.hidden = !image;
     if (image)
       this.image.src = image;
     const preferences = this.host.preferences();
-    const player = this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ""], "call");
+    const player = this.host.renderVoice ? this.host.renderVoice({ ...message, id: `call:${message.id}` }) : this.host.player.render({ ...message, id: `call:${message.id}` }, preferences.ttsVoiceURI, true, preferences.ttsConnectionId, preferences.ttsConnectionOptions?.[preferences.ttsConnectionId || ""], "call");
     this.playback.replaceChildren(player);
     this.choices.replaceChildren();
     for (const choice of message.callTurn?.choices || []) {
@@ -550,7 +704,10 @@ class LiveCallUi {
       this.choices.append(type);
     }
     if (ended) {
+      this.finished = true;
+      this.ready = false;
       this.controls.hidden = true;
+      this.camera.disabled = true;
       this.status.textContent = "The character said goodbye";
       player.addEventListener("pocket-voice-ended", () => this.close(), { once: true });
     }
@@ -562,7 +719,7 @@ class LiveCallUi {
   }
   reply(text) {
     const spoken = text.trim();
-    if (!spoken || this.busy || !this.ready)
+    if (!spoken || this.busy || !this.ready || this.cameraRequest)
       return;
     this.cancelSpeech();
     this.host.player.stop();
@@ -628,7 +785,7 @@ class LiveCallUi {
     if (!this.root)
       return;
     if (notify && this.scope && !this.finished)
-      this.host.send("lumiphone:call_end", { ...this.scope, callId: this.callId });
+      this.host.send(this.awaitingAnswer ? "lumiphone:call_decline" : "lumiphone:call_end", { ...this.scope, callId: this.callId });
     this.cancelSpeech();
     this.host.player.stop();
     this.root.remove();
@@ -640,6 +797,20 @@ class LiveCallUi {
     this.returnFocus?.focus();
     this.returnFocus = undefined;
   }
+}
+
+// src/domain/voice-playback.ts
+function resolveVoicePlayback(preferences, message, contact, kind = "message") {
+  const personal = contact?.voicePlayback;
+  const custom = personal?.source === "custom";
+  const connectionId = custom ? personal.connectionId || "" : preferences.ttsConnectionId || "";
+  return {
+    enabled: kind === "call" || (message.sender === "persona" ? preferences.readOwnVoiceMessages !== false : preferences.voiceMessages !== false),
+    voiceURI: custom ? personal.voiceURI || "" : preferences.ttsVoiceURI || "",
+    connectionId,
+    options: custom ? { voice: personal.voice, model: personal.model } : preferences.ttsConnectionOptions?.[connectionId],
+    choir: { useChoir: personal?.source === "choir" || !custom && preferences.voicePlaybackProvider === "choir", speaker: personal?.choirSpeaker || message.senderName }
+  };
 }
 
 // src/domain/clock-label.ts
@@ -1137,6 +1308,10 @@ function defaultPreferences() {
     ttsVoiceURI: "",
     ttsConnectionId: "",
     ttsConnectionOptions: {},
+    voicePlaybackProvider: "pocket",
+    readOwnVoiceMessages: true,
+    briefCallScenes: false,
+    incomingCallScenes: false,
     theme: "midnight",
     colors: themePalette("midnight"),
     homeWallpaper: defaultWallpaper(),
@@ -1259,6 +1434,10 @@ function normalizePreferences(value) {
     theme,
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
+    voicePlaybackProvider: raw.voicePlaybackProvider === "choir" ? "choir" : "pocket",
+    readOwnVoiceMessages: bool(raw.readOwnVoiceMessages, true),
+    briefCallScenes: bool(raw.briefCallScenes, false),
+    incomingCallScenes: bool(raw.incomingCallScenes, false),
     ttsConnectionId: text(raw.ttsConnectionId, "", 180),
     ttsConnectionOptions: Object.fromEntries(Object.entries(record2(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record2(value).voice, "", 500), model: text(record2(value).model, "", 500) }])),
     colors: palette,
@@ -1368,7 +1547,7 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
 
 // src/domain/phone-events.ts
 function callSummary(call) {
-  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? "Calling…" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
+  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? call.direction === "incoming" ? "Incoming phone call" : "Calling…" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
   return `${label}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
 }
 
@@ -1988,18 +2167,18 @@ function wallpaperImageControl(label, target, wallpaper, resolved, host) {
 }
 
 // src/frontend/components/tts-settings.ts
-function ttsSettings(getSettings, commit, onCleanup) {
+function ttsSettings(getSettings, commit, onCleanup, labelPrefix = "Voice message") {
   const panel = el("div");
   const connection = el("select", "lp-select");
-  connection.setAttribute("aria-label", "Voice message TTS connection");
+  connection.setAttribute("aria-label", `${labelPrefix} TTS connection`);
   const status = el("p", "lp-copy", "Loading Lumiverse TTS connections…");
   const provider = el("div"), browser = el("div");
   const models = el("select", "lp-select");
-  models.setAttribute("aria-label", "Voice message TTS model");
+  models.setAttribute("aria-label", `${labelPrefix} TTS model`);
   const voices = el("select", "lp-select");
-  voices.setAttribute("aria-label", "Voice message provider voice");
+  voices.setAttribute("aria-label", `${labelPrefix} provider voice`);
   const browserVoices = el("select", "lp-select");
-  browserVoices.setAttribute("aria-label", "Voice message TTS voice");
+  browserVoices.setAttribute("aria-label", `${labelPrefix} TTS voice`);
   let connections = [], disposed = false, request;
   const abort = new AbortController;
   onCleanup?.(() => {
@@ -2587,6 +2766,28 @@ function messages(host) {
     next.voiceMessages = value;
   }), "Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS."));
   voice.append(ttsSettings(() => settings, commit, host.onCleanup));
+  voice.append(toggle("Play my voice-message transcripts", settings.readOwnVoiceMessages !== false, (value) => commit((next) => {
+    next.readOwnVoiceMessages = value;
+  }), "Show a Play button on voice messages you send. Your transcript stays readable when this is off."));
+  const playback = el("select", "lp-select");
+  playback.setAttribute("aria-label", "Voice playback provider");
+  for (const [value, label] of [["pocket", "Pocket TTS"], ["choir", "Choir · saved character voices"]]) {
+    const row = el("option", "", label);
+    row.value = value;
+    playback.append(row);
+  }
+  playback.value = settings.voicePlaybackProvider || "pocket";
+  playback.addEventListener("change", () => commit((next) => {
+    next.voicePlaybackProvider = playback.value;
+  }));
+  voice.append(fieldBlock("Read voices with", playback), el("p", "lp-copy", "Contact voice settings can override this choice. Choir needs an enabled voice for the named speaker."));
+  const calls = el("section", "lp-card lp-settings-section");
+  calls.append(el("div", "lp-eyebrow", "Call scenes"), toggle("Brief pickups from busy characters", settings.briefCallScenes === true, (value) => commit((next) => {
+    next.briefCallScenes = value;
+  }), "With roleplay context, a character may let you catch a small moment of their life, apologize, and hang up."), toggle("Incoming slice-of-life calls", settings.incomingCallScenes === true, (value) => commit((next) => {
+    next.incomingCallScenes = value;
+  }), "After a roleplay turn, a character may call unexpectedly. You choose whether to answer. These brief calls are occasional and use current story context."));
+  content.append(calls);
   content.append(voice);
   const replies = el("section", "lp-card lp-settings-section");
   replies.append(el("div", "lp-eyebrow", "Reply behavior"), toggle("Decide on a reply after user DMs", settings.autoReplyAfterSend, (value) => commit((next) => {
@@ -4819,6 +5020,86 @@ function callAvailability(contact, conversation) {
   return contact.presence.inScene ? "Here" : "Away";
 }
 
+// src/frontend/components/contact-voice.ts
+function contactVoiceSettings(initial, name, onCleanup) {
+  let voice = structuredClone(initial || { source: "default" });
+  const root = el("section", "lp-card"), source = el("select", "lp-select"), speaker = el("select", "lp-select");
+  for (const [value, label] of [["default", "Pocket default"], ["custom", "Choose a voice"], ["choir", "Use Choir voice"]]) {
+    const row = el("option", "", label);
+    row.value = value;
+    source.append(row);
+  }
+  source.setAttribute("aria-label", "Contact voice source");
+  speaker.setAttribute("aria-label", "Contact Choir speaker");
+  const custom = el("div"), choir = el("div"), status = el("p", "lp-copy"), copy = button("Copy voice from Choir", "lp-button lp-button-quiet");
+  let cleanups = [];
+  const stopCustom = () => {
+    for (const cleanup of cleanups.splice(0))
+      cleanup();
+  };
+  const refreshSpeakers = () => {
+    const profiles = choirVoiceProfiles(), selected = voice.choirSpeaker || name;
+    choir.hidden = voice.source !== "choir" && profiles.length === 0;
+    speaker.replaceChildren();
+    for (const profile of profiles) {
+      const row = el("option", "", `${profile.speaker} · ${profile.voice}`);
+      row.value = profile.speaker;
+      speaker.append(row);
+    }
+    if (!profiles.some((row) => row.speaker === selected)) {
+      const saved = el("option", "", `${selected} · choose its voice in Choir`);
+      saved.value = selected;
+      speaker.append(saved);
+    }
+    speaker.value = selected;
+    copy.disabled = !profiles.some((row) => row.speaker === selected);
+    status.textContent = choirBridge()?.playVoiceMessage ? "Choir uses this speaker’s current voice and delivery settings." : "Enable Choir to use or copy its saved voices.";
+  };
+  const render = () => {
+    source.value = voice.source;
+    custom.hidden = voice.source !== "custom";
+    stopCustom();
+    custom.replaceChildren();
+    if (voice.source === "custom") {
+      let settings = { ...defaultPreferences(), ttsVoiceURI: voice.voiceURI || "", ttsConnectionId: voice.connectionId || "", ttsConnectionOptions: voice.connectionId ? { [voice.connectionId]: { voice: voice.voice, model: voice.model } } : {} };
+      custom.append(ttsSettings(() => settings, (mutate) => {
+        mutate(settings);
+        const selected = settings.ttsConnectionOptions?.[settings.ttsConnectionId || ""];
+        voice = { ...voice, source: "custom", connectionId: settings.ttsConnectionId, voiceURI: settings.ttsVoiceURI, voice: selected?.voice, model: selected?.model };
+      }, (cleanup) => cleanups.push(cleanup), "Contact"));
+    }
+    refreshSpeakers();
+  };
+  source.addEventListener("change", () => {
+    voice.source = source.value;
+    render();
+  });
+  speaker.addEventListener("change", () => {
+    voice.choirSpeaker = speaker.value;
+    refreshSpeakers();
+  });
+  copy.addEventListener("click", () => {
+    const profile = choirVoiceProfiles().find((row) => row.speaker === speaker.value);
+    if (!profile)
+      return;
+    voice = profile.route.startsWith("native:") ? { source: "custom", connectionId: profile.route.slice(7), voice: profile.voice, model: profile.model, choirSpeaker: profile.speaker } : { source: "choir", choirSpeaker: profile.speaker };
+    render();
+    status.textContent = voice.source === "custom" ? `Copied ${profile.speaker}’s voice. Save the contact to keep it.` : "This voice uses Choir’s provider. Save the contact to keep it linked.";
+  });
+  const available = () => refreshSpeakers();
+  window.addEventListener("choir-available-v1", available);
+  window.addEventListener("choir-unavailable-v1", available);
+  onCleanup?.(() => {
+    stopCustom();
+    window.removeEventListener("choir-available-v1", available);
+    window.removeEventListener("choir-unavailable-v1", available);
+  });
+  choir.append(fieldBlock("Choir speaker", speaker));
+  root.append(el("div", "lp-eyebrow", "Voice"), fieldBlock("Voice source", source), custom, choir, copy, status);
+  render();
+  return { element: root, value: () => structuredClone(voice) };
+}
+
 // src/frontend/apps/contacts.ts
 function avatar(contact) {
   const node = el("div", "lp-avatar", contact.name.slice(0, 1).toUpperCase());
@@ -4882,6 +5163,7 @@ function contactEditor(host, contact, draft = null) {
   sceneNote.placeholder = "Current scene note — temporary state, objective, or reason they are here";
   sceneNote.maxLength = 600;
   sceneNote.value = contact?.sceneNote || "";
+  const voice = contactVoiceSettings(contact?.voicePlayback, contact?.name || draft?.name || "Character", host.onCleanup);
   const accent = el("input", "lp-color-input");
   accent.type = "color";
   accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || "") ? contact?.accent || draft.accent : "#8b7dff";
@@ -4992,6 +5274,7 @@ function contactEditor(host, contact, draft = null) {
         appearance: appearance.value.trim(),
         textingStyle: textingStyle.value.trim()
       },
+      voicePlayback: voice.value(),
       sceneNote: sceneNote.value.trim(),
       accent: accent.value,
       colorMode: colorMode.value,
@@ -5012,7 +5295,7 @@ function contactEditor(host, contact, draft = null) {
   };
   if (photoCard)
     content.appendChild(photoCard);
-  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
+  content.append(fieldBlock("Name", name), fieldBlock("Role", role), fieldBlock("Compact profile", description, "Stable identity, role, and relationship summary."), fieldBlock("Personality", personality, "Stable social and temperamental traits that shape conversation."), fieldBlock("Minimal appearance", appearance, "Only recognizable details worth occasional reference in texts."), fieldBlock("Texting quirks", textingStyle, "Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm."), fieldBlock("Current scene note", sceneNote, "Temporary state, objective, or reason they are here."), voice.element, colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow, sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow);
   if (contact) {
     if (contact.source.kind === "character")
       content.append(identityProfileControls(host.identityProfiles || [], "character", contact.id, host.send, () => ({ name: name.value, role: role.value, identityBrief: description.value, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })));
@@ -5284,7 +5567,7 @@ function communicationActions(host, contact, includeMessage = true) {
     const conversation = host.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
     const activeCall = conversation?.messages.filter((row) => row.call?.interactive).at(-1)?.call;
     const connected = activeCall?.status === "connected" || activeCall?.status === "ringing";
-    const call = action("call", connected ? "Resume call" : "Call", () => host.startCall(contact.id, connected ? activeCall.mode || "voice" : "voice", connected ? activeCall.callId : undefined));
+    const call = action("call", connected ? activeCall.direction === "incoming" && activeCall.status === "ringing" ? "Answer call" : "Resume call" : "Call", () => host.startCall(contact.id, connected ? activeCall.mode || "voice" : "voice", connected ? activeCall.callId : undefined));
     call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || !connected && !host.capabilities?.generation);
     if (!connected) {
       const video = action("video", "Video call", () => host.startCall(contact.id, "video"));
@@ -8082,6 +8365,7 @@ class PocketController {
       root: this.shell,
       player: this.voicePlayer,
       preferences: () => this.preferences,
+      renderVoice: (message) => this.renderVoice(message, "call"),
       send: (type, payload) => this.send(type, payload),
       speech: ctx.stt,
       roleplay: () => this.close()
@@ -8838,6 +9122,14 @@ class PocketController {
     if (!payload || typeof payload !== "object" || typeof payload.type !== "string")
       return;
     this.liveCall.receive(payload);
+    if (payload.type === "lumiphone:call_incoming" && !this.liveCall.active && this.state) {
+      const active = this.ctx.getActiveChat();
+      if (active.chatId !== payload.chatId || active.characterId !== payload.characterId || this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state) || !this.preferences.incomingCallScenes)
+        return;
+      this.openPocket({ app: "contacts", contactId: payload.contactId, view: "detail" });
+      this.liveCall.start({ chatId: payload.chatId, characterId: payload.characterId, conversationId: payload.conversationId, deviceOwnerActorId: pocketPersonaActorId(this.state) }, payload.mode || "voice", payload.callId, payload.name);
+      return;
+    }
     if (payload.type === "lumiphone:state" && payload.state) {
       const active = this.ctx.getActiveChat();
       if (active.chatId && payload.state.chatId !== active.chatId)
@@ -9619,6 +9911,11 @@ class PocketController {
   openApp(app) {
     this.openPocket({ app });
   }
+  renderVoice(message, kind = "message") {
+    const contact = this.state ? resolvePocketActor(this.state, message.senderActorId || "")?.contact || this.state.contacts.find((row) => row.name === message.senderName) : undefined;
+    const playback = resolveVoicePlayback(this.preferences, { sender: message.sender || "contact", senderName: message.senderName }, contact, kind);
+    return this.voicePlayer.render(message, playback.voiceURI, playback.enabled, playback.connectionId, playback.options, kind, playback.choir);
+  }
   inlineOptions(activity) {
     if (!this.state)
       return {};
@@ -9639,12 +9936,12 @@ class PocketController {
       backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text,
       surfaceColor: appearance.colors.surface,
-      voicePlaybackKey: JSON.stringify([this.preferences.voiceMessages, this.preferences.ttsVoiceURI, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions]),
+      voicePlaybackKey: JSON.stringify([this.preferences.voiceMessages, this.preferences.readOwnVoiceMessages, this.preferences.voicePlaybackProvider, this.preferences.ttsVoiceURI, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions, this.state.contacts.map((row) => [row.id, row.voicePlayback])]),
       renderVoiceMessage: (message) => {
         const routeMessageId = activity.route.app === "messages" ? activity.route.messageId : undefined;
         const canonical = this.state?.conversations.flatMap((row) => row.messages).find((row) => row.id === message.id) || this.state?.conversations.flatMap((row) => row.messages).find((row) => row.id === routeMessageId);
         const full = canonical || { ...message, text: activity.presentation?.voiceTranscript || message.text };
-        return this.voicePlayer.render({ ...full, id: `inline:${activity.id}:${message.id || "voice"}` }, this.preferences.ttsVoiceURI, canonical?.sender === "persona" || activity.presentation?.kind === "sent" || this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]);
+        return this.renderVoice({ ...full, sender: canonical?.sender || (activity.presentation?.kind === "sent" ? "persona" : "contact"), id: `inline:${activity.id}:${message.id || "voice"}` });
       },
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map((row) => [row.senderActorId || "", resolvePocketActor(this.state, row.senderActorId || "")?.avatarUrl || ""]))
@@ -10077,7 +10374,7 @@ class PocketController {
     return renderMessagesView({
       state: this.state,
       selectedConversationId: this.selectedConversationId,
-      renderVoiceMessage: (message) => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, message.sender === "persona" || this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]),
+      renderVoiceMessage: (message) => this.renderVoice(message),
       deviceOwnerActorId: owner,
       readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
@@ -10518,6 +10815,7 @@ ${body}`;
       iconButton,
       readOnlyDevice: this.currentDeviceOwnerActorId() !== pocketPersonaActorId(this.state),
       isCallPending: (contactId) => [...this.contactCallRequests.values()].some((call) => call.chatId === this.state.chatId && call.characterId === this.state.characterId && call.contactId === contactId && call.deviceOwnerActorId === this.currentDeviceOwnerActorId()),
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
       startCall: (contactId, mode, callId) => this.startContactCall(contactId, mode, callId),
       choosePhoto: (contactId) => this.chooseContactPhoto(contactId),
       uploadPhoto: (contactId) => {
@@ -10547,7 +10845,8 @@ ${body}`;
     const scope = { chatId: this.state.chatId, characterId: this.state.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId() };
     const conversation = this.state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(actorId));
     if (conversation) {
-      this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId);
+      const marker = callId ? conversation.messages.filter((row) => row.call?.callId === callId).at(-1)?.call : undefined;
+      this.liveCall.start({ ...scope, conversationId: conversation.id }, mode, callId, marker?.status === "ringing" && marker.direction === "incoming" ? this.state.contacts.find((row) => row.id === contactId)?.name : undefined);
       return;
     }
     if ([...this.contactCallRequests.values()].some((call) => call.contactId === contactId && call.chatId === scope.chatId && call.characterId === scope.characterId && call.deviceOwnerActorId === scope.deviceOwnerActorId))

@@ -4,6 +4,7 @@ import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
 import { callAvailability } from '../../domain/call-availability.js'
+import { contactVoiceSettings } from '../components/contact-voice.js'
 import { conversationActorIds, resolvePocketActor } from '../../domain/actors.js'
 import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el, formatDate } from '../shared.js'
@@ -14,6 +15,7 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export type ContactView = NonNullable<Extract<PocketRoute, { app: 'contacts' }>['view']>
 
 export interface ContactsViewHost {
+  onCleanup?(cleanup: () => void): void
   identityProfiles?: IdentityProfile[]
   state: PhoneState
   selectedContactId: string
@@ -84,6 +86,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
   const appearance = el('textarea', 'lp-textarea'); appearance.placeholder = 'Minimal appearance — only a few recognizable details'; appearance.maxLength = 360; appearance.value = phoneProfile.appearance
   const textingStyle = el('textarea', 'lp-textarea'); textingStyle.placeholder = 'Texting quirks — casing, punctuation, slang/register, emoji/kaomoji habits, fragmentation…'; textingStyle.maxLength = 600; textingStyle.value = phoneProfile.textingStyle
   const sceneNote = el('textarea', 'lp-textarea'); sceneNote.placeholder = 'Current scene note — temporary state, objective, or reason they are here'; sceneNote.maxLength = 600; sceneNote.value = contact?.sceneNote || ''
+  const voice = contactVoiceSettings(contact?.voicePlayback, contact?.name || draft?.name || 'Character', host.onCleanup)
   const accent = el('input', 'lp-color-input'); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(contact?.accent || draft?.accent || '') ? (contact?.accent || draft!.accent) : '#8b7dff'
   const colorRow = controlRow('Contact color', accent)
   const colorMode = el('select', 'lp-select')
@@ -149,7 +152,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
         personality: personality.value.trim(),
         appearance: appearance.value.trim(),
         textingStyle: textingStyle.value.trim(),
-      }, sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
+      }, voicePlayback: voice.value(), sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
       relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
       contextPolicy: { pinned: pinned.checked },
@@ -173,6 +176,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
     fieldBlock('Minimal appearance', appearance, 'Only recognizable details worth occasional reference in texts.'),
     fieldBlock('Texting quirks', textingStyle, 'Casing, punctuation, slang/register, dialect when established, emoji or kaomoji habits, abbreviations, and message rhythm.'),
     fieldBlock('Current scene note', sceneNote, 'Temporary state, objective, or reason they are here.'),
+    voice.element,
     colorRow, colorModeLabel, relationshipLabel, talkRow, fragmentRow,
     sceneRow, pinRow, relevantRow, remoteRow, ambientHereRow,
   )
@@ -409,7 +413,7 @@ function communicationActions(host: ContactsViewHost, contact: PocketContact, in
     const conversation = host.state.conversations.find(row => row.kind === 'direct' && row.includesPocketPersona && conversationActorIds(row).includes(actorId))
     const activeCall = conversation?.messages.filter(row => row.call?.interactive).at(-1)?.call
     const connected = activeCall?.status === 'connected' || activeCall?.status === 'ringing'
-    const call = action('call', connected ? 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
+    const call = action('call', connected ? activeCall.direction === 'incoming' && activeCall.status === 'ringing' ? 'Answer call' : 'Resume call' : 'Call', () => host.startCall!(contact.id, connected ? activeCall.mode || 'voice' : 'voice', connected ? activeCall.callId : undefined))
     call.disabled = Boolean(host.readOnlyDevice || host.isCallPending?.(contact.id) || (!connected && !host.capabilities?.generation))
     if (!connected) {
       const video = action('video', 'Video call', () => host.startCall!(contact.id, 'video'))

@@ -1324,11 +1324,16 @@ assert.equal(generatedContacts[0].name, 'Kestrel Two')
 const editableLuna = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => contact.id === luna.id)
 await frontendHandler({ type: 'lumiphone:save_contact', requestId: 'save-luna-accent', chatId: 'chat-a', characterId: 'char-a', contact: {
   ...editableLuna, accent: '#12abef', colorMode: 'pocket',
+  voicePlayback: { source: 'choir', choirSpeaker: 'Luna', apiKey: 'must-not-persist' },
   messagingStyle: { talkativeness: 82, fragmentation: 17 },
 } }, 'user-a')
 const savedLuna = storage.get('phones/chat-a__char-a.json').contacts.find((contact) => contact.id === luna.id)
 assert.equal(savedLuna.accent, '#12abef', 'Contact Save must persist a changed manual accent')
 assert.deepEqual(savedLuna.messagingStyle, { talkativeness: 82, fragmentation: 17 })
+assert.equal(savedLuna.voicePlayback.choirSpeaker, 'Luna', 'Contact Save must persist the personal voice choice')
+assert.equal(savedLuna.voicePlayback.apiKey, undefined, 'Contact voices must not store credentials')
+await frontendHandler({ type: 'lumiphone:import_contact', requestId: 'refresh-luna-voice', chatId: 'chat-a', characterId: 'char-a', kind: 'council', sourceId: 'member-luna', itemId: 'item-luna' }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').contacts.find(contact => contact.id === luna.id).voicePlayback.choirSpeaker, 'Luna', 'Refreshing a source must preserve the personal voice')
 assert.equal(frontendMessages.findLast((message) => message.type === 'lumiphone:contact_saved' && message.requestId === 'save-luna-accent').contact.accent, '#12abef', 'save acknowledgement must carry the returned Contact')
 spindle.generate.quiet = async () => ({ content: '{"contacts":[{"name":"Alice","role":"Primary character"},{"name":"Test Persona","role":"Active persona"},{"name":"Mira","role":"Flower seller","description":"A bright-eyed merchant at the market."}]}' })
 await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene-one', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')

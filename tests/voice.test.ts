@@ -6,6 +6,69 @@ import { normalizeContactCollections } from '../src/domain/contacts.js'
 import { VoiceMessagePlayer } from '../src/frontend/components/voice-message.js'
 import { renderSettingsView } from '../src/frontend/apps/settings.js'
 import { ttsSettings } from '../src/frontend/components/tts-settings.js'
+import { resolveVoicePlayback, normalizePocketVoice } from '../src/domain/voice-playback.js'
+import { contactVoiceSettings } from '../src/frontend/components/contact-voice.js'
+
+test('personal voices persist without credentials and own-message playback is independent of calls', () => {
+  const prefs = normalizePreferences({ voicePlaybackProvider: 'choir', readOwnVoiceMessages: false, briefCallScenes: true, incomingCallScenes: true })
+  expect(defaultPreferences()).toMatchObject({ readOwnVoiceMessages: true, briefCallScenes: false, incomingCallScenes: false, voicePlaybackProvider: 'pocket' })
+  expect(normalizePreferences({ incomingCallScenes: 'true', briefCallScenes: 1, voicePlaybackProvider: 'invalid' })).toMatchObject({ incomingCallScenes: false, briefCallScenes: false, voicePlaybackProvider: 'pocket' })
+  const personal = normalizePocketVoice({ source: 'custom', connectionId: ' tts ', voice: ' nova ', model: 'model', apiKey: 'secret' })!
+  expect(personal).not.toHaveProperty('apiKey')
+  const state = normalizeContactCollections({ contacts: [{ id: 'alice', name: 'Alice', voicePlayback: personal }] }, { characterId: 'card', characterName: 'Alice', now: '', makeId: prefix => prefix })
+  expect(state.contacts.find(row => row.id === 'alice')!.voicePlayback).toEqual(personal)
+  expect(resolveVoicePlayback(prefs, { sender: 'contact', senderName: 'Alice' }, state.contacts.find(row => row.id === 'alice'))).toMatchObject({ enabled: true, connectionId: 'tts', options: { voice: 'nova' }, choir: { useChoir: false } })
+  expect(resolveVoicePlayback(prefs, { sender: 'persona', senderName: 'Player' }).enabled).toBe(false)
+  expect(resolveVoicePlayback(prefs, { sender: 'persona', senderName: 'Player' }, undefined, 'call').enabled).toBe(true)
+  expect(resolveVoicePlayback(prefs, { sender: 'contact', senderName: 'Alice' }, { voicePlayback: { source: 'choir', choirSpeaker: 'Captain' } } as any).choir).toEqual({ useChoir: true, speaker: 'Captain' })
+})
+
+test('disabling own playback hides Play while retaining the authored transcript', () => withDom(() => {
+  const view = new VoiceMessagePlayer().render({ text: 'Exactly my voice transcript', senderName: 'Player' }, '', false)
+  expect(view.querySelector<HTMLButtonElement>('button')!.hidden).toBe(true)
+  expect(view.querySelector('details')!.textContent).toContain('Exactly my voice transcript')
+}))
+
+test('Choir voice messages use the exact transcript and speaker, cancel exclusively and expose missing voices', async () => {
+  const old = { window: globalThis.window, document: globalThis.document, bridge: (globalThis as any).__CHOIR_API__ }
+  const dom = new JSDOM('<body></body>'), pending: any[] = []
+  try {
+    globalThis.window = dom.window as any; globalThis.document = dom.window.document
+    ;(globalThis as any).__CHOIR_API__ = { version: 1, isAvailable: () => true, playVoiceMessage: (request: any) => new Promise((resolve, reject) => pending.push({ ...request, resolve, reject })) }
+    const player = new VoiceMessagePlayer(), first = player.render({ text: 'No quotes needed. *Typed words*', senderName: 'Alice' }, '', true, '', undefined, 'message', { useChoir: true, speaker: 'Captain' })
+    const second = player.render({ text: 'Another transcript', senderName: 'Bob' }, '', true, '', undefined, 'message', { useChoir: true, speaker: 'Bob' })
+    let ended = 0; first.addEventListener('pocket-voice-ended', () => ended++)
+    expect(pending).toHaveLength(0)
+    first.querySelector<HTMLButtonElement>('button')!.click()
+    expect(pending[0]).toMatchObject({ text: 'No quotes needed. *Typed words*', speaker: 'Captain' })
+    second.querySelector<HTMLButtonElement>('button')!.click(); expect(pending[0].signal.aborted).toBe(true)
+    pending[0].resolve({ played: 1 }); await Promise.resolve(); expect(ended).toBe(0)
+    pending[1].reject(new Error('Choose an enabled Choir voice for Bob.')); await new Promise(resolve => setTimeout(resolve, 0))
+    expect(second.querySelector('[role=status]')!.textContent).toContain('Choose an enabled Choir voice')
+    expect(second.querySelector('details')!.textContent).toContain('Another transcript')
+    first.querySelector<HTMLButtonElement>('button')!.click(); pending[2].resolve({ played: 1 }); await new Promise(resolve => setTimeout(resolve, 0)); expect(ended).toBe(1)
+    delete (globalThis as any).__CHOIR_API__; first.querySelector<HTMLButtonElement>('button')!.click()
+    expect(first.querySelector('[role=status]')!.textContent).toContain('Choir is unavailable')
+    player.stop()
+  } finally { Object.assign(globalThis, { window: old.window, document: old.document, __CHOIR_API__: old.bridge }); dom.window.close() }
+})
+
+test('contacts can copy a native Choir voice or keep a Choir provider linked without copying secrets', async () => {
+  const old = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch, bridge: (globalThis as any).__CHOIR_API__ }
+  const dom = new JSDOM('<body></body>'), cleanups: Array<() => void> = []
+  try {
+    globalThis.document = dom.window.document; globalThis.window = dom.window as any
+    globalThis.fetch = (async () => Response.json({ data: [], voices: [], models: [] })) as any
+    ;(globalThis as any).__CHOIR_API__ = { version: 1, isAvailable: () => true, getVoiceProfiles: () => [{ speaker: 'Alice', voice: 'nova', route: 'native:a', model: 'tts-model' }, { speaker: 'Bob', voice: 'Puck', route: 'gemini' }], playVoiceMessage() {} }
+    const view = contactVoiceSettings(undefined, 'Alice', cleanup => cleanups.push(cleanup))
+    const copy = [...view.element.querySelectorAll('button')].find(row => row.textContent === 'Copy voice from Choir')!
+    copy.click(); expect(view.value()).toEqual({ source: 'custom', connectionId: 'a', voice: 'nova', model: 'tts-model', choirSpeaker: 'Alice' })
+    const speaker = view.element.querySelector<HTMLSelectElement>('[aria-label="Contact Choir speaker"]')!
+    speaker.value = 'Bob'; speaker.dispatchEvent(new dom.window.Event('change')); copy.click()
+    expect(view.value()).toEqual({ source: 'choir', choirSpeaker: 'Bob' })
+    expect(view.element.textContent).toContain('Save the contact')
+  } finally { cleanups.forEach(fn => fn()); Object.assign(globalThis, { document: old.document, window: old.window, fetch: old.fetch, __CHOIR_API__: old.bridge }); dom.window.close() }
+})
 
 test('old preferences migrate and malformed voice options normalize safely', () => {
   expect(normalizePreferences({ version: 5 })).toMatchObject({ voiceMessages: true, ttsVoiceURI: '', ttsConnectionId: '' })

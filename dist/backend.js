@@ -628,6 +628,10 @@ function defaultPreferences() {
     ttsVoiceURI: "",
     ttsConnectionId: "",
     ttsConnectionOptions: {},
+    voicePlaybackProvider: "pocket",
+    readOwnVoiceMessages: true,
+    briefCallScenes: false,
+    incomingCallScenes: false,
     theme: "midnight",
     colors: themePalette("midnight"),
     homeWallpaper: defaultWallpaper(),
@@ -750,6 +754,10 @@ function normalizePreferences(value) {
     theme,
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
+    voicePlaybackProvider: raw.voicePlaybackProvider === "choir" ? "choir" : "pocket",
+    readOwnVoiceMessages: bool(raw.readOwnVoiceMessages, true),
+    briefCallScenes: bool(raw.briefCallScenes, false),
+    incomingCallScenes: bool(raw.incomingCallScenes, false),
     ttsConnectionId: text(raw.ttsConnectionId, "", 180),
     ttsConnectionOptions: Object.fromEntries(Object.entries(record3(raw.ttsConnectionOptions)).slice(0, 100).filter(([id]) => id.length <= 180 && !["__proto__", "constructor", "prototype"].includes(id)).map(([id, value]) => [id, { voice: text(record3(value).voice, "", 500), model: text(record3(value).model, "", 500) }])),
     colors: palette,
@@ -822,12 +830,16 @@ function normalizeCallMarker(value) {
   if (!["connected", "ended", "missed"].includes(String(raw.status)) && !(raw.status === "ringing" && raw.interactive === true) || typeof raw.callId !== "string" || !raw.callId.trim())
     return;
   const duration = raw.durationSeconds;
+  const opening = raw.incomingOpening && typeof raw.incomingOpening === "object" ? raw.incomingOpening : null;
   const follow = raw.followUp && typeof raw.followUp === "object" ? raw.followUp : null;
   const followUp = raw.interactive === true && follow && (follow.when === "now" || follow.when === "later") && typeof follow.text === "string" && follow.text.trim() ? { when: follow.when, text: follow.text.trim().slice(0, 1000), status: follow.status === "sent" || follow.status === "cancelled" ? follow.status : "pending", availabilityKey: typeof follow.availabilityKey === "string" ? follow.availabilityKey.slice(0, 4000) : "" } : undefined;
   return {
     callId: raw.callId.trim().slice(0, 180),
     status: raw.status,
     speakerphone: raw.speakerphone === true,
+    direction: raw.interactive === true && raw.direction === "incoming" ? "incoming" : raw.interactive === true ? "outgoing" : undefined,
+    personaCamera: raw.mode === "video" && raw.interactive === true ? raw.personaCamera !== false : undefined,
+    incomingOpening: raw.interactive === true && raw.direction === "incoming" && raw.status === "ringing" && opening && typeof opening.text === "string" && opening.text.trim() ? { text: opening.text.trim().slice(0, 4000), scene: typeof opening.scene === "string" ? opening.scene.trim().slice(0, 600) : "", expression: typeof opening.expression === "string" ? opening.expression.slice(0, 80) : "" } : undefined,
     mode: raw.mode === "video" ? "video" : raw.mode === "voice" ? "voice" : undefined,
     interactive: raw.interactive === true || undefined,
     followUp,
@@ -836,8 +848,24 @@ function normalizeCallMarker(value) {
   };
 }
 function callSummary(call) {
-  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? "Calling\u2026" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
+  const label = call.outcome === "declined" ? "Call declined" : call.outcome === "ignored" ? "No answer" : call.outcome === "cancelled" ? "Call cancelled" : call.status === "ringing" ? call.direction === "incoming" ? "Incoming phone call" : "Calling\u2026" : call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call";
   return `${label}${call.speakerphone ? " \xB7 Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` \xB7 ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
+}
+
+// src/domain/voice-playback.ts
+function normalizePocketVoice(raw) {
+  if (!raw || typeof raw !== "object")
+    return;
+  const value = raw;
+  const clean = (key, max = 180) => typeof value[key] === "string" ? value[key].trim().slice(0, max) : "";
+  return {
+    source: value.source === "custom" || value.source === "choir" ? value.source : "default",
+    choirSpeaker: clean("choirSpeaker", 120),
+    voiceURI: clean("voiceURI", 500),
+    connectionId: clean("connectionId"),
+    voice: clean("voice"),
+    model: clean("model")
+  };
 }
 
 // src/domain/contacts.ts
@@ -942,6 +970,7 @@ function normalizePocketContact(value, context) {
     description,
     identityBrief,
     phoneProfile: normalizePhoneProfile(value.phoneProfile),
+    voicePlayback: normalizePocketVoice(value.voicePlayback),
     sceneNote: clean4(value.sceneNote, 600),
     avatarUrl: clean4(value.avatarUrl, 2000),
     sourceAvatarUrl: clean4(value.sourceAvatarUrl, 2000) || clean4(value.avatarUrl, 2000),
@@ -1015,8 +1044,10 @@ function normalizeMessage(value, fallbackContact, now, makeId, personaActorId) {
     callTurn: record4(value.callTurn) && clean4(value.callTurn.callId, 180) ? {
       callId: clean4(value.callTurn.callId, 180),
       expression: clean4(value.callTurn.expression, 80) || undefined,
-      choices: (Array.isArray(value.callTurn.choices) ? value.callTurn.choices : []).map((entry) => clean4(entry, 180)).filter(Boolean).slice(0, 3)
+      choices: (Array.isArray(value.callTurn.choices) ? value.callTurn.choices : []).map((entry) => clean4(entry, 180)).filter(Boolean).slice(0, 3),
+      scene: clean4(value.callTurn.scene, 600) || undefined
     } : undefined,
+    callCamera: record4(value.callCamera) && clean4(value.callCamera.callId, 180) && typeof value.callCamera.visible === "boolean" ? { callId: clean4(value.callCamera.callId, 180), visible: value.callCamera.visible } : undefined,
     imageUrl: clean4(value.imageUrl, 2000) || undefined,
     eventSuggestion: normalizeEventSuggestion(value.eventSuggestion, makeId),
     origin: record4(value.origin) && clean4(value.origin.chatId, 180) && clean4(value.origin.hostMessageId, 180) && value.origin.swipeId !== null && value.origin.swipeId !== undefined && Number.isInteger(Number(value.origin.swipeId)) && Number(value.origin.swipeId) >= 0 ? {
@@ -1741,7 +1772,8 @@ function normalizeCallReply(raw, expressions) {
     text,
     expression: typeof value.expression === "string" && Object.hasOwn(expressions, value.expression) ? value.expression : Object.keys(expressions)[0] || "",
     choices: [...new Set((Array.isArray(value.choices) ? value.choices : []).map((row) => clean5(row, 180)).filter(Boolean))].slice(0, 3),
-    end: value.end === true
+    end: value.end === true,
+    ...clean5(value.scene, 600) ? { scene: clean5(value.scene, 600) } : {}
   };
 }
 function normalizeCallDecision(raw, expressions) {
@@ -1758,6 +1790,7 @@ class PocketCalls {
   host;
   flights = new Map;
   followUpFlights = new Set;
+  incomingFlights = new Set;
   constructor(host) {
     this.host = host;
   }
@@ -1779,6 +1812,14 @@ class PocketCalls {
     return marker;
   }
   async handle(type, input, userId) {
+    if (type === "lumiphone:call_camera") {
+      await this.camera(input, userId);
+      return;
+    }
+    if (type === "lumiphone:call_decline" || type === "lumiphone:call_ignore") {
+      await this.end({ ...input, declined: type === "lumiphone:call_decline", ignored: type === "lumiphone:call_ignore" }, userId);
+      return;
+    }
     if (type === "lumiphone:call_end") {
       await this.end(input, userId);
       return;
@@ -1792,6 +1833,16 @@ class PocketCalls {
     try {
       let state = await this.host.load(input.chatId, input.characterId, userId);
       let conversation = this.conversation(state, input);
+      const preferences = await this.host.preferences?.(userId);
+      if (type === "lumiphone:call_accept") {
+        const incoming = this.marker(conversation, clean5(input.callId, 180), true);
+        if (incoming.direction !== "incoming" || incoming.status !== "ringing" || !incoming.incomingOpening)
+          throw new Error("This incoming call has ended or is unavailable.");
+        if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === "off") {
+          await this.end({ ...input, declined: true }, userId);
+          return;
+        }
+      }
       const actor = conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)).find((row) => row && row.kind !== "persona");
       if (!actor)
         throw new Error("This call\u2019s contact is unavailable.");
@@ -1822,11 +1873,11 @@ class PocketCalls {
               createdAt: this.host.timestamp(state),
               read: true,
               status: "read",
-              call: { callId, status: "ringing", speakerphone: false, mode, interactive: true }
+              call: { callId, status: "ringing", speakerphone: false, mode, interactive: true, direction: "outgoing", personaCamera: mode === "video" ? input.personaCamera !== false : undefined }
             });
           }
         } else
-          this.marker(conversation, callId, type === "lumiphone:call_resume");
+          this.marker(conversation, callId, type === "lumiphone:call_resume" || type === "lumiphone:call_accept");
         const spoken = clean5(input.text, 4000);
         if (type === "lumiphone:call_reply" && spoken && !conversation.messages.some((row) => row.callTurn?.callId === callId && row.generation?.requestId === input.requestId && row.sender === "persona")) {
           const message = {
@@ -1853,6 +1904,11 @@ class PocketCalls {
       const ringing = marker.status === "ringing";
       const video = marker.mode === "video" && Object.keys(expressions).length > 0;
       const turns = conversation.messages.filter((row) => row.callTurn?.callId === callId);
+      if (ringing && marker.direction === "incoming" && type !== "lumiphone:call_accept") {
+        this.host.send({ type: "lumiphone:call_incoming", requestId: input.requestId, chatId: state.chatId, characterId: state.characterId, conversationId: conversation.id, callId, contactId: contact.id, name: actor.name, mode: marker.mode || "voice" }, userId);
+        return;
+      }
+      const briefScenes = ringing && preferences?.briefCallScenes === true && preferences.roleplayContextMode !== "off";
       const ready = () => this.host.send({
         type: "lumiphone:call_ready",
         requestId: input.requestId,
@@ -1865,7 +1921,8 @@ class PocketCalls {
         mode: marker.mode || mode,
         video,
         expressions,
-        turns
+        turns,
+        personaCamera: marker.personaCamera !== false
       }, userId);
       if (ringing)
         this.host.send({ type: "lumiphone:call_ringing", requestId: input.requestId, chatId: state.chatId, characterId: state.characterId, callId, name: actor.name }, userId);
@@ -1892,10 +1949,22 @@ ${background}` },
         ...turns.slice(-24).map((row) => ({ role: row.sender === "persona" ? "user" : "assistant", content: row.text })),
         { role: "user", content: ringing ? "[Call control: incoming call. Decide whether to answer, reject, or ignore. Only greet the caller if you answer.]" : "[Call control: respond to the last spoken turn. If it was yours, continue briefly without inventing player speech.]" }
       ];
-      const raw = await this.host.generate(input.requestId, messages, abort.signal, userId);
+      messages[0].content += `
+PLAYER CAMERA
+${marker.mode !== "video" ? "Audio only: you cannot see the caller." : marker.personaCamera === false ? "The caller\u2019s persona camera is hidden. You cannot see their face, body, gestures, or surroundings. Do not infer visual facts from spoken text." : "The caller\u2019s persona camera is shown. You may refer only to their established RP appearance and explicitly narrated visible actions. No real webcam or human image is provided."}
+BRIEF PICKUP SCENES
+${briefScenes ? 'Opt-in enabled. If your current situation fits, you may answer briefly with scene="a small audible slice of your current life (visible too only if video works)", then message="your spoken realization/apology that you are busy and goodbye", end=true, choices=[]. Ground it in current RP context; do not create a major offscreen event or speak for the player. Scene is background context, not narration to read aloud. This is optional, not every call.' : "Disabled. Do not return a scene snippet. Normal brief busy dialogue is still allowed."}`;
+      const opening = ringing && marker.direction === "incoming" && type === "lumiphone:call_accept" ? marker.incomingOpening : undefined;
+      const raw = opening ? { decision: "answer", message: opening.text, scene: opening.scene, expression: opening.expression, choices: [], end: true } : await this.host.generate(input.requestId, messages, abort.signal, userId);
       abort.signal.throwIfAborted();
       const decision = normalizeCallDecision(ringing ? raw : { ...raw, decision: "answer" }, expressions);
       const reply = decision.reply;
+      if (reply?.scene && !briefScenes && !opening)
+        delete reply.scene;
+      if (reply?.scene) {
+        reply.end = true;
+        reply.choices = [];
+      }
       const availabilityKey = decision.followUp ? await this.availabilityKey(state, contact, conversation, userId) : "";
       await this.host.lock(input.chatId, input.characterId, async () => {
         abort.signal.throwIfAborted();
@@ -1905,6 +1974,7 @@ ${background}` },
           const attempt = thread.messages.find((row) => row.call === live);
           live.status = decision.decision === "answer" ? "connected" : "missed";
           live.outcome = decision.decision === "reject" ? "declined" : decision.decision === "ignore" ? "ignored" : undefined;
+          delete live.incomingOpening;
           attempt.text = callSummary(live);
         }
         if (decision.followUp)
@@ -1926,7 +1996,7 @@ ${background}` },
           recipientActorIds: [pocketPersonaActorId(latest)],
           text: reply.text,
           format: "voice",
-          callTurn: { callId, expression: reply.expression, choices: reply.choices },
+          callTurn: { callId, expression: reply.expression, choices: reply.choices, scene: reply.scene },
           createdAt: this.host.timestamp(latest),
           read: true,
           status: "read",
@@ -1966,9 +2036,16 @@ ${background}` },
     const referenceId = `call_reference_${callId}`;
     const existing = state.references.find((row) => row.id.startsWith(referenceId) && (row.status === "armed" || row.status === "failed"));
     const call = conversation.messages.filter((row) => row.call?.callId === callId).at(-1)?.call;
-    const spoken = conversation.messages.filter((row) => row.callTurn?.callId === callId);
+    const spoken = conversation.messages.filter((row) => row.callTurn?.callId === callId || row.callCamera?.callId === callId);
     const reference = createPocketReference({ state, conversation: { ...conversation, messages: spoken.length ? spoken : conversation.messages.filter((row) => row.call?.callId === callId).slice(-1) }, scope: "conversation", createdAt: new Date().toISOString(), makeId: () => `call_reference_${callId}` });
     reference.snapshot = `Spoken ${call?.mode === "video" ? "video" : "phone"} call transcript. Call ID: ${callId}. Call state: ${call?.status || "connected"}. ${call?.status === "ended" ? "The call is already ended in Pocket; do not recreate its end action." : "The call is still connected."} These lines already happened as speech, not text messages. Only the call participants heard them; this does not establish physical presence. ${reference.snapshot}`.slice(0, 600);
+    if (call?.mode === "video")
+      reference.snapshot = `Persona camera: ${call.personaCamera === false ? "hidden; the NPC cannot see the persona" : "shown; only established RP visuals are available"}. Camera control entries are not spoken dialogue. ${reference.snapshot}`.slice(0, 600);
+    for (const message of reference.messages) {
+      const source = spoken.find((row) => row.id === message.messageId);
+      if (source?.callTurn?.scene)
+        message.text = `[Call background: ${source.callTurn.scene}] ${message.text}`.slice(0, 420);
+    }
     if (!spoken.length)
       reference.snapshot = `Phone call attempt. Call ID: ${callId}. Outcome: ${call ? callSummary(call) : "No answer"}. Technical call history only: no connection or spoken exchange occurred. Do not invent dialogue, a private reason, or knowledge of the recipient\u2019s activity. The caller only knows this outcome. This does not establish physical presence.`;
     if (!reference.messages.length)
@@ -1991,9 +2068,10 @@ ${background}` },
         return;
       if (prior.status === "connected" || prior.status === "ringing") {
         if (prior.status === "ringing") {
-          prior.status = "ended";
-          prior.outcome = "cancelled";
-          conversation.messages.find((row) => row.call === prior).text = "Call cancelled";
+          prior.status = input.declined || input.ignored ? "missed" : "ended";
+          prior.outcome = input.declined ? "declined" : input.ignored ? "ignored" : "cancelled";
+          delete prior.incomingOpening;
+          conversation.messages.find((row) => row.call === prior).text = callSummary(prior);
         } else {
           conversation.messages.push({
             id: this.host.id("msg"),
@@ -2014,6 +2092,133 @@ ${background}` },
       }
       this.host.send({ type: "lumiphone:call_ended", callId: prior.callId, requestId: input.requestId }, userId);
     });
+  }
+  async camera(input, userId) {
+    await this.host.lock(input.chatId, input.characterId, async () => {
+      if (this.flights.has(this.key(input, userId)))
+        throw new Error("Wait for the current spoken reply before changing camera visibility.");
+      const state = await this.host.load(input.chatId, input.characterId, userId), conversation = this.conversation(state, input);
+      const marker = this.marker(conversation, clean5(input.callId, 180));
+      if (marker.mode !== "video" || typeof input.visible !== "boolean")
+        throw new Error("Camera visibility is available only during a video call.");
+      if (marker.personaCamera !== input.visible) {
+        marker.personaCamera = input.visible;
+        conversation.messages.push({
+          id: this.host.id("msg"),
+          sender: "persona",
+          senderName: state.pocketPersona.displayName || "You",
+          senderActorId: pocketPersonaActorId(state),
+          senderAccent: state.pocketPersona.accent,
+          text: `[Call camera ${input.visible ? "shown" : "hidden"}]`,
+          callCamera: { callId: marker.callId, visible: input.visible },
+          createdAt: this.host.timestamp(state),
+          read: true,
+          status: "read"
+        });
+        this.attachReference(state, conversation, marker.callId);
+        await this.host.save(state, userId);
+        await this.host.publish(state, userId);
+      }
+      this.host.send({ type: "lumiphone:call_camera", requestId: input.requestId, callId: marker.callId, visible: marker.personaCamera !== false }, userId);
+    });
+  }
+  async offerIncoming(input, userId) {
+    const preferences = await this.host.preferences?.(userId), scope = this.key(input, userId);
+    if (!preferences?.incomingCallScenes || preferences.roleplayContextMode === "off" || !input.seed || !clean5(input.sourceKey, 240) || this.incomingFlights.has(scope))
+      return;
+    this.incomingFlights.add(scope);
+    try {
+      let state = await this.host.load(input.chatId, input.characterId, userId);
+      if (state.callSceneCheck?.sourceKey === input.sourceKey)
+        return;
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        state = await this.host.load(input.chatId, input.characterId, userId);
+        let changed = false;
+        for (const conversation of state.conversations)
+          for (const message of conversation.messages) {
+            const call = message.call;
+            if (call?.interactive && call.direction === "incoming" && call.status === "ringing") {
+              call.status = "missed";
+              call.outcome = "ignored";
+              delete call.incomingOpening;
+              message.text = callSummary(call);
+              this.attachReference(state, conversation, call.callId);
+              changed = true;
+              this.host.send({ type: "lumiphone:call_ended", callId: call.callId }, userId);
+            }
+          }
+        if (changed) {
+          await this.host.save(state, userId);
+          await this.host.publish(state, userId);
+        }
+      });
+      const active = new Map(state.conversations.flatMap((row) => row.messages).filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
+      if ([...active.values()].some((row) => row.status === "ringing" || row.status === "connected"))
+        return;
+      const lastOfferRevision = state.callSceneCheck?.lastOfferRevision ?? -10;
+      let reserved = false;
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        state = await this.host.load(input.chatId, input.characterId, userId);
+        if (state.callSceneCheck?.sourceKey === input.sourceKey)
+          return;
+        state.callSceneCheck = { sourceKey: input.sourceKey, lastOfferRevision };
+        await this.host.save(state, userId);
+        reserved = true;
+      });
+      if (!reserved || (state.stateRevision || 0) - lastOfferRevision < 3)
+        return;
+      const contacts = state.contacts.filter((row) => row.generationPolicy.relevant && row.messagingPolicy.remoteEligible).slice(0, 6);
+      if (!contacts.length)
+        return;
+      const candidates = await Promise.all(contacts.map(async (contact) => {
+        const profile = await this.host.profile(contact, userId);
+        const conversation = state.conversations.find((row) => row.kind === "direct" && row.includesPocketPersona && conversationActorIds(row).includes(contact.id)) || { id: "", kind: "direct", title: contact.name, messages: [], availability: { state: "remote" }, participantActorIds: [contact.id], participantContactIds: [contact.id], includesPocketPersona: true, unread: 0, createdAt: "", updatedAt: "" };
+        return { contactId: contact.id, name: contact.name, identity: profile.description, personality: profile.personality, behavior: profile.behavior, context: (await this.host.background(state, contact, conversation, userId)).slice(0, 3000) };
+      }));
+      const controller = new AbortController, timer = setTimeout(() => controller.abort(), 60000);
+      let raw;
+      try {
+        raw = await this.host.generate(`incoming_call_${this.host.id("scene")}`, [{ role: "system", content: `Optional slice-of-life phone call. The player opted in to occasional incoming calls after RP turns. Prefer no call unless current character activity naturally supports a brief accidental or distracted pickup. Choose ONE contact from the supplied candidates, or none. Return JSON {"decision":"none|call","contactId":"candidate id","scene":"short audible background moment from their current life","message":"ONLY this NPC\u2019s spoken words: realizes the call, apologizes, says busy, and goodbye"}. The phone remains silent until the player accepts. No major new event, player speech/actions, secrets from another actor\u2019s private context, or fabricated established facts. Ordinary minor incidental details are allowed. This is always a short audio call that ends after this single NPC turn.
+${JSON.stringify(candidates)}` }, { role: "user", content: "Does this RP moment fit one brief incoming call? None is a valid choice." }], controller.signal, userId);
+        controller.signal.throwIfAborted();
+      } finally {
+        clearTimeout(timer);
+      }
+      if (raw?.decision !== "call")
+        return;
+      const contact = contacts.find((row) => row.id === raw.contactId), opening = clean5(raw.message, 2000), scene = clean5(raw.scene, 600);
+      if (!contact || !opening || !scene)
+        return;
+      await this.host.lock(input.chatId, input.characterId, async () => {
+        const latest = await this.host.load(input.chatId, input.characterId, userId);
+        const currentPreferences = await this.host.preferences?.(userId);
+        if (!currentPreferences?.incomingCallScenes || currentPreferences.roleplayContextMode === "off" || latest.callSceneCheck?.sourceKey !== input.sourceKey || latest.lastReconciliation?.sourceKey && latest.lastReconciliation.sourceKey !== input.sourceKey)
+          return;
+        const latestActive = new Map(latest.conversations.flatMap((row) => row.messages).filter((row) => row.call?.interactive).map((row) => [row.call.callId, row.call]));
+        if ([...latestActive.values()].some((row) => row.status === "ringing" || row.status === "connected") || !latest.contacts.some((row) => row.id === contact.id))
+          return;
+        const conversation = ensureDirectConversation(latest, contact.id, this.host.timestamp(latest), (prefix) => this.host.id(prefix)), callId = this.host.id("call");
+        conversation.messages.push({
+          id: this.host.id("msg"),
+          sender: "contact",
+          senderName: contact.name,
+          senderActorId: contact.id,
+          senderContactId: contact.id,
+          senderAccent: contact.accent,
+          text: "Incoming phone call",
+          createdAt: this.host.timestamp(latest),
+          read: true,
+          status: "read",
+          call: { callId, status: "ringing", speakerphone: false, mode: "voice", interactive: true, direction: "incoming", incomingOpening: { text: opening, scene, expression: "" } }
+        });
+        latest.callSceneCheck = { sourceKey: input.sourceKey, lastOfferRevision: latest.stateRevision || 0 };
+        await this.host.save(latest, userId);
+        await this.host.publish(latest, userId);
+        this.host.send({ type: "lumiphone:call_incoming", chatId: latest.chatId, characterId: latest.characterId, conversationId: conversation.id, callId, contactId: contact.id, name: contact.name, mode: "voice" }, userId);
+      });
+    } finally {
+      this.incomingFlights.delete(scope);
+    }
   }
   async availabilityKey(state, contact, conversation, userId) {
     return (this.host.availabilityKey ? await this.host.availabilityKey(state, contact, conversation, userId) : callAvailabilityContext(contact, conversation)).slice(0, 4000);
@@ -4399,6 +4604,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     roleplayClockLabel: value.roleplayClockPrecision === "exact" || value.roleplayClockSource === "manual" ? text2(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    callSceneCheck: isRecord2(value.callSceneCheck) ? { sourceKey: text2(value.callSceneCheck.sourceKey, 240), lastOfferRevision: Math.max(-10, Math.round(numberValue(value.callSceneCheck.lastOfferRevision, -10))) } : undefined,
     hostSwipeSelections,
     hostClockBaselines,
     candidateClocks,
@@ -5396,6 +5602,7 @@ function upsertContact(state, contact, preserveCustomization = true) {
   const existing = state.contacts.find((entry) => entry.id === contact.id || contact.source.kind !== "npc" && contactSourceKey(entry.source) === sourceKey || contact.source.kind === "npc" && entry.source.kind === "npc" && contact.source.sceneKey && entry.source.sceneKey === contact.source.sceneKey);
   if (existing) {
     const preserved = preserveCustomization ? {
+      id: existing.id,
       createdAt: existing.createdAt,
       accent: existing.accent,
       contextPolicy: existing.contextPolicy,
@@ -5404,6 +5611,7 @@ function upsertContact(state, contact, preserveCustomization = true) {
       sourceAccent: contact.sourceAccent || existing.sourceAccent,
       avatarSource: existing.avatarSource,
       avatarFocus: existing.avatarFocus,
+      voicePlayback: existing.voicePlayback,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
@@ -6939,6 +7147,9 @@ ${recentNarrative}`
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId });
     if (state.conversations.some((thread) => thread.messages.some((row) => row.call?.followUp?.status === "pending")))
       liveCalls.processFollowUps({ chatId, characterId }, userId).catch((error) => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`));
+    const callPreferences = await loadPreferences(userId);
+    if (callPreferences.incomingCallScenes && callPreferences.roleplayContextMode !== "off")
+      liveCalls.offerIncoming({ chatId, characterId, sourceKey, seed }, userId).catch((error) => spindle.log.warn(`Pocket incoming call skipped: ${error instanceof Error ? error.message : String(error)}`));
     return seed;
   })();
   narrativeSeedFlights.set(flightKey, flight);
@@ -8867,6 +9078,10 @@ async function handleFrontend(payload, userId) {
     switch (payload.type) {
       case "lumiphone:call_start":
       case "lumiphone:call_resume":
+      case "lumiphone:call_accept":
+      case "lumiphone:call_decline":
+      case "lumiphone:call_ignore":
+      case "lumiphone:call_camera":
       case "lumiphone:call_reply":
       case "lumiphone:call_end": {
         await liveCalls.handle(String(payload.type), { ...payload, ...context }, userId);
@@ -10232,6 +10447,7 @@ ${projectPhoneContext(state)}` };
 }
 spindle.frontendCapabilities.declare("message_tag_interceptor");
 var liveCalls = new PocketCalls({
+  preferences: loadPreferences,
   load: loadState,
   save: saveState,
   lock: (chatId, characterId, action) => withStateLock(stateKey(chatId, characterId), action),

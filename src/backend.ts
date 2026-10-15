@@ -634,6 +634,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     roleplayClockLabel: value.roleplayClockPrecision === 'exact' || value.roleplayClockSource === 'manual' ? text(value.roleplayClockLabel, 160) : clockLabel(value.roleplayClockLabel),
     roleplayTimezoneOffsetMinutes: Number.isFinite(Number(value.roleplayTimezoneOffsetMinutes)) ? Number(value.roleplayTimezoneOffsetMinutes) : undefined,
     stateRevision: Math.max(0, Math.round(numberValue(value.stateRevision, 0))),
+    callSceneCheck: isRecord(value.callSceneCheck) ? { sourceKey: text(value.callSceneCheck.sourceKey, 240), lastOfferRevision: Math.max(-10, Math.round(numberValue(value.callSceneCheck.lastOfferRevision, -10))) } : undefined,
     hostSwipeSelections,
     hostClockBaselines,
     candidateClocks,
@@ -1575,9 +1576,10 @@ function upsertContact(state: PhoneState, contact: PocketContact, preserveCustom
   ))
   if (existing) {
     const preserved = preserveCustomization ? {
-      createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy,
+      id: existing.id, createdAt: existing.createdAt, accent: existing.accent, contextPolicy: existing.contextPolicy,
       avatarOverrideUrl: existing.avatarOverrideUrl, colorMode: existing.colorMode, sourceAccent: contact.sourceAccent || existing.sourceAccent,
       avatarSource: existing.avatarSource, avatarFocus: existing.avatarFocus,
+      voicePlayback: existing.voicePlayback,
       generationPolicy: contact.generationPolicy || existing.generationPolicy,
       messagingPolicy: contact.messagingPolicy || existing.messagingPolicy,
       messagingStyle: contact.messagingStyle || existing.messagingStyle,
@@ -3130,6 +3132,8 @@ ${recentNarrative}`,
     })
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
     if (state.conversations.some(thread => thread.messages.some(row => row.call?.followUp?.status === 'pending'))) void liveCalls.processFollowUps({ chatId, characterId }, userId).catch(error => spindle.log.warn(`Pocket call follow-up skipped: ${error instanceof Error ? error.message : String(error)}`))
+    const callPreferences = await loadPreferences(userId)
+    if (callPreferences.incomingCallScenes && callPreferences.roleplayContextMode !== 'off') void liveCalls.offerIncoming({ chatId, characterId, sourceKey, seed }, userId).catch(error => spindle.log.warn(`Pocket incoming call skipped: ${error instanceof Error ? error.message : String(error)}`))
 
     return seed
   })()
@@ -4765,6 +4769,10 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
     switch (payload.type) {
       case 'lumiphone:call_start':
       case 'lumiphone:call_resume':
+      case 'lumiphone:call_accept':
+      case 'lumiphone:call_decline':
+      case 'lumiphone:call_ignore':
+      case 'lumiphone:call_camera':
       case 'lumiphone:call_reply':
       case 'lumiphone:call_end': {
         await liveCalls.handle(String(payload.type), { ...payload, ...context }, userId)
@@ -5971,6 +5979,7 @@ function ensureInterceptor(): void {
 
 spindle.frontendCapabilities.declare('message_tag_interceptor')
 const liveCalls = new PocketCalls({
+  preferences: loadPreferences,
   load: loadState, save: saveState, lock: (chatId, characterId, action) => withStateLock(stateKey(chatId, characterId), action), publish: (state, userId) => sendState(state, userId, 'call'),
   send, id, timestamp: phoneMessageTimestamp, contact: actor => actorAsGenerationContact(actor, nowIso()), profile: resolveContactProfile,
   character: async (characterId, userId) => (spindle.characters.get as any)(characterId, userId),

@@ -1,5 +1,6 @@
 import type { PhoneMessage } from '../../types.js'
 import { synthesizeVoiceMessage } from './tts-connection.js'
+import { choirBridge } from './choir-bridge.js'
 
 function setPlaybackButton(button: HTMLButtonElement, playing: boolean): void {
   const label = (playing ? button.dataset.voiceStopLabel : button.dataset.voicePlayLabel) || '▶ Play voice message'
@@ -33,10 +34,10 @@ export class VoiceMessagePlayer {
     setPlaybackButton(button, false)
   }
 
-  render(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string }, voiceURI = '', enabled = true, connectionId = '', connectionOptions?: { voice?: string; model?: string }, kind: 'message' | 'call' = 'message'): HTMLElement {
+  render(message: Pick<PhoneMessage, 'text' | 'senderName' | 'senderActorId'> & { id?: string }, voiceURI = '', enabled = true, connectionId = '', connectionOptions?: { voice?: string; model?: string }, kind: 'message' | 'call' = 'message', choir?: { useChoir: boolean; speaker: string }): HTMLElement {
     const playLabel = kind === 'call' ? '▶ Replay spoken turn' : '▶ Play voice message'
     const stopLabel = kind === 'call' ? '■ Stop speech' : '■ Stop voice message'
-    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind])
+    const signature = JSON.stringify([message.text, message.senderName, message.senderActorId, voiceURI, enabled, connectionId, connectionOptions, kind, choir])
     if (message.id && this.views.get(message.id)?.signature === signature) return this.views.get(message.id)!.element
     const container = document.createElement('div'); container.className = 'lp-voice-message'
     // Inline cards can open their conversation on click; playback and transcript controls own their clicks.
@@ -47,7 +48,8 @@ export class VoiceMessagePlayer {
     button.dataset.voiceIcon = String(kind === 'call'); setPlaybackButton(button, false)
     const status = document.createElement('span'); status.className = 'lp-voice-status'; status.setAttribute('role', 'status')
     const supported = typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
-    button.disabled = !enabled || (!supported && !connectionId)
+    button.disabled = !enabled || (!supported && !connectionId && !choir?.useChoir)
+    button.hidden = !enabled
     if (button.disabled) status.textContent = enabled ? 'Speech playback unavailable in this browser.' : 'Voice playback is disabled in Settings.'
     button.addEventListener('click', () => {
       if (VoiceMessagePlayer.current && VoiceMessagePlayer.current !== this) VoiceMessagePlayer.current.stop()
@@ -55,6 +57,26 @@ export class VoiceMessagePlayer {
       const same = this.active?.button === button
       this.stop()
       if (same) return
+      if (choir?.useChoir) {
+        const bridge = choirBridge()
+        if (!bridge?.playVoiceMessage) { status.textContent = 'Choir is unavailable. Enable it or choose Pocket playback in Settings.'; return }
+        const active = { button, status, abort: new AbortController() } as NonNullable<VoiceMessagePlayer['active']>
+        this.active = active; setPlaybackButton(button, true); status.textContent = 'Preparing speech with Choir…'
+        active.timer = setTimeout(() => { if (this.active === active) { this.stop(); status.textContent = 'Choir playback timed out. Try again.' } }, 90_000)
+        void bridge.playVoiceMessage({ text: message.text, speaker: choir.speaker, signal: active.abort!.signal, onStatus: update => {
+          if (this.active === active) status.textContent = update.kind === 'loading' ? 'Preparing speech with Choir…' : ''
+        } }).then(result => {
+          if (this.active !== active) return
+          this.stop()
+          if (!result.played) { status.textContent = 'No Choir voice is enabled for this speaker.'; return }
+          container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-ended'))
+        }).catch(error => {
+          if (this.active !== active) return
+          this.stop(); status.textContent = error instanceof Error ? error.message : 'Choir playback failed.'
+          container.dispatchEvent(new (container.ownerDocument.defaultView!.Event)('pocket-voice-error'))
+        })
+        return
+      }
       if (connectionId) {
         const active = { button, status, abort: new AbortController() } as NonNullable<VoiceMessagePlayer['active']>
         this.active = active; setPlaybackButton(button, true); status.textContent = kind === 'call' ? 'Preparing speech…' : 'Preparing voice message…'
