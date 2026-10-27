@@ -1049,6 +1049,9 @@ class PocketController {
         if (!conversation || conversation.availability.state !== 'local') this.manualMessageOverrides.delete(conversationId)
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true
+      const setupSourceUnchanged = payload.reason === 'preferences'
+        && payload.preferences?.generationMode === this.preferences.generationMode
+        && payload.preferences?.sidecarConnectionId === this.preferences.sidecarConnectionId
       const previousDockSide = this.preferences.desktopDockSide
       this.preferences = normalizePreferences(payload.preferences || this.preferences)
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
@@ -1062,7 +1065,7 @@ class PocketController {
       if ('activePersona' in payload) this.activePersona = payload.activePersona || null
       if (this.setupModalOpen && this.setupModalBody) {
         if (this.state.setup.initialized) this.setupModalDismiss?.()
-        else if (!this.setupPersonaEditing) this.renderFirstChatSetupBody()
+        else if (!this.setupPersonaEditing && !setupSourceUnchanged) this.renderFirstChatSetupBody()
       }
       this.knownActivities.clear()
       for (const activity of this.state.activities || []) {
@@ -1926,6 +1929,7 @@ class PocketController {
     const oldView = this.screen.querySelector<HTMLElement>('.lumiphone-app-view')
     const oldViewScroll = oldView?.scrollTop || 0
     const oldThread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
+    const oldEventStripOpen = this.screen.querySelector<HTMLDetailsElement>('.lp-event-strip')?.open
     const oldThreadScroll = oldThread?.scrollTop
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false
     const focusedDockSide = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
@@ -1964,6 +1968,10 @@ class PocketController {
       view.addEventListener('animationend', () => view.removeAttribute('data-animate'), { once: true })
     }
     this.screen.replaceChildren(view)
+    if (!transition && oldEventStripOpen) {
+      const strip = view.querySelector<HTMLDetailsElement>('.lp-event-strip')
+      if (strip) strip.open = true
+    }
     if (!transition) requestAnimationFrame(() => {
       view.scrollTop = oldViewScroll
       const thread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
@@ -2123,6 +2131,7 @@ class PocketController {
       continueArrival: (conversationId) => { this.send('lumiphone:continue_arrival', { conversationId }) },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
+      quickstartEvent: (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
       declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
@@ -2141,6 +2150,28 @@ class PocketController {
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back(),
     })
+  }
+
+  private quickstartEvent(conversationId: string, eventId: string): void {
+    const event = this.state?.events.find(entry => entry.id === eventId && !entry.completed)
+    if (!event) { this.showError('This event is no longer available.'); return }
+    const modal = this.ctx.ui.showModal({ title: 'Quickstart event', width: 420, maxHeight: 520 })
+    const content = el('div', 'lp-settings-section')
+    const time = this.field('Event time', dateTimeLocal(event.start || this.state!.roleplayNow), 'datetime-local')
+    content.append(el('strong', '', event.title), el('p', 'lp-copy', 'Move the story clock to this time and generate the event in roleplay using this conversation as context.'), time.label)
+    if (event.whenKind !== 'exact') content.append(el('p', 'lp-copy', `This plan has an approximate time (${event.whenText || 'unscheduled'}). Choose the time to begin.`))
+    const start = button('Start event in roleplay', 'lp-button lp-button-primary')
+    start.disabled = !this.caps?.generation || !this.caps?.sceneSync
+    start.addEventListener('click', () => {
+      const parsed = new Date(time.input.value)
+      if (Number.isNaN(parsed.getTime())) { time.input.reportValidity(); return }
+      start.disabled = true
+      this.send('lumiphone:quickstart_event', { conversationId, eventId, roleplayNow: parsed.toISOString(), timezoneOffsetMinutes: new Date().getTimezoneOffset() })
+      modal.dismiss()
+    })
+    content.append(start)
+    time.input.required = true
+    modal.root.append(content)
   }
 
   private scheduleEventSuggestion(conversationId: string, messageId: string): void {
@@ -3300,7 +3331,7 @@ class PocketController {
         connection.addEventListener('change', () => changeConnection(connection.value)); connectionMount.append(connection)
       }
       const modelMount = el('div', 'lp-model-combobox')
-      afterAttachment(modelMount, () => this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: 'llm', id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: 'Use connection model', onChange: value => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) }))
+      afterAttachment(modelMount, () => this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: 'llm', id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, appearance: 'standard', placeholder: 'Use connection model', onChange: value => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) }))
       const connectionLabel = el('div', 'lp-setup-field', 'Connection'); connectionLabel.append(connectionMount)
       const modelLabel = el('div', 'lp-setup-field', 'Model'); modelLabel.append(modelMount)
       sourceControls.append(connectionLabel, modelLabel)

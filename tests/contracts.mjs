@@ -1749,9 +1749,10 @@ let dockRequestCount = 0
 let dockDestroyCount = 0
 const injected = []
 let uploadFiles = []
+const modelMountCalls = []
 const frontendContext = {
   uploads: { pickFile: async () => uploadFiles },
-  components: { mountModelCombobox: (target, options) => { assert.equal(target.isConnected, true, 'host model controls must mount only on connected targets'); target.dataset.modelPickerMounted = 'true'; if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
+  components: { mountModelCombobox: (target, options) => { modelMountCalls.push({ target, options }); assert.equal(target.isConnected, true, 'host model controls must mount only on connected targets'); target.dataset.modelPickerMounted = 'true'; if (options.connection?.kind === 'image') { assert.equal(target.isConnected, true, 'camera picker must mount after its sheet joins the DOM'); target.dataset.imagePickerMounted = 'true' }; return { getValue: () => '', refresh: () => {}, update: () => {}, destroy: () => {} } } },
   dom: {
     addStyle: css => { frontendStyles.push(css); return () => {} },
     findMessageElement: (messageId) => messageId === 'host-message-a' ? messageBubble : null,
@@ -2128,8 +2129,29 @@ backendReceiver(inviteUiState)
 const inviteCard = dockRoot.querySelector('.lp-event-invite')
 assert.ok(inviteCard, 'conversation suggestions render as separate invite cards')
 assert.equal(inviteCard.closest('.lp-bubble, .lp-group-message'), null, 'invites must not live inside messages')
-assert.equal(inviteCard.parentElement, dockRoot.querySelector('.lp-bubbles'))
-assert.equal(inviteCard.previousElementSibling.querySelector('.lp-bubble')?.dataset.messageId || inviteCard.previousElementSibling.dataset.messageId, inviteConversation.messages.at(-1).id)
+assert.equal(inviteCard.parentElement, dockRoot.querySelector('.lp-event-strip-list'))
+assert.equal(dockRoot.querySelector('.lp-event-strip').open, false, 'event strip starts collapsed')
+assert.equal(dockRoot.querySelector('.lp-event-strip').closest('.lp-reference-slot').previousElementSibling.className, 'lp-nav')
+assert.ok(dockRoot.querySelector('.lp-compose-input textarea[aria-label="Message"]'))
+assert.ok(dockRoot.querySelector('.lp-compose-input button[aria-label="Send message"]'))
+inviteUiState.state.events.push({ id: 'ui-quick-event', title: 'Movie night', start: '2026-09-05T19:00:00.000Z', end: '2026-09-05T20:00:00.000Z', whenKind: 'exact', completed: false })
+inviteConversation.messages.at(-1).eventSuggestion.status = 'scheduled'
+inviteConversation.messages.at(-1).eventSuggestion.scheduledEventId = 'ui-quick-event'
+backendReceiver(inviteUiState)
+const stripBeforeUpdate = dockRoot.querySelector('.lp-event-strip')
+stripBeforeUpdate.open = true
+backendReceiver(inviteUiState)
+assert.equal(dockRoot.querySelector('.lp-event-strip').open, true, 'state refresh keeps event details expanded')
+;[...dockRoot.querySelectorAll('.lp-event-invite button')].find(button => button.textContent === 'Quickstart event').click()
+const quickModal = shownModals.at(-1)
+assert.equal(quickModal.options.title, 'Quickstart event')
+assert.ok(quickModal.root.querySelector('label input[type="datetime-local"]'), 'quickstart time has a visible label')
+quickModal.root.querySelector('.lp-button-primary').click()
+assert.equal(frontendSends.at(-1).type, 'lumiphone:quickstart_event')
+assert.equal(frontendSends.at(-1).eventId, 'ui-quick-event')
+assert.equal(frontendSends.at(-1).conversationId, groupId)
+dockRoot.querySelector('.lp-event-strip').open = false
+
 await exportVisual('chat-invite', dockRoot)
 backendReceiver(groupUiState)
 const conversationMenu = dockRoot.querySelector('.lp-conversation-menu')
@@ -2826,6 +2848,16 @@ setupSource.value = 'sidecar'; setupSource.dispatchEvent(new dom.window.Event('c
 await new Promise(resolve => setTimeout(resolve, 0))
 assert.equal(setupRoot.querySelector('.lp-setup-generation [data-model-picker-mounted]').dataset.modelPickerMounted, 'true', 'setup mounts the native picker after joining its modal')
 assert.ok(setupRoot.querySelector('[data-select-mounted]'))
+const setupPicker = setupRoot.querySelector('.lp-setup-generation [data-model-picker-mounted]')
+const setupPickerOptions = modelMountCalls.findLast(call => call.target === setupPicker).options
+setupPickerOptions.onChange('typed-model')
+await new Promise(resolve => setTimeout(resolve, 280))
+const setupSavedPreferences = frontendSends.findLast(message => message.type === 'lumiphone:save_preferences').preferences
+const setupMountCount = modelMountCalls.length
+backendReceiver({ ...savedDraftState, reason: 'preferences', preferences: setupSavedPreferences, state: { ...savedDraftState.state, setup: { ...savedDraftState.state.setup, initialized: false } } })
+await new Promise(resolve => setTimeout(resolve, 0))
+assert.equal(setupRoot.querySelector('.lp-setup-generation [data-model-picker-mounted]'), setupPicker, 'saving typed model text must preserve the setup picker and its loaded catalog')
+assert.equal(modelMountCalls.length, setupMountCount, 'preference echo must not refetch by remounting the setup picker')
 const exportSetupPreview = async (filename) => {
   if (!process.env.POCKET_SETUP_PREVIEW) return
   const preview = setupRoot.cloneNode(true)
@@ -2967,5 +2999,33 @@ try {
   spindle.generate.quiet = quietBeforeVoice
   await frontendHandler({ type: 'lumiphone:save_preferences', preferences: voicePreferencesBefore }, 'user-a')
 }
+
+// Quickstart uses a controlled scheduled plan, preserves the event, and advances the clock before generation.
+const quickState = structuredClone(storage.get('phones/voice-contract__char-a.json'))
+quickState.chatId = 'quickstart-contract'
+quickState.events = [{ id: 'quick-event', title: 'Movie night', description: 'Bring takeout.', start: '2026-09-05T19:00:00.000Z', end: '2026-09-05T20:00:00.000Z', whenKind: 'exact', whenText: 'Tomorrow at seven', lane: 'Plans', color: '#8877ff', completed: false, createdBy: 'user', kind: 'event' }]
+const quickConversation = quickState.conversations[0]
+quickConversation.messages = [{ ...quickConversation.messages[0], text: 'I will bring takeout for our movie.', origin: undefined, eventSuggestion: { id: 'quick-invite', status: 'scheduled', title: 'Movie night', description: 'Bring takeout.', participantNames: ['Alice'], whenKind: 'exact', whenText: 'Tomorrow at seven', scheduledEventId: 'quick-event' } }]
+storage.set('phones/quickstart-contract__char-a.json', quickState)
+const quickPayload = { type: 'lumiphone:quickstart_event', chatId: 'quickstart-contract', characterId: 'char-a', conversationId: quickConversation.id, eventId: 'quick-event', roleplayNow: '2026-09-05T19:00:00.000Z', timezoneOffsetMinutes: 180 }
+const quickBefore = appendedChatMessages.length
+permissions.delete('chat_mutation')
+await frontendHandler(quickPayload, 'user-a')
+assert.equal(appendedChatMessages.length, quickBefore, 'missing permissions cannot launch quickstart')
+assert.equal(storage.get('phones/quickstart-contract__char-a.json').roleplayNow, quickState.roleplayNow, 'blocked quickstart cannot move the clock')
+permissions.add('chat_mutation')
+await frontendHandler({ ...quickPayload, eventId: 'missing' }, 'user-a')
+assert.equal(appendedChatMessages.length, quickBefore, 'stale plans cannot launch')
+await frontendHandler({ ...quickPayload, roleplayNow: 'invalid' }, 'user-a')
+assert.equal(appendedChatMessages.length, quickBefore, 'invalid time cannot launch')
+await frontendHandler(quickPayload, 'user-a')
+assert.equal(appendedChatMessages.length, quickBefore + 1)
+assert.equal(appendedChatMessages.at(-1).options.triggerGeneration, true)
+assert.match(appendedChatMessages.at(-1).message.content, /Movie night/)
+assert.match(appendedChatMessages.at(-1).message.content, /I will bring takeout/)
+const quickSaved = storage.get('phones/quickstart-contract__char-a.json')
+assert.equal(quickSaved.roleplayNow, quickPayload.roleplayNow)
+assert.equal(quickSaved.roleplayClockSource, 'manual')
+assert.equal(quickSaved.events[0].completed, false, 'launching an event does not mark it completed')
 
 console.log('Pocket contracts passed.')

@@ -8,7 +8,7 @@ test('invite actions keep their originating message and scheduled event identiti
   try {
     globalThis.document = dom.window.document
     const calls: string[][] = []
-    const host = { scheduleEventSuggestion: (...args: string[]) => calls.push(['schedule', ...args]), declineEventSuggestion: (...args: string[]) => calls.push(['decline', ...args]), openTimeline: (...args: string[]) => calls.push(['open', ...args]) }
+    const host = { scheduleEventSuggestion: (...args: string[]) => calls.push(['schedule', ...args]), declineEventSuggestion: (...args: string[]) => calls.push(['decline', ...args]), openTimeline: (...args: string[]) => calls.push(['open', ...args]), quickstartEvent: (...args: string[]) => calls.push(['quickstart', ...args]) }
     const message = { id: 'message', eventSuggestion: { id: 'invite', title: 'Movie night', description: 'Takeout and a film.', whenText: 'Tonight', participantNames: ['Alex', 'Sam'], status: 'pending' } } as PhoneMessage
     const card = eventInvite(message, 'thread', host)
     expect(card.textContent).toContain('Tonight')
@@ -18,6 +18,11 @@ test('invite actions keep their originating message and scheduled event identiti
     message.eventSuggestion!.status = 'scheduled'; message.eventSuggestion!.scheduledEventId = 'event'
     eventInvite(message, 'thread', host).querySelector('button')!.click()
     expect(calls.at(-1)).toEqual(['open', 'event'])
+    const scheduled = eventInvite(message, 'thread', host)
+    const quickstart = [...scheduled.querySelectorAll('button')].find(button => button.textContent === 'Quickstart event')!
+    expect(quickstart.getAttribute('aria-label')).toBe('Quickstart event: Movie night')
+    quickstart.click()
+    expect(calls.at(-1)).toEqual(['quickstart', 'thread', 'event'])
     message.eventSuggestion!.status = 'declined'
     expect(eventInvite(message, 'thread', host).querySelectorAll('button').length).toBe(0)
   } finally { globalThis.document = old; dom.window.close() }

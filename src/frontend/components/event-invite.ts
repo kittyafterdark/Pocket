@@ -5,6 +5,7 @@ interface InviteHost {
   scheduleEventSuggestion(conversationId: string, messageId: string): void
   declineEventSuggestion(conversationId: string, messageId: string): void
   openTimeline(eventId: string): void
+  quickstartEvent?(conversationId: string, eventId: string): void
 }
 
 export function eventInvite(message: PhoneMessage, conversationId: string, host: InviteHost): HTMLElement {
@@ -25,14 +26,23 @@ export function eventInvite(message: PhoneMessage, conversationId: string, host:
   const actions = el('div', 'lp-event-invite-actions')
   if (invite.status === 'pending') {
     const accept = button('Schedule event', 'lp-button')
+    accept.setAttribute('aria-label', `Schedule event: ${invite.title}`)
     accept.addEventListener('click', () => host.scheduleEventSuggestion(conversationId, message.id))
     const decline = button('Decline', 'lp-button lp-button-quiet')
+    decline.setAttribute('aria-label', `Decline invitation: ${invite.title}`)
     decline.addEventListener('click', () => host.declineEventSuggestion(conversationId, message.id))
     actions.append(accept, decline)
   } else if (invite.status === 'scheduled' && invite.scheduledEventId) {
     const open = button('Open event', 'lp-button lp-button-quiet')
+    open.setAttribute('aria-label', `Open event: ${invite.title}`)
     open.addEventListener('click', () => host.openTimeline(invite.scheduledEventId!))
     actions.append(open)
+    if (host.quickstartEvent) {
+      const start = button('Quickstart event', 'lp-button')
+      start.setAttribute('aria-label', `Quickstart event: ${invite.title}`)
+      start.addEventListener('click', () => host.quickstartEvent!(conversationId, invite.scheduledEventId!))
+      actions.append(start)
+    }
   }
   if (actions.childElementCount) card.append(actions)
   return card

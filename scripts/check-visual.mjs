@@ -47,7 +47,7 @@ const server = createServer(async (request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 let browser
 try {
-  browser = await playwright.chromium.launch({ headless: true })
+  browser = await playwright.chromium.launch({ headless: true, executablePath: process.env.POCKET_CHROMIUM_EXECUTABLE || undefined })
   const version = browser.version()
   const metadata = join(baseline, 'environment.json')
   const environment = { browser: version, platform: process.platform }
@@ -95,7 +95,18 @@ try {
         assert.equal(await page.locator('.lp-npc-portrait-actions button').count(), 3)
         assert.ok(await page.locator('.lp-npc-portrait-actions').evaluate(node => { const row = node.getBoundingClientRect(); const screen = node.closest('.lumiphone-screen').getBoundingClientRect(); return row.width <= screen.width && row.top >= screen.top && row.bottom <= screen.bottom }), 'NPC portrait row must fit and remain reachable in the handset')
       }
-      if (file === 'chat-invite.html') await page.locator('.lp-event-invite').scrollIntoViewIfNeeded()
+      if (file === 'chat-invite.html') {
+        const strip = page.locator('.lp-event-strip')
+        assert.equal(await strip.getAttribute('open'), null, 'Event strip starts collapsed')
+        await strip.locator('summary').focus()
+        await page.keyboard.press('Enter')
+        assert.ok(await page.getByRole('button', { name: 'Quickstart event: Movie night', exact: true }).isVisible())
+        await page.evaluate(() => window.scrollTo(0, 0))
+      }
+      if (file.startsWith('chat')) {
+        assert.ok(await page.getByRole('textbox', { name: 'Message', exact: true }).isVisible())
+        assert.ok(await page.locator('.lp-compose-input').evaluate(node => node.scrollWidth <= node.clientWidth + 1), 'Shared composer must fit the handset')
+      }
       if (file.startsWith('sheet-')) {
         // Recreate the native top-layer mount after JSDOM's layout-free export.
         await page.locator('dialog.lp-sheet').evaluate(dialog => {

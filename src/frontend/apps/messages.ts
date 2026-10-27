@@ -44,6 +44,7 @@ export interface MessagesViewHost {
   continueArrival(conversationId: string): void
   openRoleplay(): void
   openTimeline(eventId: string): void
+  quickstartEvent?(conversationId: string, eventId: string): void
   scheduleEventSuggestion(conversationId: string, messageId: string): void
   declineEventSuggestion(conversationId: string, messageId: string): void
   showReferenceSheet(conversationId: string): void
@@ -534,13 +535,21 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id))) bubbles.appendChild(handoffActivity(host, conversation, relay))
+  const eventStrip = el('details', 'lp-event-strip')
+  const eventSummary = el('summary', 'lp-event-strip-summary')
+  const eventList = el('div', 'lp-event-strip-list')
   if (!host.readOnlyDevice) {
     const seenInvites = new Set<string>()
     for (const message of conversation.messages) {
       if (!message.eventSuggestion || seenInvites.has(message.eventSuggestion.id)) continue
       seenInvites.add(message.eventSuggestion.id)
-      bubbles.append(eventInvite(message, conversation.id, host))
+      if (message.eventSuggestion.status !== 'declined') eventList.append(eventInvite(message, conversation.id, host))
     }
+  }
+  if (eventList.childElementCount) {
+    eventSummary.textContent = `${eventList.childElementCount === 1 ? '1 event' : `${eventList.childElementCount} events`} · ${eventList.querySelector('h3')?.textContent || 'Timeline'}`
+    eventStrip.append(eventSummary, eventList)
+    referenceSlot.appendChild(eventStrip)
   }
   if (busy?.phase === 'checking') {
     const checking = el('div', conversation.kind === 'group' ? 'lp-group-typing' : 'lp-conversation-status')
@@ -643,7 +652,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     event.preventDefault()
     compose.requestSubmit()
   })
-  compose.append(sparkle, textarea, submit)
+  textarea.setAttribute('aria-label', 'Message')
+  const inputShell = el('div', 'lp-compose-input')
+  inputShell.append(textarea, submit)
+  compose.append(sparkle, inputShell)
   compose.addEventListener('submit', (event) => {
     event.preventDefault()
     const message = inputValue(textarea)

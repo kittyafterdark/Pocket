@@ -5313,6 +5313,48 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         send({ type: 'lumiphone:context_preview', requestId, conversationId: conversation.id, diagnostics: assembled.diagnostics }, userId)
         break
       }
+      case 'lumiphone:quickstart_event': {
+        if (!spindle.permissions.has('chat_mutation') || !spindle.permissions.has('generation')) throw new Error('Chat mutation and generation permissions are required to quickstart an event.')
+        const flightKey = `${viewKey(userId)}:${context.chatId}`
+        if (relayFlights.has(flightKey)) throw new Error('Pocket is already starting a roleplay continuation.')
+        relayFlights.add(flightKey)
+        try {
+          const content = await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+            const state = await loadState(context.chatId, context.characterId, userId)
+            const conversation = state.conversations.find(entry => entry.id === text(payload.conversationId, 180))
+            const event = state.events.find(entry => entry.id === text(payload.eventId, 180) && !entry.completed)
+            if (!conversation || !event || !activeConversationMessages(state, conversation).some(message => message.eventSuggestion?.status === 'scheduled' && message.eventSuggestion.scheduledEventId === event.id)) throw new Error('That scheduled conversation event is no longer available.')
+            const next = text(payload.roleplayNow, 80)
+            if (!next || !Number.isFinite(Date.parse(next))) throw new Error('Choose a valid event time.')
+            const roleplayNow = new Date(next).toISOString()
+            const projectedConversation = { ...conversation, messages: activeConversationMessages(state, conversation) }
+            const reference = createPocketReference({ state, conversation: projectedConversation, scope: 'conversation', selectedMessageIds: [], createdAt: nowIso(), makeId: id })
+            const content = [
+              'Begin this scheduled event in the roleplay. Advance the scene to the chosen story time; use the phone conversation below as context for the plan. Preserve character knowledge and do not assume anyone has already arrived.',
+              `Event: ${JSON.stringify(event.title)}`,
+              `Details: ${JSON.stringify(event.description)}`,
+              `Story time: ${roleplayNow}`,
+              serializePocketReference(reference),
+            ].join('\n\n')
+            state.trackers = state.trackers.map(tracker => materializeTracker(tracker, roleplayNow).tracker)
+            state.roleplayNow = roleplayNow
+            state.roleplayClockSource = 'manual'
+            state.roleplayClockPrecision = 'exact'
+            state.roleplayClockLabel = 'Event quickstart'
+            const offset = Number(payload.timezoneOffsetMinutes)
+            if (Number.isFinite(offset)) state.roleplayTimezoneOffsetMinutes = Math.max(-840, Math.min(840, offset))
+            await saveState(state, userId)
+            await sendState(state, userId, 'event_quickstart')
+            return content
+          })
+          const appended = await spindle.chat.appendMessage(context.chatId, {
+            role: 'user', content, metadata: { source: 'pocket', pocketEventId: text(payload.eventId, 180), pocketContinuation: true },
+          }, { triggerGeneration: true })
+          await spindle.chat.setMessageHidden(context.chatId, appended.id, true).catch(() => undefined)
+          if (!appended.generationId) throw new Error('The event time was set, but the host did not accept generation. You can retry quickstart.')
+        } finally { relayFlights.delete(flightKey) }
+        break
+      }
       case 'lumiphone:save_roleplay_time': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)

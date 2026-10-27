@@ -2378,7 +2378,10 @@ function camera(host) {
   diagnostics.appendChild(el("summary", "", "Macro diagnostics"));
   for (const name of ["char_base", "persona_base", "swarm_negative", "swarm_preset", "swarm_checkpoint", "swarm_aspect", "swarm_loras"]) {
     const field = host.swarmProfile?.fields?.[name];
-    const row = el("div", "lp-generation-run", `${name} · ${field?.detected ? `${field.length} chars · ${field.preview}` : "empty"}`);
+    const row = el("div", "lp-swarm-macro");
+    row.append(el("strong", "", `${name} · ${field?.detected ? `${field.length} chars` : "empty"}`));
+    if (field?.detected)
+      row.append(el("p", "", field.preview));
     row.dataset.pocketSwarmMacro = name;
     diagnostics.appendChild(row);
   }
@@ -3427,14 +3430,23 @@ function eventInvite(message, conversationId, host) {
   const actions = el("div", "lp-event-invite-actions");
   if (invite.status === "pending") {
     const accept = button("Schedule event", "lp-button");
+    accept.setAttribute("aria-label", `Schedule event: ${invite.title}`);
     accept.addEventListener("click", () => host.scheduleEventSuggestion(conversationId, message.id));
     const decline = button("Decline", "lp-button lp-button-quiet");
+    decline.setAttribute("aria-label", `Decline invitation: ${invite.title}`);
     decline.addEventListener("click", () => host.declineEventSuggestion(conversationId, message.id));
     actions.append(accept, decline);
   } else if (invite.status === "scheduled" && invite.scheduledEventId) {
     const open = button("Open event", "lp-button lp-button-quiet");
+    open.setAttribute("aria-label", `Open event: ${invite.title}`);
     open.addEventListener("click", () => host.openTimeline(invite.scheduledEventId));
     actions.append(open);
+    if (host.quickstartEvent) {
+      const start = button("Quickstart event", "lp-button");
+      start.setAttribute("aria-label", `Quickstart event: ${invite.title}`);
+      start.addEventListener("click", () => host.quickstartEvent(conversationId, invite.scheduledEventId));
+      actions.append(start);
+    }
   }
   if (actions.childElementCount)
     card.append(actions);
@@ -3961,14 +3973,23 @@ function renderMessagesView(host) {
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id)))
     bubbles.appendChild(handoffActivity(host, conversation, relay));
+  const eventStrip = el("details", "lp-event-strip");
+  const eventSummary = el("summary", "lp-event-strip-summary");
+  const eventList = el("div", "lp-event-strip-list");
   if (!host.readOnlyDevice) {
     const seenInvites = new Set;
     for (const message of conversation.messages) {
       if (!message.eventSuggestion || seenInvites.has(message.eventSuggestion.id))
         continue;
       seenInvites.add(message.eventSuggestion.id);
-      bubbles.append(eventInvite(message, conversation.id, host));
+      if (message.eventSuggestion.status !== "declined")
+        eventList.append(eventInvite(message, conversation.id, host));
     }
+  }
+  if (eventList.childElementCount) {
+    eventSummary.textContent = `${eventList.childElementCount === 1 ? "1 event" : `${eventList.childElementCount} events`} · ${eventList.querySelector("h3")?.textContent || "Timeline"}`;
+    eventStrip.append(eventSummary, eventList);
+    referenceSlot.appendChild(eventStrip);
   }
   if (busy?.phase === "checking") {
     const checking = el("div", conversation.kind === "group" ? "lp-group-typing" : "lp-conversation-status");
@@ -4087,7 +4108,10 @@ function renderMessagesView(host) {
     event.preventDefault();
     compose.requestSubmit();
   });
-  compose.append(sparkle, textarea, submit);
+  textarea.setAttribute("aria-label", "Message");
+  const inputShell = el("div", "lp-compose-input");
+  inputShell.append(textarea, submit);
+  compose.append(sparkle, inputShell);
   compose.addEventListener("submit", (event) => {
     event.preventDefault();
     const message = inputValue(textarea);
@@ -8253,6 +8277,7 @@ class PocketController {
           this.manualMessageOverrides.delete(conversationId);
       }
       this.jevKeyConfigured = payload.jevKeyConfigured === true;
+      const setupSourceUnchanged = payload.reason === "preferences" && payload.preferences?.generationMode === this.preferences.generationMode && payload.preferences?.sidecarConnectionId === this.preferences.sidecarConnectionId;
       const previousDockSide = this.preferences.desktopDockSide;
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode);
@@ -8271,7 +8296,7 @@ class PocketController {
       if (this.setupModalOpen && this.setupModalBody) {
         if (this.state.setup.initialized)
           this.setupModalDismiss?.();
-        else if (!this.setupPersonaEditing)
+        else if (!this.setupPersonaEditing && !setupSourceUnchanged)
           this.renderFirstChatSetupBody();
       }
       this.knownActivities.clear();
@@ -9272,6 +9297,7 @@ class PocketController {
     const oldView = this.screen.querySelector(".lumiphone-app-view");
     const oldViewScroll = oldView?.scrollTop || 0;
     const oldThread = this.screen.querySelector("[data-pocket-thread]");
+    const oldEventStripOpen = this.screen.querySelector(".lp-event-strip")?.open;
     const oldThreadScroll = oldThread?.scrollTop;
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false;
     const focusedDockSide = document.activeElement?.getAttribute("aria-label") === "Desktop phone side";
@@ -9308,6 +9334,11 @@ class PocketController {
       view.addEventListener("animationend", () => view.removeAttribute("data-animate"), { once: true });
     }
     this.screen.replaceChildren(view);
+    if (!transition && oldEventStripOpen) {
+      const strip = view.querySelector(".lp-event-strip");
+      if (strip)
+        strip.open = true;
+    }
     if (!transition)
       requestAnimationFrame(() => {
         view.scrollTop = oldViewScroll;
@@ -9507,6 +9538,7 @@ class PocketController {
       },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: "calendar", eventId }),
+      quickstartEvent: (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
       declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
@@ -9527,6 +9559,34 @@ class PocketController {
       showGenerationInfo: (message) => this.showMessageGenerationInfo(message),
       back: () => this.back()
     });
+  }
+  quickstartEvent(conversationId, eventId) {
+    const event = this.state?.events.find((entry) => entry.id === eventId && !entry.completed);
+    if (!event) {
+      this.showError("This event is no longer available.");
+      return;
+    }
+    const modal = this.ctx.ui.showModal({ title: "Quickstart event", width: 420, maxHeight: 520 });
+    const content = el("div", "lp-settings-section");
+    const time = this.field("Event time", dateTimeLocal(event.start || this.state.roleplayNow), "datetime-local");
+    content.append(el("strong", "", event.title), el("p", "lp-copy", "Move the story clock to this time and generate the event in roleplay using this conversation as context."), time.label);
+    if (event.whenKind !== "exact")
+      content.append(el("p", "lp-copy", `This plan has an approximate time (${event.whenText || "unscheduled"}). Choose the time to begin.`));
+    const start = button("Start event in roleplay", "lp-button lp-button-primary");
+    start.disabled = !this.caps?.generation || !this.caps?.sceneSync;
+    start.addEventListener("click", () => {
+      const parsed = new Date(time.input.value);
+      if (Number.isNaN(parsed.getTime())) {
+        time.input.reportValidity();
+        return;
+      }
+      start.disabled = true;
+      this.send("lumiphone:quickstart_event", { conversationId, eventId, roleplayNow: parsed.toISOString(), timezoneOffsetMinutes: new Date().getTimezoneOffset() });
+      modal.dismiss();
+    });
+    content.append(start);
+    time.input.required = true;
+    modal.root.append(content);
   }
   scheduleEventSuggestion(conversationId, messageId) {
     const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
@@ -10928,7 +10988,7 @@ ${body}`;
         connectionMount.append(connection);
       }
       const modelMount = el("div", "lp-model-combobox");
-      afterAttachment(modelMount, () => this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: "llm", id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, placeholder: "Use connection model", onChange: (value) => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) }));
+      afterAttachment(modelMount, () => this.ctx.components.mountModelCombobox(modelMount, { value: this.preferences.sidecarModelOverride, connection: { kind: "llm", id: this.preferences.sidecarConnectionId || undefined }, disabled: !this.preferences.sidecarConnectionId, appearance: "standard", placeholder: "Use connection model", onChange: (value) => this.updatePreferences({ ...this.preferences, sidecarModelOverride: value }) }));
       const connectionLabel = el("div", "lp-setup-field", "Connection");
       connectionLabel.append(connectionMount);
       const modelLabel = el("div", "lp-setup-field", "Model");
@@ -11577,6 +11637,7 @@ var PHONE_STYLES = `
   .lp-conversation-menu-action { appearance:none; min-height:34px; padding:7px 9px; border:0; border-radius:8px; background:transparent; color:var(--lp-text); font:inherit; font-size:var(--pocket-font-sm); text-align:left; cursor:pointer; }
   .lp-conversation-menu-action:hover { background:var(--lp-surface-2); }
   .lp-conversation-menu-action:disabled { opacity:.42; cursor:not-allowed; }
+  .lp-reference-slot { min-width:0; }
   .lp-reference-slot:empty { min-height:0; }
   .lp-reference-attachment { margin:7px 9px 0; padding:8px 9px; display:grid; gap:5px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:13px; background:color-mix(in srgb,var(--lp-surface) 94%,transparent); box-shadow:0 5px 16px rgba(0,0,0,.09); }
   .lp-reference-head { display:flex; align-items:center; gap:8px; }
@@ -11970,7 +12031,28 @@ ${INLINE_BASE_STYLES}
   .lp-settings-category > span:first-child { display:grid; gap:2px; }
   .lp-settings-chevron { color:var(--lp-muted); font-size:22px; }
   .lp-code-input { min-height:150px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre; }
-  .lp-swarm-diagnostics { display:grid; gap:6px; }
+  .lp-swarm-diagnostics { min-width:0; max-width:100%; }
+  .lp-swarm-macro { min-width:0; padding:10px 0; border-bottom:1px solid var(--lp-border); font-size:var(--pocket-font-sm); overflow-wrap:anywhere; }
+  .lp-swarm-macro strong { display:block; color:var(--lp-muted); font-size:var(--pocket-font-xs); font-weight:600; }
+  .lp-swarm-macro p { margin:5px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .lp-swarm-diagnostics[open] { max-height:280px; overflow-y:auto; }
+  .lp-swarm-diagnostics summary { padding:8px 0; }
+  .lp-settings-section { min-width:0; }
+  .lp-settings-section > .lp-copy { overflow-wrap:anywhere; }
+  .lp-event-strip { min-width:0; border-bottom:1px solid var(--lp-border); background:var(--lp-surface); }
+  .lp-event-strip-summary { padding:10px 14px; color:var(--lp-accent); font-size:var(--pocket-font-sm); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-event-strip-list { max-height: min(280px,35vh); overflow-y:auto; padding:0 10px 8px; }
+  .lumiphone-shell .lp-event-strip .lp-event-invite { margin:0; padding:12px 4px; border:0; border-radius:0; background:transparent; box-shadow:none; }
+  .lp-event-strip .lp-event-invite-icon { width:30px; height:30px; border-radius:8px; }
+  .lp-event-strip .lp-event-invite-heading h3 { font-size:var(--pocket-font-sm); }
+  .lp-event-strip .lp-event-invite-when { margin-top:8px; }
+  .lumiphone-shell .lp-compose { grid-template-columns:auto minmax(0,1fr); align-items:end; }
+  .lp-compose-input { display:flex; align-items:flex-end; min-width:0; padding:3px; border:1px solid var(--lp-border); border-radius:22px; background:var(--lp-surface); }
+  .lp-compose-input:focus-within { border-color:var(--lp-accent); box-shadow:0 0 0 1px var(--lp-accent); }
+  .lumiphone-shell .lp-compose-input .lp-textarea { flex:1; min-width:0; min-height:calc(32px * var(--pocket-ui-scale)); border:0; outline:0; resize:none; background:transparent; box-shadow:none; padding:7px 9px; }
+  .lumiphone-shell .lp-compose-input .lp-button-icon { flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:calc(30px * var(--pocket-ui-scale)); border:0; border-radius:50%; background:var(--lp-accent); color:var(--lp-bg); }
+  .lp-compose-input .lp-button-icon svg { width:15px; height:15px; }
+  .lp-event-strip-summary:focus-visible { outline:2px solid var(--lp-accent); outline-offset:-3px; }
   .lp-swarm-diagnostics summary { cursor:pointer; color:var(--lp-muted); font-size:var(--pocket-font-sm); }
   .lp-gallery-actions { margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .lp-gallery-actions .lp-select { grid-column:1 / -1; }
