@@ -460,6 +460,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   bubbles.dataset.conversationKind = conversation.kind
   const conversationRelays = host.readOnlyDevice ? [] : host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== 'dismissed')
   const renderedRelayIds = new Set<string>()
+  const eventStrip = el('details', 'lp-event-strip')
+  const eventSummary = el('summary', 'lp-event-strip-summary')
+  const eventList = el('div', 'lp-event-strip-list')
+  const seenInvites = new Set<string>()
   let priorGroupSpeakerId = ''
   let priorBurstKey = ''
   for (const message of conversation.messages) {
@@ -528,6 +532,14 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       bubbles.appendChild(bubble)
       priorGroupSpeakerId = ''
     }
+    const invite = message.eventSuggestion
+    if (!host.readOnlyDevice && invite && !seenInvites.has(invite.id)) {
+      seenInvites.add(invite.id)
+      if (invite.status === 'pending') {
+        bubbles.append(eventInvite(message, conversation.id, host))
+        priorBurstKey = ''; priorGroupSpeakerId = ''
+      } else if (invite.status === 'scheduled') eventList.append(eventInvite(message, conversation.id, host))
+    }
     for (const relay of conversationRelays.filter((entry) => entry.sourceMessageId === message.id)) {
       bubbles.appendChild(handoffActivity(host, conversation, relay))
       renderedRelayIds.add(relay.id)
@@ -535,17 +547,6 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id))) bubbles.appendChild(handoffActivity(host, conversation, relay))
-  const eventStrip = el('details', 'lp-event-strip')
-  const eventSummary = el('summary', 'lp-event-strip-summary')
-  const eventList = el('div', 'lp-event-strip-list')
-  if (!host.readOnlyDevice) {
-    const seenInvites = new Set<string>()
-    for (const message of conversation.messages) {
-      if (!message.eventSuggestion || seenInvites.has(message.eventSuggestion.id)) continue
-      seenInvites.add(message.eventSuggestion.id)
-      if (message.eventSuggestion.status !== 'declined') eventList.append(eventInvite(message, conversation.id, host))
-    }
-  }
   if (eventList.childElementCount) {
     eventSummary.textContent = `${eventList.childElementCount === 1 ? '1 event' : `${eventList.childElementCount} events`} · ${eventList.querySelector('h3')?.textContent || 'Timeline'}`
     eventStrip.append(eventSummary, eventList)

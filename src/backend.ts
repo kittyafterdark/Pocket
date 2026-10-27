@@ -5350,7 +5350,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const appended = await spindle.chat.appendMessage(context.chatId, {
             role: 'user', content, metadata: { source: 'pocket', pocketEventId: text(payload.eventId, 180), pocketContinuation: true },
           }, { triggerGeneration: true })
-          await spindle.chat.setMessageHidden(context.chatId, appended.id, true).catch(() => undefined)
+          // Hidden host turns are excluded from prompt assembly. Keep the event
+          // instruction in chat history so generation and later turns retain it.
           if (!appended.generationId) throw new Error('The event time was set, but the host did not accept generation. You can retry quickstart.')
         } finally { relayFlights.delete(flightKey) }
         break

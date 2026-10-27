@@ -68,6 +68,7 @@ let interceptorHandler = null
 let registeredTool = null
 const quietRequests = []
 const appendedChatMessages = []
+const hiddenChatMessages = new Set()
 const updatedChatMessages = []
 const macroResolveCalls = []
 const hostImages = new Map([
@@ -116,7 +117,11 @@ globalThis.spindle = {
     getMessages: async () => [{ id: 'BED-111', index_in_chat: 0, role: 'user', content: 'At the market.' }, { id: 'KITCHEN-222', index_in_chat: 1, role: 'assistant', content: 'Mira, the flower seller, waves from her stall.' }],
     appendMessage: async (chatId, message, options) => { appendedChatMessages.push({ chatId, message, options }); return { id: `host-message-${appendedChatMessages.length}`, generationId: options?.triggerGeneration ? `generation-${appendedChatMessages.length}` : undefined } },
     updateMessage: async (chatId, messageId, patch) => { updatedChatMessages.push({ chatId, messageId, patch }) },
-    setMessageHidden: async () => {},
+    setMessageHidden: async (chatId, messageId, hidden) => {
+      const key = `${chatId}:${messageId}`
+      if (hidden) hiddenChatMessages.add(key)
+      else hiddenChatMessages.delete(key)
+    },
   },
   personas: { getActive: async () => ({ id: 'persona-test', name: 'Test Persona' }) },
   council: {
@@ -2129,14 +2134,44 @@ backendReceiver(inviteUiState)
 const inviteCard = dockRoot.querySelector('.lp-event-invite')
 assert.ok(inviteCard, 'conversation suggestions render as separate invite cards')
 assert.equal(inviteCard.closest('.lp-bubble, .lp-group-message'), null, 'invites must not live inside messages')
-assert.equal(inviteCard.parentElement, dockRoot.querySelector('.lp-event-strip-list'))
-assert.equal(dockRoot.querySelector('.lp-event-strip').open, false, 'event strip starts collapsed')
-assert.equal(dockRoot.querySelector('.lp-event-strip').closest('.lp-reference-slot').previousElementSibling.className, 'lp-nav')
+assert.equal(inviteCard.parentElement, dockRoot.querySelector('.lp-bubbles'), 'new invitations are visible inline')
+assert.equal(inviteCard.previousElementSibling.querySelector('.lp-bubble')?.dataset.messageId || inviteCard.previousElementSibling.dataset.messageId, inviteConversation.messages.at(-1).id, 'invite follows its originating message')
+assert.equal(dockRoot.querySelector('.lp-event-strip'), null, 'pending invitations must not be hidden in the event strip')
+await exportVisual('chat-invite-pending', dockRoot)
+inviteConversation.messages.at(-1).eventSuggestion.status = 'declined'
+backendReceiver(inviteUiState)
+assert.equal(dockRoot.querySelector('.lp-event-invite'), null, 'declined invitations disappear')
+assert.equal(dockRoot.querySelector('.lp-event-strip'), null)
+assert.ok(dockRoot.querySelector('[data-message-id="' + inviteConversation.messages.at(-1).id + '"]'), 'declining keeps the original message')
 assert.ok(dockRoot.querySelector('.lp-compose-input textarea[aria-label="Message"]'))
 assert.ok(dockRoot.querySelector('.lp-compose-input button[aria-label="Send message"]'))
 inviteUiState.state.events.push({ id: 'ui-quick-event', title: 'Movie night', start: '2026-09-05T19:00:00.000Z', end: '2026-09-05T20:00:00.000Z', whenKind: 'exact', completed: false })
 inviteConversation.messages.at(-1).eventSuggestion.status = 'scheduled'
 inviteConversation.messages.at(-1).eventSuggestion.scheduledEventId = 'ui-quick-event'
+backendReceiver(inviteUiState)
+assert.equal(dockRoot.querySelector('.lp-bubbles .lp-event-invite'), null, 'scheduled invitation leaves the message stream')
+assert.equal(dockRoot.querySelector('.lp-event-strip').open, false, 'scheduled invitation folds into a collapsed strip')
+assert.equal(dockRoot.querySelector('.lp-event-strip').closest('.lp-reference-slot').previousElementSibling.className, 'lp-nav')
+dockRoot.querySelector('.lp-event-strip').open = true
+const secondInviteMessage = { ...structuredClone(inviteConversation.messages.at(-1)), id: 'second-invite-message', eventSuggestion: { ...structuredClone(inviteConversation.messages.at(-1).eventSuggestion), id: 'second-invite', title: 'Breakfast', status: 'pending', scheduledEventId: undefined } }
+inviteConversation.messages.push(secondInviteMessage)
+backendReceiver(inviteUiState)
+assert.equal(dockRoot.querySelectorAll('.lp-event-strip .lp-event-invite').length, 1, 'pending events do not inflate the scheduled strip')
+assert.equal(dockRoot.querySelectorAll('.lp-bubbles .lp-event-invite').length, 1)
+assert.equal(dockRoot.querySelector('.lp-event-strip').open, true, 'a new invitation does not disturb an expanded scheduled strip')
+secondInviteMessage.eventSuggestion.status = 'declined'
+backendReceiver(inviteUiState)
+assert.equal(dockRoot.querySelector('.lp-bubbles .lp-event-invite'), null)
+assert.equal(dockRoot.querySelector('.lp-event-strip').open, true)
+secondInviteMessage.eventSuggestion.status = 'pending'
+backendReceiver(inviteUiState)
+secondInviteMessage.eventSuggestion.status = 'scheduled'
+secondInviteMessage.eventSuggestion.scheduledEventId = 'ui-second-event'
+backendReceiver(inviteUiState)
+assert.equal(dockRoot.querySelector('.lp-bubbles .lp-event-invite'), null)
+assert.equal(dockRoot.querySelectorAll('.lp-event-strip .lp-event-invite').length, 2)
+assert.equal(dockRoot.querySelector('.lp-event-strip').open, false, 'scheduling a new invitation collapses an already expanded strip')
+inviteConversation.messages.pop()
 backendReceiver(inviteUiState)
 const stripBeforeUpdate = dockRoot.querySelector('.lp-event-strip')
 stripBeforeUpdate.open = true
@@ -3023,6 +3058,16 @@ assert.equal(appendedChatMessages.length, quickBefore + 1)
 assert.equal(appendedChatMessages.at(-1).options.triggerGeneration, true)
 assert.match(appendedChatMessages.at(-1).message.content, /Movie night/)
 assert.match(appendedChatMessages.at(-1).message.content, /I will bring takeout/)
+// Model assembly can run after appendMessage resolves; hidden host turns are filtered out.
+const quickHostId = `host-message-${appendedChatMessages.length}`
+const quickPromptTurns = appendedChatMessages.filter((turn, index) => turn.chatId === quickPayload.chatId && !hiddenChatMessages.has(`${turn.chatId}:host-message-${index + 1}`))
+assert.equal(hiddenChatMessages.has(`${quickPayload.chatId}:${quickHostId}`), false, 'quickstart instruction must remain available to delayed assembly and subsequent turns')
+assert.equal(quickPromptTurns.length, 1)
+assert.equal(quickPromptTurns[0].message.role, 'user')
+assert.match(quickPromptTurns[0].message.content, /Begin this scheduled event/)
+assert.match(quickPromptTurns[0].message.content, /Story time: 2026-09-05T19:00:00.000Z/)
+assert.match(quickPromptTurns[0].message.content, /Movie night/)
+assert.match(quickPromptTurns[0].message.content, /I will bring takeout/)
 const quickSaved = storage.get('phones/quickstart-contract__char-a.json')
 assert.equal(quickSaved.roleplayNow, quickPayload.roleplayNow)
 assert.equal(quickSaved.roleplayClockSource, 'manual')

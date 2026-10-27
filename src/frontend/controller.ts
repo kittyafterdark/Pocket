@@ -1930,6 +1930,7 @@ class PocketController {
     const oldViewScroll = oldView?.scrollTop || 0
     const oldThread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
     const oldEventStripOpen = this.screen.querySelector<HTMLDetailsElement>('.lp-event-strip')?.open
+    const oldScheduledInvites = new Set([...this.screen.querySelectorAll<HTMLElement>('.lp-event-strip [data-suggestion-id]')].map(card => card.dataset.suggestionId))
     const oldThreadScroll = oldThread?.scrollTop
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false
     const focusedDockSide = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
@@ -1970,7 +1971,7 @@ class PocketController {
     this.screen.replaceChildren(view)
     if (!transition && oldEventStripOpen) {
       const strip = view.querySelector<HTMLDetailsElement>('.lp-event-strip')
-      if (strip) strip.open = true
+      if (strip && [...strip.querySelectorAll<HTMLElement>('[data-suggestion-id]')].every(card => oldScheduledInvites.has(card.dataset.suggestionId))) strip.open = true
     }
     if (!transition) requestAnimationFrame(() => {
       view.scrollTop = oldViewScroll

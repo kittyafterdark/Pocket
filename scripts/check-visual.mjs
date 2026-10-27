@@ -34,7 +34,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 36, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 37, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 for (const name of selectedCases) assert.ok(files.includes(name + '.html'), 'Unknown visual case')
 const captureFiles = selectedCases.length ? files.filter(file => selectedCases.includes(file.replace('.html', ''))) : files
@@ -94,6 +94,12 @@ try {
         await page.locator('.lp-npc-camera .lp-content').evaluate(node => { node.scrollTop = node.scrollHeight })
         assert.equal(await page.locator('.lp-npc-portrait-actions button').count(), 3)
         assert.ok(await page.locator('.lp-npc-portrait-actions').evaluate(node => { const row = node.getBoundingClientRect(); const screen = node.closest('.lumiphone-screen').getBoundingClientRect(); return row.width <= screen.width && row.top >= screen.top && row.bottom <= screen.bottom }), 'NPC portrait row must fit and remain reachable in the handset')
+      }
+      if (file === 'chat-invite-pending.html') {
+        assert.equal(await page.locator('.lp-event-strip').count(), 0, 'Pending invitations stay in the conversation')
+        assert.equal(await page.locator('.lp-bubbles > .lp-event-invite[data-status="pending"]').count(), 1)
+        assert.ok(await page.getByRole('button', { name: 'Schedule event: Movie night', exact: true }).isVisible())
+        assert.ok(await page.getByRole('button', { name: 'Decline invitation: Movie night', exact: true }).isVisible())
       }
       if (file === 'chat-invite.html') {
         const strip = page.locator('.lp-event-strip')

@@ -9137,9 +9137,6 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
             content,
             metadata: { source: "pocket", pocketEventId: text2(payload.eventId, 180), pocketContinuation: true }
           }, { triggerGeneration: true });
-          await spindle.chat.setMessageHidden(context.chatId, appended.id, true).catch(() => {
-            return;
-          });
           if (!appended.generationId)
             throw new Error("The event time was set, but the host did not accept generation. You can retry quickstart.");
         } finally {
