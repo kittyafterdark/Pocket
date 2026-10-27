@@ -267,8 +267,8 @@ export const PHONE_STYLES = `
   .lp-event-invite-when { margin:14px 0 0; font-size:12px; font-weight:650; }
   .lp-event-invite-description { margin:6px 0 0; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
   .lp-event-invite-people { margin:10px 0 0; font-size:10px; line-height:1.4; color:var(--lp-muted); }
-  .lp-event-invite-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
-  .lp-event-invite-actions .lp-button { min-height:36px; padding:8px 14px; border-radius:10px; }
+  .lp-event-invite-actions { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:8px; margin-top:14px; }
+  .lp-event-invite-actions .lp-button { min-width:0; min-height:36px; padding:8px 10px; border-radius:10px; text-align:center; overflow-wrap:anywhere; }
   .lp-event-invite[data-status="declined"] { opacity:.65; }
   .lp-bubbles { min-height:0; overflow:auto; padding:14px 12px; display:flex; flex-direction:column; gap:7px; }
   .lp-bubble { max-width:79%; padding:8px 10px; border-radius:16px; font-size:11px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; box-shadow:0 3px 10px rgba(0,0,0,.08); }
@@ -646,7 +646,9 @@ ${INLINE_BASE_STYLES}
   .lp-event-strip .lp-event-invite-heading h3 { font-size:var(--pocket-font-sm); }
   .lp-event-strip .lp-event-invite-when { margin-top:8px; }
   .lumiphone-shell .lp-compose { grid-template-columns:auto minmax(0,1fr); align-items:end; }
-  .lp-compose-input { display:flex; align-items:flex-end; min-width:0; padding:3px; border:1px solid var(--lp-border); border-radius:22px; background:var(--lp-surface); }
+  .lumiphone-shell .lp-compose > .lp-button-icon { width:calc(40px * var(--pocket-ui-scale)); height:calc(40px * var(--pocket-ui-scale)); min-height:calc(40px * var(--pocket-ui-scale)); padding:0; border-radius:50%; }
+  .lumiphone-shell .lp-compose > .lp-button-icon:not(.lp-reply-stop) { color:var(--lp-accent); border-color:color-mix(in srgb,var(--lp-accent) 22%,var(--lp-border)); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
+  .lp-compose-input { display:flex; align-items:center; min-width:0; padding:3px; border:1px solid var(--lp-border); border-radius:22px; background:var(--lp-surface); }
   .lp-compose-input:focus-within { border-color:var(--lp-accent); box-shadow:0 0 0 1px var(--lp-accent); }
   .lumiphone-shell .lp-compose-input .lp-textarea { flex:1; min-width:0; min-height:calc(32px * var(--pocket-ui-scale)); border:0; outline:0; resize:none; background:transparent; box-shadow:none; padding:7px 9px; }
   .lumiphone-shell .lp-compose-input .lp-button-icon { flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:calc(30px * var(--pocket-ui-scale)); border:0; border-radius:50%; background:var(--lp-accent); color:var(--lp-bg); }

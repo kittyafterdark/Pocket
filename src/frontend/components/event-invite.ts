@@ -33,7 +33,7 @@ export function eventInvite(message: PhoneMessage, conversationId: string, host:
     decline.addEventListener('click', () => host.declineEventSuggestion(conversationId, message.id))
     actions.append(accept, decline)
   } else if (invite.status === 'scheduled' && invite.scheduledEventId) {
-    const open = button('Open event', 'lp-button lp-button-quiet')
+    const open = button('Open event', 'lp-button')
     open.setAttribute('aria-label', `Open event: ${invite.title}`)
     open.addEventListener('click', () => host.openTimeline(invite.scheduledEventId!))
     actions.append(open)

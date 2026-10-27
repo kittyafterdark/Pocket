@@ -101,6 +101,13 @@ try {
         await strip.locator('summary').focus()
         await page.keyboard.press('Enter')
         assert.ok(await page.getByRole('button', { name: 'Quickstart event: Movie night', exact: true }).isVisible())
+        assert.ok(await page.locator('.lp-event-invite-actions').evaluate(node => {
+          const buttons = [...node.querySelectorAll('button')]
+          const [open, start] = buttons.map(button => button.getBoundingClientRect())
+          return Math.abs(open.width - start.width) < 1 && Math.abs(open.height - start.height) < 1
+            && getComputedStyle(buttons[0]).backgroundColor === getComputedStyle(buttons[1]).backgroundColor
+            && start.right <= node.getBoundingClientRect().right + 1
+        }), 'Event actions must have matching weight and fit the row')
         await page.evaluate(() => window.scrollTo(0, 0))
       }
       if (file.startsWith('chat')) {
@@ -126,6 +133,22 @@ try {
       }
       const name = file.replace('.html', `-${width}.png`)
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide' })
+      // Check scaled geometry after capture so raster caches from scale changes cannot affect baselines.
+      if (file.startsWith('chat')) {
+        const originalScale = await page.locator('.lumiphone-shell').evaluate(node => node.style.getPropertyValue('--pocket-ui-scale'))
+        for (const scale of [.7, 1, 1.3]) {
+          await page.locator('.lumiphone-shell').evaluate((node, scale) => node.style.setProperty('--pocket-ui-scale', String(scale)), scale)
+          assert.ok(await page.locator('.lp-compose-input').evaluate(node => {
+            const shell = node.getBoundingClientRect(), send = node.querySelector('button').getBoundingClientRect()
+            return Math.abs((shell.top + shell.bottom - send.top - send.bottom) / 2) < 1
+          }), 'Send button must stay vertically centered at every interface scale')
+          assert.ok(await page.locator('.lp-compose > button').evaluate(node => {
+            const bounds = node.getBoundingClientRect()
+            return Math.abs(bounds.width - bounds.height) < 1
+          }), 'Generate/stop button must remain circular at every interface scale')
+        }
+        await page.locator('.lumiphone-shell').evaluate((node, scale) => node.style.setProperty('--pocket-ui-scale', scale), originalScale)
+      }
       if (update || updateCases.includes(file.replace('.html', ''))) await writeFile(join(baseline, name), actual)
       else {
         const expected = await readFile(join(baseline, name)).catch(error => {
