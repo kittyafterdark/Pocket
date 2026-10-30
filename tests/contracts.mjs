@@ -193,6 +193,227 @@ assert.equal(firstState.state.events.find((entry) => entry.id === 'legacy-handof
 assert.equal(firstState.state.trackers[0].kind, 'meter')
 assert.equal(firstState.state.trackers[0].clock, 'real')
 assert.equal(firstState.state.trackers[0].target.type, 'custom')
+// Launcher mutations use the same canonical state lock and survive normalization/reload.
+const launcherOwner = firstState.state.pocketPersonaActorId
+const launcherNpc = firstState.state.contacts[0].id
+const compactLauncher = { version: 1, home: ['settings'], dock: ['messages', null, 'camera', null] }
+const migratedLauncher = { version: 2, pages: [{ id: 'home', name: 'Home', items: [{ id: 'app-settings', kind: 'app', app: 'settings' }] }], dock: compactLauncher.dock }
+await Promise.all([
+  frontendHandler({ type: 'lumiphone:save_launcher', requestId: 'launcher-persona', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, layout: compactLauncher }, 'user-a'),
+  frontendHandler({ type: 'lumiphone:save_launcher', requestId: 'launcher-npc', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherNpc, layout: { version: 1, home: ['notes'], dock: [] } }, 'user-a'),
+])
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherOwner], migratedLauncher)
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherNpc].pages[0].items.map(item => item.app), ['notes'])
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'launcher-reload', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.deepEqual(frontendMessages.filter(message => message.type === 'lumiphone:state').at(-1).state.launcherLayouts[launcherOwner], migratedLauncher)
+const richLauncher = { version: 2, dock: ['messages', null, 'gallery', null], pages: [
+  { id: 'home', name: 'Home', items: [{ id: 'app-settings', kind: 'app', app: 'settings' }] },
+  { id: 'second', name: 'Screen 2', items: [{ id: 'social', kind: 'folder', name: 'Social', apps: ['contacts', 'camera'] }, { id: 'health-widget', kind: 'tracker', trackerId: firstState.state.trackers[0].id, size: 'wide' }, { id: 'weather-widget', kind: 'weather', size: 'compact', variant: 'stripe' }, { id: 'clock-widget', kind: 'clock', size: 'wide' }] },
+] }
+await frontendHandler({ type: 'lumiphone:save_launcher', requestId: 'rich-launcher', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, layout: richLauncher }, 'user-a')
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'rich-launcher-reload', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.deepEqual(frontendMessages.filter(message => message.type === 'lumiphone:state').at(-1).state.launcherLayouts[launcherOwner], richLauncher)
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherNpc].pages[0].items.map(item => item.app), ['notes'], 'saving Persona pages must not change an NPC phone layout')
+const beforeStore = structuredClone(storage.get('phones/chat-a__char-a.json'))
+const storeFixtureState = structuredClone(beforeStore)
+storeFixtureState.notes.push({ id: 'store-kept-note', title: 'Kept note', body: 'App removal must preserve this.', pinned: false, author: 'user', createdAt: '2026-10-01T12:00:00Z', updatedAt: '2026-10-01T12:00:00Z' })
+storage.set('phones/chat-a__char-a.json', storeFixtureState)
+await frontendHandler({ type: 'lumiphone:app_install', requestId: 'store-remove', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, appId: 'notes', installed: false }, 'user-a')
+assert.ok(!storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherOwner].installedApps.includes('notes'))
+assert.equal(storage.get('phones/chat-a__char-a.json').notes.find(note => note.id === 'store-kept-note').body, 'App removal must preserve this.')
+assert.equal(storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherNpc].installedApps, undefined, 'installation is isolated to the selected phone')
+// Saving an older Home draft cannot undo a concurrent install/remove operation.
+await frontendHandler({ type: 'lumiphone:save_launcher', requestId: 'store-stale-draft', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, layout: richLauncher }, 'user-a')
+assert.ok(!storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherOwner].installedApps.includes('notes'))
+await frontendHandler({ type: 'lumiphone:app_install', requestId: 'store-get', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, appId: 'notes', installed: true }, 'user-a')
+assert.ok(storage.get('phones/chat-a__char-a.json').launcherLayouts[launcherOwner].installedApps.includes('notes'))
+assert.equal(storage.get('phones/chat-a__char-a.json').notes.find(note => note.id === 'store-kept-note').body, 'App removal must preserve this.')
+await frontendHandler({ type: 'lumiphone:app_install', requestId: 'store-unknown', chatId: 'chat-a', characterId: 'char-a', appId: 'unknown-app', installed: true }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'store-unknown'))
+// Socials use the same installed-app boundary and canonical save/load pipeline.
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-before-get', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'post', text: 'Not installed yet' }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'social-before-get'))
+for (const app of ['twitter', 'discord', 'instagram', 'tumblr']) {
+  await frontendHandler({ type: 'lumiphone:app_install', requestId: `social-get-${app}`, chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, appId: app, installed: true }, 'user-a')
+}
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-post', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'post', text: 'A public festival post', imageUrl: 'https://untrusted.invalid/image.png' }, 'user-a')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-post', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'post', text: 'A duplicate delivery' }, 'user-a')
+assert.equal(storage.get('phones/chat-a__char-a.json').social.posts.length, 1, 'social request redelivery must not duplicate a post')
+assert.equal(storage.get('phones/chat-a__char-a.json').social.posts[0].imageUrl, undefined, 'arbitrary client URLs are not trusted image assets')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-server', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'discord', action: 'server', name: 'Night owls', channels: ['general', 'art'] }, 'user-a')
+const socialServer = storage.get('phones/chat-a__char-a.json').social.servers[0]
+assert.deepEqual(socialServer.channels.map(channel => channel.name), ['general', 'art'])
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-channel', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'discord', action: 'post', channelId: socialServer.channels[0].id, text: 'A private channel message' }, 'user-a')
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'social-reload', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+assert.equal(frontendMessages.filter(message => message.type === 'lumiphone:state').at(-1).state.social.posts.length, 2, 'social posts survive backend normalization and reload')
+// Social profiles, follows, and palette preferences persist through the real handler.
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-bio', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'profile', bio: 'Books and city lights.' }, 'user-a')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-follow', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'follow', accountId: launcherNpc }, 'user-a')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-palette', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'tumblr', action: 'preferences', theme: 'goth-rave' }, 'user-a')
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'social-profile-reload', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+const contractSocialSavedSettings = frontendMessages.filter(message => message.type === 'lumiphone:state').at(-1).state.social
+assert.equal(contractSocialSavedSettings.profiles[launcherOwner].bio, 'Books and city lights.')
+assert.deepEqual(contractSocialSavedSettings.following[launcherOwner].twitter, [launcherNpc])
+assert.equal(contractSocialSavedSettings.preferences[launcherOwner].tumblrTheme, 'goth-rave')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-self-follow', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'follow', accountId: launcherOwner }, 'user-a')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-invalid-palette', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'tumblr', action: 'preferences', theme: 'invalid' }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'social-self-follow'))
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'social-invalid-palette'))
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').social, contractSocialSavedSettings, 'invalid settings requests must not change the social world')
+
+// Photo selection is explicit, host-backed, and separate from posting or the old wallpaper fixture.
+const contractSocialOriginalUpload = spindle.images.uploadFromDataUrl, contractSocialOriginalGenerate = spindle.imageGen.generate
+const contractSocialImageIds = ['social-upload-photo', 'social-generated-photo', 'social-late-upload', 'social-late-generation']
+const contractSocialUploadCalls = [], contractSocialGenerationCalls = []
+try {
+  spindle.images.uploadFromDataUrl = async (dataUrl, options) => {
+    contractSocialUploadCalls.push({ dataUrl, options })
+    const image = { id: 'social-upload-photo', url: '/api/v1/images/social-upload-photo', mime_type: 'image/png' }
+    hostImages.set(image.id, image); return image
+  }
+  spindle.imageGen.generate = async input => { contractSocialGenerationCalls.push(input); return { imageId: 'social-generated-photo', imageUrl: '/api/v1/images/social-generated-photo' } }
+  await frontendHandler({ type: 'lumiphone:social_photo_upload', requestId: 'social-upload', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', filename: 'harbor.png', dataUrl: 'data:image/png;base64,AA==' }, 'user-a')
+  const uploaded = frontendMessages.find(message => message.type === 'lumiphone:social_photo_uploaded' && message.requestId === 'social-upload')
+  assert.equal(uploaded.imageId, 'social-upload-photo'); assert.equal(uploaded.imageUrl, '/api/v1/images/social-upload-photo')
+  assert.equal(contractSocialUploadCalls.at(-1).options.owner_chat_id, 'chat-a'); assert.equal(contractSocialUploadCalls.at(-1).options.owner_character_id, 'char-a'); assert.equal(contractSocialUploadCalls.at(-1).options.userId, 'user-a')
+  assert.equal(storage.get('phones/chat-a__char-a.json').social.posts.length, 2, 'uploading must attach a draft asset, never post automatically')
+  for (const [requestId, patch] of [
+    ['social-upload-bad-mime', { dataUrl: 'data:text/html;base64,AA==' }],
+    ['social-upload-wrong-app', { app: 'discord' }],
+    ['social-upload-wrong-owner', { deviceOwnerActorId: 'missing-phone' }],
+  ]) {
+    await frontendHandler({ type: 'lumiphone:social_photo_upload', requestId, chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', dataUrl: 'data:image/png;base64,AA==', ...patch }, 'user-a')
+    assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === requestId))
+  }
+  assert.equal(contractSocialUploadCalls.length, 1, 'invalid photo requests must stop before calling the host uploader')
+  await frontendHandler({ type: 'lumiphone:social_photo_generate', requestId: 'social-generated', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'tumblr', scene: 'Lanterns over the harbor', connectionId: 'fixture-image-connection' }, 'user-a')
+  const generated = frontendMessages.find(message => message.type === 'lumiphone:camera_done' && message.requestId === 'social-generated')
+  assert.equal(generated.imageId, 'social-generated-photo'); assert.equal(generated.imageUrl, '/api/v1/images/social-generated-photo')
+  assert.equal(contractSocialGenerationCalls.at(-1).owner_chat_id, 'chat-a'); assert.equal(contractSocialGenerationCalls.at(-1).owner_character_id, 'char-a')
+  assert.equal(contractSocialGenerationCalls.at(-1).includeDataUrl, false)
+  assert.equal(storage.get('phones/chat-a__char-a.json').social.posts.length, 2, 'generating a draft photo must never create a social post')
+
+  let contractSocialUploadStarted, contractSocialReleaseUpload
+  const uploadStarted = new Promise(resolve => { contractSocialUploadStarted = resolve })
+  spindle.images.uploadFromDataUrl = async () => { contractSocialUploadStarted(); return new Promise(resolve => { contractSocialReleaseUpload = resolve }) }
+  const lateUpload = frontendHandler({ type: 'lumiphone:social_photo_upload', requestId: 'social-cancel-upload', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', dataUrl: 'data:image/png;base64,AA==' }, 'user-a')
+  await uploadStarted
+  await frontendHandler({ type: 'lumiphone:social_photo_cancel', requestId: 'social-cancel-upload', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner }, 'user-a')
+  contractSocialReleaseUpload({ id: 'social-late-upload', url: '/api/v1/images/social-late-upload' }); await lateUpload
+  assert.ok(!frontendMessages.some(message => message.type === 'lumiphone:social_photo_uploaded' && message.requestId === 'social-cancel-upload'), 'cancelled uploads cannot attach late results')
+
+  let contractSocialGenerationStarted, contractSocialReleaseGeneration
+  const generationStarted = new Promise(resolve => { contractSocialGenerationStarted = resolve })
+  spindle.imageGen.generate = async () => { contractSocialGenerationStarted(); return new Promise(resolve => { contractSocialReleaseGeneration = resolve }) }
+  const beforeCancelledGeneration = structuredClone(storage.get('phones/chat-a__char-a.json'))
+  const lateGeneration = frontendHandler({ type: 'lumiphone:social_photo_generate', requestId: 'social-cancel-generation', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', scene: 'The late photo', connectionId: 'fixture-image-connection' }, 'user-a')
+  await generationStarted
+  await frontendHandler({ type: 'lumiphone:social_photo_cancel', requestId: 'social-cancel-generation', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner }, 'user-a')
+  contractSocialReleaseGeneration({ imageId: 'social-late-generation', imageUrl: '/api/v1/images/social-late-generation' }); await lateGeneration
+  assert.ok(!frontendMessages.some(message => message.type === 'lumiphone:camera_done' && message.requestId === 'social-cancel-generation'), 'cancelled generation cannot attach a late image')
+  for (const field of ['social', 'notifications', 'activities']) assert.deepEqual(storage.get('phones/chat-a__char-a.json')[field], beforeCancelledGeneration[field], `late cancelled image generation must not mutate ${field}`)
+} finally {
+  spindle.images.uploadFromDataUrl = contractSocialOriginalUpload; spindle.imageGen.generate = contractSocialOriginalGenerate
+  for (const id of contractSocialImageIds) hostImages.delete(id)
+}
+// Actual social handlers preserve per-app refresh modes and participant-scoped DM continuity.
+const contractDmStorage = new Map([...storage].map(([path, value]) => [path, structuredClone(value)]))
+const contractDmQuiet = spindle.generate.quiet, contractDmFrontendLength = frontendMessages.length
+const contractDmQuietLength = quietRequests.length, contractDmMacroLength = macroResolveCalls.length
+let contractDmInput
+try {
+  const profileBioBefore = storage.get('phones/chat-a__char-a.json').social.profiles[launcherOwner].bio
+  await frontendHandler({ type:'lumiphone:social_mutate',requestId:'profile-username-route',chatId:'chat-a',characterId:'char-a',deviceOwnerActorId:launcherOwner,app:'tumblr',action:'profile',username:'pocket-notes' },'user-a')
+  await frontendHandler({ type:'lumiphone:get_state',requestId:'profile-username-reload',chatId:'chat-a',characterId:'char-a' },'user-a')
+  assert.equal(storage.get('phones/chat-a__char-a.json').social.profiles[launcherOwner].usernames.tumblr,'pocket-notes','the real profile route forwards username edits')
+  assert.equal(storage.get('phones/chat-a__char-a.json').social.profiles[launcherOwner].bio,profileBioBefore,'username-only updates preserve the bio')
+  const settingsRequest = (requestId, patch) => frontendHandler({ type: 'lumiphone:social_mutate', requestId, chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', action: 'settings', ...patch }, 'user-a')
+  await settingsRequest('social-settings-timer-contract', { refreshMode: 'timer', refreshIntervalMinutes: 11 })
+  await frontendHandler({ type: 'lumiphone:get_state', requestId: 'social-settings-timer-reload', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+  const timedSettings = frontendMessages.filter(message => message.type === 'lumiphone:state').at(-1).state.social.preferences[launcherOwner].apps.instagram
+  assert.equal(timedSettings.refreshMode, 'timer'); assert.equal(timedSettings.refreshIntervalMinutes, 11); assert.equal(timedSettings.autoRefresh, true)
+  await settingsRequest('social-settings-turn-contract', { refreshMode: 'turn' })
+  assert.equal(storage.get('phones/chat-a__char-a.json').social.preferences[launcherOwner].apps.instagram.refreshMode, 'turn')
+  await settingsRequest('social-settings-manual-contract', { refreshMode: 'manual' })
+  const manualSettings = storage.get('phones/chat-a__char-a.json').social.preferences[launcherOwner].apps.instagram
+  assert.equal(manualSettings.refreshMode, 'manual'); assert.equal(manualSettings.autoRefresh, false); assert.equal(manualSettings.refreshIntervalMinutes, 11)
+
+  const dmState = structuredClone(storage.get('phones/chat-a__char-a.json')), contact = dmState.contacts.find(contact => contact.id === launcherNpc)
+  const dmAccountId = `card:${contact.source.characterId}`
+  contact.identityBrief = 'A longtime friend who promised to keep the market book.'
+  contact.phoneProfile = { personality: 'Warm and observant', appearance: '', textingStyle: 'Short lower-case texts' }
+  dmState.actorMemories.push({ id: 'memory:contract-prior-known', messageId: 'contract-prior-known', conversationId: 'contract-old-pocket-dm', conversationTitle: 'Earlier Pocket Messages', conversationKind: 'direct', speakerActorId: launcherOwner, speakerName: dmState.pocketPersona.displayName, text: 'The violet market book is reserved for you.', knownByActorIds: [launcherOwner, launcherNpc], knownByNames: [], createdAt: dmState.roleplayNow })
+  dmState.social.posts.push({ id: 'contract-known-instagram-post', app: 'instagram', account: { id: dmAccountId, actorId: launcherNpc, cardId: contact.source.characterId, name: contact.name, handle: 'alice' }, text: 'A public market photo.', tags: [], likedBy: [], createdAt: dmState.roleplayNow })
+  storage.set('phones/chat-a__char-a.json', dmState)
+  await frontendHandler({ type: 'lumiphone:get_state', requestId: 'social-linked-dm-boundary', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
+  const canonicalDmState = storage.get('phones/chat-a__char-a.json')
+  const beforeDmPosts = structuredClone(canonicalDmState.social.posts), beforeDmConversations = structuredClone(canonicalDmState.conversations)
+  spindle.generate.quiet = async request => {
+    const messages = request.messages || []
+    assert.match(String(messages[0]?.content || ''), /private fictional Instagram DM/)
+    contractDmInput = JSON.parse(messages.find(message => message.role === 'user').content)
+    return { content: JSON.stringify({ text: 'i remember. your book is waiting for you.' }), finish_reason: 'stop' }
+  }
+  const dmEligibility = storage.get('phones/chat-a__char-a.json'); dmEligibility.social.following ||= {}; dmEligibility.social.following[launcherOwner] ||= {}; dmEligibility.social.following[launcherOwner].instagram = [dmAccountId]; storage.set('phones/chat-a__char-a.json', dmEligibility)
+  await frontendHandler({ type: 'lumiphone:social_dm_send', requestId: 'social-linked-dm-contract', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, accountId: dmAccountId, text: 'Do you still have the violet book?' }, 'user-a')
+  assert.ok(contractDmInput?.knownContext, 'the real Instagram route must resolve the known character context callback')
+  assert.match(contractDmInput.knownContext.profile.identity, /longtime friend/)
+  assert.match(contractDmInput.knownContext.profile.textingStyle, /lower-case/)
+  assert.match(contractDmInput.knownContext.phoneMemory, /violet market book/)
+  assert.equal(contractDmInput.knownContext.name, contact.name)
+  const afterDm = storage.get('phones/chat-a__char-a.json'), dmThread = afterDm.social.dmThreads.find(thread => thread.account.id === dmAccountId && thread.owner === launcherOwner)
+  assert.deepEqual(dmThread.messages.map(message => message.sender), ['owner', 'account'])
+  const sharedDmMemories = afterDm.actorMemories.filter(memory => dmThread.messages.some(message => message.id === memory.messageId))
+  assert.equal(sharedDmMemories.length, 2, 'both sides of a known Instagram DM must enter the existing actor-memory store')
+  for (const memory of sharedDmMemories) {
+    assert.ok(memory.knownByActorIds.includes(launcherOwner)); assert.ok(memory.knownByActorIds.includes(launcherNpc))
+    assert.ok(memory.knownByActorIds.includes(`card:${contact.source.characterId}`)); assert.deepEqual(memory.knownByNames, [])
+  }
+  assert.deepEqual(afterDm.social.posts, beforeDmPosts, 'private Instagram messages must not become public posts')
+  assert.deepEqual(afterDm.conversations, beforeDmConversations, 'private Instagram messages remain separate from Pocket Messages')
+  assert.ok(frontendMessages.slice(contractDmFrontendLength).some(message => message.type === 'lumiphone:social_dm_done' && message.requestId === 'social-linked-dm-contract'))
+  const tumblrState = structuredClone(afterDm)
+  const originalPost = tumblrState.social.posts.find(post => post.app === 'instagram' && post.account.id === dmAccountId)
+  tumblrState.social.posts.push({ ...originalPost, id:'contract-known-tumblr-post',app:'tumblr',text:'A little public blog post.' })
+  tumblrState.social.following[launcherOwner].tumblr = [dmAccountId]
+  storage.set('phones/chat-a__char-a.json',tumblrState)
+  let tumblrInput
+  spindle.generate.quiet = async request => {
+    assert.match(request.messages[0].content,/private fictional Tumblr DM/)
+    tumblrInput = JSON.parse(request.messages.find(message=>message.role==='user').content)
+    return {content:JSON.stringify({text:'a separate tumblr answer.'}),finish_reason:'stop'}
+  }
+  await frontendHandler({type:'lumiphone:social_dm_send',app:'tumblr',requestId:'tumblr-wrong-thread-contract',chatId:'chat-a',characterId:'char-a',deviceOwnerActorId:launcherOwner,accountId:dmAccountId,threadId:dmThread.id,text:'Wrong app thread'},'user-a')
+  assert.equal(tumblrInput,undefined,'an Instagram thread cannot be opened as Tumblr')
+  await frontendHandler({type:'lumiphone:social_dm_send',app:'tumblr',requestId:'tumblr-linked-dm-contract',chatId:'chat-a',characterId:'char-a',deviceOwnerActorId:launcherOwner,accountId:dmAccountId,text:'A private Tumblr message'},'user-a')
+  assert.deepEqual(tumblrInput.messages.map(message=>message.text),['A private Tumblr message'],'the actual route selects the correct app history')
+  assert.match(tumblrInput.knownContext.profile.identity,/longtime friend/)
+  const savedTumblr = storage.get('phones/chat-a__char-a.json').social.dmThreads.find(thread=>thread.app==='tumblr')
+  assert.ok(savedTumblr); assert.notEqual(savedTumblr.id,dmThread.id)
+  assert.equal(storage.get('phones/chat-a__char-a.json').social.dmThreads.find(thread=>thread.id===dmThread.id).messages.length,2,'Tumblr replies never append to Instagram')
+  assert.ok(storage.get('phones/chat-a__char-a.json').actorMemories.some(memory=>memory.conversationId===`tumblr:${savedTumblr.id}`),'the Tumblr thread keeps its correct shared-memory source')
+} finally {
+  // Reconcile the active timer scope before restoring fixture storage, even after an assertion failure.
+  await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-settings-cleanup-contract', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', action: 'settings', refreshMode: 'manual' }, 'user-a')
+  spindle.generate.quiet = contractDmQuiet
+  storage.clear(); for (const [path, value] of contractDmStorage) storage.set(path, value)
+  frontendMessages.length = contractDmFrontendLength; quietRequests.length = contractDmQuietLength; macroResolveCalls.length = contractDmMacroLength
+}
+
+await frontendHandler({ type: 'lumiphone:app_install', requestId: 'social-remove', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, appId: 'twitter', installed: false }, 'user-a')
+await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'social-after-remove', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', action: 'post', text: 'No hidden app writes' }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'social-after-remove'))
+assert.equal(storage.get('phones/chat-a__char-a.json').social.posts.length, 2, 'removal hides the app and preserves the social world')
+await frontendHandler({ type: 'lumiphone:social_photo_upload', requestId: 'social-photo-after-remove', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'twitter', dataUrl: 'data:image/png;base64,AA==' }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'social-photo-after-remove'), 'removed apps cannot use the photo composer')
+storage.set('phones/chat-a__char-a.json', beforeStore)
+const launcherSnapshot = structuredClone(storage.get('phones/chat-a__char-a.json').launcherLayouts)
+await frontendHandler({ type: 'lumiphone:save_launcher', requestId: 'launcher-missing', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: 'missing-phone', layout: compactLauncher }, 'user-a')
+assert.ok(frontendMessages.some(message => message.type === 'lumiphone:error' && message.requestId === 'launcher-missing'))
+assert.deepEqual(storage.get('phones/chat-a__char-a.json').launcherLayouts, launcherSnapshot)
+// Keep the remaining app contracts on their original default launcher fixture.
+storage.set('phones/chat-a__char-a.json', { ...storage.get('phones/chat-a__char-a.json'), launcherLayouts: {} })
+await frontendHandler({ type: 'lumiphone:get_state', requestId: 'launcher-restored', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
 assert.equal(firstState.state.settings, undefined)
 assert.equal(firstState.preferences.handsetScale, 1.15)
 assert.equal(firstState.preferences.uiScale, 1)
@@ -1600,9 +1821,12 @@ let portraitInput
 spindle.imageGen.generate = async input => { portraitInput = input; return { imageId: 'portrait-image', imageUrl: '/api/v1/image-gen/results/portrait-image' } }
 const portraitContact = storage.get('phones/chat-a__char-a.json').contacts[0]
 const oldAvatar = portraitContact.avatarOverrideUrl
+const portraitNotificationCount = storage.get('phones/chat-a__char-a.json').notifications.length, portraitActivityCount = storage.get('phones/chat-a__char-a.json').activities.length
 await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'portrait-test', chatId: 'chat-a', characterId: 'char-a', contactId: portraitContact.id, scene: 'Head and shoulders, neutral background', enhance: false }, 'user-a')
 assert.match(portraitInput.prompt, /Single-subject contact portrait/)
 assert.equal(storage.get('phones/chat-a__char-a.json').contacts[0].avatarOverrideUrl, oldAvatar, 'portrait generation must wait for an explicit apply action')
+assert.equal(storage.get('phones/chat-a__char-a.json').notifications.length, portraitNotificationCount, 'portrait jobs must not emit story notifications')
+assert.equal(storage.get('phones/chat-a__char-a.json').activities.length, portraitActivityCount, 'portrait jobs must not emit in-world photo activities')
 portraitInput = null
 await frontendHandler({ type: 'lumiphone:camera_generate', requestId: 'portrait-missing', chatId: 'chat-a', characterId: 'char-a', contactId: 'missing-contact', scene: 'Portrait', enhance: false }, 'user-a')
 assert.equal(portraitInput, null, 'missing portrait target must fail before image generation')
@@ -1655,6 +1879,116 @@ for (const offset of [0, 120, 672, 9999, -5]) {
 }
 spindle.images.list = originalImageList
 
+// Exercise the real GENERATION_ENDED subscription, not a direct service fixture.
+// Isolated host messages/settings keep this opt-in automation test independent of the UI fixtures.
+const contractAutoStorage = new Map([...storage].map(([path, value]) => [path, structuredClone(value)]))
+const contractAutoQuiet = spindle.generate.quiet, contractAutoMessages = spindle.chat.getMessages
+const contractAutoFrontendLength = frontendMessages.length, contractAutoMacroLength = macroResolveCalls.length
+const contractAutoChat = 'chat-social-auto-contract', contractAutoPath = 'phones/chat-social-auto-contract__char-a.json'
+let contractAutoMessageId = 'social-auto-default', contractAutoFeedCalls = 0
+const contractAutoWait = async predicate => {
+  for (let attempt = 0; attempt < 100 && !predicate(); attempt++) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.ok(predicate(), 'normal committed RP completion must finish its enabled social refresh')
+}
+try {
+  const isolatedPreferences = structuredClone(storage.get('device/preferences.json'))
+  isolatedPreferences.ambientMessaging = 'off'; isolatedPreferences.jev = { ...isolatedPreferences.jev, enabled: false }
+  storage.set('device/preferences.json', isolatedPreferences)
+  spindle.chat.getMessages = async () => [
+    { id: 'social-auto-human', revision: 1, role: 'user', content: 'The public market is open.' },
+    { id: contractAutoMessageId, revision: 1, role: 'assistant', content: 'Lanterns glow above the market stalls.' },
+  ]
+  spindle.generate.quiet = async request => {
+    const system = String(request.messages?.find(message => message.role === 'system')?.content || '')
+    if (/fictional Twitter content/i.test(system)) {
+      contractAutoFeedCalls++
+      return { content: JSON.stringify({ posts: [{ key: 'market', author: 'Market Bulletin', handle: 'market_bulletin', text: 'Lantern night at the public market.' }] }), finish_reason: 'stop' }
+    }
+    // The authoritative normal-turn reconciler still runs before social automation.
+    assert.match(system, /RP WORLD STATE delta/)
+    return { content: JSON.stringify({ world: { setting: '', clock: null, facts: [], weather: null }, facts: [], actors: [], timeline: [], trackerOps: [] }), finish_reason: 'stop' }
+  }
+  await frontendHandler({ type: 'lumiphone:get_state', requestId: 'auto-contract-state', chatId: contractAutoChat, characterId: 'char-a' }, 'user-a')
+  const owner = storage.get(contractAutoPath).pocketPersonaActorId
+  await frontendHandler({ type: 'lumiphone:app_install', requestId: 'auto-contract-install', chatId: contractAutoChat, characterId: 'char-a', deviceOwnerActorId: owner, appId: 'twitter', installed: true }, 'user-a')
+  await backendEvents.get('GENERATION_ENDED')({ chatId: contractAutoChat, generationId: 'auto-default-gen', generationType: 'normal', messageId: contractAutoMessageId }, 'user-a')
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(contractAutoFeedCalls, 0, 'installing Twitter must not opt the phone into automatic generation')
+  await frontendHandler({ type: 'lumiphone:social_mutate', requestId: 'auto-contract-enable', chatId: contractAutoChat, characterId: 'char-a', deviceOwnerActorId: owner, app: 'twitter', action: 'settings', autoRefresh: true }, 'user-a')
+  for (const kind of ['quiet', 'regenerate', 'swipe']) {
+    contractAutoMessageId = 'social-auto-' + kind
+    await backendEvents.get('GENERATION_ENDED')({ chatId: contractAutoChat, generationId: 'auto-' + kind + '-gen', generationType: kind, messageId: contractAutoMessageId }, 'user-a')
+  }
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(contractAutoFeedCalls, 0, 'quiet, regenerated, and swipe completions must not start enabled social automation')
+  contractAutoMessageId = 'social-auto-normal'
+  await backendEvents.get('GENERATION_ENDED')({ chatId: contractAutoChat, generationId: 'auto-enabled-gen', generationType: 'normal', messageId: contractAutoMessageId }, 'user-a')
+  await contractAutoWait(() => frontendMessages.slice(contractAutoFrontendLength).some(message => message.type === 'lumiphone:social_done' && message.chatId === contractAutoChat && message.app === 'twitter' && message.action === 'refresh'))
+  assert.equal(contractAutoFeedCalls, 1)
+  assert.equal(storage.get(contractAutoPath).social.posts.length, 1)
+  assert.equal(storage.get(contractAutoPath).social.posts[0].text, 'Lantern night at the public market.')
+  assert.ok(frontendMessages.slice(contractAutoFrontendLength).some(message => message.type === 'lumiphone:social_started' && message.chatId === contractAutoChat && message.automatic === true))
+  await backendEvents.get('GENERATION_ENDED')({ chatId: contractAutoChat, generationId: 'auto-repeat-gen', generationType: 'normal', messageId: contractAutoMessageId }, 'user-a')
+  // All host callbacks above resolve in memory; a task boundary drains the remaining disabled-app checks.
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(contractAutoFeedCalls, 1, 'duplicate completion of the same canonical host message must not generate twice')
+  assert.equal(storage.get(contractAutoPath).social.posts.length, 1)
+} finally {
+  spindle.generate.quiet = contractAutoQuiet; spindle.chat.getMessages = contractAutoMessages
+  storage.clear(); for (const [path, value] of contractAutoStorage) storage.set(path, value)
+  frontendMessages.length = contractAutoFrontendLength; macroResolveCalls.length = contractAutoMacroLength
+}
+
+// Historical phone messages cannot replay a resolved plan after the story calendar advances.
+const staleDmStorage = new Map([...storage].map(([path, value]) => [path, structuredClone(value)]))
+const staleDmQuiet = spindle.generate.quiet, staleDmFrontLength = frontendMessages.length, staleDmMacroLength = macroResolveCalls.length
+const staleDmChat = 'historical-dm-contract', staleDmPath = 'phones/historical-dm-contract__char-a.json'
+let staleDmRequest
+try {
+  storage.set('device/preferences.json', { ...storage.get('device/preferences.json'), version: 5, roleplayContextMode: 'off', ambientMessaging: 'off' })
+  await frontendHandler({ type: 'lumiphone:get_state', requestId: 'historical-dm-state', chatId: staleDmChat, characterId: 'char-a' }, 'user-a')
+  const state = structuredClone(storage.get(staleDmPath)), contact = state.contacts[0], conversation = state.conversations[0]
+  const oldTime = '2026-10-27T10:00:00.000Z', currentTime = '2026-10-29T14:00:00.000Z'
+  state.roleplayNow = currentTime; state.roleplayClockSource = 'manual'; state.roleplayClockPrecision = 'exact'; state.roleplayClockLabel = 'October 29, 14:00'; state.roleplayTimezoneOffsetMinutes = 0
+  contact.presence.inScene = false; contact.messagingPolicy.remoteEligible = true
+  conversation.availability = { state: 'remote' }; conversation.pause = undefined
+  const oldClock = { source: 'narrative', precision: 'exact', roleplayNow: oldTime, label: 'October 27, 10:00' }
+  conversation.messages = [
+    { id: 'historical-approach', sender: 'contact', senderActorId: contact.id, senderContactId: contact.id, senderName: contact.name, text: 'I will be there in 20 minutes.', createdAt: oldTime, storyClock: oldClock, read: true, status: 'read' },
+    { id: 'historical-confirmation', sender: 'persona', senderActorId: state.pocketPersonaActorId, senderName: state.pocketPersona.displayName, text: 'See you at the market then.', createdAt: oldTime, storyClock: oldClock, read: true, status: 'read' },
+  ]
+  const eventBase = { description: '', start: '', end: '', whenKind: 'unscheduled', whenText: '', color: '#8b7dff', lane: 'Personal', createdBy: 'user', actorContactIds: [contact.id], participantActorIds: [contact.id], source: { app: 'messages', conversationId: conversation.id } }
+  state.events = [
+    { ...eventBase, id: 'historical-completed-plan', title: 'Market visit already happened', completed: true, kind: 'phone-handoff', channelTransition: { from: 'remote', to: 'local', reason: 'in_scene' } },
+    { ...eventBase, id: 'historical-open-plan', title: 'Return the borrowed book', completed: false },
+  ]
+  state.relays = [{ id: 'historical-consumed-handoff', chatId: staleDmChat, characterId: 'char-a', contactId: contact.id, conversationId: conversation.id, kind: 'local', reason: 'in_scene', actorState: 'in_scene', conversationTail: { text: 'The market visit continued in person.', recentMessageIds: ['historical-approach'], updatedAt: oldTime }, latestExchange: 'I will be there in 20 minutes.', timelineEventId: 'historical-completed-plan', createdAt: oldTime, status: 'consumed', consumedAt: oldTime, consumedMessageId: 'historical-rp-handoff', continuation: { state: 'completed' } }]
+  storage.set(staleDmPath, state)
+  spindle.generate.quiet = async request => { staleDmRequest = request; return { content: JSON.stringify({ recipient: state.pocketPersona.displayName, message: 'good seeing you at the market the other day. still have your book?', after: { state: 'remote', reason: '' }, suggestion: null }), finish_reason: 'stop' } }
+  await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'historical-dm-generate', chatId: staleDmChat, characterId: 'char-a', conversationId: conversation.id }, 'user-a')
+  assert.ok(staleDmRequest, 'Generate message must reach the controlled model')
+  const prompt = staleDmRequest.messages.map(message => message.content).join('\n')
+  assert.match(prompt, /CURRENT CONVERSATION STATE/); assert.match(prompt, /CURRENT STORY TIME: 2026-10-29 14:00/)
+  assert.match(prompt, /Story time: 2026-10-27 10:00; EARLIER STORY DAY/)
+  assert.match(prompt, /story calendar advanced 2 days/); assert.match(prompt, /COMPLETED HANDOFF/)
+  assert.match(prompt, /COMPLETED TIMELINE: Market visit already happened/); assert.match(prompt, /OPEN TIMELINE: Return the borrowed book/)
+  assert.match(prompt, /CURRENT CHANNEL: remote/); assert.match(prompt, /Earlier countdowns.*rather than restart them today/i)
+  const saved = storage.get(staleDmPath), generated = saved.conversations.find(thread => thread.id === conversation.id).messages.at(-1)
+  assert.equal(generated.generation.requestId, 'historical-dm-generate'); assert.equal(generated.createdAt, currentTime)
+  assert.deepEqual(generated.storyClock, { roleplayNow: currentTime, source: 'manual', precision: 'exact', label: state.roleplayClockLabel })
+  assert.equal(saved.events.find(event => event.id === 'historical-completed-plan').completed, true)
+  assert.equal(saved.events.find(event => event.id === 'historical-open-plan').completed, false, 'elapsed time must not mark an unresolved plan completed')
+  assert.equal(saved.relays[0].status, 'consumed'); assert.equal(saved.relays.length, 1, 'historical handoffs must not be recreated')
+  await frontendHandler({ type: 'lumiphone:get_state', requestId: 'historical-dm-reload', chatId: staleDmChat, characterId: 'char-a' }, 'user-a')
+  const reloaded = frontendMessages.filter(message => message.type === 'lumiphone:state' && message.state.chatId === staleDmChat).at(-1).state.conversations.find(thread => thread.id === conversation.id)
+  assert.deepEqual(reloaded.messages.at(-1).storyClock, generated.storyClock, 'story-clock precision must survive the real save/load boundary')
+  assert.deepEqual(reloaded.messages[0].storyClock, oldClock, 'old messages retain their own historical clock snapshot')
+} finally {
+  spindle.generate.quiet = staleDmQuiet
+  storage.clear(); for (const [path, value] of staleDmStorage) storage.set(path, value)
+  frontendMessages.length = staleDmFrontLength; macroResolveCalls.length = staleDmMacroLength
+}
+
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
 dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
 dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')) }
@@ -1697,6 +2031,14 @@ const frontendStyles = []
 async function exportVisual(name, source) {
   if (!process.env.POCKET_VISUAL_DIR) return
   const preview = source.cloneNode(true)
+  if (name === 'npc-bank' || name === 'contact-create') preview.querySelectorAll('.lp-floating-notification, .lp-alert').forEach(node => node.remove())
+  if (name === 'contact-create') {
+    const originalFields = [...source.querySelectorAll('input, textarea')]
+    for (const [index, field] of [...preview.querySelectorAll('input, textarea')].entries()) {
+      if (field.tagName === 'TEXTAREA') field.textContent = originalFields[index].value
+      else field.setAttribute('value', originalFields[index].value)
+    }
+  }
   if (name.startsWith('judge-')) {
     for (const input of preview.querySelectorAll('input')) {
       if (input.type !== 'password') input.setAttribute('value', input.value)
@@ -1841,6 +2183,10 @@ assert.match(identityStyle.textContent, /device-css-marker/)
 assert.match(identityStyle.textContent, /persona-css-marker/)
 assert.doesNotMatch(identityStyle.textContent, /@scope \(\.lumiphone-shell\)/, 'dynamic CSS must never scope against every Pocket shell in the document')
 
+const roleplaySpace = drawerRoot.querySelector('[aria-label="Open Roleplay"]')
+assert.ok(roleplaySpace, 'sidebar home must offer the Roleplay space')
+roleplaySpace.click()
+
 const npcDeviceRow = [...drawerRoot.querySelectorAll('.lumiphone-device-row')].find((node) => node.textContent.includes('Alice') && !node.textContent.includes('Roleplay Persona'))
 assert.ok(npcDeviceRow, 'device selector must expose a non-Persona phone for isolation QA')
 assert.ok(drawerRoot.querySelector('[data-section="persona"] .lumiphone-device-rp'), 'your phone must have a dedicated section')
@@ -1903,8 +2249,46 @@ assert.equal(dockRequestCount, 2, 'reopening Pocket must request a fresh dock ha
 assert.ok(dockRoot.querySelector('.lumiphone-shell:not([hidden])'))
 const handsetHost = dockRoot.querySelector('.lumiphone-handset-host')
 assert.ok(Math.abs((parseFloat(handsetHost.style.width) / parseFloat(handsetHost.style.height)) - (9 / 18.4)) < 0.01, 'desktop phone bounds are not 9:18.4')
-assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 9)
+assert.equal(dockRoot.querySelectorAll('.lp-app-icon').length, 10)
 await exportVisual('home', dockRoot)
+const launcherControl = name => {
+  const node = [...dockRoot.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === name)
+  assert.ok(node, 'Missing launcher action: ' + name)
+  return node
+}
+launcherControl('Open app drawer').click()
+const drawerSearch = dockRoot.querySelector('input[type="search"]')
+assert.equal(document.activeElement, drawerSearch)
+drawerSearch.value = 'settings'; drawerSearch.dispatchEvent(new dom.window.Event('input'))
+assert.equal([...dockRoot.querySelectorAll('.lp-app-grid button')].filter(node => !node.hidden).length, 1)
+// Host refreshes must retain the query and focus while the drawer is open.
+backendReceiver({ ...identityUiState, reason: 'refresh' })
+assert.equal(dockRoot.querySelector('input[type="search"]').value, 'settings')
+assert.equal(document.activeElement, dockRoot.querySelector('input[type="search"]'))
+launcherControl('Return to Home').click()
+launcherControl('Edit home screen').click(); launcherControl('Arrange Weather').click()
+const weatherDestination = dockRoot.querySelector('.lp-launcher-location select')
+weatherDestination.value = '0'; weatherDestination.dispatchEvent(new dom.window.Event('change'))
+launcherControl('Save home layout').click()
+const launcherSave = frontendSends.filter(message => message.type === 'lumiphone:save_launcher').at(-1)
+assert.equal(launcherSave.deviceOwnerActorId, identityUiState.state.pocketPersonaActorId)
+assert.equal(launcherSave.layout.dock[0], 'weather')
+backendReceiver({ type: 'lumiphone:error', requestId: launcherSave.requestId, error: 'Fixture save failure' })
+assert.equal(dockRoot.querySelector('[role="alert"]').textContent, 'Fixture save failure')
+assert.ok(!launcherControl('Save home layout').disabled, 'Save failure must allow retry')
+launcherControl('Save home layout').click()
+const launcherRetry = frontendSends.filter(message => message.type === 'lumiphone:save_launcher').at(-1)
+const savedLauncherState = structuredClone(identityUiState)
+savedLauncherState.state.launcherLayouts = { [launcherRetry.deviceOwnerActorId]: launcherRetry.layout }
+backendReceiver({ ...savedLauncherState, reason: 'launcher' })
+backendReceiver({ type: 'lumiphone:launcher_saved', requestId: launcherRetry.requestId })
+assert.equal(document.activeElement, launcherControl('Edit home screen'))
+assert.equal(dockRoot.querySelector('.lp-home-dock button').getAttribute('aria-label'), 'Weather')
+// Closing and remounting the dock must keep the backend-confirmed layout.
+dockRoot.querySelector('.lumiphone-dismiss').click(); launcher.click()
+assert.equal(dockRoot.querySelector('.lp-home-dock button').getAttribute('aria-label'), 'Weather')
+// Restore the controlled fixture for the existing scale and app contracts.
+backendReceiver({ ...identityUiState, reason: 'refresh' })
 for (const [name, width, scale] of [['min', 288, .7], ['max', 443, 1.3]]) {
   const scaledHome = dockRoot.cloneNode(true)
   const handset = scaledHome.querySelector('.lumiphone-handset-host')
@@ -2066,7 +2450,7 @@ let handoffActivityNode = dockRoot.querySelector('[data-relay-id="relay-ui"]')
 assert.equal(handoffActivityNode.dataset.state, 'preparing')
 assert.match(handoffActivityNode.textContent, /Preparing roleplay handoff/)
 assert.ok(dockRoot.querySelector(`[data-message-id="${handoffSource.id}"]`).nextElementSibling?.matches('[data-relay-id="relay-ui"]'), 'handoff activity must be anchored immediately after its chronological source message')
-assert.equal(handoffScrollCount, 1, 'a newly local conversation must scroll its handoff activity into view once')
+assert.equal(handoffScrollCount, 0, 'handoff reveals must use the thread scroller without moving ancestor containers')
 
 const acceptedUiState = structuredClone(localUiState)
 acceptedUiState.state.relays[0].continuation = { ...acceptedUiState.state.relays[0].continuation, state: 'accepted', hostAcceptedAt: new Date().toISOString(), generationId: 'gen-ui' }
@@ -2074,7 +2458,7 @@ backendReceiver(acceptedUiState)
 handoffActivityNode = dockRoot.querySelector('[data-relay-id="relay-ui"]')
 assert.equal(handoffActivityNode.dataset.state, 'accepted')
 assert.match(handoffActivityNode.textContent, /Host accepted the handoff/)
-assert.equal(handoffScrollCount, 1, 'relay progress rerenders must not repeatedly steal scroll')
+assert.equal(handoffScrollCount, 0, 'relay progress rerenders must not scroll ancestor containers')
 
 const generatingUiState = structuredClone(acceptedUiState)
 generatingUiState.state.relays[0].injectedAt = new Date().toISOString()
@@ -2131,63 +2515,61 @@ inviteConversation.messages.at(-1).eventSuggestion = {
   whenKind: 'relative', whenText: 'Tonight', participantNames: ['Alex', 'Sam'],
 }
 backendReceiver(inviteUiState)
-const inviteCard = dockRoot.querySelector('.lp-event-invite')
-assert.ok(inviteCard, 'conversation suggestions render as separate invite cards')
-assert.equal(inviteCard.closest('.lp-bubble, .lp-group-message'), null, 'invites must not live inside messages')
-assert.equal(inviteCard.parentElement, dockRoot.querySelector('.lp-bubbles'), 'new invitations are visible inline')
-assert.equal(inviteCard.previousElementSibling.querySelector('.lp-bubble')?.dataset.messageId || inviteCard.previousElementSibling.dataset.messageId, inviteConversation.messages.at(-1).id, 'invite follows its originating message')
-assert.equal(dockRoot.querySelector('.lp-event-strip'), null, 'pending invitations must not be hidden in the event strip')
+const inviteCard = dockRoot.querySelector('.lp-plan-stripe')
+assert.ok(inviteCard, 'a pending plan renders in the pinned stripe')
+assert.ok(inviteCard.closest('.lp-reference-slot'), 'pending plans stay above the scrolling messages')
+assert.equal(dockRoot.querySelector('.lp-bubbles .lp-plan-stripe'),null)
+assert.equal(dockRoot.querySelector('.lp-event-strip').tagName,'SECTION','plans no longer use a dropdown')
 await exportVisual('chat-invite-pending', dockRoot)
 inviteConversation.messages.at(-1).eventSuggestion.status = 'declined'
 backendReceiver(inviteUiState)
-assert.equal(dockRoot.querySelector('.lp-event-invite'), null, 'declined invitations disappear')
-assert.equal(dockRoot.querySelector('.lp-event-strip'), null)
-assert.ok(dockRoot.querySelector('[data-message-id="' + inviteConversation.messages.at(-1).id + '"]'), 'declining keeps the original message')
-assert.ok(dockRoot.querySelector('.lp-compose-input textarea[aria-label="Message"]'))
-assert.ok(dockRoot.querySelector('.lp-compose-input button[aria-label="Send message"]'))
-inviteUiState.state.events.push({ id: 'ui-quick-event', title: 'Movie night', start: '2026-09-05T19:00:00.000Z', end: '2026-09-05T20:00:00.000Z', whenKind: 'exact', completed: false })
-inviteConversation.messages.at(-1).eventSuggestion.status = 'scheduled'
-inviteConversation.messages.at(-1).eventSuggestion.scheduledEventId = 'ui-quick-event'
+assert.equal(dockRoot.querySelector('.lp-event-strip'),null,'a rejected plan leaves the pinned strip')
+assert.ok(dockRoot.querySelector('[data-message-id="' + inviteConversation.messages.at(-1).id + '"]'),'rejection keeps the original message')
+inviteUiState.state.events.push({id:'ui-quick-event',title:'Movie night',description:'Bring takeout.',start:'2026-09-05T19:00:00.000Z',end:'2026-09-05T20:00:00.000Z',whenKind:'exact',whenText:'Tonight at seven',completed:false})
+inviteConversation.messages.at(-1).eventSuggestion.status='scheduled'
+inviteConversation.messages.at(-1).eventSuggestion.scheduledEventId='ui-quick-event'
 backendReceiver(inviteUiState)
-assert.equal(dockRoot.querySelector('.lp-bubbles .lp-event-invite'), null, 'scheduled invitation leaves the message stream')
-assert.equal(dockRoot.querySelector('.lp-event-strip').open, false, 'scheduled invitation folds into a collapsed strip')
-assert.equal(dockRoot.querySelector('.lp-event-strip').closest('.lp-reference-slot').previousElementSibling.className, 'lp-nav')
-dockRoot.querySelector('.lp-event-strip').open = true
-const secondInviteMessage = { ...structuredClone(inviteConversation.messages.at(-1)), id: 'second-invite-message', eventSuggestion: { ...structuredClone(inviteConversation.messages.at(-1).eventSuggestion), id: 'second-invite', title: 'Breakfast', status: 'pending', scheduledEventId: undefined } }
+assert.equal(dockRoot.querySelectorAll('.lp-plan-stripe').length,1)
+assert.equal(dockRoot.querySelector('.lp-event-strip').closest('.lp-reference-slot').previousElementSibling.className,'lp-nav')
+const secondInviteMessage={...structuredClone(inviteConversation.messages.at(-1)),id:'second-invite-message',eventSuggestion:{...structuredClone(inviteConversation.messages.at(-1).eventSuggestion),id:'second-invite',title:'Breakfast',status:'pending',scheduledEventId:undefined}}
 inviteConversation.messages.push(secondInviteMessage)
 backendReceiver(inviteUiState)
-assert.equal(dockRoot.querySelectorAll('.lp-event-strip .lp-event-invite').length, 1, 'pending events do not inflate the scheduled strip')
-assert.equal(dockRoot.querySelectorAll('.lp-bubbles .lp-event-invite').length, 1)
-assert.equal(dockRoot.querySelector('.lp-event-strip').open, true, 'a new invitation does not disturb an expanded scheduled strip')
-secondInviteMessage.eventSuggestion.status = 'declined'
+assert.equal(dockRoot.querySelectorAll('.lp-plan-stripe').length,2,'a pending and a scheduled plan each get one slim row')
+assert.equal(dockRoot.querySelector('.lp-plan-stripe').dataset.status,'pending','pending decisions come first')
+secondInviteMessage.eventSuggestion.status='declined'
 backendReceiver(inviteUiState)
-assert.equal(dockRoot.querySelector('.lp-bubbles .lp-event-invite'), null)
-assert.equal(dockRoot.querySelector('.lp-event-strip').open, true)
-secondInviteMessage.eventSuggestion.status = 'pending'
-backendReceiver(inviteUiState)
-secondInviteMessage.eventSuggestion.status = 'scheduled'
-secondInviteMessage.eventSuggestion.scheduledEventId = 'ui-second-event'
-backendReceiver(inviteUiState)
-assert.equal(dockRoot.querySelector('.lp-bubbles .lp-event-invite'), null)
-assert.equal(dockRoot.querySelectorAll('.lp-event-strip .lp-event-invite').length, 2)
-assert.equal(dockRoot.querySelector('.lp-event-strip').open, false, 'scheduling a new invitation collapses an already expanded strip')
+assert.equal(dockRoot.querySelectorAll('.lp-plan-stripe').length,1)
 inviteConversation.messages.pop()
 backendReceiver(inviteUiState)
-const stripBeforeUpdate = dockRoot.querySelector('.lp-event-strip')
-stripBeforeUpdate.open = true
-backendReceiver(inviteUiState)
-assert.equal(dockRoot.querySelector('.lp-event-strip').open, true, 'state refresh keeps event details expanded')
-;[...dockRoot.querySelectorAll('.lp-event-invite button')].find(button => button.textContent === 'Quickstart event').click()
-const quickModal = shownModals.at(-1)
-assert.equal(quickModal.options.title, 'Quickstart event')
-assert.ok(quickModal.root.querySelector('label input[type="datetime-local"]'), 'quickstart time has a visible label')
+;[...dockRoot.querySelectorAll('.lp-plan-stripe button')].find(button=>button.getAttribute('aria-label')==='Quickstart event: Movie night').click()
+const quickModal=shownModals.at(-1)
+assert.equal(quickModal.options.title,'Quickstart event')
+assert.ok(quickModal.root.querySelector('label input[type="datetime-local"]'))
 quickModal.root.querySelector('.lp-button-primary').click()
-assert.equal(frontendSends.at(-1).type, 'lumiphone:quickstart_event')
-assert.equal(frontendSends.at(-1).eventId, 'ui-quick-event')
-assert.equal(frontendSends.at(-1).conversationId, groupId)
-dockRoot.querySelector('.lp-event-strip').open = false
-
-await exportVisual('chat-invite', dockRoot)
+assert.equal(frontendSends.at(-1).type,'lumiphone:quickstart_event')
+assert.equal(frontendSends.at(-1).eventId,'ui-quick-event')
+assert.equal(frontendSends.at(-1).conversationId,groupId)
+await exportVisual('chat-invite',dockRoot)
+const lifecycleInviteState=structuredClone(inviteUiState)
+lifecycleInviteState.state.events=[]
+backendReceiver(lifecycleInviteState)
+assert.equal(dockRoot.querySelector('.lp-event-strip'),null,'deleted Timeline events cannot remain pinned')
+lifecycleInviteState.state.events=structuredClone(inviteUiState.state.events).map(event=>({...event,startedAt:'2026-09-05T19:00:00Z'}))
+backendReceiver(lifecycleInviteState)
+assert.equal(dockRoot.querySelector('.lp-event-strip'),null,'started plans leave the stripe')
+const revisionState=structuredClone(inviteUiState),revisionConversation=revisionState.state.conversations.find(entry=>entry.id===groupId)
+revisionConversation.messages.push({...structuredClone(revisionConversation.messages[0]),id:'revision',eventSuggestion:{...revisionConversation.messages[0].eventSuggestion,status:'pending',scheduledEventId:undefined,updateEventId:'ui-quick-event',whenKind:'relative',whenText:'Tomorrow at eight',title:'Movie night at eight'}})
+backendReceiver(revisionState)
+assert.equal(dockRoot.querySelectorAll('.lp-plan-stripe').length,1,'the proposed update replaces the scheduled stripe')
+assert.equal(dockRoot.querySelectorAll('.lp-event-update').length,1)
+assert.equal(revisionState.state.events.find(event=>event.id==='ui-quick-event').title,'Movie night')
+;[...dockRoot.querySelectorAll('.lp-event-update button')].find(button=>button.textContent==='Review').click()
+assert.equal(dockRoot.querySelector('header .lp-nav-title').textContent.includes('Edit Event'),true)
+assert.ok([...dockRoot.querySelectorAll('input')].some(input=>input.value==='Movie night at eight'))
+;[...dockRoot.querySelectorAll('.lp-nav-action')].find(button=>button.textContent==='Save').click()
+const confirmedRevision=frontendSends.findLast(message=>message.type==='lumiphone:action'&&message.action==='event')
+assert.equal(confirmedRevision.payload.id,'ui-quick-event')
+assert.equal(confirmedRevision.payload.sourceMessageId,'revision')
 backendReceiver(groupUiState)
 const conversationMenu = dockRoot.querySelector('.lp-conversation-menu')
 conversationMenu.open = true
@@ -2278,24 +2660,30 @@ const contactsIconForDraft = [...dockRoot.querySelectorAll('.lp-app-icon')].find
 contactsIconForDraft.click()
 const addContactForDraft = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Add')
 addContactForDraft.click()
-const addContactSearch = dockRoot.querySelector('input[type="search"][aria-label="Search contacts to add"]')
+const addContactSearch = dockRoot.querySelector('input[type="search"][aria-label="Search all saved people"]')
 assert.ok(addContactSearch, 'Add Contact must expose search for saved/importable contacts')
 addContactSearch.value = 'definitely-not-a-pocket-contact'
 addContactSearch.dispatchEvent(new Event('input', { bubbles: true }))
-assert.equal(dockRoot.querySelector('[data-contact-search-empty="true"]').hidden, false, 'Add Contact search must surface an empty result state')
+addContactSearch.closest('form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+assert.match(dockRoot.textContent, /No matches/, 'Add Contact search must surface an empty result state')
+;dockRoot.querySelector('button[aria-label="Back to contact sources"]').click()
 backendReceiver({ type: 'lumiphone:contact_draft', requestId: 'ui-draft-one', draft: draftOne })
-assert.match(dockRoot.textContent, /Unsaved preview/)
+backendReceiver({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId: 'ui-draft-one', phase: 'generating', message: 'Writing profile' })
+assert.ok(!dockRoot.textContent.includes('Writing profile'), 'A completed draft cannot regress to a late writing phase')
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Continue Draft One’s profile').click()
+assert.match(dockRoot.textContent, /Unsaved profile/)
 assert.match(dockRoot.textContent, /Draft One/)
 const contactsBeforeUiRetry = groupUiState.state.contacts.length
-const retryDraftButton = [...dockRoot.querySelectorAll('.lp-npc-draft button')].find((node) => node.textContent === 'Retry')
+const retryDraftButton = [...dockRoot.querySelectorAll('.lp-npc-review button')].find((node) => node.textContent === 'Regenerate profile')
 retryDraftButton.click()
 assert.equal(frontendSends.filter((message) => message.type === 'lumiphone:generate_contact').at(-1).description, draftOne.sourceDescription)
 assert.equal(groupUiState.state.contacts.length, contactsBeforeUiRetry)
 const draftTwo = { name: 'Draft Two', role: 'Courier', identityBrief: 'Second unsaved attempt.', accent: '#556677', messagingStyle: { talkativeness: 73, fragmentation: 22 }, sourceDescription: 'A useful scout' }
 backendReceiver({ type: 'lumiphone:contact_draft', requestId: 'ui-draft-two', draft: draftTwo })
-assert.ok([...dockRoot.querySelectorAll('.lp-npc-draft button')].some((node) => node.textContent === 'Undo reroll'), 'one previous draft must remain recoverable')
-const editDraftButton = [...dockRoot.querySelectorAll('.lp-npc-draft button')].find((node) => node.textContent === 'Edit')
+assert.ok([...dockRoot.querySelectorAll('.lp-npc-review button')].some((node) => node.textContent === 'Previous version'), 'one previous draft must remain recoverable')
+const editDraftButton = [...dockRoot.querySelectorAll('.lp-npc-review button')].find((node) => node.textContent === 'Edit profile')
 editDraftButton.click()
+await exportVisual('contact-create', dockRoot)
 const routeEventsBeforeDraftEdits = frontendSends.filter((message) => message.type === 'lumiphone:view_state').length
 const draftColor = dockRoot.querySelector('.lp-color-input')
 draftColor.value = '#abcdef'
@@ -2369,8 +2757,11 @@ dockRoot.querySelector('.lp-nav-action').click()
 assert.match(dockRoot.textContent, /Add Contact/, 'one Back after saving a new draft must return to the ordinary import screen')
 
 const quickGenerate = [...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Generate NPC')
+const beforeQuick = frontendSends.length
+const importBrief = dockRoot.querySelector('textarea'); importBrief.value = 'A sleepy florist'; importBrief.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 quickGenerate.click()
-assert.ok(dockRoot.querySelector('.lp-npc-viewfinder'), 'quick generation opens a camera-style preview')
+assert.ok(frontendSends.slice(beforeQuick).some(message => message.type === 'lumiphone:generate_contact'), 'Generate NPC starts generation immediately')
+assert.ok(dockRoot.querySelector('.lp-npc-review'), 'quick generation opens the contact review flow')
 const quickBrief = dockRoot.querySelector('textarea')
 quickBrief.value = 'A sleepy florist'
 quickBrief.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
@@ -2694,8 +3085,7 @@ assert.ok(deleteAction, 'delete remains available in the message sheet')
 await exportVisual('sheet-message', dockRoot)
 deleteAction.click()
 assert.ok(frontendSends.some(payload => payload.type === 'lumiphone:delete' && payload.id === 'burst-0'))
-dockRoot.querySelector('.lp-sheet-close').click()
-assert.equal(dockRoot.querySelector('dialog'), null, 'closing sheets must clean up the modal')
+assert.equal(dockRoot.querySelector('dialog'), null, 'choosing a message action dismisses its sheet automatically')
 assert.equal(document.activeElement, moreAction, 'sheet close restores keyboard focus')
 const outgoingHex = dockRoot.querySelector('.lumiphone-shell').style.getPropertyValue('--lp-outgoing')
 const linear = [1,3,5].map(i => parseInt(outgoingHex.slice(i,i+2),16)/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4)
@@ -2712,7 +3102,7 @@ assert.ok(dockRoot.querySelector('.lumiphone-app-view[data-pocket-app="weather"]
 backendReceiver(savedDraftState)
 dockRoot.querySelector('.lumiphone-homebar button').click()
 ;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
-;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Groups').click()
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Manage groups').click()
 ;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'New').click()
 const collectionName = dockRoot.querySelector('input[placeholder="Group name"]')
 collectionName.value = 'UI cast'
@@ -2736,10 +3126,10 @@ dockRoot.querySelector('.lumiphone-homebar button').click()
 ;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
 const uiBank = { ...uiCollections, npcBank: storage.get('device/npc-bank.json') }
 backendReceiver(uiBank)
-assert.deepEqual([...dockRoot.querySelectorAll('.lp-contact-filters button')].map(node => node.textContent), ['All', 'Here', 'Recent'], 'Only contact filters belong in the chip bar')
-assert.deepEqual([...dockRoot.querySelectorAll('.lp-contact-library button')].map(node => node.textContent), ['Groups', 'NPC Bank'], 'Groups and the reusable bank share a separate library area')
+assert.deepEqual([...dockRoot.querySelectorAll('.lp-directory-pills button')].map(node => node.textContent), ['All', 'Recent', 'Here', 'Groups'], 'Contact filters include groups')
+assert.deepEqual([...dockRoot.querySelectorAll('.lp-directory-library button')].map(node => node.textContent), ['NPC Bank', 'Manage groups'], 'Library management stays separate from filters')
 await exportVisual('contacts', dockRoot)
-dockRoot.querySelector('.lp-contact-row').click()
+dockRoot.querySelector('.lp-directory-list .lp-directory-row').click()
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Edit').click()
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Upload avatar').click()
 await new Promise(resolve => setTimeout(resolve, 0))
@@ -2785,16 +3175,16 @@ dockRoot.querySelector('.lumiphone-homebar button').click()
 ;[...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Contacts').click()
 backendReceiver(uiBank)
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'NPC Bank').click()
-assert.ok(dockRoot.querySelector('.lp-bank-casts'), 'portable casts have their own section')
-assert.ok(dockRoot.querySelector('.lp-bank-individuals'), 'individual profiles have their own section')
-const bankSearch = dockRoot.querySelector('input[placeholder="Search casts and saved NPCs"]')
+assert.deepEqual([...dockRoot.querySelectorAll('[role="tab"]')].map(node=>node.textContent), ['NPCs','Casts'])
+const bankSearch = dockRoot.querySelector('input[placeholder="Search NPC Bank"]')
 bankSearch.value = 'no matching saved identity'; bankSearch.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
-assert.ok(dockRoot.querySelector('.lp-bank-casts').hidden && dockRoot.querySelector('.lp-bank-individuals').hidden, 'search hides empty sections')
+assert.equal(dockRoot.querySelectorAll('.lp-directory-list .lp-directory-row').length, 0, 'search filters saved profiles')
 bankSearch.value = ''; bankSearch.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
-assert.ok(!dockRoot.querySelector('.lp-bank-casts').hidden && !dockRoot.querySelector('.lp-bank-individuals').hidden, 'clearing search restores both sections')
+assert.ok(dockRoot.querySelector('.lp-directory-list .lp-directory-row'), 'clearing search restores the profiles')
 await exportVisual('npc-bank', dockRoot)
 const importsBeforeBankEdit = frontendSends.filter(message => message.type === 'lumiphone:npc_bank_add').length
-;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Edit saved profile').click()
+dockRoot.querySelector('.lp-directory-list .lp-directory-row').click()
+;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'Edit').click()
 assert.match(dockRoot.textContent, /Edit Bank Profile/)
 assert.equal(frontendSends.filter(message => message.type === 'lumiphone:npc_bank_add').length, importsBeforeBankEdit)
 
@@ -2815,14 +3205,15 @@ await new Promise(resolve => setTimeout(resolve, 0))
 const avatarUpload = frontendSends.filter(message => message.type === 'lumiphone:upload_avatar').at(-1)
 assert.ok(avatarUpload.croppedDataUrl.startsWith('data:image/png'))
 backendReceiver({ type: 'lumiphone:avatar_uploaded', requestId: avatarUpload.requestId, imageId: 'framed-draft', imageUrl: '/api/v1/images/framed-draft' })
-assert.ok(dockRoot.querySelector('.lp-draft-portrait'))
-;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use Portrait Draft').click()
+assert.ok(dockRoot.querySelector('.lp-npc-review-photo'))
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Save Portrait Draft').click()
 const withPhoto = frontendSends.filter(message => message.type === 'lumiphone:save_contact').at(-1).contact
 assert.deepEqual(withPhoto.avatarSource, { kind: 'asset', assetId: 'framed-draft' })
 assert.equal(withPhoto.avatarOverrideUrl, '/api/v1/images/framed-draft')
-assert.deepEqual([...dockRoot.querySelectorAll('.lp-npc-portrait-actions button')].map(node => node.textContent), ['Gallery', 'Upload avatar', 'Retake portrait'])
+backendReceiver({ type:'lumiphone:error', requestId:frontendSends.findLast(message=>message.type==='lumiphone:save_contact').requestId, error:'Fixture contact save failed. Retry.' })
+assert.deepEqual([...dockRoot.querySelectorAll('.lp-npc-review-tools button')].map(node => node.textContent), ['Gallery', 'Upload', 'Retake portrait', 'Edit profile', 'Regenerate profile'])
 uploadFiles = [{ bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png', name: 'npc.png' }]
-;[...dockRoot.querySelectorAll('.lp-npc-portrait-actions button')].find(node => node.textContent === 'Upload avatar').click()
+;[...dockRoot.querySelectorAll('.lp-npc-review-tools button')].find(node => node.textContent === 'Upload').click()
 await new Promise(resolve => setTimeout(resolve, 20))
 assert.match(dockRoot.textContent, /Uploaded photo ready/)
 dockRoot.querySelector('.lp-camera-accept').click()
@@ -2831,16 +3222,16 @@ const draftFileUpload = frontendSends.findLast(message => message.type === 'lumi
 assert.notEqual(draftFileUpload.requestId, avatarUpload.requestId)
 backendReceiver({ type: 'lumiphone:avatar_uploaded', requestId: draftFileUpload.requestId, imageId: 'uploaded-draft', imageUrl: '/api/v1/images/uploaded-draft' })
 uploadFiles = []
-;[...dockRoot.querySelectorAll('.lp-npc-portrait-actions button')].find(node => node.textContent === 'Gallery').click()
+;[...dockRoot.querySelectorAll('.lp-npc-review-tools button')].find(node => node.textContent === 'Gallery').click()
 requestedPage = frontendSends.findLast(entry => entry.type === 'lumiphone:gallery_list'); showGalleryPage(requestedPage)
 dockRoot.querySelector('.lp-gallery-item').click()
 const draftGalleryModal = shownModals.at(-1)
 ;[...draftGalleryModal.root.querySelectorAll('button')].find(node => node.textContent === 'Use for Portrait Draft').click()
 assert.equal(draftGalleryModal.dismissed, true)
-assert.ok(dockRoot.querySelector('.lp-npc-portrait-actions'), 'Gallery selection returns to the unsaved NPC preview')
+assert.ok(dockRoot.querySelector('.lp-npc-review-tools'), 'Gallery selection returns to the unsaved NPC preview')
 dockRoot.querySelector('.lp-alert').hidden = true
 await exportVisual('npc-draft-portrait', dockRoot)
-;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Use Portrait Draft').click()
+;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Save Portrait Draft').click()
 assert.deepEqual(frontendSends.findLast(entry => entry.type === 'lumiphone:save_contact').contact.avatarSource, { kind: 'gallery', imageId: 'paged-0' })
 
 frontendContext.components.mountSelect = (target, options) => {
@@ -3072,5 +3463,226 @@ const quickSaved = storage.get('phones/quickstart-contract__char-a.json')
 assert.equal(quickSaved.roleplayNow, quickPayload.roleplayNow)
 assert.equal(quickSaved.roleplayClockSource, 'manual')
 assert.equal(quickSaved.events[0].completed, false, 'launching an event does not mark it completed')
+assert.equal(quickSaved.events[0].startedAt, quickPayload.roleplayNow, 'accepted quickstart consumes the upcoming-plan affordance')
+assert.deepEqual(quickSaved.events[0].phoneHistoryBoundary, { conversationId: quickConversation.id, messageIds: quickConversation.messages.map(message => message.id) }, 'accepted Quickstart snapshots phone IDs independently of clock time')
+assert.equal(appendedChatMessages.at(-1).message.metadata.pocketConversationId, quickConversation.id)
+assert.deepEqual(appendedChatMessages.at(-1).message.metadata.pocketPhoneMessageIds, quickSaved.events[0].phoneHistoryBoundary.messageIds)
+// Exercise the real generation/save/load path after the event, with a frozen story clock.
+const postEventQuiet = spindle.generate.quiet, postEventPreferences = structuredClone(storage.get('device/preferences.json'))
+let postEventRequest
+try {
+  storage.set('device/preferences.json', { ...postEventPreferences, roleplayContextMode: 'off', ambientMessaging: 'off' })
+  const state = structuredClone(quickSaved), conversation = state.conversations[0], contact = state.contacts.find(contact => conversation.participantContactIds.includes(contact.id))
+  contact.presence.inScene = false; contact.messagingPolicy.remoteEligible = true
+  conversation.availability = { state: 'remote' }; conversation.pause = undefined
+  state.events[0].completed = true; state.events[0].source = { app: 'messages', conversationId: conversation.id }
+  const current = { ...structuredClone(conversation.messages[0]), id: 'post-event-human', sender: 'persona', senderActorId: state.pocketPersonaActorId, senderContactId: undefined, senderName: state.pocketPersona.displayName, text: 'I enjoyed movie night. Did you get home okay?', eventSuggestion: undefined, createdAt: state.roleplayNow, storyClock: { source: 'manual', precision: 'exact', roleplayNow: state.roleplayNow, label: 'Event quickstart' } }
+  conversation.messages.push(current); storage.set('phones/quickstart-contract__char-a.json', state)
+  spindle.generate.quiet = async request => { postEventRequest = request; return { content: JSON.stringify({ recipient: state.pocketPersona.displayName, message: 'made it home. that was a good night.', after: { state: 'remote', reason: '' }, suggestion: null }), finish_reason: 'stop' } }
+  await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'post-event-message', chatId: quickPayload.chatId, characterId: quickPayload.characterId, conversationId: conversation.id }, 'user-a')
+  assert.ok(postEventRequest, 'post-event messaging reaches the controlled provider')
+  assert.ok(postEventRequest.messages.some(message => message.role === 'system' && message.content.includes('HISTORICAL PHONE EXCHANGE BEFORE ROLEPLAY EVENT') && message.content.includes('I will bring takeout')))
+  assert.equal(postEventRequest.messages.some(message => message.role !== 'system' && message.content.includes('I will bring takeout')), false, 'old planning messages no longer act as live user/assistant turns')
+  assert.ok(postEventRequest.messages.some(message => message.role === 'user' && message.content.includes(current.text)), 'the post-scene human message retains its actual role')
+  const prompt = postEventRequest.messages.map(message => message.content).join('\n')
+  assert.match(prompt, /COMPLETED TIMELINE: Movie night/); assert.match(prompt, /EVENT CONTINUITY LOCK: Movie night is completed/)
+  assert.match(prompt, /Answer the current post-boundary human message/)
+  await frontendHandler({ type: 'lumiphone:get_state', chatId: quickPayload.chatId, characterId: quickPayload.characterId }, 'user-a')
+  assert.deepEqual(storage.get('phones/quickstart-contract__char-a.json').events[0].phoneHistoryBoundary, quickSaved.events[0].phoneHistoryBoundary, 'the boundary survives actual generation and reload')
+  const resume = structuredClone(storage.get('phones/quickstart-contract__char-a.json'))
+  resume.conversations[0].messages = resume.conversations[0].messages.filter(message => message.id !== current.id)
+  storage.set('phones/quickstart-contract__char-a.json', resume)
+  await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'post-event-no-new-human', chatId: quickPayload.chatId, characterId: quickPayload.characterId, conversationId: conversation.id }, 'user-a')
+  const final = postEventRequest.messages.at(-1).content
+  assert.match(final, /There is no new human phone message after that scene boundary/)
+  assert.match(final, /DIRECTION: Reopen the phone conversation from the current roleplay state/)
+  assert.equal(postEventRequest.messages.some(message => message.role !== 'system' && message.content.includes('I will bring takeout')), false)
+} finally { spindle.generate.quiet = postEventQuiet; storage.set('device/preferences.json', postEventPreferences) }
+await frontendHandler(quickPayload,'user-a')
+assert.equal(appendedChatMessages.length,quickBefore+1,'an already started event cannot launch twice')
+await frontendHandler({type:'lumiphone:delete',chatId:quickPayload.chatId,characterId:quickPayload.characterId,kind:'event',id:'quick-event'},'user-a')
+const deletedPlan=storage.get('phones/quickstart-contract__char-a.json')
+assert.equal(deletedPlan.events.length,0)
+assert.equal(deletedPlan.conversations[0].messages[0].eventSuggestion.status,'declined','deletion retires the invitation link')
+
+
+// Roleplay retrieval keeps a named actor's current state even when the card title differs,
+// and editing the resolution of a long unchanged host row invalidates its summary.
+const retrievalQuiet = spindle.generate.quiet, retrievalMessages = spindle.chat.getMessages, retrievalCharacter = spindle.characters.get
+const retrievalPreferences = structuredClone(storage.get('device/preferences.json'))
+try {
+  storage.set('device/preferences.json', { ...retrievalPreferences, roleplayContextMode: 'smart', ambientMessaging: 'off' })
+  spindle.characters.get = async id => ({ ...await retrievalCharacter(id), name: id === 'char-a' ? 'Jock!Ivan' : 'Other' })
+  const state = structuredClone(quickSaved), conversation = state.conversations[0]
+  state.chatId = 'retrieval-contract'; state.characterName = 'Jock!Ivan'; state.pocketPersona.displayName = 'Till'
+  const contact = state.contacts.find(contact => conversation.participantContactIds.includes(contact.id))
+  contact.name = 'Jock!Ivan'; contact.presence.inScene = false
+  contact.messagingPolicy.remoteEligible = true
+  conversation.availability = { state: 'remote' }; conversation.pause = undefined
+  conversation.messages = [{ ...conversation.messages[0], id: 'retrieval-human', sender: 'persona', senderActorId: state.pocketPersonaActorId, senderContactId: undefined, senderName: 'Till', text: "you're getting bolder", eventSuggestion: undefined }]
+  state.events = []; state.relays = []; state.actorMemories = []
+  storage.set('phones/retrieval-contract__char-a.json', state)
+  let destination = 'HOME-CURRENT', seedCalls = 0, dmRequest, holdNext = false, failSeed = false, startSeed, releaseSeed
+  const opening = 'They talked at the café before parting. '.repeat(200)
+  spindle.chat.getMessages = async () => [
+    { id: 'retrieval-user', role: 'user', content: 'Till leaves the café.' },
+    { id: 'retrieval-rp', role: 'assistant', content: opening + ' Ivan arrived at ' + destination + '. He is no longer at the café.' },
+  ]
+  spindle.generate.quiet = async request => {
+    const prompt = request.messages.map(message => message.content).join('\n')
+    if (prompt.includes('Extract a small structured RP WORLD STATE delta')) {
+      seedCalls++
+      const currentDestination = destination
+      assert.ok(prompt.includes(currentDestination), 'latest long-turn resolution must reach extraction')
+      if (holdNext) { holdNext = false; startSeed(); await new Promise(resolve => { releaseSeed = resolve }) }
+      if (failSeed) throw new Error('Controlled extraction failure')
+      return { content: JSON.stringify({
+        world: { setting: 'Rainy city', clock: {}, facts: [], weather: null },
+        actors: [
+          { name: 'Ivan', presence: 'away', status: 'available', location: currentDestination, activity: 'Already home after the date', visibility: 'private', knownBy: ['Ivan'], ttl: 'scene' },
+          { name: 'Till', presence: 'unknown', status: 'available', location: 'SECRET-SHELTER', visibility: 'private', knownBy: ['Till'], ttl: 'scene' },
+          { name: 'Someone else', status: 'away', location: 'UNRELATED-PRIVATE-LOCATION', visibility: 'private', knownBy: ['Someone else'], ttl: 'scene' },
+        ],
+        facts: [
+          { text: 'The shared date was warm and flirty.', actors: ['Ivan', 'Till'], knownBy: ['Ivan', 'Till'], visibility: 'scene', ttl: 'scene' },
+          { text: 'SECRET-UNSPOKEN-OPINION about Ivan', actors: ['Ivan', 'Till'], knownBy: ['Till'], visibility: 'private', ttl: 'scene' },
+        ],
+        timeline: [],
+      }) }
+    }
+    dmRequest = request
+    return { content: JSON.stringify({ recipient: 'Till', message: 'still smiling about earlier.', after: { state: 'remote' }, suggestion: null }) }
+  }
+  const generate = async requestId => frontendHandler({ type: 'lumiphone:generate_message', requestId, chatId: state.chatId, characterId: state.characterId, conversationId: conversation.id }, 'user-a')
+  await generate('retrieval-first')
+  assert.ok(dmRequest, 'real route reaches DM generation')
+  let prompt = dmRequest.messages.map(message => message.content).join('\n')
+  assert.match(prompt, /HOME-CURRENT/, 'short prose names must bind to the correct card before filtering')
+  assert.match(prompt, /The shared date was warm and flirty/)
+  assert.doesNotMatch(prompt, /SECRET-SHELTER|UNRELATED-PRIVATE-LOCATION|SECRET-UNSPOKEN-OPINION/, 'private state remains scoped to its actual witnesses')
+  assert.doesNotMatch(prompt, /They talked at the café before parting/, 'raw RP dialogue does not become a DM turn')
+  destination = 'STUDIO-CURRENT'
+  await generate('retrieval-edited-tail')
+  prompt = dmRequest.messages.map(message => message.content).join('\n')
+  assert.equal(seedCalls, 2, 'same-id edits beyond the opening excerpt must invalidate the summary')
+  assert.match(prompt, /STUDIO-CURRENT/)
+  assert.doesNotMatch(prompt, /HOME-CURRENT/, 'a newer actor location replaces its older location')
+  assert.ok(dmRequest.messages.findIndex(message => message.content.includes('CURRENT ROLEPLAY STATE')) >
+    dmRequest.messages.findLastIndex(message => message.role === 'assistant'), 'current state follows older generated phone claims')
+  // An on-demand DM must not reuse a reconciliation flight for an older committed RP turn.
+  destination = 'RIVER-CURRENT'; holdNext = true
+  const seedStarted = new Promise(resolve => { startSeed = resolve })
+  const earlierRequest = generate('retrieval-flight-old')
+  await seedStarted
+  destination = 'LIBRARY-CURRENT'
+  const currentRequest = generate('retrieval-flight-new')
+  releaseSeed()
+  await Promise.all([earlierRequest, currentRequest])
+  prompt = dmRequest.messages.map(message => message.content).join('\n')
+  assert.equal(seedCalls, 4, 'waiting for an older in-flight summary must recheck the committed source')
+  assert.match(prompt, /LIBRARY-CURRENT/)
+  assert.doesNotMatch(prompt, /RIVER-CURRENT/)
+  // A failed extraction cannot silently label its cached position current.
+  destination = 'NEW-UNKNOWN-LOCATION'; failSeed = true
+  await generate('retrieval-failed-refresh')
+  prompt = dmRequest.messages.map(message => message.content).join('\n')
+  assert.match(prompt, /LAST KNOWN ROLEPLAY STATE/)
+  assert.doesNotMatch(prompt, /CURRENT ROLEPLAY STATE/)
+  failSeed = false
+  await generate('retrieval-retry-refresh')
+  prompt = dmRequest.messages.map(message => message.content).join('\n')
+  assert.match(prompt, /NEW-UNKNOWN-LOCATION/)
+  assert.doesNotMatch(prompt, /LAST KNOWN ROLEPLAY STATE/)
+  // The reverse bridge recalls the active Character's actual messages in the main RP.
+  const recalledState = structuredClone(storage.get('phones/retrieval-contract__char-a.json'))
+  recalledState.hostSwipeSelections = [{ hostMessageId: 'discarded-rp', swipeId: 1, updatedAt: recalledState.roleplayNow }]
+  recalledState.conversations[0].messages.push({ ...recalledState.conversations[0].messages.at(-1), id: 'discarded-private-text', text: 'REJECTED-SWIPE-SECRET', origin: { chatId: recalledState.chatId, hostMessageId: 'discarded-rp', swipeId: 0 }, candidateCommitState: 'committed' })
+  recalledState.conversations.push({ ...structuredClone(recalledState.conversations[0]), id: 'persona-other-private', participantActorIds: ['other-contact'], participantContactIds: ['other-contact'], messages: [{ ...recalledState.conversations[0].messages[0], id: 'other-secret', text: 'OTHER-CONTACT-PRIVATE-SECRET' }] })
+  storage.set('phones/retrieval-contract__char-a.json', recalledState)
+  const beforeRecall = JSON.stringify(recalledState)
+  const interceptedRecall = await interceptorHandler([{ role: 'user', content: 'Continue from the current scene.' }], { chatId: state.chatId, characterId: state.characterId, userId: 'user-a' })
+  const recallPrompt = interceptedRecall.messages.map(message => message.content).join('\n')
+  assert.match(recallPrompt, /POCKET PHONE RECALL — PRIVATE TO Jock!Ivan/)
+  assert.match(recallPrompt, /still smiling about earlier/)
+  assert.match(recallPrompt, /channel already exists/)
+  assert.doesNotMatch(recallPrompt, /REJECTED-SWIPE-SECRET|OTHER-CONTACT-PRIVATE-SECRET/)
+  assert.equal(JSON.stringify(storage.get('phones/retrieval-contract__char-a.json')), beforeRecall, 'automatic recall does not consume references or change messages')
+} finally {
+  spindle.generate.quiet = retrievalQuiet; spindle.chat.getMessages = retrievalMessages; spindle.characters.get = retrievalCharacter
+  storage.set('device/preferences.json', retrievalPreferences)
+}
+
+
+{
+  const chatId='discord-people-contract', characterId='char-a', path='phones/discord-people-contract__char-a.json'
+  await frontendHandler({type:'lumiphone:get_state',chatId,characterId},'user-a')
+  const owner=storage.get(path).pocketPersonaActorId
+  await frontendHandler({type:'lumiphone:app_install',chatId,characterId,deviceOwnerActorId:owner,appId:'discord',installed:true},'user-a')
+  await frontendHandler({type:'lumiphone:social_mutate',requestId:'discord-server-create',chatId,characterId,deviceOwnerActorId:owner,app:'discord',action:'server',name:'Crew server',channels:['general']},'user-a')
+  const serverId=storage.get(path).social.servers[0].id
+  const bank=storage.get('device/npc-bank.json'), cast=bank.groups.find(group=>group.memberIds.length)
+  assert.ok(cast, 'controlled Bank fixture contains a portable cast')
+  await frontendHandler({type:'lumiphone:social_mutate',requestId:'discord-cast-import',chatId,characterId,deviceOwnerActorId:owner,app:'discord',action:'participant',serverId,castId:cast.id},'user-a')
+  const participants=storage.get(path).social.servers[0].participants
+  assert.equal(participants.length,cast.memberIds.length,'real route imports every cast member in one request')
+  await frontendHandler({type:'lumiphone:social_mutate',requestId:'discord-cast-again',chatId,characterId,deviceOwnerActorId:owner,app:'discord',action:'participant',serverId,castId:cast.id},'user-a')
+  assert.deepEqual(JSON.parse(JSON.stringify(storage.get(path).social.servers[0].participants)),JSON.parse(JSON.stringify(participants)),'repeating a cast import preserves existing members')
+  hostImages.set('discord-server-picture',{id:'discord-server-picture',url:'/api/v1/images/discord-server-picture'})
+  await frontendHandler({type:'lumiphone:social_mutate',requestId:'discord-server-image',chatId,characterId,deviceOwnerActorId:owner,app:'discord',action:'server',serverId,imageId:'discord-server-picture',imageUrl:'https://not-trusted.invalid'},'user-a')
+  await frontendHandler({type:'lumiphone:get_state',chatId,characterId},'user-a')
+  const servers=storage.get(path).social.servers
+  assert.equal(servers.length,1);assert.equal(servers[0].name,'Crew server')
+  assert.equal(servers[0].imageId,'discord-server-picture');assert.equal(servers[0].imageUrl,'/api/v1/images/discord-server-picture')
+  const postCountBeforePicture=storage.get(path).social.posts.length, uploadCountBeforePicture=uploadedImageCount
+  for(const [requestId,targetServer] of [['discord-upload-existing',serverId],['discord-upload-new','']]) {
+    await frontendHandler({type:'lumiphone:social_photo_upload',requestId,chatId,characterId,deviceOwnerActorId:owner,app:'discord',targetServer,dataUrl:'data:image/png;base64,AA==',filename:'server.png'},'user-a')
+    const result=frontendMessages.find(message=>message.requestId===requestId&&message.type==='lumiphone:social_photo_uploaded')
+    assert.ok(result?.imageId,'real server-picture upload must reach the host uploader')
+    if(targetServer) {
+      await frontendHandler({type:'lumiphone:social_mutate',requestId:'discord-apply-uploaded-picture',chatId,characterId,deviceOwnerActorId:owner,app:'discord',action:'server',serverId,imageId:result.imageId},'user-a')
+      assert.equal(storage.get(path).social.servers.find(server=>server.id===serverId).imageId,result.imageId)
+    }
+  }
+  assert.equal(uploadedImageCount,uploadCountBeforePicture+2)
+  assert.equal(storage.get(path).social.posts.length,postCountBeforePicture,'server uploads must not create post drafts or posts')
+  const photoWorld=storage.get(path)
+  photoWorld.social.servers.push({...photoWorld.social.servers[0],id:'other-phone-server',memberActorIds:['another-phone'],channels:[{id:'other-phone-channel',name:'general',topic:''}]})
+  storage.set(path,photoWorld)
+  for(const [requestId,fields] of [
+    ['discord-upload-no-target',{}],
+    ['discord-upload-unknown',{targetServer:'missing-server'}],
+    ['discord-upload-other-phone',{targetServer:'other-phone-server'}],
+    ['discord-upload-generate',{targetServer:serverId,type:'lumiphone:social_photo_generate'}],
+  ]) {
+    await frontendHandler({type:'lumiphone:social_photo_upload',requestId,chatId,characterId,deviceOwnerActorId:owner,app:'discord',dataUrl:'data:image/png;base64,AA==',...fields},'user-a')
+    assert.ok(frontendMessages.some(message=>message.requestId===requestId&&message.type==='lumiphone:error'),'invalid server destination is rejected before upload')
+  }
+  assert.equal(uploadedImageCount,uploadCountBeforePicture+2,'invalid server-picture requests never reach host image storage')
+  const afterPictures=storage.get(path);afterPictures.social.servers=afterPictures.social.servers.filter(server=>server.id!=='other-phone-server');storage.set(path,afterPictures)
+  const sendSocial = async (requestId,action,fields={}) => frontendHandler({type:'lumiphone:social_mutate',requestId,chatId,characterId,deviceOwnerActorId:owner,app:'discord',action,...fields},'user-a')
+  await sendSocial('discord-profile-gradient','profile',{gradient:['#112233','#665588']})
+  await sendSocial('discord-theme-gradient','preferences',{discordTheme:'gradient',gradient:['#101020','#302040']})
+  assert.deepEqual(storage.get(path).social.profiles[owner].discordGradient,['#112233','#665588'])
+  assert.equal(storage.get(path).social.preferences[owner].discordTheme,'gradient')
+  await sendSocial('discord-gif-room','server',{name:'GIF room',channels:['general']})
+  const channelId=storage.get(path).social.servers.at(-1).channels[0].id
+  const gif={url:'https://media.tenor.com/fixture/wave.gif',description:'hello wave'}
+  await sendSocial('discord-gif-post','post',{channelId,gif})
+  const posted=storage.get(path).social.posts.at(-1)
+  assert.deepEqual(posted.gif,gif,'GIF-only messages pass through the real command route')
+  await sendSocial('discord-react-route','react',{postId:posted.id,emoji:'💜'})
+  await sendSocial('discord-pin-route','pin',{postId:posted.id})
+  const reacted=storage.get(path).social.posts.find(post=>post.id===posted.id)
+  assert.deepEqual(reacted.reactions,[{emoji:'💜',actorIds:[owner]}]);assert.equal(reacted.pinned,true)
+  const originalCors=spindle.cors
+  try {
+    spindle.cors=async(url,options)=>{assert.equal(url,'https://tenor.com/search/hello-wave-gifs');assert.equal(options.responseType,'text');return {status:200,body:'<img src="https://media.tenor.com/fixture/wave.gif">'}}
+    await frontendHandler({type:'lumiphone:social_gif_search',requestId:'tenor-search-route',chatId,characterId,deviceOwnerActorId:owner,app:'discord',query:'hello wave'},'user-a')
+    assert.deepEqual(frontendMessages.find(message=>message.requestId==='tenor-search-route'&&message.type==='lumiphone:social_gifs')?.gifs,[gif])
+    permissions.delete('cors_proxy')
+    await frontendHandler({type:'lumiphone:social_gif_search',requestId:'tenor-without-permission',chatId,characterId,deviceOwnerActorId:owner,app:'twitter',query:'hello wave'},'user-a')
+    assert.ok(frontendMessages.some(message=>message.requestId==='tenor-without-permission'&&message.type==='lumiphone:error'&&/CORS Proxy/.test(message.error)))
+  } finally {spindle.cors=originalCors;permissions.add('cors_proxy')}
+}
 
 console.log('Pocket contracts passed.')

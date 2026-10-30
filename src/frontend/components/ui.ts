@@ -102,15 +102,21 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
   home?.insertBefore(marker, content)
   const dismiss = () => dialog.close()
   close.addEventListener('click', dismiss)
+  dialog.addEventListener('keydown', event => { if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation() })
   dialog.addEventListener('click', event => { if (event.target === dialog) dismiss() })
   dialog.addEventListener('close', () => {
+    // Native dialog closing may restore the opener before this queued event runs.
+    // Preserve a focus move made by the person in that interval.
+    const active = dialog.ownerDocument.activeElement
+    const restoreFocus = !active || active === dialog.ownerDocument.body || dialog.contains(active)
     if (home) marker.replaceWith(content)
     dialog.remove()
-    if (anchor.isConnected) anchor.focus()
+    if (restoreFocus && anchor.isConnected) anchor.focus({ preventScroll: true })
   }, { once: true })
   panel.append(heading, content, close); dialog.append(panel); parent.append(dialog)
   const bounds = parent.getBoundingClientRect()
-  if (parent.matches('.lumiphone-shell')) {
+  const viewport = parent.ownerDocument.defaultView
+  if (parent.matches('.lumiphone-shell') && viewport) {
     // Top-layer dialogs inherit CSS zoom; bounds are already visual pixels.
     const layoutWidth = (parent as HTMLElement).offsetWidth
     const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
@@ -119,9 +125,15 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
     dialog.style.margin = '0'
     dialog.style.left = `${layoutPx(bounds.left + 12)}px`
     dialog.style.top = 'auto'
-    dialog.style.bottom = `${layoutPx(Math.max(12, window.innerHeight - bounds.bottom + 24))}px`
+    dialog.style.bottom = `${layoutPx(Math.max(12, viewport.innerHeight - bounds.bottom + 24))}px`
     dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`
     dialog.style.maxHeight = `${layoutPx(Math.max(120, bounds.height - 70))}px`
+  } else if (viewport) {
+    // Detached host modals can reset native dialog margins. Center in viewport
+    // layout pixels, including inherited host zoom, rather than their top-left.
+    const layoutWidth = (parent as HTMLElement).offsetWidth
+    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
+    Object.assign(dialog.style, { position:'fixed', margin:'0', left:`${viewport.innerWidth / 2 / zoom}px`, top:`${viewport.innerHeight / 2 / zoom}px`, bottom:'auto', transform:'translate(-50%,-50%)', width:`${Math.min(440, Math.max(0, viewport.innerWidth / zoom - 32))}px`, maxHeight:`calc(${viewport.innerHeight / zoom}px - 48px - var(--app-interactive-safe-top,0px))` })
   }
   dialog.showModal()
   return { dismiss }

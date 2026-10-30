@@ -2,12 +2,23 @@ import type { PhoneMessage, PhoneState, PocketContextReference, PocketConversati
 import { conversationActorIds, listPocketActors, resolvePocketActor } from '../../domain/actors.js'
 import { counterpartActorIds, conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../../domain/device.js'
 import { avatarColor, showPocketSheet } from '../components/ui.js'
-import { eventInvite } from '../components/event-invite.js'
+import { eventStripe } from '../components/event-invite.js'
 import { button, el, formatTime, inputValue } from '../shared.js'
+import { cleanPhoneMessageText } from '../../backend/narrative-content.js'
+import { eventSuggestionReady } from '../../domain/scheduler.js'
+import { conversationSceneBoundary, messageContinuityBoundary } from '../../domain/message-continuity.js'
 import type { PageAction } from '../shared.js'
 import { fieldBlock, identityBlock, sectionBlock } from '../components/ui.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
+
+/** Center within the message scroller without moving a phone, dock, or host ancestor. */
+export function centerMessageInThread(thread: HTMLElement, target: HTMLElement): void {
+  const frame = thread.getBoundingClientRect(), targetFrame = target.getBoundingClientRect()
+  const scale = thread.offsetHeight && frame.height ? frame.height / thread.offsetHeight : 1
+  const top = thread.scrollTop + (targetFrame.top - frame.top) / scale - thread.clientTop - (thread.clientHeight - targetFrame.height / scale) / 2
+  thread.scrollTop = Math.max(0, Math.min(Math.max(0, thread.scrollHeight - thread.clientHeight), top))
+}
 
 export interface MessagesViewHost {
   state: PhoneState
@@ -15,6 +26,10 @@ export interface MessagesViewHost {
   deviceOwnerActorId: string
   readOnlyDevice: boolean
   selectedMessageId: string
+  /** One-shot navigation target. Empty disables the legacy selected-message reveal. */
+  scrollToMessageId?: string
+  /** The controller restores the existing thread anchor after same-thread updates. */
+  preserveThreadScroll?: boolean
   selectedView: 'thread' | 'new-group' | 'group-editor' | 'group-detail'
   groupDraft: { title: string; participants: string[] } | undefined
   updateGroupDraft(draft: { title: string; participants: string[] }): void
@@ -306,7 +321,11 @@ function handoffActivity(host: MessagesViewHost, conversation: PocketConversatio
   }
   more.append(summary, secondary)
   activity.appendChild(more)
-  if (host.shouldFocusHandoff(relay.id)) requestAnimationFrame(() => activity.scrollIntoView?.({ block: 'center', behavior: 'smooth' }))
+  if (host.shouldFocusHandoff(relay.id)) requestAnimationFrame(() => {
+    if (!activity.isConnected) return
+    const thread = activity.closest<HTMLElement>('[data-pocket-thread]')
+    if (thread?.isConnected) centerMessageInThread(thread, activity)
+  })
   return activity
 }
 
@@ -460,17 +479,30 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   bubbles.dataset.conversationKind = conversation.kind
   const conversationRelays = host.readOnlyDevice ? [] : host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== 'dismissed')
   const renderedRelayIds = new Set<string>()
-  const eventStrip = el('details', 'lp-event-strip')
-  const eventSummary = el('summary', 'lp-event-strip-summary')
+  const eventStrip = el('section', 'lp-event-strip'); eventStrip.setAttribute('aria-label','Conversation plans')
   const eventList = el('div', 'lp-event-strip-list')
-  const seenInvites = new Set<string>()
+  const seenInvites = new Set<string>(), seenEvents = new Set<string>(), pendingRows:HTMLElement[] = [], scheduledRows:HTMLElement[] = []
+  const inviteKey = (invite: NonNullable<PhoneMessage['eventSuggestion']>) => invite.updateEventId ? `event:${invite.updateEventId}` : invite.id
+  const latestInvites = new Map(conversation.messages.flatMap(message => message.eventSuggestion ? [[inviteKey(message.eventSuggestion), message.id] as const] : []))
+  const updatingEvents = new Set(conversation.messages.flatMap(message => { const invite=message.eventSuggestion; return invite?.status==='pending' && invite.updateEventId && eventSuggestionReady(invite) && latestInvites.get(inviteKey(invite))===message.id ? [invite.updateEventId] : [] }))
   let priorGroupSpeakerId = ''
   let priorBurstKey = ''
+  let previousMessage: PhoneMessage | undefined
+  const sceneBoundary = conversationSceneBoundary(host.state, conversation)
+  const daySeparator = (boundary: { label: string; detail: string }) => {
+    const separator = el('div', 'lp-conversation-status lp-story-day', boundary.label)
+    separator.dataset.storyDay = boundary.label
+    separator.setAttribute('role', 'separator'); separator.setAttribute('aria-label', `${boundary.label}. ${boundary.detail}`)
+    return separator
+  }
   for (const message of conversation.messages) {
-    const bubble = el('div', 'lp-bubble lp-message-surface')
+    const boundary = previousMessage ? messageContinuityBoundary(host.state, previousMessage, message) : undefined
+    if (boundary) { bubbles.append(daySeparator(boundary)); priorBurstKey = ''; priorGroupSpeakerId = '' }
+    previousMessage = message
+    const bubble = el('div', message.call ? 'lp-conversation-status lp-call-history' : 'lp-bubble lp-message-surface')
     bubble.dataset.messageId = message.id
     bubble.dataset.selected = String(message.id === host.selectedMessageId)
-    if (message.call) { bubble.classList.add('lp-call-history'); bubble.dataset.callStatus = message.call.status }
+    if (message.call) { bubble.dataset.callStatus = message.call.status; bubble.setAttribute('role', 'separator'); bubble.setAttribute('aria-label', `${message.text} · ${formatTime(message.createdAt)}`) }
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId)
     bubble.dataset.sender = direction === 'outbound' ? 'persona' : message.sender === 'system' ? 'system' : 'contact'
     const senderActor = message.senderActorId ? resolvePocketActor(host.state, message.senderActorId) : message.sender === 'contact' ? resolvePocketActor(host.state, message.senderContactId || counterpartIds[0] || '') : null
@@ -479,16 +511,21 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     const messageActorId = message.senderActorId || message.senderContactId || ''
     const burstKey = `${bubble.dataset.sender}:${messageActorId}`
     bubble.dataset.burstContinuation = String(priorBurstKey === burstKey && message.sender !== 'system')
-    priorBurstKey = burstKey
+    priorBurstKey = message.call ? '' : burstKey
     const continuesRun = conversation.kind === 'group' && direction !== 'outbound' && priorGroupSpeakerId === messageActorId
-    if (conversation.kind === 'group' && direction !== 'outbound' && !continuesRun && senderActor) {
+    if (!message.call && conversation.kind === 'group' && direction !== 'outbound' && !continuesRun && senderActor) {
       const sender = button(senderActor?.name || message.senderName, 'lp-bubble-sender lp-actor-link')
       sender.addEventListener('click', () => { if (messageActorId) host.openActor(messageActorId) })
       bubble.appendChild(sender)
     }
-    bubble.append(message.format === 'voice' && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
-    if (message.generation || message.origin || !host.readOnlyDevice) {
+    if (message.call) {
+      const time = el('time', 'lp-call-history-time', formatTime(message.createdAt)); time.dateTime = message.createdAt
+      bubble.append(el('span', '', message.text), time)
+    } else bubble.append(message.format === 'voice' && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.sender === 'contact' ? cleanPhoneMessageText(message.text) : message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
+    if (!message.call && (message.generation || message.origin || !host.readOnlyDevice)) {
       const tools = el('div', 'lp-bubble-tools')
+      let dismissActions: (() => void) | undefined
+      tools.addEventListener('click', event => { if ((event.target as HTMLElement).closest('button')) dismissActions?.() }, { capture: true })
       if (message.generation && !host.readOnlyDevice) {
         const retry = button('↻', 'lp-bubble-action')
         retry.textContent = 'Retry message'; retry.type = 'button'; retry.title = 'Retry'
@@ -512,10 +549,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
         tools.appendChild(remove)
       }
       const more = button('⋯', 'lp-message-more'); more.setAttribute('aria-label', 'Message actions')
-      more.addEventListener('click', () => showPocketSheet(more, 'Message actions', tools))
+      more.addEventListener('click', () => { dismissActions = showPocketSheet(more, 'Message actions', tools)?.dismiss })
       bubble.appendChild(more)
     }
-    if (conversation.kind === 'group' && direction !== 'outbound' && senderActor) {
+    if (!message.call && conversation.kind === 'group' && direction !== 'outbound' && senderActor) {
       const row = el('div', 'lp-group-message')
       row.style.setProperty('--message-accent', resolvedAccent)
       row.dataset.continuation = String(continuesRun)
@@ -533,25 +570,32 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       priorGroupSpeakerId = ''
     }
     const invite = message.eventSuggestion
-    if (!host.readOnlyDevice && invite && !seenInvites.has(invite.id)) {
-      seenInvites.add(invite.id)
-      if (invite.status === 'pending') {
-        bubbles.append(eventInvite(message, conversation.id, host))
-        priorBurstKey = ''; priorGroupSpeakerId = ''
-      } else if (invite.status === 'scheduled') eventList.append(eventInvite(message, conversation.id, host))
+    if (!host.readOnlyDevice && invite) {
+      const event = host.state.events.find(event => event.id === (invite.scheduledEventId || invite.updateEventId))
+      const activeEvent = event && !event.completed && !event.startedAt
+      if (invite.status === 'pending' && latestInvites.get(inviteKey(invite)) === message.id && !seenInvites.has(invite.id) && eventSuggestionReady(invite) && (!invite.updateEventId || activeEvent)) {
+        seenInvites.add(invite.id); pendingRows.push(eventStripe(message, conversation.id, host))
+      } else if (invite.status === 'scheduled' && activeEvent && !seenEvents.has(event.id) && !updatingEvents.has(event.id)) {
+        seenEvents.add(event.id)
+        scheduledRows.push(eventStripe({ ...message, eventSuggestion: { ...invite, title: event.title, description: event.description, whenKind: event.whenKind, whenText: event.whenText, start: event.start, end: event.end, participantNames: event.participantNames || invite.participantNames } }, conversation.id, host))
+      }
     }
     for (const relay of conversationRelays.filter((entry) => entry.sourceMessageId === message.id)) {
       bubbles.appendChild(handoffActivity(host, conversation, relay))
       renderedRelayIds.add(relay.id)
       priorBurstKey = ''
     }
+    if (sceneBoundary && conversation.messages[sceneBoundary.index].id === message.id) {
+      const separator = daySeparator(sceneBoundary); delete separator.dataset.storyDay
+      separator.dataset.eventBoundary = sceneBoundary.event.id; bubbles.append(separator)
+      priorBurstKey = ''; priorGroupSpeakerId = ''
+    }
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id))) bubbles.appendChild(handoffActivity(host, conversation, relay))
-  if (eventList.childElementCount) {
-    eventSummary.textContent = `${eventList.childElementCount === 1 ? '1 event' : `${eventList.childElementCount} events`} · ${eventList.querySelector('h3')?.textContent || 'Timeline'}`
-    eventStrip.append(eventSummary, eventList)
-    referenceSlot.appendChild(eventStrip)
-  }
+  const currentDayBoundary = previousMessage ? messageContinuityBoundary(host.state, previousMessage) : undefined
+  if (currentDayBoundary) bubbles.append(daySeparator(currentDayBoundary))
+  eventList.append(...pendingRows,...scheduledRows)
+  if (eventList.childElementCount) { eventStrip.append(eventList); referenceSlot.append(eventStrip) }
   if (busy?.phase === 'checking') {
     const checking = el('div', conversation.kind === 'group' ? 'lp-group-typing' : 'lp-conversation-status')
     checking.appendChild(el('span', '', conversation.kind === 'group' ? titleText : 'Checking for reply…'))
@@ -599,7 +643,8 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   }
 
   if (availability.state === 'local' && !host.manualOverride) {
-    if (!conversationRelays.length) bubbles.appendChild(el('div', 'lp-conversation-status', `${directContact?.name || titleText} is currently with you.`))
+    const presence = el('div', 'lp-conversation-status', `${directContact?.name || titleText} ${LOCAL_COPY[availability.reason]}`)
+    presence.dataset.currentPresence = 'true'; bubbles.append(presence)
     page.appendChild(bubbles)
     return page
   }
@@ -671,10 +716,12 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   composerStack.appendChild(compose)
   page.append(bubbles, composerStack)
   requestAnimationFrame(() => {
+    if (!page.isConnected || !bubbles.isConnected) return
     resizeComposer()
-    const selected = host.selectedMessageId ? bubbles.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(host.selectedMessageId)}"]`) : null
-    if (selected) selected.scrollIntoView({ block: 'center' })
-    else bubbles.scrollTop = bubbles.scrollHeight
+    const targetId = host.scrollToMessageId === undefined ? host.selectedMessageId : host.scrollToMessageId
+    const selected = targetId ? [...bubbles.querySelectorAll<HTMLElement>('[data-message-id]')].find(node => node.dataset.messageId === targetId) : undefined
+    if (selected) centerMessageInThread(bubbles, selected)
+    else if (!host.preserveThreadScroll) bubbles.scrollTop = bubbles.scrollHeight
   })
   return page
 }

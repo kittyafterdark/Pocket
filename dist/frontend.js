@@ -1,211 +1,90 @@
-// src/domain/gallery-page.ts
-var GALLERY_PAGE_SIZE = 48;
-
-// src/frontend/components/tts-connection.ts
-async function listTtsConnections(signal) {
-  const response = await fetch("/api/v1/tts-connections?limit=100", { credentials: "same-origin", signal });
-  if (!response.ok)
-    throw new Error("Could not load Lumiverse TTS connections.");
-  const payload = await response.json();
-  return (Array.isArray(payload.data) ? payload.data : []).flatMap((item) => {
-    if (!item || typeof item !== "object")
-      return [];
-    const value = item;
-    return typeof value.id === "string" && typeof value.name === "string" ? [{
-      id: value.id,
-      name: value.name,
-      model: typeof value.model === "string" ? value.model : undefined,
-      voice: typeof value.voice === "string" ? value.voice : undefined
-    }] : [];
-  });
+// src/domain/social-extras.ts
+var QUICK_REACTIONS = ["\uD83D\uDE2D", "\uD83D\uDD25", "❤️", "✅", "\uD83D\uDC80", "\uD83D\uDE02"];
+var EMOJI_CHOICES = [
+  ["\uD83D\uDE2D", "cry sob"],
+  ["\uD83D\uDD25", "fire"],
+  ["❤️", "heart love"],
+  ["✅", "check yes"],
+  ["\uD83D\uDC80", "skull dead"],
+  ["\uD83D\uDE02", "laugh joy"],
+  ["\uD83D\uDC4D", "thumbs up"],
+  ["\uD83D\uDC4E", "thumbs down"],
+  ["\uD83E\uDD70", "love smile"],
+  ["\uD83D\uDE0D", "heart eyes"],
+  ["\uD83E\uDD7A", "pleading"],
+  ["\uD83D\uDE0E", "cool"],
+  ["\uD83E\uDD14", "thinking"],
+  ["\uD83D\uDE43", "upside down"],
+  ["\uD83D\uDE05", "sweat smile"],
+  ["\uD83D\uDE33", "flushed"],
+  ["\uD83D\uDE0F", "smirk"],
+  ["\uD83D\uDE34", "sleep"],
+  ["\uD83D\uDE31", "scream"],
+  ["\uD83D\uDE21", "angry"],
+  ["\uD83E\uDD2F", "mind blown"],
+  ["\uD83E\uDD21", "clown"],
+  ["\uD83D\uDC40", "eyes"],
+  ["\uD83E\uDEF6", "heart hands"],
+  ["✨", "sparkles"],
+  ["\uD83C\uDF89", "party"],
+  ["\uD83D\uDCAF", "hundred"],
+  ["\uD83D\uDDA4", "black heart"],
+  ["\uD83D\uDC9C", "purple heart"],
+  ["\uD83D\uDC99", "blue heart"],
+  ["\uD83D\uDC9B", "yellow heart"],
+  ["\uD83C\uDF08", "rainbow"],
+  ["\uD83E\uDD1D", "handshake"],
+  ["\uD83D\uDE4F", "thanks pray"],
+  ["\uD83E\uDEE1", "salute"],
+  ["\uD83E\uDD0D", "white heart"],
+  ["\uD83E\uDD2D", "giggle"],
+  ["\uD83E\uDD37", "shrug"],
+  ["\uD83D\uDE14", "sad"],
+  ["\uD83D\uDC08", "cat"],
+  ["\uD83C\uDF38", "flower"],
+  ["☕", "coffee"],
+  ["\uD83C\uDF7F", "popcorn"],
+  ["\uD83D\uDC85", "nails"],
+  ["\uD83E\uDEE0", "melting"],
+  ["\uD83D\uDC94", "broken heart"],
+  ["\uD83E\uDEC2", "hug"],
+  ["\uD83D\uDC83", "dance"],
+  ["\uD83D\uDEA9", "red flag"]
+];
+function validEmoji(value) {
+  return typeof value === "string" && value.length <= 24 && /\p{Extended_Pictographic}|\p{Regional_Indicator}|[0-9#*]\uFE0F?\u20E3/u.test(value) && /^[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\uFE0F\u200D\u20E30-9#*]+$/u.test(value);
 }
-async function listTtsChoices(connectionId, kind, signal) {
-  const response = await fetch(`/api/v1/tts-connections/${encodeURIComponent(connectionId)}/${kind}`, { credentials: "same-origin", signal });
-  if (!response.ok)
-    throw new Error("Could not load TTS choices.");
-  const payload = await response.json();
-  if (payload.error)
-    throw new Error("Could not load TTS choices.");
-  return (Array.isArray(payload[kind]) ? payload[kind] : []).flatMap((item) => {
-    if (!item || typeof item !== "object")
-      return [];
-    const value = item;
-    if (typeof value.id !== "string" || !value.id)
-      return [];
-    const name = typeof value.label === "string" ? value.label : typeof value.name === "string" ? value.name : value.id;
-    return [{ id: value.id, label: `${name}${typeof value.language === "string" && value.language ? ` (${value.language})` : ""}` }];
-  });
+function normalizeReactions(value) {
+  if (!Array.isArray(value))
+    return [];
+  const merged = new Map;
+  for (const item of value.slice(0, 24)) {
+    if (!item || !validEmoji(item.emoji) || !Array.isArray(item.actorIds))
+      continue;
+    const ids = merged.get(item.emoji) || new Set;
+    for (const id of item.actorIds.slice(0, 40))
+      if (typeof id === "string" && id.trim() && id.length <= 180)
+        ids.add(id);
+    merged.set(item.emoji, ids);
+  }
+  return [...merged].filter(([, ids]) => ids.size).map(([emoji, ids]) => ({ emoji, actorIds: [...ids].slice(0, 40) }));
 }
-async function synthesizeVoiceMessage(connectionId, text, signal, options) {
-  const response = await fetch("/api/v1/tts/synthesize", {
-    method: "POST",
-    credentials: "same-origin",
-    signal,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connectionId, text, voice: options?.voice || undefined, model: options?.model || undefined })
-  });
-  if (!response.ok)
-    throw new Error("The selected TTS connection could not generate audio. Check it in Lumiverse Connections.");
-  const blob = await response.blob();
-  if (!blob.size || !/^audio\//i.test(blob.type))
-    throw new Error("The TTS connection did not return playable audio.");
-  return blob;
-}
-
-// src/frontend/components/voice-message.ts
-class VoiceMessagePlayer {
-  active;
-  stop() {
-    if (!this.active)
+function socialGif(value) {
+  if (!value || typeof value !== "object")
+    return;
+  const raw = value;
+  if (typeof raw.url !== "string" || raw.url.length > 1400)
+    return;
+  try {
+    const url = new URL(raw.url);
+    if (url.protocol !== "https:" || url.hostname !== "media.tenor.com" || !url.pathname.endsWith(".gif") || url.username || url.password)
       return;
-    const { button, status, utterance, abort, audio, url, timer } = this.active;
-    this.active = undefined;
-    if (utterance) {
-      utterance.onend = utterance.onerror = null;
-      window.speechSynthesis.cancel();
-    }
-    abort?.abort();
-    clearTimeout(timer);
-    if (audio) {
-      audio.onended = audio.onerror = null;
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-    }
-    if (url)
-      URL.revokeObjectURL(url);
-    if (status)
-      status.textContent = "";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-pressed", "false");
-  }
-  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions) {
-    const container = document.createElement("div");
-    container.className = "lp-voice-message";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "lp-voice-play";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-label", `Play voice message from ${message.senderName}`);
-    button.setAttribute("aria-pressed", "false");
-    const status = document.createElement("span");
-    status.className = "lp-voice-status";
-    status.setAttribute("role", "status");
-    const supported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-    button.disabled = !enabled || !supported && !connectionId;
-    if (button.disabled)
-      status.textContent = enabled ? "Speech playback unavailable in this browser." : "Voice playback is disabled in Settings.";
-    button.addEventListener("click", () => {
-      const same = this.active?.button === button;
-      this.stop();
-      if (same)
-        return;
-      if (connectionId) {
-        const active = { button, status, abort: new AbortController };
-        this.active = active;
-        button.textContent = "■ Stop voice message";
-        button.setAttribute("aria-pressed", "true");
-        status.textContent = "Preparing voice message…";
-        active.timer = setTimeout(() => {
-          if (this.active === active) {
-            this.stop();
-            status.textContent = "TTS generation timed out. Try again.";
-          }
-        }, 90000);
-        synthesizeVoiceMessage(connectionId, message.text, active.abort.signal, connectionOptions).then(async (blob) => {
-          if (this.active !== active)
-            return;
-          clearTimeout(active.timer);
-          active.url = URL.createObjectURL(blob);
-          active.audio = new window.Audio(active.url);
-          active.audio.onended = () => {
-            if (this.active === active)
-              this.stop();
-          };
-          active.audio.onerror = () => {
-            if (this.active === active) {
-              this.stop();
-              status.textContent = "Could not play the generated audio. The transcript is available below.";
-            }
-          };
-          await active.audio.play();
-          if (this.active === active)
-            status.textContent = "";
-        }).catch((error) => {
-          if (this.active !== active)
-            return;
-          this.stop();
-          status.textContent = error instanceof Error ? error.message : "TTS playback failed. The transcript is available below.";
-        });
-        return;
-      }
-      const utterance = new window.SpeechSynthesisUtterance(message.text);
-      const voices = window.speechSynthesis.getVoices();
-      let hash = 0;
-      for (const char of message.senderActorId || message.senderName)
-        hash = hash * 31 + char.charCodeAt(0) >>> 0;
-      const defaults = voices.filter((voice) => voice.lang.split("-")[0] === (document.documentElement.lang || navigator.language || "en").split("-")[0]);
-      const pool = defaults.length ? defaults : voices;
-      const voice = voices.find((voice) => voice.voiceURI === voiceURI) || pool[hash % (pool.length || 1)];
-      if (voice) {
-        utterance.voice = voice;
-        utterance.lang = voice.lang;
-      }
-      this.active = { button, utterance };
-      status.textContent = "";
-      button.textContent = "■ Stop voice message";
-      button.setAttribute("aria-pressed", "true");
-      const finish = () => {
-        if (this.active?.utterance === utterance) {
-          this.active = undefined;
-          button.textContent = "▶ Play voice message";
-          button.setAttribute("aria-pressed", "false");
-        }
-      };
-      utterance.onend = finish;
-      utterance.onerror = () => {
-        finish();
-        status.textContent = "Could not play this voice message. The transcript is available below.";
-      };
-      try {
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        finish();
-        status.textContent = "Speech playback failed. Try again.";
-      }
-    });
-    const transcript = document.createElement("details");
-    transcript.className = "lp-voice-transcript";
-    const title = document.createElement("summary");
-    title.textContent = "Voice message transcript";
-    const text = document.createElement("p");
-    text.textContent = message.text;
-    transcript.append(title, text);
-    container.append(button, status, transcript);
-    return container;
+    return { url: url.href, description: typeof raw.description === "string" ? raw.description.slice(0, 180) : "Tenor GIF" };
+  } catch {
+    return;
   }
 }
-
-// src/domain/clock-label.ts
-var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
-function clockDayPart(value) {
-  if (typeof value !== "string")
-    return "";
-  const key = value.trim().toLowerCase().replace(/[_-]/g, " ");
-  const match = [...CLOCK_DAY_PART_KEYS].sort((a, b) => b.length - a.length).find((part) => key === part.replaceAll("_", " ") || key.startsWith(part.replaceAll("_", " ") + ","));
-  return match || "";
-}
-function clockLabel(value, dayPart) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  const key = clockDayPart(dayPart) || clockDayPart(raw);
-  if (key) {
-    const label = key.replaceAll("_", " ");
-    return raw.toLowerCase() === label ? raw : label[0].toUpperCase() + label.slice(1);
-  }
-  if (/^(?:[01]?\d|2[0-3]):[0-5]\d(?:\s*[AP]M)?$/i.test(raw) || /^[+-]?\d{1,4} minutes?$/.test(raw))
-    return raw;
-  return "";
-}
+var gradientColors = (value) => Array.isArray(value) && value.length === 2 && value.every((color) => typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color)) ? [value[0], value[1]] : undefined;
 
 // src/domain/trackers.ts
 var TRACKER_HISTORY_LIMIT = 40;
@@ -750,7 +629,7 @@ function normalizePreferences(value) {
     const item = record2(entry);
     const requestId = text(item.requestId, "", 180);
     const task = text(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge", "social-feed"]);
     if (!requestId || !tasks.has(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -780,6 +659,8 @@ function normalizePreferences(value) {
     const overridePreset = themePalette(overrideTheme);
     personaAppearance[personaId] = {
       enabled: bool(item.enabled, false),
+      ...typeof item.homeWallpaperEnabled === "boolean" ? { homeWallpaperEnabled: item.homeWallpaperEnabled } : {},
+      ...typeof item.chatWallpaperEnabled === "boolean" ? { chatWallpaperEnabled: item.chatWallpaperEnabled } : {},
       theme: overrideTheme,
       colors: {
         accent: safeColor(overrideColors.accent, overridePreset.accent),
@@ -861,8 +742,347 @@ function wallpaperCss(primary, secondary) {
   return `linear-gradient(145deg, ${safeColor(primary, "#171327")} 0%, ${safeColor(secondary, "#123a4a")} 100%)`;
 }
 
+// src/domain/wallpaper-scope.ts
+function personaWallpaperActive(profile, kind) {
+  return Boolean(profile?.[kind + "Wallpaper"].source && (profile?.[kind + "WallpaperEnabled"] ?? profile?.enabled));
+}
+
+// src/domain/gallery-page.ts
+var GALLERY_PAGE_SIZE = 48;
+
+// src/frontend/components/tts-connection.ts
+async function listTtsConnections(signal) {
+  const response = await fetch("/api/v1/tts-connections?limit=100", { credentials: "same-origin", signal });
+  if (!response.ok)
+    throw new Error("Could not load Lumiverse TTS connections.");
+  const payload = await response.json();
+  return (Array.isArray(payload.data) ? payload.data : []).flatMap((item) => {
+    if (!item || typeof item !== "object")
+      return [];
+    const value = item;
+    return typeof value.id === "string" && typeof value.name === "string" ? [{
+      id: value.id,
+      name: value.name,
+      model: typeof value.model === "string" ? value.model : undefined,
+      voice: typeof value.voice === "string" ? value.voice : undefined
+    }] : [];
+  });
+}
+async function listTtsChoices(connectionId, kind, signal) {
+  const response = await fetch(`/api/v1/tts-connections/${encodeURIComponent(connectionId)}/${kind}`, { credentials: "same-origin", signal });
+  if (!response.ok)
+    throw new Error("Could not load TTS choices.");
+  const payload = await response.json();
+  if (payload.error)
+    throw new Error("Could not load TTS choices.");
+  return (Array.isArray(payload[kind]) ? payload[kind] : []).flatMap((item) => {
+    if (!item || typeof item !== "object")
+      return [];
+    const value = item;
+    if (typeof value.id !== "string" || !value.id)
+      return [];
+    const name = typeof value.label === "string" ? value.label : typeof value.name === "string" ? value.name : value.id;
+    return [{ id: value.id, label: `${name}${typeof value.language === "string" && value.language ? ` (${value.language})` : ""}` }];
+  });
+}
+async function synthesizeVoiceMessage(connectionId, text, signal, options) {
+  const response = await fetch("/api/v1/tts/synthesize", {
+    method: "POST",
+    credentials: "same-origin",
+    signal,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionId, text, voice: options?.voice || undefined, model: options?.model || undefined })
+  });
+  if (!response.ok)
+    throw new Error("The selected TTS connection could not generate audio. Check it in Lumiverse Connections.");
+  const blob = await response.blob();
+  if (!blob.size || !/^audio\//i.test(blob.type))
+    throw new Error("The TTS connection did not return playable audio.");
+  return blob;
+}
+
+// src/frontend/components/voice-message.ts
+class VoiceMessagePlayer {
+  active;
+  stop() {
+    if (!this.active)
+      return;
+    const { button, status, utterance, abort, audio, url, timer } = this.active;
+    this.active = undefined;
+    if (utterance) {
+      utterance.onend = utterance.onerror = null;
+      window.speechSynthesis.cancel();
+    }
+    abort?.abort();
+    clearTimeout(timer);
+    if (audio) {
+      audio.onended = audio.onerror = null;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    if (url)
+      URL.revokeObjectURL(url);
+    if (status)
+      status.textContent = "";
+    button.textContent = "▶ Play voice message";
+    button.setAttribute("aria-pressed", "false");
+  }
+  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions) {
+    const container = document.createElement("div");
+    container.className = "lp-voice-message";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lp-voice-play";
+    button.textContent = "▶ Play voice message";
+    button.setAttribute("aria-label", `Play voice message from ${message.senderName}`);
+    button.setAttribute("aria-pressed", "false");
+    const status = document.createElement("span");
+    status.className = "lp-voice-status";
+    status.setAttribute("role", "status");
+    const supported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+    button.disabled = !enabled || !supported && !connectionId;
+    if (button.disabled)
+      status.textContent = enabled ? "Speech playback unavailable in this browser." : "Voice playback is disabled in Settings.";
+    button.addEventListener("click", () => {
+      const same = this.active?.button === button;
+      this.stop();
+      if (same)
+        return;
+      if (connectionId) {
+        const active = { button, status, abort: new AbortController };
+        this.active = active;
+        button.textContent = "■ Stop voice message";
+        button.setAttribute("aria-pressed", "true");
+        status.textContent = "Preparing voice message…";
+        active.timer = setTimeout(() => {
+          if (this.active === active) {
+            this.stop();
+            status.textContent = "TTS generation timed out. Try again.";
+          }
+        }, 90000);
+        synthesizeVoiceMessage(connectionId, message.text, active.abort.signal, connectionOptions).then(async (blob) => {
+          if (this.active !== active)
+            return;
+          clearTimeout(active.timer);
+          active.url = URL.createObjectURL(blob);
+          active.audio = new window.Audio(active.url);
+          active.audio.onended = () => {
+            if (this.active === active)
+              this.stop();
+          };
+          active.audio.onerror = () => {
+            if (this.active === active) {
+              this.stop();
+              status.textContent = "Could not play the generated audio. The transcript is available below.";
+            }
+          };
+          await active.audio.play();
+          if (this.active === active)
+            status.textContent = "";
+        }).catch((error) => {
+          if (this.active !== active)
+            return;
+          this.stop();
+          status.textContent = error instanceof Error ? error.message : "TTS playback failed. The transcript is available below.";
+        });
+        return;
+      }
+      const utterance = new window.SpeechSynthesisUtterance(message.text);
+      const voices = window.speechSynthesis.getVoices();
+      let hash = 0;
+      for (const char of message.senderActorId || message.senderName)
+        hash = hash * 31 + char.charCodeAt(0) >>> 0;
+      const defaults = voices.filter((voice) => voice.lang.split("-")[0] === (document.documentElement.lang || navigator.language || "en").split("-")[0]);
+      const pool = defaults.length ? defaults : voices;
+      const voice = voices.find((voice) => voice.voiceURI === voiceURI) || pool[hash % (pool.length || 1)];
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      }
+      this.active = { button, utterance };
+      status.textContent = "";
+      button.textContent = "■ Stop voice message";
+      button.setAttribute("aria-pressed", "true");
+      const finish = () => {
+        if (this.active?.utterance === utterance) {
+          this.active = undefined;
+          button.textContent = "▶ Play voice message";
+          button.setAttribute("aria-pressed", "false");
+        }
+      };
+      utterance.onend = finish;
+      utterance.onerror = () => {
+        finish();
+        status.textContent = "Could not play this voice message. The transcript is available below.";
+      };
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        finish();
+        status.textContent = "Speech playback failed. Try again.";
+      }
+    });
+    const transcript = document.createElement("details");
+    transcript.className = "lp-voice-transcript";
+    const title = document.createElement("summary");
+    title.textContent = "Voice message transcript";
+    const text = document.createElement("p");
+    text.textContent = message.text;
+    transcript.append(title, text);
+    container.append(button, status, transcript);
+    return container;
+  }
+}
+
+// src/domain/launcher.ts
+var LAUNCHER_APPS = [
+  { app: "messages", label: "Messages", icon: "messages" },
+  { app: "camera", label: "Camera", icon: "camera" },
+  { app: "gallery", label: "Gallery", icon: "gallery" },
+  { app: "notes", label: "Notes", icon: "notes" },
+  { app: "weather", label: "Weather", icon: "weather" },
+  { app: "contacts", label: "Contacts", icon: "contacts" },
+  { app: "calendar", label: "Timeline", icon: "calendar" },
+  { app: "trackers", label: "Trackers", icon: "trackers" },
+  { app: "settings", label: "Settings", icon: "settings" },
+  { app: "appstore", label: "App Store", icon: "appstore" },
+  { app: "twitter", label: "Twitter", icon: "twitter" },
+  { app: "discord", label: "Discord", icon: "discord" },
+  { app: "instagram", label: "Instagram", icon: "instagram" },
+  { app: "tumblr", label: "Tumblr", icon: "tumblr" }
+];
+var POCKET_SYSTEM_APPS = ["messages", "contacts", "settings", "appstore"];
+var POCKET_PREINSTALLED_APPS = ["messages", "contacts", "settings", "appstore", "camera", "gallery", "notes", "weather", "calendar", "trackers"];
+function pocketInstalledApps(layout) {
+  return [...new Set([...layout.installedApps || POCKET_PREINSTALLED_APPS, ...POCKET_SYSTEM_APPS])];
+}
+function pocketAppInstalled(layout, app) {
+  return pocketInstalledApps(layout).some((entry) => entry === app);
+}
+var MAX_LAUNCHER_PAGES = 8;
+var MAX_LAUNCHER_ITEMS = 64;
+var launcherItemCount = (layout) => layout.pages.reduce((total, page) => total + page.items.reduce((count, item) => count + 1 + (item.kind === "folder" ? item.apps.length : 0), 0), 0);
+var launcherAppIds = new Set(LAUNCHER_APPS.map((entry) => entry.app));
+function defaultLauncherLayout() {
+  const apps = ["weather", "contacts", "calendar", "trackers", "settings", "appstore"].map((app) => ({ id: `app-${app}`, kind: "app", app }));
+  return { version: 2, pages: [{ id: "home", name: "Home", items: [{ id: "widget-clock", kind: "clock", size: "compact" }, { id: "widget-weather", kind: "weather", size: "compact", variant: "stripe" }, ...apps] }], dock: ["messages", "camera", "gallery", "notes"] };
+}
+var isLauncherRecord = (raw) => Boolean(raw && typeof raw === "object" && !Array.isArray(raw));
+var launcherText = (raw, max = 120) => typeof raw === "string" ? raw.trim().slice(0, max) : "";
+function normalizeLauncherLayout(raw) {
+  if (!isLauncherRecord(raw) || !Array.isArray(raw.dock))
+    return defaultLauncherLayout();
+  const pages = raw.version === 1 && Array.isArray(raw.home) ? [{ id: "home", name: "Home", items: raw.home.map((app) => ({ id: `app-${app}`, kind: "app", app })) }] : raw.version === 2 && Array.isArray(raw.pages) ? raw.pages : [];
+  if (!pages.length)
+    return defaultLauncherLayout();
+  const used = new Set, widgets = new Set, ids = new Set, pageIds = new Set;
+  const unique = (id, seen) => {
+    let candidate = id;
+    for (let suffix = 2;seen.has(candidate); suffix++)
+      candidate = `${id}-${suffix}`;
+    seen.add(candidate);
+    return candidate;
+  };
+  const accept = (app) => {
+    if (typeof app !== "string" || !launcherAppIds.has(app) || used.has(app))
+      return false;
+    used.add(app);
+    return true;
+  };
+  const rawDock = raw.dock;
+  const dock = Array.from({ length: 4 }, (_, index) => accept(rawDock[index]) ? rawDock[index] : null);
+  let itemCount = 0;
+  let weatherAdded = false;
+  let clockAdded = false;
+  const normalized = pages.slice(0, MAX_LAUNCHER_PAGES).flatMap((page, index) => {
+    if (!isLauncherRecord(page))
+      return [];
+    const pageId = unique(launcherText(page.id) || `screen-${index + 1}`, pageIds);
+    const items = (Array.isArray(page.items) ? page.items : []).flatMap((item) => {
+      if (!isLauncherRecord(item) || itemCount >= MAX_LAUNCHER_ITEMS)
+        return [];
+      const id = () => {
+        itemCount++;
+        return unique(launcherText(item.id) || `item-${itemCount}`, ids);
+      };
+      if (item.kind === "app" && accept(item.app))
+        return [{ id: id(), kind: "app", app: item.app }];
+      if (item.kind === "folder" && Array.isArray(item.apps)) {
+        const apps = item.apps.filter(accept).slice(0, MAX_LAUNCHER_ITEMS - itemCount - 1);
+        itemCount += apps.length;
+        return [{ id: id(), kind: "folder", name: launcherText(item.name, 40) || "Folder", apps }];
+      }
+      if (item.kind === "tracker" && launcherText(item.trackerId) && !widgets.has(launcherText(item.trackerId))) {
+        widgets.add(launcherText(item.trackerId));
+        return [{ id: id(), kind: "tracker", trackerId: launcherText(item.trackerId), size: item.size === "wide" ? "wide" : "compact" }];
+      }
+      if (item.kind === "weather" && !weatherAdded) {
+        weatherAdded = true;
+        return [{ id: id(), kind: "weather", size: item.size === "wide" ? "wide" : "compact", ...item.variant === "stripe" ? { variant: "stripe" } : {} }];
+      }
+      if (item.kind === "clock" && !clockAdded) {
+        clockAdded = true;
+        return [{ id: id(), kind: "clock", size: item.size === "wide" ? "wide" : "compact" }];
+      }
+      return [];
+    });
+    return [{ id: pageId, name: launcherText(page.name, 40) || `Screen ${index + 1}`, items }];
+  });
+  const installedApps = Array.isArray(raw.installedApps) ? [...new Set([...raw.installedApps.filter((app) => typeof app === "string" && launcherAppIds.has(app)), ...POCKET_SYSTEM_APPS])] : undefined;
+  return normalized.length ? { version: 2, pages: normalized, dock, ...installedApps ? { installedApps } : {} } : defaultLauncherLayout();
+}
+function placeLauncherApp(layout, app, target, fallbackPageId) {
+  const next = normalizeLauncherLayout(layout);
+  const page = next.pages.find((entry) => entry.id === fallbackPageId) || next.pages[0];
+  const destinationPage = typeof target === "object" && "pageId" in target ? next.pages.find((entry) => entry.id === target.pageId) : page;
+  const folder = typeof target === "object" && "folderId" in target ? next.pages.flatMap((page) => page.items).find((item) => item.kind === "folder" && item.id === target.folderId) : null;
+  if (typeof target === "number" && (!Number.isInteger(target) || target < 0 || target > 3) || !destinationPage || typeof target === "object" && "folderId" in target && folder?.kind !== "folder")
+    return next;
+  const located = next.pages.flatMap((page) => page.items).some((item) => item.kind === "app" ? item.app === app : item.kind === "folder" && item.apps.includes(app));
+  const extra = typeof target === "number" ? Number(Boolean(next.dock[target] && next.dock[target] !== app)) : 1;
+  if (launcherItemCount(next) + extra - Number(located) > MAX_LAUNCHER_ITEMS)
+    return next;
+  for (const page of next.pages) {
+    page.items = page.items.filter((item) => item.kind !== "app" || item.app !== app);
+    for (const item of page.items)
+      if (item.kind === "folder")
+        item.apps = item.apps.filter((entry) => entry !== app);
+  }
+  next.dock = next.dock.map((entry) => entry === app ? null : entry);
+  if (folder?.kind === "folder")
+    folder.apps.push(app);
+  else if (typeof target === "number") {
+    const displaced = next.dock[target];
+    next.dock[target] = app;
+    if (displaced)
+      page.items.push({ id: `app-${displaced}`, kind: "app", app: displaced });
+  } else
+    destinationPage.items.push({ id: `app-${app}`, kind: "app", app });
+  return normalizeLauncherLayout(next);
+}
+function removeLauncherItem(layout, itemId) {
+  const next = normalizeLauncherLayout(layout);
+  for (const page of next.pages) {
+    const index = page.items.findIndex((item) => item.id === itemId);
+    if (index < 0)
+      continue;
+    const item = page.items[index];
+    page.items.splice(index, 1, ...item.kind === "folder" ? item.apps.map((app) => ({ id: `app-${app}`, kind: "app", app })) : []);
+  }
+  return normalizeLauncherLayout(next);
+}
+function removeLauncherPage(layout, pageId) {
+  const next = normalizeLauncherLayout(layout), index = next.pages.findIndex((page) => page.id === pageId);
+  if (index < 0 || next.pages.length < 2)
+    return next;
+  const [page] = next.pages.splice(index, 1);
+  next.pages[Math.max(0, index - 1)].items.push(...page.items);
+  return next;
+}
+
 // src/domain/navigation.ts
-var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings"]);
+var APPS = new Set(["home", "messages", "contacts", "gallery", "camera", "notes", "weather", "calendar", "trackers", "notifications", "settings", "appstore", "twitter", "discord", "instagram", "tumblr"]);
 function shortId(value) {
   if (typeof value !== "string")
     return;
@@ -905,14 +1125,121 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
     return { app, section: shortId(raw.section) };
   if (app === "camera")
     return { app, contactId: shortId(raw.contactId), ...raw.draft === true ? { draft: true } : {} };
-  if (app === "weather" || app === "notifications" || app === "home")
+  if (app === "twitter" || app === "discord" || app === "instagram" || app === "tumblr")
+    return { app };
+  if (app === "weather" || app === "notifications" || app === "home" || app === "appstore")
     return { app };
   return fallback;
+}
+
+// src/domain/scheduler.ts
+function eventSuggestionReady(suggestion) {
+  if (suggestion.whenKind === "unscheduled")
+    return false;
+  if (suggestion.whenKind === "exact")
+    return Boolean(suggestion.start && Number.isFinite(Date.parse(suggestion.start)));
+  return Boolean(suggestion.whenText.trim()) && !/\b(?:soon|sometime|some time|one day|someday|eventually|tbd|no (?:set |fixed )?(?:day|time)|not (?:set|decided))\b/i.test(suggestion.whenText);
 }
 
 // src/domain/phone-events.ts
 function callSummary(call) {
   return `${call.status === "connected" ? "Call connected" : call.status === "ended" ? "Call ended" : "Missed call"}${call.speakerphone ? " · Speakerphone" : ""}${call.durationSeconds === undefined ? "" : ` · ${Math.floor(call.durationSeconds / 60)}:${String(call.durationSeconds % 60).padStart(2, "0")}`}`;
+}
+
+// src/domain/clock-label.ts
+var CLOCK_DAY_PART_KEYS = ["dawn", "early_morning", "morning", "late_morning", "noon", "afternoon", "late_afternoon", "evening", "night", "late_night", "midnight"];
+function clockDayPart(value) {
+  if (typeof value !== "string")
+    return "";
+  const key = value.trim().toLowerCase().replace(/[_-]/g, " ");
+  const match = [...CLOCK_DAY_PART_KEYS].sort((a, b) => b.length - a.length).find((part) => key === part.replaceAll("_", " ") || key.startsWith(part.replaceAll("_", " ") + ","));
+  return match || "";
+}
+function clockLabel(value, dayPart) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const key = clockDayPart(dayPart) || clockDayPart(raw);
+  if (key) {
+    const label = key.replaceAll("_", " ");
+    return raw.toLowerCase() === label ? raw : label[0].toUpperCase() + label.slice(1);
+  }
+  if (/^(?:[01]?\d|2[0-3]):[0-5]\d(?:\s*[AP]M)?$/i.test(raw) || /^[+-]?\d{1,4} minutes?$/.test(raw))
+    return raw;
+  return "";
+}
+
+// src/domain/message-continuity.ts
+var clean3 = (value, max = 160) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var validStamp = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
+function normalizeMessageStoryClock(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    return;
+  const value = raw;
+  if (!["manual", "narrative", "legacy"].includes(String(value.source)))
+    return;
+  const precision = ["exact", "approximate", "relative", "unknown"].includes(String(value.precision)) ? value.precision : "unknown";
+  const roleplayNow = clean3(value.roleplayNow, 80);
+  if ((value.source === "manual" || precision === "exact") && !validStamp(roleplayNow))
+    return;
+  return { source: value.source, precision, roleplayNow, label: clean3(value.label, 100) };
+}
+function atOffset(state, stamp) {
+  const raw = state.roleplayTimezoneOffsetMinutes;
+  const offset = typeof raw === "number" && Number.isFinite(raw) && Math.abs(raw) <= 840 ? raw : 0;
+  return new Date(Date.parse(stamp) - offset * 60000);
+}
+function clockInfo(state, snapshot) {
+  if (!snapshot)
+    return { kind: "unknown", label: "Story time not recorded" };
+  if ((snapshot.source === "manual" || snapshot.precision === "exact") && validStamp(snapshot.roleplayNow)) {
+    const date = atOffset(state, snapshot.roleplayNow);
+    return { kind: "exact", stamp: snapshot.roleplayNow, day: date.toISOString().slice(0, 10), label: `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)}` };
+  }
+  const label = clockLabel(snapshot.label);
+  return { kind: label ? "approximate" : "unknown", label: label ? `${label} (${snapshot.precision})` : "Story time not recorded" };
+}
+function currentClock(state) {
+  return clockInfo(state, { roleplayNow: state.roleplayNow, source: state.roleplayClockSource || "legacy", precision: state.roleplayClockPrecision || "unknown", label: state.roleplayClockLabel || "" });
+}
+function messageClock(state, message) {
+  if (message.storyClock)
+    return clockInfo(state, normalizeMessageStoryClock(message.storyClock));
+  if (message.origin) {
+    const snapshot = [...state.candidateClocks || []].reverse().find((clock) => clock.hostMessageId === message.origin.hostMessageId && clock.swipeId === message.origin.swipeId);
+    if (snapshot)
+      return clockInfo(state, snapshot);
+  }
+  if (validStamp(message.createdAt)) {
+    const date = atOffset(state, message.createdAt);
+    return { kind: "saved", stamp: message.createdAt, day: date.toISOString().slice(0, 10), label: `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)}` };
+  }
+  return { kind: "unknown", label: "Story time not recorded" };
+}
+function conversationSceneBoundary(state, conversation) {
+  const candidates = (state.events || []).flatMap((event) => {
+    const boundary = event.phoneHistoryBoundary;
+    if (!event.startedAt && !event.completed || boundary?.conversationId !== conversation.id)
+      return [];
+    const ids = new Set(boundary.messageIds);
+    const index = conversation.messages.reduce((last, message, index) => ids.has(message.id) ? index : last, -1);
+    if (index < 0)
+      return [];
+    return [{ event, index, label: event.completed ? `After ${clean3(event.title, 72)}` : `${clean3(event.title, 72)} · continued in roleplay`, detail: event.completed ? "This event has been completed. Earlier planning messages are conversation history." : "This plan continued in roleplay. Earlier planning messages are conversation history; this receipt alone does not establish how the scene ended." }];
+  });
+  return candidates.sort((a, b) => b.index - a.index || Date.parse(b.event.startedAt || "") - Date.parse(a.event.startedAt || ""))[0];
+}
+function messageContinuityBoundary(state, previous, next) {
+  const before = messageClock(state, previous), after = next ? messageClock(state, next) : currentClock(state);
+  if (!before.day || !after.day || before.day === after.day)
+    return;
+  if (before.kind === "saved" || after.kind === "saved") {
+    if (!currentClock(state).day)
+      return;
+  }
+  const day = new Date(after.day + "T12:00:00Z");
+  return {
+    label: new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(day),
+    detail: next ? "A different story day. Earlier messages remain part of the conversation history." : "Current story day. Earlier messages are from a previous exchange."
+  };
 }
 
 // src/domain/contacts.ts
@@ -1325,11 +1652,6 @@ function identityBlock(options) {
     root.appendChild(el("p", "lp-identity-description", options.description));
   return root;
 }
-function statusBadge(label, tone = "neutral") {
-  const node = el("span", "lp-status-badge", label);
-  node.dataset.tone = tone;
-  return node;
-}
 function actionGroup(className = "") {
   return el("div", classes("lp-actions", className));
 }
@@ -1380,22 +1702,29 @@ function showPocketSheet(anchor, title, content) {
   home?.insertBefore(marker, content);
   const dismiss = () => dialog.close();
   close.addEventListener("click", dismiss);
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" || event.key === "Tab")
+      event.stopPropagation();
+  });
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog)
       dismiss();
   });
   dialog.addEventListener("close", () => {
+    const active = dialog.ownerDocument.activeElement;
+    const restoreFocus = !active || active === dialog.ownerDocument.body || dialog.contains(active);
     if (home)
       marker.replaceWith(content);
     dialog.remove();
-    if (anchor.isConnected)
-      anchor.focus();
+    if (restoreFocus && anchor.isConnected)
+      anchor.focus({ preventScroll: true });
   }, { once: true });
   panel.append(heading, content, close);
   dialog.append(panel);
   parent.append(dialog);
   const bounds = parent.getBoundingClientRect();
-  if (parent.matches(".lumiphone-shell")) {
+  const viewport = parent.ownerDocument.defaultView;
+  if (parent.matches(".lumiphone-shell") && viewport) {
     const layoutWidth = parent.offsetWidth;
     const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1;
     const layoutPx = (pixels) => pixels / zoom;
@@ -1403,9 +1732,13 @@ function showPocketSheet(anchor, title, content) {
     dialog.style.margin = "0";
     dialog.style.left = `${layoutPx(bounds.left + 12)}px`;
     dialog.style.top = "auto";
-    dialog.style.bottom = `${layoutPx(Math.max(12, window.innerHeight - bounds.bottom + 24))}px`;
+    dialog.style.bottom = `${layoutPx(Math.max(12, viewport.innerHeight - bounds.bottom + 24))}px`;
     dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`;
     dialog.style.maxHeight = `${layoutPx(Math.max(120, bounds.height - 70))}px`;
+  } else if (viewport) {
+    const layoutWidth = parent.offsetWidth;
+    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1;
+    Object.assign(dialog.style, { position: "fixed", margin: "0", left: `${viewport.innerWidth / 2 / zoom}px`, top: `${viewport.innerHeight / 2 / zoom}px`, bottom: "auto", transform: "translate(-50%,-50%)", width: `${Math.min(440, Math.max(0, viewport.innerWidth / zoom - 32))}px`, maxHeight: `calc(${viewport.innerHeight / zoom}px - 48px - var(--app-interactive-safe-top,0px))` });
   }
   dialog.showModal();
   return { dismiss };
@@ -1492,10 +1825,12 @@ function range(label, value, update) {
 function wallpaperImageControl(label, target, wallpaper, resolved, host) {
   const card = el("section", "lp-wallpaper-control");
   card.dataset.imageTarget = target;
+  card.setAttribute("aria-label", `${label} wallpaper`);
   const heading = el("div", "lp-row-between");
   const copy = el("span");
   copy.append(el("strong", "", label), el("span", "lp-copy", resolved.status === "error" ? `${resolved.sourceLabel} · unavailable` : resolved.sourceLabel));
-  const clear = button("Clear", "lp-button lp-button-quiet");
+  const clear = button(target.startsWith("persona-") ? "Use default" : "Clear", "lp-button lp-button-quiet");
+  clear.setAttribute("aria-label", target.startsWith("persona-") ? `Use default wallpaper for ${label}` : `Clear ${label} wallpaper`);
   clear.disabled = !wallpaper.source;
   clear.addEventListener("click", () => host.change({ ...wallpaper, source: null }));
   heading.append(copy, clear);
@@ -1762,6 +2097,7 @@ function categories(host) {
   const { page, content } = host.page("Settings", "Device-wide preferences");
   content.classList.add("lp-settings-list");
   const entries = [
+    ...host.freeformSession ? [["freeform", "Freeform session", "Name, switch sessions, or start a separate roleplay chat"]] : [],
     ["personalization", "Personalization", "Theme, wallpapers, and your Persona"],
     ["messages", "Messages", "Replies, ambient texts, roleplay context"],
     ["generation", "Pocket Generation", "Model source and connection diagnostics"],
@@ -1955,6 +2291,10 @@ function persona(host) {
     option.selected = profile.source === value || profile.source === "generated" && value === "manual";
     source.appendChild(option);
   }
+  if (host.freeformSession) {
+    source.value = "manual";
+    source.disabled = true;
+  }
   const name = el("input", "lp-input");
   name.placeholder = "Display name";
   name.value = profile.displayName;
@@ -2095,11 +2435,13 @@ function persona(host) {
     choose: host.chooseImage,
     change: (wallpaper) => commit((item) => {
       item.homeWallpaper = wallpaper;
+      item.homeWallpaperEnabled = Boolean(wallpaper.source);
     })
   }), wallpaperImageControl(`${active.name} chat`, "persona-chat", current.chatWallpaper, host.resolvedWallpapers.personaChat, {
     choose: host.chooseImage,
     change: (wallpaper) => commit((item) => {
       item.chatWallpaper = wallpaper;
+      item.chatWallpaperEnabled = Boolean(wallpaper.source);
     })
   }));
   const css = el("textarea", "lp-textarea lp-code-input");
@@ -2638,7 +2980,35 @@ function data(host) {
   content.appendChild(card);
   return page;
 }
+function freeformSettings(host) {
+  const session = host.freeformSession;
+  const { page, content } = host.page("Freeform session", session.personaName);
+  const card = el("section", "lp-card lp-settings-section");
+  const name = el("input", "lp-input");
+  name.value = session.name;
+  name.maxLength = 80;
+  const rename = button("Save session name", "lp-button");
+  rename.onclick = () => {
+    if (!name.value.trim()) {
+      host.showError("Enter a session name.");
+      return;
+    }
+    host.renameFreeform?.(name.value.trim());
+  };
+  const change = button("Lock & switch session", "lp-button lp-button-quiet");
+  change.onclick = () => host.chooseFreeform?.();
+  card.append(fieldBlock("Session name", name), rename, change);
+  const start = el("section", "lp-card lp-settings-section");
+  start.append(el("h3", "lp-title", "Take it into the story"), el("p", "lp-copy", "Create or open a chat in Lumiverse, then copy this Pocket into that chat. Your Freeform session and the chat keep separate histories from here on. You will choose whether to keep or replace that chat’s base Pocket."));
+  const copy = button("Start a chat from this session", "lp-button");
+  copy.onclick = () => host.copyFreeformToChat?.();
+  start.append(copy);
+  content.append(card, start);
+  return page;
+}
 function renderSettingsView(host) {
+  if (host.section === "freeform" && host.freeformSession)
+    return freeformSettings(host);
   if (!host.section)
     return categories(host);
   if (host.section === "personalization") {
@@ -3408,52 +3778,63 @@ function renderTrackersView(host) {
 }
 
 // src/frontend/components/event-invite.ts
-function eventInvite(message, conversationId, host) {
-  const invite = message.eventSuggestion;
-  const card = el("section", "lp-event-invite");
-  card.dataset.suggestionId = invite.id;
-  card.dataset.status = invite.status;
-  card.setAttribute("aria-label", `Event invitation: ${invite.title}`);
-  const icon = el("span", "lp-event-invite-icon");
-  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="4"/><path d="M7 3v4m10-4v4M3 11h18m-13 5h2m4 0h2"/></svg>';
-  const heading = el("div", "lp-event-invite-heading");
-  heading.append(el("span", "lp-event-invite-eyebrow", invite.status === "pending" ? "You’re invited" : invite.status === "scheduled" ? "On your timeline" : "Invitation declined"), el("h3", "", invite.title));
-  const top = el("div", "lp-event-invite-top");
-  top.append(icon, heading);
-  card.append(top);
-  if (invite.whenText)
-    card.append(el("p", "lp-event-invite-when", invite.whenText));
-  if (invite.description)
-    card.append(el("p", "lp-event-invite-description", invite.description));
-  if (invite.participantNames.length)
-    card.append(el("p", "lp-event-invite-people", invite.participantNames.join(" · ")));
-  const actions = el("div", "lp-event-invite-actions");
-  if (invite.status === "pending") {
-    const accept = button("Schedule event", "lp-button");
-    accept.setAttribute("aria-label", `Schedule event: ${invite.title}`);
-    accept.addEventListener("click", () => host.scheduleEventSuggestion(conversationId, message.id));
-    const decline = button("Decline", "lp-button lp-button-quiet");
-    decline.setAttribute("aria-label", `Decline invitation: ${invite.title}`);
-    decline.addEventListener("click", () => host.declineEventSuggestion(conversationId, message.id));
-    actions.append(accept, decline);
-  } else if (invite.status === "scheduled" && invite.scheduledEventId) {
-    const open = button("Open event", "lp-button");
-    open.setAttribute("aria-label", `Open event: ${invite.title}`);
-    open.addEventListener("click", () => host.openTimeline(invite.scheduledEventId));
-    actions.append(open);
-    if (host.quickstartEvent) {
-      const start = button("Quickstart event", "lp-button");
-      start.setAttribute("aria-label", `Quickstart event: ${invite.title}`);
-      start.addEventListener("click", () => host.quickstartEvent(conversationId, invite.scheduledEventId));
-      actions.append(start);
-    }
+function eventStripe(message, conversationId, host) {
+  const invite = message.eventSuggestion, pending = invite.status === "pending", update = pending && Boolean(invite.updateEventId);
+  const row = el("section", `lp-plan-stripe${update ? " lp-event-update" : ""}`);
+  if (invite.status === "declined") {
+    row.hidden = true;
+    return row;
   }
-  if (actions.childElementCount)
-    card.append(actions);
-  return card;
+  row.dataset.suggestionId = invite.id;
+  row.dataset.status = invite.status;
+  row.setAttribute("aria-label", `${update ? "Plan update" : pending ? "Plan invitation" : "Scheduled plan"}: ${invite.title}`);
+  const icon = el("span", "lp-plan-stripe-icon");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (update ? '<path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11-1l3 3M4 15l3 3a7 7 0 0 0 11-1"/>' : '<rect x="3" y="5" width="18" height="16" rx="4"/><path d="M7 3v4m10-4v4M3 11h18m-13 5h2m4 0h2"/>') + "</svg>";
+  const text = el("div", "lp-plan-stripe-text"), title = el("strong", "", invite.title), when = el("span", "", `${update ? "Update · " : pending ? "Plan · " : ""}${invite.whenText || "On your Timeline"}`);
+  title.title = invite.title;
+  if (pending)
+    text.append(title, when);
+  else {
+    const open = button("", "lp-plan-stripe-open");
+    open.setAttribute("aria-label", `Open event: ${invite.title}`);
+    open.append(title, when);
+    open.onclick = () => invite.scheduledEventId && host.openTimeline(invite.scheduledEventId);
+    text.append(open);
+  }
+  row.append(icon, text);
+  const actions = el("div", "lp-plan-stripe-actions");
+  if (pending) {
+    const review = button(update ? "Review" : "Schedule", "lp-plan-stripe-action");
+    review.setAttribute("aria-label", `${update ? "Review event update" : "Schedule event"}: ${invite.title}`);
+    review.onclick = () => host.scheduleEventSuggestion(conversationId, message.id);
+    const dismiss = button("×", "lp-plan-stripe-dismiss");
+    dismiss.setAttribute("aria-label", `${update ? "Keep current event" : "Decline invitation"}: ${invite.title}`);
+    dismiss.title = update ? "Keep current event" : "Decline invitation";
+    dismiss.onclick = () => host.declineEventSuggestion(conversationId, message.id);
+    actions.append(review, dismiss);
+  } else if (invite.scheduledEventId && host.quickstartEvent) {
+    const start = button("Start", "lp-plan-stripe-action");
+    start.setAttribute("aria-label", `Quickstart event: ${invite.title}`);
+    start.onclick = () => host.quickstartEvent(conversationId, invite.scheduledEventId);
+    actions.append(start);
+  }
+  row.append(actions);
+  return row;
+}
+
+// src/backend/narrative-content.ts
+function cleanPhoneMessageText(value) {
+  return value.replace(/^\s*\[DM TURN:[^\r\n\]]*\][ \t]*(?:\r?\n)?/gm, "").replace(/^[ \t]*Saved story timestamp:[^\r\n]*(?:\r?\n[ \t]*precision not recorded\))?[ \t]*(?:\r?\n)?/gm, "").replace(/^[ \t]*Story time: (?:[0-9]{4}-[0-9]{2}-[0-9]{2}[^\r\n]*|Story time not recorded[^\r\n]*|[^\r\n]*\((?:approximate|relative|unknown)\))(?:\r?\n)?/gm, "").trim();
 }
 
 // src/frontend/apps/messages.ts
+function centerMessageInThread(thread, target) {
+  const frame = thread.getBoundingClientRect(), targetFrame = target.getBoundingClientRect();
+  const scale = thread.offsetHeight && frame.height ? frame.height / thread.offsetHeight : 1;
+  const top = thread.scrollTop + (targetFrame.top - frame.top) / scale - thread.clientTop - (thread.clientHeight - targetFrame.height / scale) / 2;
+  thread.scrollTop = Math.max(0, Math.min(Math.max(0, thread.scrollHeight - thread.clientHeight), top));
+}
 var PAUSE_COPY = {
   ended: "stopped responding.",
   busy: "is busy right now.",
@@ -3717,7 +4098,13 @@ function handoffActivity(host, conversation, relay) {
   more.append(summary, secondary);
   activity.appendChild(more);
   if (host.shouldFocusHandoff(relay.id))
-    requestAnimationFrame(() => activity.scrollIntoView?.({ block: "center", behavior: "smooth" }));
+    requestAnimationFrame(() => {
+      if (!activity.isConnected)
+        return;
+      const thread = activity.closest("[data-pocket-thread]");
+      if (thread?.isConnected)
+        centerMessageInThread(thread, activity);
+    });
   return activity;
 }
 function referenceAttachment(host, reference) {
@@ -3876,19 +4263,42 @@ function renderMessagesView(host) {
   bubbles.dataset.conversationKind = conversation.kind;
   const conversationRelays = host.readOnlyDevice ? [] : host.state.relays.filter((entry) => entry.conversationId === conversation.id && entry.status !== "dismissed");
   const renderedRelayIds = new Set;
-  const eventStrip = el("details", "lp-event-strip");
-  const eventSummary = el("summary", "lp-event-strip-summary");
+  const eventStrip = el("section", "lp-event-strip");
+  eventStrip.setAttribute("aria-label", "Conversation plans");
   const eventList = el("div", "lp-event-strip-list");
-  const seenInvites = new Set;
+  const seenInvites = new Set, seenEvents = new Set, pendingRows = [], scheduledRows = [];
+  const inviteKey = (invite) => invite.updateEventId ? `event:${invite.updateEventId}` : invite.id;
+  const latestInvites = new Map(conversation.messages.flatMap((message) => message.eventSuggestion ? [[inviteKey(message.eventSuggestion), message.id]] : []));
+  const updatingEvents = new Set(conversation.messages.flatMap((message) => {
+    const invite = message.eventSuggestion;
+    return invite?.status === "pending" && invite.updateEventId && eventSuggestionReady(invite) && latestInvites.get(inviteKey(invite)) === message.id ? [invite.updateEventId] : [];
+  }));
   let priorGroupSpeakerId = "";
   let priorBurstKey = "";
+  let previousMessage;
+  const sceneBoundary = conversationSceneBoundary(host.state, conversation);
+  const daySeparator = (boundary) => {
+    const separator = el("div", "lp-conversation-status lp-story-day", boundary.label);
+    separator.dataset.storyDay = boundary.label;
+    separator.setAttribute("role", "separator");
+    separator.setAttribute("aria-label", `${boundary.label}. ${boundary.detail}`);
+    return separator;
+  };
   for (const message of conversation.messages) {
-    const bubble = el("div", "lp-bubble lp-message-surface");
+    const boundary = previousMessage ? messageContinuityBoundary(host.state, previousMessage, message) : undefined;
+    if (boundary) {
+      bubbles.append(daySeparator(boundary));
+      priorBurstKey = "";
+      priorGroupSpeakerId = "";
+    }
+    previousMessage = message;
+    const bubble = el("div", message.call ? "lp-conversation-status lp-call-history" : "lp-bubble lp-message-surface");
     bubble.dataset.messageId = message.id;
     bubble.dataset.selected = String(message.id === host.selectedMessageId);
     if (message.call) {
-      bubble.classList.add("lp-call-history");
       bubble.dataset.callStatus = message.call.status;
+      bubble.setAttribute("role", "separator");
+      bubble.setAttribute("aria-label", `${message.text} · ${formatTime(message.createdAt)}`);
     }
     const direction = messageDirection(host.state, conversation, message, host.deviceOwnerActorId);
     bubble.dataset.sender = direction === "outbound" ? "persona" : message.sender === "system" ? "system" : "contact";
@@ -3899,9 +4309,9 @@ function renderMessagesView(host) {
     const messageActorId = message.senderActorId || message.senderContactId || "";
     const burstKey = `${bubble.dataset.sender}:${messageActorId}`;
     bubble.dataset.burstContinuation = String(priorBurstKey === burstKey && message.sender !== "system");
-    priorBurstKey = burstKey;
+    priorBurstKey = message.call ? "" : burstKey;
     const continuesRun = conversation.kind === "group" && direction !== "outbound" && priorGroupSpeakerId === messageActorId;
-    if (conversation.kind === "group" && direction !== "outbound" && !continuesRun && senderActor) {
+    if (!message.call && conversation.kind === "group" && direction !== "outbound" && !continuesRun && senderActor) {
       const sender = button(senderActor?.name || message.senderName, "lp-bubble-sender lp-actor-link");
       sender.addEventListener("click", () => {
         if (messageActorId)
@@ -3909,9 +4319,19 @@ function renderMessagesView(host) {
       });
       bubble.appendChild(sender);
     }
-    bubble.append(message.format === "voice" && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
-    if (message.generation || message.origin || !host.readOnlyDevice) {
+    if (message.call) {
+      const time = el("time", "lp-call-history-time", formatTime(message.createdAt));
+      time.dateTime = message.createdAt;
+      bubble.append(el("span", "", message.text), time);
+    } else
+      bubble.append(message.format === "voice" && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.sender === "contact" ? cleanPhoneMessageText(message.text) : message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
+    if (!message.call && (message.generation || message.origin || !host.readOnlyDevice)) {
       const tools = el("div", "lp-bubble-tools");
+      let dismissActions;
+      tools.addEventListener("click", (event) => {
+        if (event.target.closest("button"))
+          dismissActions?.();
+      }, { capture: true });
       if (message.generation && !host.readOnlyDevice) {
         const retry = button("↻", "lp-bubble-action");
         retry.textContent = "Retry message";
@@ -3942,10 +4362,12 @@ function renderMessagesView(host) {
       }
       const more = button("⋯", "lp-message-more");
       more.setAttribute("aria-label", "Message actions");
-      more.addEventListener("click", () => showPocketSheet(more, "Message actions", tools));
+      more.addEventListener("click", () => {
+        dismissActions = showPocketSheet(more, "Message actions", tools)?.dismiss;
+      });
       bubble.appendChild(more);
     }
-    if (conversation.kind === "group" && direction !== "outbound" && senderActor) {
+    if (!message.call && conversation.kind === "group" && direction !== "outbound" && senderActor) {
       const row = el("div", "lp-group-message");
       row.style.setProperty("--message-accent", resolvedAccent);
       row.dataset.continuation = String(continuesRun);
@@ -3970,27 +4392,40 @@ function renderMessagesView(host) {
       priorGroupSpeakerId = "";
     }
     const invite = message.eventSuggestion;
-    if (!host.readOnlyDevice && invite && !seenInvites.has(invite.id)) {
-      seenInvites.add(invite.id);
-      if (invite.status === "pending") {
-        bubbles.append(eventInvite(message, conversation.id, host));
-        priorBurstKey = "";
-        priorGroupSpeakerId = "";
-      } else if (invite.status === "scheduled")
-        eventList.append(eventInvite(message, conversation.id, host));
+    if (!host.readOnlyDevice && invite) {
+      const event = host.state.events.find((event) => event.id === (invite.scheduledEventId || invite.updateEventId));
+      const activeEvent = event && !event.completed && !event.startedAt;
+      if (invite.status === "pending" && latestInvites.get(inviteKey(invite)) === message.id && !seenInvites.has(invite.id) && eventSuggestionReady(invite) && (!invite.updateEventId || activeEvent)) {
+        seenInvites.add(invite.id);
+        pendingRows.push(eventStripe(message, conversation.id, host));
+      } else if (invite.status === "scheduled" && activeEvent && !seenEvents.has(event.id) && !updatingEvents.has(event.id)) {
+        seenEvents.add(event.id);
+        scheduledRows.push(eventStripe({ ...message, eventSuggestion: { ...invite, title: event.title, description: event.description, whenKind: event.whenKind, whenText: event.whenText, start: event.start, end: event.end, participantNames: event.participantNames || invite.participantNames } }, conversation.id, host));
+      }
     }
     for (const relay of conversationRelays.filter((entry) => entry.sourceMessageId === message.id)) {
       bubbles.appendChild(handoffActivity(host, conversation, relay));
       renderedRelayIds.add(relay.id);
       priorBurstKey = "";
     }
+    if (sceneBoundary && conversation.messages[sceneBoundary.index].id === message.id) {
+      const separator = daySeparator(sceneBoundary);
+      delete separator.dataset.storyDay;
+      separator.dataset.eventBoundary = sceneBoundary.event.id;
+      bubbles.append(separator);
+      priorBurstKey = "";
+      priorGroupSpeakerId = "";
+    }
   }
   for (const relay of conversationRelays.filter((entry) => !renderedRelayIds.has(entry.id)))
     bubbles.appendChild(handoffActivity(host, conversation, relay));
+  const currentDayBoundary = previousMessage ? messageContinuityBoundary(host.state, previousMessage) : undefined;
+  if (currentDayBoundary)
+    bubbles.append(daySeparator(currentDayBoundary));
+  eventList.append(...pendingRows, ...scheduledRows);
   if (eventList.childElementCount) {
-    eventSummary.textContent = `${eventList.childElementCount === 1 ? "1 event" : `${eventList.childElementCount} events`} · ${eventList.querySelector("h3")?.textContent || "Timeline"}`;
-    eventStrip.append(eventSummary, eventList);
-    referenceSlot.appendChild(eventStrip);
+    eventStrip.append(eventList);
+    referenceSlot.append(eventStrip);
   }
   if (busy?.phase === "checking") {
     const checking = el("div", conversation.kind === "group" ? "lp-group-typing" : "lp-conversation-status");
@@ -4041,8 +4476,9 @@ function renderMessagesView(host) {
     return page;
   }
   if (availability.state === "local" && !host.manualOverride) {
-    if (!conversationRelays.length)
-      bubbles.appendChild(el("div", "lp-conversation-status", `${directContact?.name || titleText} is currently with you.`));
+    const presence = el("div", "lp-conversation-status", `${directContact?.name || titleText} ${LOCAL_COPY[availability.reason]}`);
+    presence.dataset.currentPresence = "true";
+    bubbles.append(presence);
     page.appendChild(bubbles);
     return page;
   }
@@ -4129,13 +4565,519 @@ function renderMessagesView(host) {
   composerStack.appendChild(compose);
   page.append(bubbles, composerStack);
   requestAnimationFrame(() => {
+    if (!page.isConnected || !bubbles.isConnected)
+      return;
     resizeComposer();
-    const selected = host.selectedMessageId ? bubbles.querySelector(`[data-message-id="${CSS.escape(host.selectedMessageId)}"]`) : null;
+    const targetId = host.scrollToMessageId === undefined ? host.selectedMessageId : host.scrollToMessageId;
+    const selected = targetId ? [...bubbles.querySelectorAll("[data-message-id]")].find((node) => node.dataset.messageId === targetId) : undefined;
     if (selected)
-      selected.scrollIntoView({ block: "center" });
-    else
+      centerMessageInThread(bubbles, selected);
+    else if (!host.preserveThreadScroll)
       bubbles.scrollTop = bubbles.scrollHeight;
   });
+  return page;
+}
+
+// src/frontend/apps/contacts-browser.ts
+var session = (host) => host.browser || (host.browser = {});
+var normalized = (text) => text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
+var matches = (text, query) => normalized(query).trim().split(/\s+/).every((word) => normalized(text).includes(word));
+var byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+var linkedNpc = (host, id) => host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === id);
+function face(name, url = "", accent = "#8b7dff") {
+  const root = el("span", "lp-directory-avatar", name.slice(0, 1).toUpperCase());
+  root.style.setProperty("--person-color", accent);
+  if (url) {
+    const image = el("img");
+    image.src = url;
+    image.alt = "";
+    root.replaceChildren(image);
+  }
+  root.setAttribute("aria-hidden", "true");
+  return root;
+}
+function identity(name, role) {
+  const text = el("span", "lp-directory-identity");
+  text.append(el("strong", "", name));
+  if (role)
+    text.append(el("small", "", role));
+  return text;
+}
+function searchBox(label, value) {
+  const search = el("input", "lp-input");
+  search.dataset.contactFocus = label;
+  search.type = "search";
+  search.placeholder = label;
+  search.setAttribute("aria-label", label);
+  search.value = value;
+  return search;
+}
+function rememberScroll(content, ui, key) {
+  content.addEventListener("scroll", () => {
+    if (content.isConnected)
+      ui[key] = content.scrollTop;
+  }, { passive: true });
+  content.addEventListener("click", () => {
+    ui[key] = content.scrollTop;
+  }, { capture: true });
+  const saved = ui[key] || 0;
+  requestAnimationFrame(() => {
+    if (content.isConnected)
+      content.scrollTop = saved;
+  });
+}
+function localBack(page, label, action) {
+  const old = page.querySelector(".lp-nav-action");
+  const back = button("‹ Back", "lp-nav-action");
+  back.setAttribute("aria-label", label);
+  back.onclick = action;
+  old?.replaceWith(back);
+  page.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !event.target.closest("dialog")) {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    }
+  });
+}
+function rerenderImport(host) {
+  host.select("", "import", true);
+}
+function rerenderBank(host) {
+  host.select("", "bank", true);
+}
+function recentContactTimes(host) {
+  const result = new Map;
+  for (const conversation of host.state.conversations) {
+    const times = conversation.messages.filter((message) => message.sender !== "system").map((message) => Date.parse(message.createdAt)).filter(Number.isFinite);
+    if (!times.length)
+      continue;
+    const at = Math.max(...times);
+    for (const id of conversation.participantContactIds)
+      result.set(id, Math.max(result.get(id) || 0, at));
+  }
+  return result;
+}
+function renderContactDirectory(host) {
+  const ui = session(host), { page, content } = host.page("Contacts", `${host.state.contacts.length} people`, { label: "Add", callback: () => host.select("", "import") });
+  page.classList.add("lp-directory");
+  const top = el("div", "lp-directory-sticky"), search = searchBox("Search contacts", ui.query || ""), filters = el("div", "lp-directory-pills");
+  filters.setAttribute("role", "group");
+  filters.setAttribute("aria-label", "Filter contacts");
+  const group = el("select", "lp-select");
+  group.setAttribute("aria-label", "Contact group");
+  group.append(new Option("All groups", ""));
+  for (const item of host.state.contactGroups || [])
+    group.append(new Option(item.name, item.id));
+  group.value = ui.groupId || "";
+  group.hidden = ui.filter !== "groups";
+  const list = el("div", "lp-directory-list"), index = el("nav", "lp-directory-index");
+  index.setAttribute("aria-label", "Contacts alphabet");
+  const body = el("div", "lp-directory-body");
+  body.append(list, index);
+  const recent = recentContactTimes(host);
+  const render = () => {
+    list.replaceChildren();
+    index.replaceChildren();
+    group.hidden = ui.filter !== "groups";
+    const selected = (host.state.contactGroups || []).find((item) => item.id === ui.groupId);
+    const contacts = host.state.contacts.filter((entry) => matches(entry.name + " " + entry.role, search.value) && (ui.filter !== "here" || entry.presence.inScene) && (ui.filter !== "recent" || recent.has(entry.id)) && (ui.filter !== "groups" || !selected || selected.memberIds.includes(entry.id))).sort(ui.filter === "recent" ? (a, b) => (recent.get(b.id) || 0) - (recent.get(a.id) || 0) || byName(a, b) : byName);
+    let lastLetter = "";
+    const letters = new Map;
+    for (const entry of contacts) {
+      const letter = normalized(entry.name).charAt(0).toUpperCase().replace(/[^A-Z]/, "#") || "#";
+      if (ui.filter !== "recent" && letter !== lastLetter) {
+        const heading = el("h2", "lp-directory-letter", letter);
+        list.append(heading);
+        letters.set(letter, heading);
+        lastLetter = letter;
+      }
+      const row = button("", "lp-directory-row");
+      row.append(face(entry.name, contactAvatar(entry), contactAccent(entry)), identity(entry.name, entry.role));
+      if (entry.presence.inScene)
+        row.append(el("span", "lp-directory-here", "Here"));
+      row.onclick = () => host.select(entry.id, "detail");
+      list.append(row);
+    }
+    if (contacts.length > 18 && ui.filter !== "recent")
+      for (const [letter, node] of letters) {
+        const jump = button(letter, "lp-directory-jump");
+        jump.setAttribute("aria-label", `Jump to ${letter} contacts`);
+        jump.onclick = () => node.scrollIntoView({ block: "start" });
+        index.append(jump);
+      }
+    if (!contacts.length)
+      list.append(host.empty("No matching contacts", ui.filter === "recent" ? "Your recent conversations will appear here." : "Try another search or add someone new."));
+    index.hidden = !index.childElementCount;
+  };
+  for (const [key, label] of [["all", "All"], ["recent", "Recent"], ["here", "Here"], ["groups", "Groups"]]) {
+    const chip = button(label, "lp-directory-pill");
+    chip.setAttribute("aria-pressed", String((ui.filter || "all") === key));
+    chip.onclick = () => {
+      ui.filter = key;
+      ui.scroll = 0;
+      content.scrollTop = 0;
+      for (const control of filters.querySelectorAll("button"))
+        control.setAttribute("aria-pressed", String(control === chip));
+      render();
+    };
+    filters.append(chip);
+  }
+  search.oninput = () => {
+    ui.query = search.value;
+    ui.scroll = 0;
+    render();
+  };
+  group.onchange = () => {
+    ui.groupId = group.value;
+    render();
+  };
+  const library = el("div", "lp-directory-library");
+  const bank = button("NPC Bank", "lp-directory-link");
+  bank.onclick = () => host.selectGroup("", "bank");
+  const groups = button("Manage groups", "lp-directory-link");
+  groups.onclick = () => host.selectGroup("", "groups");
+  library.append(bank, groups);
+  top.append(search, filters, group, library);
+  content.append(top);
+  if (host.npcDraft) {
+    const draft = host.npcDraft, resume = button("", "lp-directory-resume");
+    resume.setAttribute("aria-label", `Continue ${draft.name} profile`);
+    resume.append(face(draft.name, draft.avatarUrl), identity(draft.name, "Unsaved profile · continue"));
+    resume.onclick = () => host.select("", "quick-gen");
+    content.append(resume);
+  }
+  const sync = button("Sync current scene", "lp-button lp-button-quiet");
+  const operation = [...host.operations.values()].find((entry) => entry.task === "scene-sync" && !["complete", "error"].includes(entry.phase));
+  sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(operation);
+  sync.onclick = () => host.send("lumiphone:sync_scene_contacts");
+  const snapshot = host.state.sceneSnapshot;
+  const scene = disclosure("Scene presence", el("p", "lp-copy", operation?.message || (!snapshot ? "Sync to update who is here." : `${snapshot.stale ? "Snapshot needs a refresh" : "Snapshot up to date"} · ${snapshot.actors.length} people`)), sync);
+  scene.classList.add("lp-directory-scene");
+  content.append(scene, body);
+  render();
+  rememberScroll(content, ui, "scroll");
+  return page;
+}
+function sourceRow(host, entry) {
+  const bank = "aliases" in entry, linked = bank ? linkedNpc(host, entry.id) : host.state.contacts.find((contact) => contact.id === entry.importedContactId);
+  const row = el("div", "lp-directory-row");
+  row.append(face(entry.name, entry.avatarUrl, entry.accent), identity(entry.name, entry.role));
+  const add = button(linked ? "Added" : "Add", "lp-directory-add");
+  add.disabled = Boolean(linked);
+  add.setAttribute("aria-label", `${linked ? "Already added" : "Add"} ${entry.name}`);
+  add.onclick = () => {
+    add.disabled = true;
+    add.textContent = "Adding…";
+    host.send(bank ? "lumiphone:npc_bank_add" : "lumiphone:import_contact", bank ? { bankId: entry.id } : { kind: entry.kind, sourceId: entry.sourceId, itemId: entry.itemId });
+  };
+  row.append(add);
+  return row;
+}
+function renderContactImport(host) {
+  const ui = session(host), labels = { casts: "Portable casts", bank: "NPC Bank", character: "Characters", council: "Council", search: "Search all sources" };
+  const source = ui.source, { page, content } = host.page(source ? labels[source] : "Add Contact", source ? "Choose someone for this chat" : "Someone new, or a familiar face");
+  page.classList.add("lp-directory", "lp-contact-import-browser");
+  if (source) {
+    localBack(page, "Back to contact sources", () => {
+      const previous = ui.source;
+      ui.source = undefined;
+      rerenderImport(host);
+      requestAnimationFrame(() => document.querySelector(`[data-contact-source="${previous}"]`)?.focus({ preventScroll: true }));
+    });
+    const top = el("div", "lp-directory-sticky"), search = searchBox(source === "search" ? "Search all sources" : `Search ${labels[source].toLowerCase()}`, source === "search" ? ui.importQuery || "" : ui.sourceQuery || "");
+    const list = el("div", "lp-directory-list"), letters = el("div", "lp-directory-alphabet"), count = el("p", "lp-directory-count"), pages = el("div", "lp-directory-pagination");
+    const render = () => {
+      list.replaceChildren();
+      pages.replaceChildren();
+      letters.replaceChildren();
+      const query = search.value;
+      const entries = [];
+      if (source === "bank" || source === "search")
+        for (const entry of host.npcBank)
+          entries.push({ name: entry.name, role: entry.role, terms: [...entry.tags, ...entry.aliases].join(" "), render: () => sourceRow(host, entry) });
+      if (["character", "council", "search"].includes(source))
+        for (const entry of host.sources.filter((item) => source === "search" || item.kind === source))
+          entries.push({ name: entry.name, role: entry.role, terms: entry.kind, render: () => sourceRow(host, entry) });
+      if (source === "casts" || source === "search")
+        for (const cast of host.bankGroups) {
+          const people = host.npcBank.filter((entry) => cast.memberIds.includes(entry.id));
+          entries.push({ name: cast.name, role: `${people.length} people · portable cast`, terms: people.map((item) => item.name).join(" "), render: () => {
+            const row = el("div", "lp-directory-row"), stack = el("span", "lp-directory-stack");
+            for (const item of people.slice(0, 3))
+              stack.append(face(item.name, item.avatarUrl, item.accent));
+            const add = button("Choose…", "lp-directory-add");
+            add.setAttribute("aria-label", `Choose members from ${cast.name}`);
+            add.onclick = () => host.selectGroup(cast.id, "cast-import");
+            row.append(stack, identity(cast.name, `${people.length} people`), add);
+            return row;
+          } });
+        }
+      const found = entries.filter((entry) => matches(entry.name + " " + entry.role + " " + entry.terms, query)).sort(byName);
+      const max = Math.max(0, Math.ceil(found.length / 36) - 1);
+      ui.sourcePage = Math.min(ui.sourcePage || 0, max);
+      count.textContent = `${found.length} ${found.length === 1 ? "result" : "results"}`;
+      for (const entry of found.slice(ui.sourcePage * 36, (ui.sourcePage + 1) * 36))
+        list.append(entry.render());
+      if (!found.length)
+        list.append(host.empty("No matches", "Try a name, role, tag, or cast member."));
+      if (found.length > 36) {
+        for (const letter of [...new Set(found.map((item) => normalized(item.name)[0]?.toUpperCase() || "#"))]) {
+          const jump = button(letter, "lp-directory-jump");
+          jump.setAttribute("aria-label", `Browse ${letter} names`);
+          jump.onclick = () => {
+            ui.sourcePage = Math.floor(found.findIndex((item) => (normalized(item.name)[0]?.toUpperCase() || "#") === letter) / 36);
+            render();
+            content.scrollTop = 0;
+          };
+          letters.append(jump);
+        }
+        const previous = button("Previous", "lp-directory-link"), next = button("Next", "lp-directory-link");
+        previous.disabled = ui.sourcePage === 0;
+        next.disabled = ui.sourcePage === max;
+        previous.onclick = () => {
+          ui.sourcePage--;
+          render();
+          content.scrollTop = 0;
+        };
+        next.onclick = () => {
+          ui.sourcePage++;
+          render();
+          content.scrollTop = 0;
+        };
+        pages.append(previous, el("span", "", `${ui.sourcePage + 1} / ${max + 1}`), next);
+      }
+    };
+    search.oninput = () => {
+      if (source === "search")
+        ui.importQuery = search.value;
+      else
+        ui.sourceQuery = search.value;
+      ui.sourcePage = 0;
+      ui.sourceScroll = 0;
+      render();
+    };
+    top.append(search, count, letters);
+    content.append(top, list, pages);
+    render();
+    rememberScroll(content, ui, "sourceScroll");
+    return page;
+  }
+  const creator = el("section", "lp-directory-creator");
+  creator.append(el("h2", "", "Pocket NPC"), el("p", "lp-copy", "Make someone for this story."));
+  const description = el("textarea", "lp-textarea");
+  description.rows = 2;
+  description.maxLength = 2000;
+  description.value = host.generationBrief;
+  description.placeholder = "A sleepy florist with a sharp wit…";
+  description.setAttribute("aria-label", "NPC description");
+  description.oninput = () => host.updateGenerationBrief(description.value);
+  const operation = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && !["complete", "error"].includes(entry.phase));
+  const generate = button(operation ? "Generating…" : "Generate NPC", "lp-button lp-button-primary");
+  generate.disabled = !host.capabilities?.generation || Boolean(operation);
+  generate.onclick = () => {
+    if (!description.value.trim()) {
+      description.focus();
+      return;
+    }
+    host.select("", "quick-gen");
+    host.send("lumiphone:generate_contact", { description: description.value.trim() });
+  };
+  const manual = button("Create manually", "lp-directory-link");
+  manual.onclick = () => host.select("", "new");
+  const actions = el("div", "lp-directory-creator-actions");
+  actions.append(generate, manual);
+  creator.append(description, actions);
+  if (host.npcDraft) {
+    const resume = button(`Continue ${host.npcDraft.name}’s profile`, "lp-directory-link");
+    resume.onclick = () => host.select("", "quick-gen");
+    creator.append(resume);
+  }
+  const search = searchBox("Search all saved people", ui.importQuery || "");
+  const searchForm = el("form", "lp-directory-global-search"), submit = button("Search", "lp-directory-add");
+  submit.type = "submit";
+  searchForm.append(search, submit);
+  searchForm.onsubmit = (event) => {
+    event.preventDefault();
+    ui.importQuery = search.value;
+    ui.source = "search";
+    ui.sourcePage = 0;
+    rerenderImport(host);
+  };
+  search.oninput = () => {
+    ui.importQuery = search.value;
+  };
+  const sources = el("nav", "lp-directory-sources");
+  sources.setAttribute("aria-label", "Contact sources");
+  for (const [key, label, total, help] of [
+    ["casts", "Portable casts", host.bankGroups.length, "Bring a group together"],
+    ["bank", "NPC Bank", host.npcBank.length, "Your reusable people"],
+    ["character", "Characters", host.sources.filter((item) => item.kind === "character").length, "Your character library"],
+    ["council", "Council", host.sources.filter((item) => item.kind === "council").length, "Active council members"]
+  ]) {
+    const row = button("", "lp-directory-source");
+    row.dataset.contactSource = key;
+    const text = identity(label, help);
+    text.querySelector("strong").id = "lp-contact-source-" + key;
+    text.querySelector("small").id = "lp-contact-source-help-" + key;
+    row.setAttribute("aria-labelledby", "lp-contact-source-" + key);
+    row.setAttribute("aria-describedby", "lp-contact-source-help-" + key);
+    row.append(text, el("span", "lp-directory-source-count", String(total)), el("span", "lp-directory-chevron", "›"));
+    row.onclick = () => {
+      ui.source = key;
+      ui.sourceQuery = "";
+      ui.sourcePage = 0;
+      ui.sourceScroll = 0;
+      rerenderImport(host);
+      requestAnimationFrame(() => document.querySelector('.lp-contact-import-browser input[type="search"]')?.focus({ preventScroll: true }));
+    };
+    sources.append(row);
+  }
+  content.append(creator, searchForm, sources);
+  rememberScroll(content, ui, "importScroll");
+  return page;
+}
+function renderNpcBank(host) {
+  const ui = session(host), entry = host.npcBank.find((item) => item.id === ui.bankDetail), cast = host.bankGroups.find((item) => item.id === ui.castDetail);
+  const { page, content } = host.page(entry?.name || cast?.name || "NPC Bank", entry ? "Reusable profile" : cast ? "Portable cast" : `${host.npcBank.length} people · ${host.bankGroups.length} casts`, entry ? { label: "Edit", callback: () => host.select(entry.id, "bank-entry") } : cast ? { label: "Edit", callback: () => host.selectGroup(cast.id, "cast-config") } : ui.bankTab === "casts" ? { label: "New cast", callback: () => host.selectGroup("", "cast-config") } : undefined);
+  page.classList.add("lp-directory", "lp-npc-library");
+  if (entry || cast) {
+    page.querySelector(".lp-nav-title")?.setAttribute("tabindex", "-1");
+    localBack(page, "Back to NPC Bank", () => {
+      const id = ui.bankDetail || ui.castDetail;
+      ui.bankDetail = undefined;
+      ui.castDetail = undefined;
+      rerenderBank(host);
+      requestAnimationFrame(() => [...document.querySelectorAll("[data-bank-entry]")].find((node) => node.dataset.bankEntry === id)?.focus({ preventScroll: true }));
+    });
+    if (entry) {
+      const hero = el("div", "lp-bank-hero");
+      hero.append(face(entry.name, entry.avatarUrl, entry.accent), el("h2", "", entry.name), el("p", "lp-copy", entry.role));
+      content.append(hero, el("p", "lp-bank-bio", entry.identityBrief));
+      if (entry.tags.length)
+        content.append(el("p", "lp-bank-tags", entry.tags.map((tag) => "#" + tag).join(" ")));
+      for (const [label, text] of [["Personality", entry.phoneProfile?.personality], ["Appearance", entry.phoneProfile?.appearance], ["Texting style", entry.phoneProfile?.textingStyle]])
+        if (text) {
+          const block = el("section", "lp-bank-info");
+          block.append(el("h3", "", label), el("p", "lp-copy", text));
+          content.append(block);
+        }
+      const linked = linkedNpc(host, entry.id), add = button(linked ? "Open contact" : "Add to chat", "lp-button lp-button-primary");
+      add.onclick = () => linked ? host.select(linked.id, "detail") : host.send("lumiphone:npc_bank_add", { bankId: entry.id });
+      const remove = button("Remove saved profile", "lp-directory-link lp-bank-remove");
+      remove.onclick = () => {
+        if (window.confirm(`Remove ${entry.name} from NPC Bank? Existing chat contacts stay.`)) {
+          ui.bankDetail = undefined;
+          host.send("lumiphone:npc_bank_delete", { bankId: entry.id });
+        }
+      };
+      content.append(add, remove);
+    } else if (cast) {
+      const people = host.npcBank.filter((item) => cast.memberIds.includes(item.id)), add = button("Add cast", "lp-button lp-button-primary");
+      add.disabled = !people.length;
+      add.onclick = () => host.selectGroup(cast.id, "cast-import");
+      content.append(add);
+      for (const person of people) {
+        const row = button("", "lp-directory-row");
+        row.append(face(person.name, person.avatarUrl, person.accent), identity(person.name, person.role));
+        row.onclick = () => {
+          ui.castDetail = undefined;
+          ui.bankDetail = person.id;
+          rerenderBank(host);
+        };
+        content.append(row);
+      }
+      const remove = button("Remove cast", "lp-directory-link lp-bank-remove");
+      remove.onclick = () => {
+        if (window.confirm(`Remove the ${cast.name} cast? Saved profiles stay.`)) {
+          ui.castDetail = undefined;
+          host.saveCollection("lumiphone:npc_cast_delete", { groupId: cast.id });
+        }
+      };
+      content.append(remove);
+    }
+    return page;
+  }
+  const top = el("div", "lp-directory-sticky"), search = searchBox("Search NPC Bank", ui.bankQuery || ""), tabs = el("div", "lp-directory-pills"), list = el("div", "lp-directory-list");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "NPC Bank collections");
+  const render = () => {
+    list.replaceChildren();
+    if (ui.bankTab === "casts") {
+      for (const item of [...host.bankGroups].sort(byName)) {
+        const people = host.npcBank.filter((entry) => item.memberIds.includes(entry.id));
+        if (!matches(item.name + " " + people.map((entry) => entry.name).join(" "), search.value))
+          continue;
+        const row = button("", "lp-directory-row"), stack = el("span", "lp-directory-stack");
+        for (const person of people.slice(0, 3))
+          stack.append(face(person.name, person.avatarUrl, person.accent));
+        row.dataset.bankEntry = item.id;
+        row.append(stack, identity(item.name, `${people.length} people`), el("span", "lp-directory-chevron", "›"));
+        row.onclick = () => {
+          ui.castDetail = item.id;
+          rerenderBank(host);
+          requestAnimationFrame(() => document.querySelector(".lp-npc-library .lp-nav-title")?.focus({ preventScroll: true }));
+        };
+        list.append(row);
+      }
+    } else
+      for (const person of [...host.npcBank].sort(byName)) {
+        if (!matches([person.name, person.role, ...person.tags, ...person.aliases].join(" "), search.value))
+          continue;
+        const row = button("", "lp-directory-row"), text = identity(person.name, person.role);
+        if (person.tags.length)
+          text.append(el("span", "lp-bank-tags", person.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")));
+        row.append(face(person.name, person.avatarUrl, person.accent), text);
+        if (linkedNpc(host, person.id))
+          row.append(el("span", "lp-directory-here", "Added"));
+        row.dataset.bankEntry = person.id;
+        row.onclick = () => {
+          ui.bankDetail = person.id;
+          rerenderBank(host);
+          requestAnimationFrame(() => document.querySelector(".lp-npc-library .lp-nav-title")?.focus({ preventScroll: true }));
+        };
+        list.append(row);
+      }
+    if (!list.childElementCount)
+      list.append(host.empty(search.value ? "No matches" : ui.bankTab === "casts" ? "No casts yet" : "Your people, saved", search.value ? "Try a name, role, tag, or cast member." : "Save NPC profiles from Contacts to reuse them here."));
+  };
+  const panelId = "lp-bank-collection";
+  list.id = panelId;
+  list.setAttribute("role", "tabpanel");
+  for (const [key, label] of [["npcs", "NPCs"], ["casts", "Casts"]]) {
+    const tab = button(label, "lp-directory-pill");
+    tab.id = "lp-bank-tab-" + key;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", panelId);
+    tab.setAttribute("aria-selected", String((ui.bankTab || "npcs") === key));
+    tab.tabIndex = (ui.bankTab || "npcs") === key ? 0 : -1;
+    tab.onclick = () => {
+      ui.bankTab = key;
+      ui.bankScroll = 0;
+      rerenderBank(host);
+      requestAnimationFrame(() => document.getElementById("lp-bank-tab-" + key)?.focus({ preventScroll: true }));
+    };
+    tab.onkeydown = (event) => {
+      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const next = key === "npcs" ? "casts" : "npcs";
+        ui.bankTab = event.key === "Home" ? "npcs" : event.key === "End" ? "casts" : next;
+        rerenderBank(host);
+        requestAnimationFrame(() => document.getElementById("lp-bank-tab-" + ui.bankTab)?.focus());
+      }
+    };
+    tabs.append(tab);
+  }
+  list.setAttribute("aria-labelledby", "lp-bank-tab-" + (ui.bankTab || "npcs"));
+  search.oninput = () => {
+    ui.bankQuery = search.value;
+    ui.bankScroll = 0;
+    render();
+  };
+  top.append(tabs, search);
+  content.append(top, list);
+  render();
+  rememberScroll(content, ui, "bankScroll");
   return page;
 }
 
@@ -4262,92 +5204,45 @@ function renderContactGroups(host) {
     return groupEditor2(host, true, true);
   if (host.selectedView === "bank-entry")
     return bankEditor(host);
-  const bank = host.selectedView === "bank";
-  const { page, content } = host.page(bank ? "NPC Bank" : "Contact Groups", bank ? `${host.npcBank.length} reusable profiles` : "Collections for this roleplay", { label: "New", callback: () => host.selectGroup("", bank ? "cast-config" : "group-config") });
-  const groups = bank ? host.bankGroups : host.state.contactGroups || [];
-  const search = el("input", "lp-input");
+  if (host.selectedView === "bank")
+    return renderNpcBank(host);
+  const { page, content } = host.page("Contact Groups", "Collections for this roleplay", { label: "New", callback: () => host.selectGroup("", "group-config") });
+  page.classList.add("lp-bank-organized");
+  const groups = host.state.contactGroups || [], search = el("input", "lp-input");
   search.type = "search";
-  search.placeholder = bank ? "Search casts and saved NPCs" : "Search contact groups";
-  search.setAttribute("aria-label", bank ? "Search NPC Bank" : "Search contact groups");
-  const noMatches = el("p", "lp-copy", "No matching profiles or casts.");
-  noMatches.hidden = true;
+  search.placeholder = "Search contact groups";
+  search.setAttribute("aria-label", "Search contact groups");
   const cards = [];
-  content.append(search);
-  if (!bank) {
-    const portable = button("NPC Bank & portable casts", "lp-button lp-button-quiet");
-    portable.addEventListener("click", () => host.selectGroup("", "bank"));
-    content.append(portable);
-  }
-  const casts = bank ? sectionBlock("Portable casts", "Groups you can bring into another chat.", "lp-bank-casts") : null;
-  const profiles = bank ? sectionBlock("Individual NPCs", "Saved identities, ready to reuse.", "lp-bank-individuals") : null;
-  if (casts)
-    content.append(casts.section);
+  const bank = button("NPC Bank & portable casts", "lp-button lp-button-quiet");
+  bank.onclick = () => host.selectGroup("", "bank");
+  content.append(search, bank);
   for (const group of groups) {
-    const people = group.memberIds.map((id) => members(host, bank).find((entry) => entry.id === id)).filter((entry) => Boolean(entry));
-    const { section, body } = sectionBlock(group.name, `${people.length} members${bank ? " · portable cast" : ""}`, "lp-card lp-contact-group");
+    const people = group.memberIds.map((id) => host.state.contacts.find((entry) => entry.id === id)).filter((entry) => Boolean(entry));
+    const { section, body } = sectionBlock(group.name, `${people.length} members`, "lp-card lp-contact-group");
     body.append(el("p", "lp-copy", people.map((entry) => entry.name).join(" · ") || "No members left. Edit this group to add people."));
-    const actions = actionGroup();
-    const edit = button("Edit", "lp-button lp-button-quiet");
-    edit.addEventListener("click", () => host.selectGroup(group.id, bank ? "cast-config" : "group-config"));
-    actions.append(edit);
-    if (bank) {
-      const importCast = button("Import…");
-      importCast.disabled = !people.length;
-      importCast.addEventListener("click", () => host.selectGroup(group.id, "cast-import"));
-      actions.append(importCast);
-    } else {
-      const chat = button("Start group chat");
-      chat.disabled = group.memberIds.length < 2;
-      chat.addEventListener("click", () => host.startGroup(group.name, group.memberIds));
-      actions.append(chat);
-      const save = button(group.bankGroupId ? "Update saved cast" : "Save as portable cast", "lp-button lp-button-quiet");
-      save.disabled = !people.length || people.some((entry) => !entry || !("source" in entry) || entry.source.kind !== "npc") || host.collectionSaving;
-      save.addEventListener("click", () => host.saveCollection("lumiphone:contact_group_bank", { groupId: group.id }));
-      actions.append(save);
-      if (save.disabled && people.length)
-        body.append(el("p", "lp-copy", "Portable casts contain Pocket NPCs. Linked Characters stay local."));
-    }
-    const remove = button("Remove group", "lp-button lp-button-danger");
+    const actions = actionGroup(), edit = button("Edit", "lp-button lp-button-quiet"), chat = button("Start group chat"), save = button(group.bankGroupId ? "Update saved cast" : "Save as portable cast", "lp-button lp-button-quiet"), remove = button("Remove group", "lp-button lp-button-danger");
+    edit.onclick = () => host.selectGroup(group.id, "group-config");
+    chat.disabled = group.memberIds.length < 2;
+    chat.onclick = () => host.startGroup(group.name, group.memberIds);
+    save.disabled = !people.length || people.some((entry) => entry.source.kind !== "npc") || host.collectionSaving;
+    save.onclick = () => host.saveCollection("lumiphone:contact_group_bank", { groupId: group.id });
+    if (save.disabled && people.length)
+      body.append(el("p", "lp-copy", "Portable casts contain Pocket NPCs. Linked Characters stay local."));
     remove.disabled = host.collectionSaving;
-    remove.addEventListener("click", () => host.saveCollection(bank ? "lumiphone:npc_cast_delete" : "lumiphone:contact_group_delete", { groupId: group.id }));
-    actions.append(remove);
+    remove.onclick = () => host.saveCollection("lumiphone:contact_group_delete", { groupId: group.id });
+    actions.append(edit, chat, save, remove);
     body.append(actions);
-    (casts?.body || content).append(section);
-    cards.push({ node: section, name: group.name, terms: `${group.name} ${people.map((entry) => entry.name).join(" ")}`.toLowerCase() });
+    content.append(section);
+    cards.push({ node: section, name: group.name, terms: group.name + " " + people.map((entry) => entry.name).join(" ") });
   }
   if (!groups.length)
-    (casts?.body || content).append(el("p", "lp-copy", bank ? "Save a cast to reuse the same NPCs in other chats." : "Organize a cast, family, team, or faction here."));
-  if (profiles)
-    content.append(profiles.section);
-  if (bank && !host.npcBank.length)
-    profiles.body.append(el("p", "lp-copy", "Save an NPC contact to reuse their profile in other chats."));
-  if (bank)
-    for (const entry of host.npcBank) {
-      const row = el("div", "lp-card lp-bank-profile");
-      row.append(identityBlock({ name: entry.name, meta: entry.role, description: entry.identityBrief }));
-      const actions = actionGroup();
-      const edit = button("Edit saved profile", "lp-button lp-button-quiet");
-      edit.addEventListener("click", () => host.select(entry.id, "bank-entry"));
-      actions.append(edit);
-      const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
-      const add = button(linked ? "Open local contact" : "Add to this chat");
-      add.addEventListener("click", () => linked ? host.select(linked.id, "detail") : host.send("lumiphone:npc_bank_add", { bankId: entry.id }));
-      actions.append(add);
-      row.append(actions);
-      profiles.body.append(row);
-      cards.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role} ${entry.aliases.join(" ")} ${entry.tags.join(" ")}`.toLowerCase() });
-    }
-  content.append(noMatches);
-  search.addEventListener("input", () => {
-    const query = search.value.trim().toLowerCase();
-    const visible = applyRankedSearch(cards, query);
-    noMatches.hidden = !query || visible > 0;
-    for (const group of [casts, profiles])
-      if (group) {
-        group.section.dataset.pocketSearchResult = "true";
-        group.section.hidden = Boolean(query && !cards.some((card) => group.body.contains(card.node) && !card.node.hidden));
-      }
-  });
+    content.append(el("p", "lp-copy", "Organize a cast, family, team, or faction here."));
+  const empty = el("p", "lp-copy", "No matching groups.");
+  empty.hidden = true;
+  content.append(empty);
+  search.oninput = () => {
+    empty.hidden = applyRankedSearch(cards, search.value) > 0 || !search.value.trim();
+  };
   return page;
 }
 
@@ -4387,6 +5282,7 @@ function draftPayload(draft) {
 function contactEditor(host, contact, draft = null) {
   let saveContact = () => {};
   const { page, content } = host.page(contact ? "Contact Settings" : draft ? "Edit Draft" : "New Contact", contact?.source.kind || (draft ? "Generated preview · unsaved" : "Pocket NPC"), { label: "Save", callback: () => saveContact() });
+  page.classList.add("lp-contact-create");
   const name = el("input", "lp-input");
   name.placeholder = "Name";
   name.value = contact?.name || draft?.name || "";
@@ -4563,238 +5459,95 @@ function contactEditor(host, contact, draft = null) {
   return page;
 }
 function importView(host) {
-  const { page, content } = host.page("Add Contact", "Character, Council, or Pocket NPC");
-  const search = el("input", "lp-input");
-  search.type = "search";
-  search.placeholder = "Search saved or importable contacts";
-  search.setAttribute("aria-label", "Search contacts to add");
-  const searchableRows = [];
-  const searchableSections = [];
-  const noMatches = el("p", "lp-copy", "No matching saved or importable contacts.");
-  noMatches.dataset.contactSearchEmpty = "true";
-  noMatches.hidden = true;
-  content.appendChild(search);
-  const { section: manual, body: manualBody } = sectionBlock("Pocket NPC", "Generate a compact NPC seed or create one manually.", "lp-card lp-contact-import");
-  const description = el("textarea", "lp-textarea");
-  description.placeholder = "Describe someone; Pocket will generate one compact contact profile.";
-  description.maxLength = 2000;
-  description.value = host.generationBrief;
-  description.addEventListener("input", () => host.updateGenerationBrief(description.value));
-  const npcOperation = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && entry.phase !== "complete" && entry.phase !== "error");
-  const generate = button(npcOperation ? "Generating…" : "Generate NPC");
-  generate.disabled = !host.capabilities?.generation || Boolean(npcOperation);
-  generate.addEventListener("click", () => {
-    host.select("", "quick-gen");
-  });
-  const primitive = button("Create manually", "lp-button lp-button-quiet");
-  primitive.addEventListener("click", () => host.select("", "new"));
-  manualBody.append(description, generate, primitive);
-  if (host.npcDraft) {
-    const draft = host.npcDraft;
-    const preview = el("section", "lp-card lp-npc-draft");
-    const previewHead = el("div", "lp-row-between");
-    previewHead.append(el("span", "lp-eyebrow", "Unsaved preview"), statusBadge(`${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`));
-    preview.append(previewHead, identityBlock({ name: draft.name, meta: draft.role, description: draft.identityBrief }));
-    const actions = actionGroup("lp-draft-actions");
-    const retry = button("Retry", "lp-button lp-button-quiet");
-    retry.disabled = Boolean(npcOperation);
-    retry.addEventListener("click", () => host.send("lumiphone:generate_contact", { description: draft.sourceDescription }));
-    const edit = button("Edit", "lp-button lp-button-quiet");
-    edit.addEventListener("click", () => host.select("", "draft"));
-    const use = button("Use", "lp-button lp-button-primary");
-    use.addEventListener("click", () => host.send("lumiphone:save_contact", { contact: draftPayload(draft) }));
-    actions.append(retry, edit, use);
-    if (host.previousNpcDraft) {
-      const previous = button("Undo reroll", "lp-button lp-button-quiet");
-      previous.addEventListener("click", () => host.restorePreviousNpcDraft());
-      actions.prepend(previous);
-    }
-    preview.appendChild(actions);
-    manualBody.appendChild(preview);
-  }
-  if (npcOperation) {
-    const progress = el("div", "lp-operation-progress");
-    progress.dataset.operationRequest = npcOperation.requestId;
-    progress.dataset.phase = npcOperation.phase;
-    progress.setAttribute("role", "status");
-    const message = el("strong", "", npcOperation.message || "Generating contact…");
-    message.dataset.operationMessage = "true";
-    progress.append(el("span", "lp-indeterminate"), message);
-    manualBody.appendChild(progress);
-  }
-  content.appendChild(manual);
-  const { section: bank, body: bankBody } = sectionBlock("NPC Bank", "Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.", "lp-contact-source-section");
-  const bankRows = [];
-  if (!host.npcBank.length) {
-    bankBody.appendChild(el("div", "lp-card lp-copy", "No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”."));
-  } else {
-    for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row = el("div", "lp-card");
-      row.style.display = "grid";
-      row.style.gap = "10px";
-      row.style.minWidth = "0";
-      const identity = identityBlock({ name: entry.name, meta: entry.role || "Pocket NPC" });
-      const linked = host.state.contacts.find((contact) => contact.source.kind === "npc" && contact.source.bankId === entry.id);
-      const actions = actionGroup();
-      actions.style.display = "grid";
-      actions.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
-      actions.style.width = "100%";
-      actions.style.minWidth = "0";
-      const edit = button("Edit", "lp-button lp-button-quiet");
-      edit.addEventListener("click", () => {
-        host.select(entry.id, "bank-entry");
-      });
-      const add = button(linked ? "Added" : "Add", "lp-button lp-button-quiet");
-      add.disabled = Boolean(linked);
-      add.addEventListener("click", () => {
-        if (!linked)
-          host.send("lumiphone:npc_bank_add", { bankId: entry.id });
-      });
-      const forget = button("Forget", "lp-button lp-button-danger");
-      forget.addEventListener("click", () => {
-        if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
-          host.send("lumiphone:npc_bank_delete", { bankId: entry.id });
-        }
-      });
-      for (const action of [edit, add, forget]) {
-        action.style.width = "100%";
-        action.style.minWidth = "0";
-      }
-      actions.append(edit, add, forget);
-      row.append(identity, actions);
-      bankBody.appendChild(row);
-      bankRows.push(row);
-      searchableRows.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role || "Pocket NPC"} ${entry.aliases.join(" ")} ${entry.tags.join(" ")} npc bank`.toLocaleLowerCase() });
-    }
-  }
-  content.appendChild(bank);
-  searchableSections.push({ section: bank, rows: bankRows });
-  const grouped = new Map;
-  for (const option of host.sources)
-    grouped.set(option.kind, [...grouped.get(option.kind) || [], option]);
-  for (const [kind, sources] of grouped) {
-    const { section, body } = sectionBlock(kind === "character" ? "Lumiverse Characters" : "Active Council", "", "lp-contact-source-section");
-    const sourceRows = [];
-    for (const source of sources) {
-      const row = el("div", "lp-card lp-list-row");
-      const identity = identityBlock({ name: source.name, meta: source.role });
-      let trailing;
-      if (source.importedContactId)
-        trailing = statusBadge("Imported");
-      else {
-        const add = button("Add", "lp-button lp-button-quiet");
-        add.addEventListener("click", () => host.send("lumiphone:import_contact", { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }));
-        trailing = add;
-      }
-      row.append(identity, trailing);
-      body.appendChild(row);
-      sourceRows.push(row);
-      searchableRows.push({ node: row, name: source.name, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() });
-    }
-    content.appendChild(section);
-    searchableSections.push({ section, rows: sourceRows });
-  }
-  if (!host.sources.length)
-    content.appendChild(el("p", "lp-copy", "No importable Characters or active Council members were returned. Manual NPC contacts remain available."));
-  const applySearch = () => {
-    const query = search.value.trim().toLocaleLowerCase();
-    const visible = applyRankedSearch(searchableRows, query);
-    for (const entry of searchableSections) {
-      entry.section.dataset.pocketSearchResult = "true";
-      entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden));
-    }
-    noMatches.hidden = !query || visible > 0;
-  };
-  search.addEventListener("input", applySearch);
-  content.appendChild(noMatches);
-  return page;
+  return renderContactImport(host);
 }
 function quickGenerateView(host) {
-  const active = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && entry.phase !== "complete" && entry.phase !== "error");
-  const { page, content } = host.page("Quick Generate", "NPC profiles");
-  page.classList.add("lp-npc-camera");
-  const finder = el("div", "lp-npc-viewfinder");
-  const mode = el("div", "lp-camera-mode", "ϟ AUTO");
-  mode.append(el("span", "", "POCKET"), el("span", "", "PROFILE"));
-  const focus = el("div", "lp-focus-frame");
+  const active = [...host.operations.values()].find((entry) => entry.task === "npc-contact" && !["complete", "error"].includes(entry.phase));
   const draft = host.npcDraft;
-  const mark = el("div", "lp-npc-camera-mark", draft ? draft.name.slice(0, 1).toUpperCase() : "+");
-  focus.append(mark);
-  const copy = el("div", "lp-npc-camera-copy");
-  copy.append(el("strong", "", active ? "Developing profile…" : draft?.name || "Frame a new character"), el("p", "", active?.message || draft?.identityBrief || "Describe an NPC, then tap the shutter."));
-  const subject = el("div", "lp-camera-subject");
-  subject.append(focus, copy);
-  finder.append(subject);
-  const brief = el("textarea", "lp-textarea");
-  brief.placeholder = "A sleepy florist with a sharp wit and a soft spot for stray cats…";
-  brief.maxLength = 2000;
-  brief.rows = 3;
-  brief.value = host.generationBrief;
-  brief.addEventListener("input", () => host.updateGenerationBrief(brief.value));
-  const floating = fieldBlock("Character brief", brief);
-  floating.classList.add("lp-camera-floating-brief");
-  finder.append(floating);
-  const footer = el("div", "lp-camera-bottom-strip");
-  const caption = el("p", "lp-camera-caption", draft ? "PREVIEW · UNSAVED" : "PROFILE");
-  const controls = el("div", "lp-quick-controls");
-  const manual = button("Manual", "lp-nav-action");
-  manual.addEventListener("click", () => host.select("", "new"));
-  const shutter = button("", "lp-shutter");
-  shutter.setAttribute("aria-label", draft ? "Generate another NPC" : "Generate NPC");
-  shutter.disabled = Boolean(active) || !host.capabilities?.generation;
-  shutter.addEventListener("click", () => {
-    if (!brief.value.trim()) {
-      brief.focus();
-      host.showError("Describe someone first.");
-      return;
-    }
-    shutter.disabled = true;
-    host.send("lumiphone:generate_contact", { description: brief.value.trim() });
-  });
-  const edit = button("Edit", "lp-nav-action");
-  edit.disabled = !draft || Boolean(active);
-  edit.addEventListener("click", () => host.select("", "draft"));
-  controls.append(manual, shutter, edit);
-  footer.append(caption, controls);
-  content.append(mode, finder, footer);
+  const { page, content } = host.page(draft ? "Review contact" : "Quick Generate", active ? "Writing profile…" : draft ? "Unsaved profile" : "Make someone for this story");
+  page.classList.add("lp-npc-review");
   if (draft) {
-    const actions = actionGroup("lp-draft-actions");
-    const use = button(`Use ${draft.name}`, "lp-button lp-button-primary");
-    use.disabled = Boolean(active);
-    use.addEventListener("click", () => {
-      use.disabled = true;
-      host.send("lumiphone:save_contact", { contact: draftPayload(draft) });
-    });
-    actions.append(use);
-    const portraits = el("div", "lp-npc-portrait-actions");
-    portraits.setAttribute("role", "group");
-    portraits.setAttribute("aria-label", "NPC portrait source");
-    const gallery = button("Gallery", "lp-button lp-button-quiet");
-    gallery.disabled = !host.capabilities?.images;
-    gallery.addEventListener("click", () => host.choosePhoto());
-    const upload = button("Upload avatar", "lp-button lp-button-quiet");
-    upload.disabled = !host.capabilities?.images;
-    upload.addEventListener("click", () => host.uploadPhoto());
-    const photo = button(draft.avatarUrl ? "Retake portrait" : "Generate portrait", "lp-button lp-button-quiet");
-    photo.disabled = !host.capabilities?.imageGen;
-    photo.addEventListener("click", () => host.generateDraftPhoto());
-    portraits.append(gallery, upload, photo);
-    footer.append(portraits);
     if (draft.avatarUrl) {
-      const image = el("img", "lp-draft-portrait");
+      const image = el("img", "lp-npc-review-photo");
       image.src = draft.avatarUrl;
       image.alt = `${draft.name} portrait`;
-      finder.prepend(image);
+      image.style.objectPosition = `${draft.avatarFocus?.x ?? 50}% ${draft.avatarFocus?.y ?? 50}%`;
+      content.append(image);
+    } else {
+      const placeholder = el("div", "lp-npc-review-placeholder", draft.name.slice(0, 1));
+      placeholder.setAttribute("aria-hidden", "true");
+      content.append(placeholder);
     }
+    const heading = el("div", "lp-npc-review-heading");
+    heading.append(el("h2", "", draft.name), el("p", "lp-copy", draft.role));
+    const details = disclosure("Profile details", el("p", "lp-copy", draft.identityBrief));
+    if (draft.phoneProfile?.personality)
+      details.append(el("p", "lp-copy", draft.phoneProfile.personality));
+    const save = button(draft.avatarUrl ? `Save ${draft.name}` : "Save without photo", "lp-button lp-button-primary");
+    save.disabled = Boolean(active) || Boolean(host.collectionSaving);
+    if (host.collectionSaving)
+      save.textContent = "Saving contact…";
+    save.onclick = () => {
+      save.disabled = true;
+      save.textContent = "Saving contact…";
+      host.saveCollection("lumiphone:save_contact", { contact: draftPayload(draft) });
+    };
+    const portraits = el("div", "lp-npc-review-tools");
+    portraits.setAttribute("role", "group");
+    portraits.setAttribute("aria-label", "Contact portrait");
+    const gallery = button("Gallery", "lp-button lp-button-quiet");
+    gallery.disabled = !host.capabilities?.images;
+    gallery.onclick = () => host.choosePhoto();
+    const upload = button("Upload", "lp-button lp-button-quiet");
+    upload.disabled = !host.capabilities?.images;
+    upload.onclick = () => host.uploadPhoto();
+    const generate = button(draft.avatarUrl ? "Retake portrait" : "Generate portrait", "lp-button lp-button-quiet");
+    generate.disabled = !host.capabilities?.imageGen || Boolean(active);
+    generate.onclick = () => host.generateDraftPhoto();
+    portraits.append(gallery, upload, generate);
+    const secondary = el("div", "lp-npc-review-tools"), edit = button("Edit profile", "lp-directory-link"), retry = button("Regenerate profile", "lp-directory-link");
+    edit.onclick = () => host.select("", "draft");
+    retry.disabled = Boolean(active) || !host.capabilities?.generation;
+    retry.onclick = () => host.send("lumiphone:generate_contact", { description: draft.sourceDescription });
+    secondary.append(edit, retry);
     if (host.previousNpcDraft) {
-      const undo = button("Previous", "lp-button lp-button-quiet");
-      undo.addEventListener("click", () => host.restorePreviousNpcDraft());
-      actions.append(undo);
+      const previous = button("Previous version", "lp-directory-link");
+      previous.onclick = () => host.restorePreviousNpcDraft();
+      secondary.append(previous);
     }
-    footer.append(actions);
+    content.append(heading, save, portraits, details, secondary);
+  } else {
+    const brief = el("textarea", "lp-textarea");
+    brief.value = host.generationBrief;
+    brief.rows = 4;
+    brief.maxLength = 2000;
+    brief.placeholder = "A sleepy florist with a sharp wit…";
+    brief.oninput = () => host.updateGenerationBrief(brief.value);
+    const generate = button(active ? "Generating…" : "Generate NPC", "lp-button lp-button-primary");
+    generate.disabled = Boolean(active) || !host.capabilities?.generation;
+    generate.onclick = () => {
+      if (!brief.value.trim()) {
+        brief.focus();
+        return;
+      }
+      generate.disabled = true;
+      host.send("lumiphone:generate_contact", { description: brief.value.trim() });
+    };
+    content.append(fieldBlock("Character brief", brief), generate);
+    const manual = button("Create manually", "lp-directory-link");
+    manual.onclick = () => host.select("", "new");
+    content.append(manual);
   }
-  if (!host.capabilities?.generation)
-    footer.append(el("p", "lp-warning", "Enable text generation in Settings to generate an NPC."));
+  if (active) {
+    const progress = el("div", "lp-operation-progress");
+    progress.dataset.operationRequest = active.requestId;
+    progress.dataset.phase = active.phase;
+    progress.setAttribute("role", "status");
+    const message = el("strong", "", active.message || "Writing profile…");
+    message.dataset.operationMessage = "true";
+    progress.append(el("span", "lp-indeterminate"), message);
+    content.append(progress);
+  }
   return page;
 }
 function renderContactsView(host) {
@@ -4879,101 +5632,7 @@ function renderContactsView(host) {
     content.append(message);
     return page;
   }
-  const { page, content } = host.page("Contacts", `${host.state.contacts.length} people`, { label: "Add", callback: () => host.select("", "import") });
-  const search = el("input", "lp-input");
-  search.type = "search";
-  search.placeholder = "Search contacts";
-  const toolbar = el("div", "lp-contact-toolbar");
-  const filters = el("div", "lp-chipbar lp-contact-filters");
-  filters.setAttribute("aria-label", "Filter contacts");
-  const library = el("div", "lp-contact-library");
-  library.setAttribute("role", "group");
-  library.setAttribute("aria-label", "Contact library");
-  library.append(el("span", "lp-contact-library-label", "Library"));
-  const all = button("All", "lp-chip");
-  const here = button("Here", "lp-chip");
-  const recent = button("Recent", "lp-chip");
-  all.setAttribute("aria-pressed", "true");
-  filters.append(all, here, recent);
-  const groups = button("Groups", "lp-contact-library-action");
-  groups.title = "Contact groups for this roleplay";
-  groups.setAttribute("aria-description", groups.title);
-  groups.addEventListener("click", () => host.selectGroup("", "groups"));
-  const bank = button("NPC Bank", "lp-contact-library-action");
-  bank.title = "Reusable NPC profiles and casts across chats";
-  bank.setAttribute("aria-description", bank.title);
-  const bankIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  bankIcon.setAttribute("viewBox", "0 0 24 24");
-  bankIcon.setAttribute("width", "12");
-  bankIcon.setAttribute("height", "12");
-  bankIcon.setAttribute("aria-hidden", "true");
-  bankIcon.setAttribute("focusable", "false");
-  const bankPath = document.createElementNS(bankIcon.namespaceURI, "path");
-  bankPath.setAttribute("d", "M4 8h16v12H4zM3 4h18v4H3zM9 12h6");
-  bankPath.setAttribute("fill", "none");
-  bankPath.setAttribute("stroke", "currentColor");
-  bankPath.setAttribute("stroke-width", "1.5");
-  bankPath.setAttribute("stroke-linejoin", "round");
-  bankIcon.append(bankPath);
-  bank.prepend(bankIcon);
-  bank.addEventListener("click", () => host.selectGroup("", "bank"));
-  library.append(groups, bank);
-  toolbar.append(filters, library);
-  const sync = button("Sync current scene", "lp-button lp-button-quiet");
-  const sceneOperation = [...host.operations.values()].find((entry) => entry.task === "scene-sync" && entry.phase !== "complete" && entry.phase !== "error");
-  sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation);
-  sync.addEventListener("click", () => host.send("lumiphone:sync_scene_contacts"));
-  const snapshot = host.state.sceneSnapshot;
-  const snapshotStatus = el("p", snapshot?.stale ? "lp-warning" : "lp-copy", !snapshot ? "Refresh to see who is in the scene." : `${snapshot.stale ? "Scene snapshot is stale" : "Scene snapshot is current"} · ${snapshot.actors.length} actor${snapshot.actors.length === 1 ? "" : "s"} · source turn ${snapshot.sourceMessageIndex}`);
-  const list = el("div", "lp-contact-list");
-  const renderList = (filter = "all") => {
-    list.replaceChildren();
-    const query = search.value.trim().toLocaleLowerCase();
-    const contacts = host.state.contacts.filter((entry) => {
-      if (query && !`${entry.name} ${entry.role}`.toLocaleLowerCase().includes(query))
-        return false;
-      if (filter === "here")
-        return entry.presence.inScene;
-      if (filter === "recent")
-        return Boolean(entry.presence.lastSceneAt);
-      return true;
-    }).sort((a, b) => Number(b.presence.inScene) - Number(a.presence.inScene) || Date.parse(b.presence.lastSceneAt || "0") - Date.parse(a.presence.lastSceneAt || "0"));
-    for (const entry of contacts) {
-      const row = button("", "lp-card lp-contact-row");
-      const identity = identityBlock({ name: entry.name, meta: entry.role, className: "lp-grow" });
-      const status = el("span", entry.presence.inScene ? "lp-contact-presence-label" : "lp-contact-presence-label lp-contact-presence-away", entry.presence.inScene ? "Here" : "Away");
-      row.append(avatar(entry), identity, status);
-      row.addEventListener("click", () => host.select(entry.id, "detail"));
-      list.appendChild(row);
-    }
-    if (!contacts.length)
-      list.appendChild(host.empty("No matching contacts", "Try another search or sync the current scene."));
-  };
-  let active = "all";
-  const useFilter = (next) => {
-    active = next;
-    for (const chip of [all, here, recent])
-      chip.setAttribute("aria-pressed", String(chip === { all, here, recent }[next]));
-    renderList(active);
-  };
-  all.addEventListener("click", () => useFilter("all"));
-  here.addEventListener("click", () => useFilter("here"));
-  recent.addEventListener("click", () => useFilter("recent"));
-  search.addEventListener("input", () => renderList(active));
-  renderList();
-  content.append(search, toolbar, sync, snapshotStatus);
-  if (sceneOperation) {
-    const progress = el("div", "lp-operation-progress");
-    progress.dataset.operationRequest = sceneOperation.requestId;
-    progress.dataset.phase = sceneOperation.phase;
-    progress.setAttribute("role", "status");
-    const message = el("strong", "", sceneOperation.message || "Syncing scene…");
-    message.dataset.operationMessage = "true";
-    progress.append(el("span", "lp-indeterminate"), message);
-    content.appendChild(progress);
-  }
-  content.appendChild(list);
-  return page;
+  return renderContactDirectory(host);
 }
 
 // src/domain/app-review.ts
@@ -5158,8 +5817,10 @@ class PocketRouteHistory {
     this.current = route;
     return route;
   }
-  settle(routeInput) {
+  settle(routeInput, discard) {
     const route = normalizePocketRoute(routeInput);
+    while (discard && this.entries.length && discard(this.entries.at(-1)))
+      this.entries.pop();
     if (sameRoute(route, this.current))
       return this.current;
     const parent = this.entries.at(-1);
@@ -5190,7 +5851,7 @@ class PocketRouteHistory {
 // src/domain/activity-clock.ts
 function activityClock(activity, state) {
   let { storyAt, storyTimeLabel, storyTimezoneOffsetMinutes } = activity.presentation || {};
-  if (!validStamp(storyAt) && !storyTimeLabel?.trim() && state && activity.source?.messageId) {
+  if (!validStamp2(storyAt) && !storyTimeLabel?.trim() && state && activity.source?.messageId) {
     const sourceId = activity.source.messageId;
     const selected = [...state.hostSwipeSelections || []].reverse().find((entry) => entry.hostMessageId === sourceId);
     const snapshot = [...state.candidateClocks || []].reverse().find((entry) => entry.hostMessageId === sourceId && selected && entry.swipeId === selected.swipeId);
@@ -5200,7 +5861,7 @@ function activityClock(activity, state) {
       storyTimezoneOffsetMinutes = state.roleplayTimezoneOffsetMinutes;
     }
   }
-  if (validStamp(storyAt)) {
+  if (validStamp2(storyAt)) {
     const offset = typeof storyTimezoneOffsetMinutes === "number" && Number.isFinite(storyTimezoneOffsetMinutes) && Math.abs(storyTimezoneOffsetMinutes) <= 840 ? storyTimezoneOffsetMinutes : 0;
     const date = new Date(Date.parse(storyAt) - offset * 60000);
     return { time: date.toISOString().slice(11, 16), date: new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(date), precision: "exact" };
@@ -5208,7 +5869,7 @@ function activityClock(activity, state) {
   const label = clockLabel(storyTimeLabel);
   return { time: label, date: "", precision: label ? "approximate" : "unknown" };
 }
-function validStamp(value) {
+function validStamp2(value) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)));
 }
 
@@ -6931,6 +7592,94 @@ function activityReceipt(ctx, activity, openRoute, options = {}) {
   return renderActivityHost(wrapper, activity, openRoute, { ...options, includeArtifact: false, includeReceipt: true });
 }
 
+// src/frontend/components/event-quickstart.ts
+var escape = (text) => text.replace(/[&<>"']/g, (letter) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[letter]);
+function eventQuickstartHtml(card) {
+  const date = new Date(card.when);
+  const when = Number.isFinite(date.getTime()) ? date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : card.when;
+  const messageCount = Math.max(0, Math.round(card.messageCount));
+  const serial = `PKT-${String(messageCount % 1000).padStart(3, "0")}`;
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  :root{color-scheme:dark;--bg:#0d0c12;--card:#17141d;--card-2:#121017;--ink:#f4f0fa;--muted:#9e95aa;--accent:#b9a3ff;--accent-2:#7fd8ff}
+  *{box-sizing:border-box}
+  h2,p,.when{overflow-wrap:anywhere}.body,.pass{min-width:0}
+  body{margin:0;padding:4px;background:transparent;color:var(--ink);font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  article{max-width:680px;margin:auto;position:relative;display:grid;grid-template-columns:154px minmax(0,1fr);overflow:hidden;border:1px solid #ffffff21;border-radius:22px;background:linear-gradient(120deg,#ffffff06,transparent 35%),linear-gradient(160deg,var(--card),var(--card-2));box-shadow:0 22px 54px #0000004a,inset 0 1px #ffffff0a}
+  article:before{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(90deg,#ffffff03 0 1px,transparent 1px 5px);mix-blend-mode:screen;opacity:.6}
+  .stub{position:relative;min-height:250px;padding:18px 18px 16px;display:flex;flex-direction:column;justify-content:space-between;border-right:1px dashed #ffffff38;background:radial-gradient(circle at 18% 18%,#ffffff12,transparent 22%),linear-gradient(165deg,#b9a3ff3d,#7fd8ff0f)}
+  .stub:before,.stub:after{content:"";position:absolute;right:-11px;width:22px;height:22px;border-radius:50%;background:var(--bg);box-shadow:inset 0 0 0 1px #ffffff08;z-index:3}.stub:before{top:-11px}.stub:after{bottom:-11px}
+  .serial{display:flex;justify-content:space-between;gap:10px;align-items:center;font:700 8px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;color:#d3c5ff}.serial code{font:inherit;color:#9187a0}
+  .brand-wrap{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center}.brand{writing-mode:vertical-rl;transform:rotate(180deg);font-size:10px;font-weight:850;letter-spacing:.23em;color:#f0e9ff}
+  .pass{min-width:0}.tiny{font:800 8px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:#a99dc0;margin-bottom:7px}.when{font-size:16px;line-height:1.2;font-weight:780;letter-spacing:-.025em;color:#f7f3ff}
+  .admit{display:flex;align-items:center;gap:7px;font:800 8px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.14em;color:#92899f}.admit:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px #b9a3ffb3}
+  .body{position:relative;padding:22px 24px 19px}.body-top{display:flex;justify-content:space-between;align-items:center;gap:16px}.kicker{font:800 9px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.14em;color:#9f94ac}
+  .classification{padding:4px 7px;border:1px solid #b9a3ff33;border-radius:5px;background:#b9a3ff0e;font:750 8px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.12em;color:#cbbaff;white-space:nowrap}
+  h2{margin:12px 0 8px;max-width:470px;font-size:27px;line-height:1.03;letter-spacing:-.05em}.people{margin:0;color:#c1b8ca;font-size:12px}.people:before{content:"WITH  ";font:750 8px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.12em;color:#786f82}
+  .desc{margin:15px 0 0;max-width:500px;color:#e5dfe9}
+  .route{position:relative;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;margin-top:22px;color:#7e7588;font:750 8px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.13em;text-transform:uppercase}.route-line{position:relative;height:1px;background:linear-gradient(90deg,#b9a3ffa6,#7fd8ff59)}.route-line:before,.route-line:after{content:"";position:absolute;top:50%;width:5px;height:5px;border-radius:50%;transform:translateY(-50%);background:#c8b8ff}.route-line:before{left:0}.route-line:after{right:0;background:#90dcff}
+  .footer{display:flex;justify-content:space-between;gap:18px;align-items:flex-end;margin-top:16px;padding-top:13px;border-top:1px solid #ffffff11}.carried{color:#8f8699;font-size:10px}.carried b{display:block;margin-bottom:2px;font-size:12px;color:#d5c8ff;font-weight:750}
+  .barcode{width:92px;height:22px;opacity:.55;background:repeating-linear-gradient(90deg,#ddd6ed 0 1px,transparent 1px 3px,#ddd6ed 3px 5px,transparent 5px 8px,#ddd6ed 8px 9px,transparent 9px 12px);-webkit-mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}
+  @media(max-width:520px){article{grid-template-columns:1fr}.stub{min-height:auto;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;border-right:0;border-bottom:1px dashed #ffffff38}.stub:before,.stub:after{display:none}.serial{grid-column:1/-1}.brand-wrap{grid-template-columns:1fr}.brand{writing-mode:horizontal-tb;transform:none;letter-spacing:.18em}.tiny{display:none}.admit{justify-self:end}.body{padding:19px 18px 17px}h2{font-size:23px}.footer{align-items:center}.barcode{width:72px}}
+  </style><article aria-label="Event quickstart: ${escape(card.title)}">
+    <aside class="stub">
+      <div class="serial"><span>POCKET // EVENT</span><code>${serial}</code></div>
+      <div class="brand-wrap">
+        <div class="brand">POCKET</div>
+        <div class="pass"><div class="tiny">Valid for one scene</div><div class="when">${escape(when)}</div></div>
+      </div>
+      <div class="admit">Admit one jump</div>
+    </aside>
+
+    <section class="body">
+      <div class="body-top"><div class="kicker">A little time skip</div><div class="classification">scene handoff</div></div>
+      <h2>${escape(card.title)}</h2>
+      <p class="people">${escape(card.people)}</p>
+      ${card.description ? `<p class="desc">${escape(card.description)}</p>` : ""}
+
+      <div class="route"><span>Messages</span><span class="route-line"></span><span>Scene</span></div>
+
+      <div class="footer">
+        <div class="carried"><b>${messageCount} texts carried forward</b>Context preserved from the preceding exchange</div>
+        <div class="barcode" aria-hidden="true"></div>
+      </div>
+    </section>
+  </article>`;
+}
+function installEventQuickstartCards(ctx) {
+  if (!ctx.messages.renderWidget)
+    return () => {};
+  const mounted = new Map;
+  const clear = () => {
+    for (const entry of mounted.values())
+      entry.dispose();
+    mounted.clear();
+  };
+  const unregister = ctx.messages.registerTagInterceptor({ tagName: "pocket-event-start", removeFromMessage: true }, (payload) => {
+    if (payload.isStreaming || payload.isUser === false || !payload.messageId)
+      return;
+    if (payload.chatId && payload.chatId !== ctx.getActiveChat().chatId)
+      return;
+    try {
+      const data = JSON.parse(decodeURIComponent((payload.attrs.card || "").slice(0, 24000)));
+      if (!data || typeof data.eventId !== "string" || typeof data.title !== "string" || typeof data.when !== "string")
+        return;
+      const clean = (value, max) => typeof value === "string" ? value.slice(0, max) : "";
+      const card = { eventId: clean(data.eventId, 180), title: clean(data.title, 180), description: clean(data.description, 600), when: clean(data.when, 80), people: clean(data.people, 600), messageCount: Number.isFinite(data.messageCount) ? data.messageCount : 0 };
+      const key = `${payload.chatId}:${payload.messageId}`, source = JSON.stringify(card), existing = mounted.get(key);
+      if (existing?.source === source)
+        return;
+      existing?.dispose();
+      mounted.set(key, { source, dispose: ctx.messages.renderWidget({ messageId: payload.messageId, widgetId: "pocket-event-start", html: eventQuickstartHtml(card), minHeight: 160, maxHeight: 650 }) });
+    } catch {}
+  });
+  const stop = ctx.events.on("CHAT_SWITCHED", clear);
+  return () => {
+    unregister();
+    stop();
+    clear();
+  };
+}
+
 // src/frontend/components/phone-sequence.ts
 function key(entry) {
   const { activity, options, owner } = entry;
@@ -7054,6 +7803,38 @@ function sequence(group, open) {
   return phone;
 }
 
+// src/frontend/components/wallpaper-choice.ts
+var serial = 0;
+function wallpaperDestinationLabel(value) {
+  return value.target.startsWith("persona-") ? `${value.personaName || "Persona"}’s ${value.target.endsWith("chat") ? "chat" : "home"} wallpaper` : `default ${value.target.endsWith("chat") ? "chat" : "home"} wallpaper`;
+}
+function wallpaperChoice(persona, apply) {
+  const root = el("div", "lp-wallpaper-choice"), id = "pocket-wallpaper-" + ++serial;
+  const place = el("fieldset"), scope = el("fieldset");
+  place.append(el("legend", "", "Use for"));
+  scope.append(el("legend", "", "Apply to"));
+  const radios = (parent, name, items, initial) => {
+    const controls = [];
+    for (const [value, title] of items) {
+      const label = el("label"), input = el("input");
+      input.type = "radio";
+      input.name = id + name;
+      input.value = value;
+      input.checked = value === initial;
+      label.append(input, el("span", "", title));
+      parent.append(label);
+      controls.push(input);
+    }
+    return () => controls.find((control) => control.checked).value;
+  };
+  const destination = radios(place, "place", [["home", "Home screen"], ["chat", "Message chats"]], "home");
+  const selectedScope = radios(scope, "scope", [...persona ? [["persona", persona.name + " only"]] : [], ["device", "All phones · default"]], persona ? "persona" : "device");
+  const save = button("Set wallpaper", "lp-button lp-button-primary");
+  save.onclick = () => apply(save, { target: `${selectedScope() === "persona" ? "persona" : "device"}-${destination()}`, ...selectedScope() === "persona" ? { personaId: persona.id, personaName: persona.name } : {} });
+  root.append(place, scope, save);
+  return root;
+}
+
 // src/frontend/components/avatar-crop.ts
 function avatarCropRect(width, height, focus) {
   if (!(width > 0 && height > 0))
@@ -7121,6 +7902,161 @@ function renderAppReviewControl(host, task, label, type) {
   }
   return panel;
 }
+
+// src/domain/freeform.ts
+var isFreeformChat = (chatId) => Boolean(chatId?.startsWith("_freeform_"));
+
+// src/frontend/components/freeform-lock.ts
+function renderFreeformLock(directory, draft, busy, error, actions) {
+  const root = el("section", "pocket-freeform-lock");
+  root.setAttribute("aria-label", "Freeform lock screen");
+  const mark = el("span", "pocket-lock-mark");
+  mark.setAttribute("aria-hidden", "true");
+  mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>';
+  const heading = el("h2", "", "Make yourself at home.");
+  heading.tabIndex = -1;
+  root.append(mark, el("p", "pocket-portal-eyebrow", "FREEFORM"), heading, el("p", "pocket-portal-intro", "Your persona. Your own little world. No roleplay chat needed."));
+  if (!directory) {
+    root.append(el("p", "", error || "Loading personas and sessions…"));
+    if (error) {
+      const retry = button("Try again", "pocket-portal-action");
+      retry.onclick = actions.refresh;
+      root.append(retry);
+    }
+    return root;
+  }
+  const persona = el("select");
+  persona.setAttribute("aria-label", "Choose persona");
+  persona.dataset.freeformField = "persona";
+  persona.append(new Option("Choose a persona", ""));
+  for (const entry of directory.personas)
+    persona.append(new Option(entry.name, entry.id));
+  const sessions = el("select");
+  sessions.setAttribute("aria-label", "Log in to session");
+  sessions.dataset.freeformField = "session";
+  const name = el("input");
+  name.type = "text";
+  name.maxLength = 80;
+  name.placeholder = "A name for this little world";
+  name.value = draft.name;
+  name.dataset.freeformField = "name";
+  const label = (text, input) => {
+    const field = el("label", "pocket-lock-field", text);
+    field.append(input);
+    return field;
+  };
+  const login = button("Log in to session", "pocket-portal-action pocket-portal-primary");
+  login.dataset.freeformField = "login";
+  const create = button("Create session", "pocket-portal-action");
+  create.dataset.freeformField = "create";
+  const avatar = el("div", "pocket-lock-avatar");
+  avatar.setAttribute("aria-hidden", "true");
+  const update = () => {
+    const selected = directory.personas.find((entry) => entry.id === draft.personaId);
+    avatar.replaceChildren(document.createTextNode(selected?.name.slice(0, 1).toUpperCase() || "P"));
+    if (selected?.avatarUrl) {
+      const image = el("img");
+      image.src = selected.avatarUrl;
+      image.alt = "";
+      image.onerror = () => image.remove();
+      avatar.append(image);
+    }
+    sessions.replaceChildren(new Option("Choose a session", ""));
+    for (const session of directory.sessions.filter((entry) => entry.personaId === draft.personaId))
+      sessions.append(new Option(session.name, session.id));
+    sessions.value = draft.sessionId;
+    if (!sessions.value)
+      draft.sessionId = "";
+    persona.value = draft.personaId;
+    persona.disabled = sessions.disabled = name.disabled = busy;
+    login.disabled = busy || !draft.sessionId;
+    create.disabled = busy || !selected || !draft.name.trim();
+  };
+  persona.onchange = () => {
+    draft.personaId = persona.value;
+    draft.sessionId = "";
+    update();
+  };
+  sessions.onchange = () => {
+    draft.sessionId = sessions.value;
+    login.disabled = busy || !sessions.value;
+  };
+  name.oninput = () => {
+    draft.name = name.value;
+    create.disabled = busy || !draft.personaId || !draft.name.trim();
+  };
+  login.onclick = () => {
+    const session = directory.sessions.find((entry) => entry.id === draft.sessionId);
+    if (session)
+      actions.login(session);
+  };
+  create.onclick = () => actions.create(draft.personaId, draft.name);
+  root.append(avatar, label("Persona", persona), label("Log in to session", sessions), login, el("p", "pocket-lock-divider", "OR START SOMETHING NEW"), label("Session name", name), create);
+  const status = el("p", "pocket-lock-status", busy ? "Opening your Pocket…" : error);
+  status.setAttribute("role", error ? "alert" : "status");
+  root.append(status);
+  if (!directory.personas.length)
+    root.append(el("p", "pocket-portal-intro", "Add a Persona in Lumiverse and enable Personas access, then refresh."));
+  const refresh = button("Refresh personas & sessions", "pocket-portal-text-action");
+  refresh.disabled = busy;
+  refresh.onclick = actions.refresh;
+  root.append(refresh);
+  refresh.dataset.freeformField = "refresh";
+  update();
+  return root;
+}
+
+// src/frontend/components/pocket-portal.ts
+function renderPocketPortal(view, navigate, content) {
+  const root = el("section", "pocket-portal lumiphone-device-drawer");
+  root.setAttribute("aria-label", "Pocket");
+  const nav = el("nav", "pocket-portal-nav");
+  nav.setAttribute("aria-label", "Pocket navigation");
+  const home = button("pocket", "pocket-portal-wordmark");
+  home.setAttribute("aria-label", "Pocket home");
+  home.onclick = () => navigate("home");
+  nav.append(home, el("span", "pocket-portal-mode", view === "home" ? "A WORLD WITHIN REACH" : view === "devices" ? "ROLEPLAY" : "FREEFORM"));
+  root.append(nav);
+  const body = el("div", "pocket-portal-body");
+  if (view === "home") {
+    const title = el("h2", "", "A little closer.");
+    title.tabIndex = -1;
+    body.append(el("p", "pocket-portal-eyebrow", "WELCOME TO YOUR POCKET"), title, el("p", "pocket-portal-intro", "Pick up where you are. Or go somewhere new."));
+    const cards = el("div", "pocket-portal-destinations");
+    for (const [id, eyebrow, name, copy, art] of [
+      ["devices", "IN THE STORY", "Roleplay", "The phones, people, and moments in your current chat.", '<rect x="35" y="9" width="42" height="68" rx="9"/><path d="M49 17h14M51 68h10M45 32h22M45 40h15"/><circle cx="87" cy="27" r="4"/><path d="M18 48h10m-5-5v10"/>'],
+      ["freeform", "ON YOUR OWN TERMS", "Freeform", "Choose a persona. Log in to a world of your own.", '<rect x="15" y="18" width="65" height="45" rx="8"/><path d="M27 32h35M27 41h24M32 63l-9 11V63"/><rect x="64" y="46" width="32" height="28" rx="6"/><path d="M73 56h14M73 63h9"/>']
+    ]) {
+      const card = button("", "pocket-portal-destination");
+      card.setAttribute("aria-label", `Open ${name}`);
+      const artwork = el("span", "pocket-portal-art");
+      artwork.setAttribute("aria-hidden", "true");
+      artwork.innerHTML = `<svg viewBox="0 0 112 88" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${art}</svg>`;
+      const arrow = el("span", "pocket-portal-arrow", "↗");
+      arrow.setAttribute("aria-hidden", "true");
+      card.append(el("small", "", eyebrow), el("strong", "", name), artwork, el("span", "pocket-portal-card-copy", copy), arrow);
+      card.onclick = () => navigate(id);
+      cards.append(card);
+    }
+    body.append(cards, el("p", "pocket-portal-footnote", "Same Pocket. A different place to begin."));
+  } else {
+    const back = button("All spaces", "pocket-portal-text-action");
+    const chevron = el("span", "", "‹ ");
+    chevron.setAttribute("aria-hidden", "true");
+    back.prepend(chevron);
+    back.onclick = () => navigate("home");
+    body.append(back, content);
+  }
+  root.append(body);
+  return root;
+}
+var POCKET_PORTAL_STYLES = `
+.pocket-portal{--pocket-text:var(--lumiverse-text,#eceaf1);--pocket-muted:var(--lumiverse-text-muted,#a7a3b2);--pocket-accent:var(--lumiverse-primary,#b5a5f5);--pocket-border:var(--lumiverse-border,#ffffff16);--pocket-surface:var(--lumiverse-fill-subtle,#ffffff06);--pocket-hover:var(--lumiverse-fill,#ffffff0c);box-sizing:border-box;width:100%;min-width:0;min-height:100%;padding:24px 20px 32px;color:var(--pocket-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--pocket-accent) 9%,transparent),transparent 55%)}
+.pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-device-access{flex:1;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
+@media(max-width:420px){.pocket-portal{padding:18px 16px 28px}.pocket-portal-nav{padding-bottom:24px}.pocket-portal h2{font-size:28px}.pocket-portal-destination{padding:20px 16px 26px}}
+.pocket-freeform-confirm{--lp-accent:var(--lumiverse-primary,#b6a5ee);font:400 13px/1.6 Inter,ui-sans-serif,system-ui,sans-serif}.pocket-freeform-confirm *{box-sizing:border-box}.pocket-freeform-confirm .lp-settings-section{gap:14px}.pocket-freeform-confirm .lp-copy{font:inherit;margin:0 0 6px;color:var(--lp-muted,#b9b5c5)}.pocket-freeform-confirm .lp-button{min-height:44px;padding:12px 14px;font:600 13px/1.4 Inter,ui-sans-serif,system-ui,sans-serif;white-space:normal;border:1px solid var(--lp-border,#ffffff22);border-radius:10px}.pocket-freeform-confirm .lp-button[data-primary=true]{background:var(--lp-accent);color:#17151e}.pocket-freeform-confirm button:focus-visible{outline:2px solid var(--lp-accent);outline-offset:3px}
+@media(prefers-reduced-motion:reduce){.pocket-portal-destination{transition:none}}
+`;
 
 // src/frontend/components/device-picker.ts
 var GLYPHS = {
@@ -7245,6 +8181,3674 @@ function renderDevicePicker(state, selected, deviceKey, select) {
   return list;
 }
 
+// src/frontend/components/launcher-weather.ts
+function launcherWeatherWidget(weather, variant = "card") {
+  const card = el("div", "lp-launcher-weather-card");
+  card.dataset.variant = variant;
+  card.dataset.condition = weatherConditionKind(weather.condition);
+  card.append(el("h3", "", "Weather"));
+  if (weather.location)
+    card.append(el("p", "lp-launcher-weather-location", weather.location));
+  const reading = el("div", "lp-launcher-weather-reading");
+  reading.append(el("strong", "lp-launcher-weather-temp", `${weather.temperature}°${weather.unit}`), weatherGlyph(weather.condition));
+  card.append(reading, el("p", "", weather.condition));
+  const range = [Number.isFinite(weather.high) ? `High ${weather.high}°` : "", Number.isFinite(weather.low) ? `Low ${weather.low}°` : ""].filter(Boolean);
+  if (range.length)
+    card.append(el("p", "lp-launcher-weather-range", range.join(" · ")));
+  return card;
+}
+
+// src/frontend/components/launcher-clock.ts
+function launcherClockWidget(state) {
+  const card = el("div", "lp-launcher-clock-card");
+  const time = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? clockLabel(state.roleplayClockLabel) || "Story time" : formatTime(state.roleplayNow);
+  card.dataset.clockKind = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? "label" : "time";
+  card.append(el("p", "lp-launcher-clock-date", formatDate(state.roleplayNow, false)), el("strong", "lp-launcher-clock-time", time));
+  return card;
+}
+
+// src/frontend/apps/launcher.ts
+function renderLauncher(host, extras) {
+  const root = el("div", "lp-home lp-launcher"), { ui } = host;
+  const liveWidgets = new Map;
+  const meta = (app) => LAUNCHER_APPS.find((entry) => entry.app === app);
+  const trackerLabel = (id) => {
+    const tracker = host.state.trackers.find((entry) => entry.id === id);
+    if (!tracker)
+      return "Unavailable tracker";
+    const duplicates = host.state.trackers.filter((entry) => entry.label === tracker.label);
+    return duplicates.length > 1 ? `${tracker.label} · ${tracker.target.label || tracker.target.type} (${duplicates.findIndex((entry) => entry.id === id) + 1})` : tracker.label;
+  };
+  const clearSelection = () => {
+    ui.selected = undefined;
+    ui.selectedItem = undefined;
+    ui.placingSlot = undefined;
+  };
+  const folderLabel = (layout, folder) => {
+    if (layout.pages.flatMap((page) => page.items).filter((item) => item.kind === "folder" && item.name === folder.name).length < 2)
+      return folder.name;
+    const page = layout.pages.find((page) => page.items.some((item) => item.id === folder.id));
+    return `${folder.name} (${page.name}, position ${page.items.findIndex((item) => item.id === folder.id) + 1})`;
+  };
+  const action = (text, name, run) => {
+    const control = button(text, "lp-launcher-action");
+    control.setAttribute("aria-label", name);
+    control.dataset.launcherFocus = name;
+    control.disabled = Boolean(ui.pending);
+    control.onclick = run;
+    return control;
+  };
+  const paint = (focus) => {
+    const scroll = ui.scrollTop || 0;
+    liveWidgets.clear();
+    root.replaceChildren();
+    root.dataset.editing = String(Boolean(ui.draft));
+    root.dataset.drawer = String(Boolean(ui.drawer));
+    const layout = ui.draft || normalizeLauncherLayout(host.layout);
+    const installed = (app) => pocketAppInstalled(layout, app);
+    const page = layout.pages.find((page) => page.id === ui.pageId) || layout.pages[0];
+    ui.pageId = page.id;
+    const allItems = () => layout.pages.flatMap((page) => page.items);
+    const widgetLabel = (item) => {
+      const missing = allItems().filter((item) => item.kind === "tracker" && !host.state.trackers.some((tracker) => tracker.id === item.trackerId));
+      return !host.state.trackers.some((tracker) => tracker.id === item.trackerId) && missing.length > 1 ? `Unavailable tracker ${missing.findIndex((entry) => entry.id === item.id) + 1}` : trackerLabel(item.trackerId);
+    };
+    const canAdd = launcherItemCount(layout) < MAX_LAUNCHER_ITEMS;
+    const selectedItem = allItems().find((item) => item.id === ui.selectedItem);
+    let selectedLabel = ui.selected ? meta(ui.selected).label : selectedItem?.kind === "folder" ? selectedItem.name : selectedItem?.kind === "clock" ? "Clock & date widget" : selectedItem?.kind === "weather" ? "Weather widget" : selectedItem?.kind === "tracker" ? `${widgetLabel(selectedItem)} widget` : "";
+    const toolbar = el("div", "lp-launcher-toolbar");
+    toolbar.append(action(ui.drawer ? "‹ Home" : "All apps", ui.drawer ? "Return to Home" : "Open app drawer", () => {
+      ui.drawer = !ui.drawer;
+      ui.placingSlot = undefined;
+      ui.widgetPicker = false;
+      ui.folderId = undefined;
+      ui.query = "";
+      paint(ui.drawer ? "Search apps" : "Open app drawer");
+    }));
+    if (ui.draft) {
+      toolbar.append(action("Cancel", "Cancel layout changes", () => {
+        ui.draft = undefined;
+        clearSelection();
+        ui.folderId = undefined;
+        ui.widgetPicker = false;
+        ui.error = undefined;
+        ui.drawer = false;
+        paint("Edit home screen");
+      }), action(ui.pending ? "Saving…" : "Done", "Save home layout", () => {
+        ui.pending = true;
+        ui.error = undefined;
+        host.save(structuredClone(ui.draft));
+        paint("Save home layout");
+      }));
+    } else
+      toolbar.append(action("Edit", "Edit home screen", () => {
+        ui.draft = structuredClone(layout);
+        paint("Cancel layout changes");
+      }));
+    root.append(toolbar);
+    if (ui.error) {
+      const error = el("p", "lp-launcher-error", ui.error);
+      error.setAttribute("role", "alert");
+      root.append(error);
+    }
+    const appButton = (app) => {
+      const control = host.appIcon(meta(app), () => {
+        if (ui.pending)
+          return;
+        if (ui.draft) {
+          if (ui.placingSlot !== undefined)
+            ui.draft = placeLauncherApp(ui.draft, app, ui.placingSlot, page.id);
+          clearSelection();
+          ui.selected = app;
+          ui.drawer = false;
+          ui.folderId = undefined;
+          paint(`Move ${meta(app).label} to`);
+        } else
+          host.open(app);
+      });
+      control.dataset.launcherFocus = `Arrange ${meta(app).label}`;
+      control.disabled = Boolean(ui.pending);
+      if (ui.draft) {
+        control.setAttribute("aria-label", `Arrange ${meta(app).label}`);
+        control.setAttribute("aria-pressed", String(ui.selected === app));
+      }
+      return control;
+    };
+    if (ui.widgetPicker && ui.draft) {
+      const picker = el("section", "lp-launcher-widget-picker");
+      picker.setAttribute("aria-label", "Widgets");
+      picker.append(el("h2", "lp-launcher-title", "Widgets"), action("‹ Home", "Close widget picker", () => {
+        ui.widgetPicker = false;
+        paint("Add widget");
+      }));
+      if (installed("weather") && !allItems().some((item) => item.kind === "weather")) {
+        const add = action("Weather · Current story weather", "Add Weather widget", () => {
+          const item = { id: requestId("weather"), kind: "weather", size: "compact", variant: "stripe" };
+          page.items.push(item);
+          clearSelection();
+          ui.selectedItem = item.id;
+          ui.widgetPicker = false;
+          paint("Move Weather widget to");
+        });
+        add.disabled ||= !canAdd;
+        picker.append(add);
+      }
+      if (!installed("weather"))
+        picker.append(action("Get Weather in App Store", "Get Weather in App Store", () => host.open("weather")));
+      if (!allItems().some((item) => item.kind === "clock")) {
+        const add = action("Clock & date · Story time", "Add Clock & date widget", () => {
+          const item = { id: requestId("clock"), kind: "clock", size: "compact" };
+          page.items.push(item);
+          clearSelection();
+          ui.selectedItem = item.id;
+          ui.widgetPicker = false;
+          paint("Move Clock & date widget to");
+        });
+        add.disabled ||= !canAdd;
+        picker.append(add);
+      }
+      picker.append(el("h3", "lp-title", "Trackers"));
+      const pinned = new Set(allItems().flatMap((item) => item.kind === "tracker" ? [item.trackerId] : []));
+      const available = host.state.trackers.filter((tracker) => !pinned.has(tracker.id));
+      for (const tracker of installed("trackers") ? available : []) {
+        const add = action(`${trackerLabel(tracker.id)} · ${tracker.target.label || tracker.target.type}`, `Add ${trackerLabel(tracker.id)} widget`, () => {
+          const item = { id: requestId("widget"), kind: "tracker", trackerId: tracker.id, size: "compact" };
+          page.items.push(item);
+          clearSelection();
+          ui.selectedItem = item.id;
+          ui.widgetPicker = false;
+          paint(`Move ${trackerLabel(tracker.id)} widget to`);
+        });
+        add.disabled ||= !canAdd;
+        picker.append(add);
+      }
+      if (!installed("trackers"))
+        picker.append(action("Get Trackers in App Store", "Get Trackers in App Store", () => host.open("trackers")));
+      else if (!available.length)
+        picker.append(el("p", "lp-launcher-subtitle", host.state.trackers.length ? "Every tracker already has a widget." : "No trackers yet. Create one in Trackers."), action("Open Trackers", "Open Trackers", () => host.open("trackers")));
+      root.append(picker);
+    } else if (ui.drawer) {
+      const drawer = el("section", "lp-launcher-drawer");
+      drawer.setAttribute("aria-label", "App drawer");
+      drawer.append(el("h2", "lp-launcher-title", "All apps"), el("p", "lp-launcher-subtitle", ui.draft ? "Choose an app to place on your phone." : "Everything on your phone."));
+      const label = el("label", "lp-launcher-search"), search = el("input");
+      label.append(el("span", "lp-sr-only", "Search apps"), search);
+      search.type = "search";
+      search.placeholder = "Search apps";
+      search.value = ui.query || "";
+      search.dataset.launcherFocus = "Search apps";
+      const grid = el("div", "lp-app-grid"), empty = el("p", "lp-launcher-subtitle", "No matching apps.");
+      const apps = [...LAUNCHER_APPS].filter((entry) => installed(entry.app)).sort((a, b) => a.label.localeCompare(b.label)).map((entry) => {
+        const control = appButton(entry.app);
+        grid.append(control);
+        return { control, label: entry.label.toLowerCase() };
+      });
+      const filter = () => {
+        const query = (ui.query || "").trim().toLowerCase();
+        for (const entry of apps)
+          entry.control.hidden = !entry.label.includes(query);
+        empty.hidden = apps.some((entry) => !entry.control.hidden);
+      };
+      search.oninput = () => {
+        ui.query = search.value;
+        filter();
+      };
+      filter();
+      drawer.append(label, grid, empty, action("Find apps in App Store", "Open App Store", () => host.open("appstore")));
+      root.append(drawer);
+    } else {
+      const body = el("div", "lp-launcher-body");
+      body.onscroll = () => {
+        ui.scrollTop = body.scrollTop;
+      };
+      root.append(body);
+      const openFolder = allItems().find((item) => item.kind === "folder" && item.id === ui.folderId);
+      if (openFolder?.kind === "folder") {
+        const folderHead = el("div", "lp-launcher-folder-heading");
+        folderHead.append(el("h2", "lp-launcher-title", openFolder.name), action("Close", "Close folder", () => {
+          ui.folderId = undefined;
+          paint(`Open folder: ${folderLabel(layout, openFolder)}`);
+        }));
+        body.append(folderHead);
+      } else
+        ui.folderId = undefined;
+      if (ui.draft) {
+        const tools = el("div", "lp-launcher-edit-tools");
+        const widget = action("Widget", "Add widget", () => {
+          ui.widgetPicker = true;
+          ui.folderId = undefined;
+          paint("Close widget picker");
+        });
+        const folder = action("Folder", "Create folder", () => {
+          const names = new Set(allItems().flatMap((item) => item.kind === "folder" ? [item.name] : []));
+          let name = "Folder";
+          for (let number = 2;names.has(name); number++)
+            name = `Folder ${number}`;
+          const item = { id: requestId("folder"), kind: "folder", name, apps: [] };
+          page.items.push(item);
+          clearSelection();
+          ui.folderId = undefined;
+          ui.selectedItem = item.id;
+          paint("Folder name");
+        });
+        widget.disabled ||= !canAdd;
+        folder.disabled ||= !canAdd;
+        tools.append(widget, folder);
+        if (layout.pages.length > 1) {
+          const receiver = layout.pages[layout.pages.indexOf(page) === 0 ? 1 : layout.pages.indexOf(page) - 1];
+          tools.append(action("Remove screen", `Remove ${page.name} screen and move its items to ${receiver.name}`, () => {
+            ui.draft = removeLauncherPage(layout, page.id);
+            ui.pageId = receiver.id;
+            ui.folderId = undefined;
+            clearSelection();
+            paint("Cancel layout changes");
+          }));
+        }
+        body.append(tools);
+      }
+      const grid = el("section", "lp-app-grid");
+      grid.setAttribute("aria-label", "Home apps");
+      if (openFolder?.kind === "folder") {
+        grid.setAttribute("aria-label", `${openFolder.name} folder apps`);
+        for (const app of openFolder.apps.filter(installed))
+          grid.append(appButton(app));
+        if (!openFolder.apps.some(installed))
+          grid.append(el("p", "lp-launcher-empty", "No installed apps in this folder. Find apps in App Store."));
+      } else
+        for (const item of page.items) {
+          if (item.kind === "app" && !installed(item.app) || item.kind === "weather" && !installed("weather") || item.kind === "tracker" && !installed("trackers"))
+            continue;
+          if (item.kind === "app") {
+            grid.append(appButton(item.app));
+            continue;
+          }
+          if (item.kind === "folder") {
+            const name = ui.draft ? `Arrange folder: ${folderLabel(layout, item)}` : `Open folder: ${folderLabel(layout, item)}`;
+            const tile = action("", name, () => {
+              if (ui.draft) {
+                clearSelection();
+                ui.selectedItem = item.id;
+                paint("Folder name");
+              } else {
+                ui.folderId = item.id;
+                paint("Close folder");
+              }
+            });
+            tile.className = "lp-app-icon";
+            tile.dataset.launcherItem = item.id;
+            if (ui.draft)
+              tile.setAttribute("aria-pressed", String(ui.selectedItem === item.id));
+            const box = el("span", "lp-app-icon-box lp-launcher-folder"), preview = el("span", "lp-launcher-folder-preview");
+            preview.setAttribute("aria-hidden", "true");
+            for (const app of item.apps.filter(installed).slice(0, 4)) {
+              const miniature = host.appIcon(meta(app), () => {}).querySelector(".lp-app-icon-box")?.cloneNode(true);
+              miniature?.querySelectorAll(".lp-app-dot").forEach((dot) => dot.remove());
+              if (miniature)
+                preview.append(miniature);
+            }
+            box.append(preview);
+            tile.append(box, el("span", "lp-app-label", item.name));
+            grid.append(tile);
+          } else if (item.kind === "weather" || item.kind === "clock") {
+            const name = item.kind === "weather" ? "Weather" : "Clock & date";
+            const widget = el("div", "lp-launcher-widget");
+            widget.dataset.size = item.size;
+            widget.dataset.systemWidget = item.kind;
+            if (item.kind === "weather")
+              widget.dataset.weatherVariant = item.variant || "card";
+            const open = action("", ui.draft ? `Arrange ${name} widget` : `Open ${name} widget`, () => {
+              if (ui.draft) {
+                clearSelection();
+                ui.selectedItem = item.id;
+                paint(`Move ${name} widget to`);
+              } else
+                host.open(item.kind === "weather" ? "weather" : "calendar");
+            });
+            open.className = "lp-launcher-widget-open";
+            if (ui.draft)
+              open.setAttribute("aria-pressed", String(ui.selectedItem === item.id));
+            widget.append(item.kind === "weather" ? launcherWeatherWidget(host.state.weather, item.variant) : launcherClockWidget(host.state), open);
+            grid.append(widget);
+          } else {
+            const tracker = host.state.trackers.find((tracker) => tracker.id === item.trackerId);
+            const widget = el("div", "lp-launcher-widget");
+            widget.dataset.size = item.size;
+            widget.dataset.trackerWidget = item.trackerId;
+            const label = widgetLabel(item);
+            const card = tracker ? trackerDisplay(item.size === "compact" ? { ...tracker, presentation: "compact" } : tracker, host.state) : el("div", "lp-card lp-launcher-missing-widget", "Tracker unavailable · remove this widget in Edit.");
+            const open = action("", ui.draft ? `Arrange ${label} widget` : `Open tracker: ${label}`, () => {
+              if (ui.draft) {
+                clearSelection();
+                ui.selectedItem = item.id;
+                paint(`Move ${label} widget to`);
+              } else if (tracker)
+                host.openTracker(tracker.id);
+            });
+            open.className = "lp-launcher-widget-open";
+            open.disabled ||= !tracker && !ui.draft;
+            if (ui.draft)
+              open.setAttribute("aria-pressed", String(ui.selectedItem === item.id));
+            widget.append(card, open);
+            grid.append(widget);
+            if (tracker?.updateMode === "automatic")
+              liveWidgets.set(card, { trackerId: tracker.id, compact: item.size === "compact" });
+          }
+        }
+      if (!openFolder && !page.items.length)
+        grid.append(el("p", "lp-launcher-empty", ui.draft ? "Add apps, folders, or tracker widgets to this screen." : "A little room to breathe. Find your apps in All apps."));
+      body.append(grid);
+      if (ui.draft) {
+        const editor = el("section", "lp-launcher-editor");
+        editor.setAttribute("aria-label", "Arrange shortcut");
+        const selected = ui.selected;
+        const heading = el("div", "lp-launcher-editor-heading");
+        heading.append(el("strong", "", selectedLabel || "Arrange your apps"));
+        editor.append(heading);
+        if (selected || selectedItem) {
+          heading.append(action("Remove", `Remove ${selectedLabel}${selected ? " shortcut" : ""}`, () => {
+            if (selected) {
+              ui.draft = removeLauncherItem(layout, allItems().find((item) => item.kind === "app" && item.app === selected)?.id || "");
+              ui.draft.dock = ui.draft.dock.map((app) => app === selected ? null : app);
+              for (const page of ui.draft.pages)
+                for (const item of page.items)
+                  if (item.kind === "folder")
+                    item.apps = item.apps.filter((app) => app !== selected);
+            } else
+              ui.draft = removeLauncherItem(layout, selectedItem.id);
+            clearSelection();
+            paint("Cancel layout changes");
+          }));
+          if (selectedItem?.kind === "folder") {
+            const name = el("label", "lp-launcher-location"), input = el("input");
+            name.append(el("span", "lp-sr-only", "Folder name"), input);
+            input.type = "text";
+            input.maxLength = 40;
+            input.value = selectedItem.name;
+            input.dataset.launcherFocus = "Folder name";
+            input.disabled = Boolean(ui.pending);
+            input.oninput = () => {
+              const previous = selectedLabel;
+              selectedItem.name = input.value.trim().slice(0, 40) || "Folder";
+              selectedLabel = selectedItem.name;
+              heading.querySelector("strong").textContent = selectedLabel;
+              const names = new Map([["Remove " + previous, "Remove " + selectedLabel], ["Edit apps in " + previous, "Edit apps in " + selectedLabel], ["Move " + previous + " to", "Move " + selectedLabel + " to"], ["Move earlier: " + previous, "Move earlier: " + selectedLabel], ["Move later: " + previous, "Move later: " + selectedLabel]]);
+              for (const control of editor.querySelectorAll("[aria-label],[data-launcher-focus]")) {
+                const name = control.getAttribute("aria-label"), focus = control.dataset.launcherFocus;
+                if (name && names.has(name))
+                  control.setAttribute("aria-label", names.get(name));
+                if (focus && names.has(focus))
+                  control.dataset.launcherFocus = names.get(focus);
+              }
+              for (const label of editor.querySelectorAll("label > .lp-sr-only"))
+                if (names.has(label.textContent || ""))
+                  label.textContent = names.get(label.textContent);
+              for (const tile of root.querySelectorAll("[data-launcher-item]"))
+                if (tile.dataset.launcherItem === selectedItem.id) {
+                  tile.querySelector(".lp-app-label").textContent = selectedLabel;
+                  tile.setAttribute("aria-label", `Arrange folder: ${folderLabel(layout, selectedItem)}`);
+                  tile.dataset.launcherFocus = `Arrange folder: ${folderLabel(layout, selectedItem)}`;
+                }
+            };
+            editor.append(name, action("Open folder", `Edit apps in ${selectedItem.name}`, () => {
+              ui.folderId = selectedItem.id;
+              clearSelection();
+              paint("Close folder");
+            }));
+          }
+          const controls = el("div", "lp-launcher-editor-actions"), location = el("label", "lp-launcher-location");
+          location.append(el("span", "lp-sr-only", `Move ${selectedLabel} to`));
+          const destination = el("select");
+          for (const screen of layout.pages) {
+            const option = el("option", "", screen.name);
+            option.value = `page:${screen.id}`;
+            destination.append(option);
+          }
+          if (selected)
+            layout.dock.forEach((app, index) => {
+              const option = el("option", "", `Dock ${index + 1} · ${app ? meta(app).label : "Empty"}`);
+              option.value = String(index);
+              destination.append(option);
+            });
+          if (selected)
+            for (const folder of allItems().filter((item) => item.kind === "folder")) {
+              const option = el("option", "", `Folder · ${folderLabel(layout, folder)}`);
+              option.value = `folder:${folder.id}`;
+              destination.append(option);
+            }
+          const sourcePage = layout.pages.find((page) => page.items.some((item) => item.id === selectedItem?.id || item.kind === "app" && item.app === selected));
+          const sourceFolder = selected ? allItems().find((item) => item.kind === "folder" && item.apps.includes(selected)) : null;
+          const dockIndex = selected ? layout.dock.indexOf(selected) : -1;
+          const hidden = !sourcePage && !sourceFolder && dockIndex < 0;
+          if (hidden) {
+            const option = el("option", "", "Choose location…");
+            option.value = "";
+            option.disabled = true;
+            destination.prepend(option);
+          }
+          destination.value = hidden ? "" : dockIndex >= 0 ? String(dockIndex) : sourceFolder ? `folder:${sourceFolder.id}` : `page:${sourcePage.id}`;
+          destination.disabled = Boolean(ui.pending);
+          destination.dataset.launcherFocus = `Move ${selectedLabel} to`;
+          destination.onchange = () => {
+            const value = destination.value;
+            if (selected)
+              ui.draft = placeLauncherApp(layout, selected, value.startsWith("page:") ? { pageId: value.slice(5) } : value.startsWith("folder:") ? { folderId: value.slice(7) } : Number(value), page.id);
+            else if (selectedItem && value.startsWith("page:")) {
+              for (const screen of layout.pages)
+                screen.items = screen.items.filter((item) => item.id !== selectedItem.id);
+              layout.pages.find((page) => page.id === value.slice(5)).items.push(selectedItem);
+            }
+            if (value.startsWith("page:")) {
+              ui.pageId = value.slice(5);
+              ui.folderId = undefined;
+            }
+            paint(`Move ${selectedLabel} to`);
+          };
+          location.append(destination);
+          controls.append(location);
+          const siblings = sourceFolder?.kind === "folder" ? sourceFolder.apps : sourcePage?.items;
+          const index = selected && sourceFolder?.kind === "folder" ? sourceFolder.apps.indexOf(selected) : sourcePage?.items.findIndex((item) => item.id === selectedItem?.id || item.kind === "app" && item.app === selected) ?? -1;
+          for (const [offset, text] of [[-1, "Move earlier"], [1, "Move later"]]) {
+            const move = action(offset < 0 ? "←" : "→", `${text}: ${selectedLabel}`, () => {
+              if (siblings)
+                [siblings[index], siblings[index + offset]] = [siblings[index + offset], siblings[index]];
+              paint(`${text}: ${selectedLabel}`);
+            });
+            move.title = text;
+            move.disabled ||= index < 0 || index + offset < 0 || index + offset >= (siblings?.length || 0);
+            controls.append(move);
+          }
+          editor.append(controls);
+          if (selectedItem?.kind === "tracker" || selectedItem?.kind === "weather" || selectedItem?.kind === "clock") {
+            const name = selectedItem.kind === "weather" ? "Weather" : selectedItem.kind === "clock" ? "Clock & date" : trackerLabel(selectedItem.trackerId);
+            const label = el("label", "lp-launcher-location"), size = el("select");
+            label.append(el("span", "lp-sr-only", `Widget size: ${name}`), size);
+            for (const value of ["compact", "wide"]) {
+              const option = el("option", "", value === "compact" ? "Compact · half width" : "Wide · full width");
+              option.value = value;
+              size.append(option);
+            }
+            size.value = selectedItem.size;
+            size.disabled = Boolean(ui.pending);
+            size.dataset.launcherFocus = `Widget size: ${name}`;
+            size.onchange = () => {
+              selectedItem.size = size.value === "wide" ? "wide" : "compact";
+              paint(size.dataset.launcherFocus);
+            };
+            editor.append(label);
+          }
+          if (selectedItem?.kind === "weather") {
+            const label = el("label", "lp-launcher-location"), variant = el("select");
+            label.append(el("span", "lp-sr-only", "Weather layout"), variant);
+            for (const [value, text] of [["card", "Card · 2 app rows"], ["stripe", "Stripe · 1 app row"]]) {
+              const option = el("option", "", text);
+              option.value = value;
+              variant.append(option);
+            }
+            variant.value = selectedItem.variant || "card";
+            variant.disabled = Boolean(ui.pending);
+            variant.dataset.launcherFocus = "Weather layout";
+            variant.onchange = () => {
+              if (variant.value === "stripe")
+                selectedItem.variant = "stripe";
+              else
+                delete selectedItem.variant;
+              paint("Weather layout");
+            };
+            editor.append(label);
+          }
+        } else
+          editor.append(el("p", "", "Select an app, or add one from All apps."));
+        body.append(editor);
+      } else
+        body.append(...extras);
+      const footer = el("div", "lp-launcher-footer"), dock = el("nav", "lp-home-dock");
+      dock.setAttribute("aria-label", "Dock");
+      const dots = el("nav", "lp-launcher-pages");
+      dots.setAttribute("aria-label", "Home screens");
+      layout.pages.forEach((screen, index) => {
+        const dot = action("", `Go to Home screen ${index + 1}: ${screen.name}`, () => {
+          ui.pageId = screen.id;
+          ui.folderId = undefined;
+          clearSelection();
+          ui.scrollTop = 0;
+          paint(`Go to Home screen ${index + 1}: ${screen.name}`);
+        });
+        dot.classList.add("lp-launcher-page-dot");
+        dot.title = screen.name;
+        if (screen.id === page.id)
+          dot.setAttribute("aria-current", "page");
+        const mark = el("span");
+        mark.setAttribute("aria-hidden", "true");
+        dot.append(mark);
+        dots.append(dot);
+      });
+      if (ui.draft) {
+        const add = action("+", "Add Home screen", () => {
+          let number = layout.pages.length + 1;
+          while (layout.pages.some((page) => page.name === `Screen ${number}`))
+            number++;
+          const screen = { id: requestId("screen"), name: `Screen ${number}`, items: [] };
+          layout.pages.push(screen);
+          ui.pageId = screen.id;
+          ui.folderId = undefined;
+          ui.scrollTop = 0;
+          clearSelection();
+          paint("Add Home screen");
+        });
+        add.classList.add("lp-launcher-page-add");
+        add.disabled ||= layout.pages.length >= MAX_LAUNCHER_PAGES;
+        dots.append(add);
+        add.title = `Up to ${MAX_LAUNCHER_PAGES} Home screens`;
+      }
+      layout.dock.forEach((app, index) => {
+        if (app && installed(app))
+          dock.append(appButton(app));
+        else {
+          const empty = action("+", `Choose app for dock slot ${index + 1}`, () => {
+            ui.draft ||= structuredClone(layout);
+            ui.placingSlot = index;
+            ui.drawer = true;
+            ui.query = "";
+            paint("Search apps");
+          });
+          empty.classList.add("lp-launcher-empty-slot");
+          dock.append(empty);
+        }
+      });
+      footer.append(dots, dock);
+      root.append(footer);
+      body.scrollTop = scroll;
+      if (!root.isConnected)
+        root.ownerDocument.defaultView?.requestAnimationFrame?.(() => {
+          if (body.isConnected)
+            body.scrollTop = scroll;
+        });
+    }
+    if (focus)
+      root.querySelectorAll("[data-launcher-focus]").forEach((node) => {
+        if (node.dataset.launcherFocus !== focus)
+          return;
+        node.focus({ preventScroll: true });
+        const body = node.closest(".lp-launcher-body");
+        if (body && root.isConnected) {
+          const bounds = body.getBoundingClientRect(), target = node.getBoundingClientRect();
+          if (target.top < bounds.top || target.bottom > bounds.bottom)
+            node.scrollIntoView?.({ block: "nearest" });
+        }
+      });
+  };
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || ui.pending)
+      return;
+    if (ui.folderId) {
+      const layout = ui.draft || host.layout;
+      const folder = layout.pages.flatMap((page) => page.items).find((item) => item.id === ui.folderId);
+      ui.folderId = undefined;
+      paint(folder?.kind === "folder" ? `Open folder: ${folderLabel(layout, folder)}` : "Open app drawer");
+    } else if (ui.widgetPicker) {
+      ui.widgetPicker = false;
+      paint("Add widget");
+    } else if (ui.drawer) {
+      ui.placingSlot = undefined;
+      ui.drawer = false;
+      ui.query = "";
+      paint("Open app drawer");
+    } else if (ui.draft) {
+      ui.draft = undefined;
+      clearSelection();
+      ui.error = undefined;
+      paint("Edit home screen");
+    } else
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  paint();
+  if (host.state.trackers.some((tracker) => tracker.updateMode === "automatic")) {
+    const timer = setInterval(() => {
+      if (!root.isConnected || root.closest("[hidden]"))
+        return;
+      for (const [card, entry] of liveWidgets) {
+        const tracker = host.state.trackers.find((tracker) => tracker.id === entry.trackerId);
+        if (tracker)
+          refreshTrackerDisplay(card, entry.compact ? { ...tracker, presentation: "compact" } : tracker, host.state);
+      }
+    }, 1000);
+    host.onCleanup(() => clearInterval(timer));
+  }
+  return root;
+}
+
+// src/frontend/components/launcher-icons.ts
+var paths = {
+  twitter: '<path fill="currentColor" stroke="none" d="M22 5a8 8 0 0 1-2 .6A4 4 0 0 0 21.6 3a8 8 0 0 1-2.5 1 4 4 0 0 0-6.8 3.6A11 11 0 0 1 4 3.5a4 4 0 0 0 1.2 5.3A4 4 0 0 1 3.4 8v.1a4 4 0 0 0 3.2 4 4 4 0 0 1-1.8.1 4 4 0 0 0 3.7 2.8A8 8 0 0 1 2 17a11.3 11.3 0 0 0 17.4-9.5V7A8 8 0 0 0 22 5Z"/>',
+  discord: '<path d="M7 5 4 6 2 17l5 2 1-2h8l1 2 5-2-2-11-3-1-1 2H8Z"/><circle cx="8" cy="12" r="1.5" fill="currentColor"/><circle cx="16" cy="12" r="1.5" fill="currentColor"/><path d="M8 16c3 1 5 1 8 0"/>',
+  instagram: '<rect x="3" y="3" width="18" height="18" rx="6"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>',
+  tumblr: '<path fill="currentColor" stroke="none" d="M10 2h4v5h5v4h-5v6c0 3 3 3 5 1v4c-6 3-10 0-10-5v-6H6V8c3-1 4-3 4-6Z"/>',
+  appstore: '<rect x="3" y="6" width="18" height="16" rx="4"/><path d="M8 7V6a4 4 0 0 1 8 0v1M8 15h8M12 11v8"/>',
+  messages: '<path fill="currentColor" stroke="none" d="M5 3h14a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H9l-6 3V6a3 3 0 0 1 2-3Z"/><path stroke="#329e6b" d="M7 9h10M7 13h7"/>',
+  camera: '<rect x="2" y="6" width="20" height="15" rx="4" fill="currentColor" stroke="none"/><path fill="currentColor" stroke="none" d="M7 7V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v3Z"/><circle cx="12" cy="13" r="4.5" fill="#455162" stroke="none"/><circle cx="12" cy="13" r="2.5" fill="#9bb9ce" stroke="none"/>',
+  gallery: '<rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="m4 17 5-5 4 4 3-3 4 4"/>',
+  notes: '<rect x="4" y="2" width="16" height="20" rx="3" fill="currentColor" stroke="none"/><path stroke="#b89b52" d="M8 8h8M8 12h8M8 16h5"/>',
+  weather: '<circle cx="9" cy="8" r="4" fill="#ffe3a2" stroke="none"/><path d="M9 1v1M2 8H1M3.3 2.3l1 1M15 2l-1 1" stroke="#ffe3a2"/><path fill="currentColor" stroke="none" d="M6 20a4 4 0 0 1-1-8 6 6 0 0 1 11-3 5.5 5.5 0 1 1 2 11Z"/>',
+  contacts: '<rect x="4" y="2" width="16" height="20" rx="4"/><circle cx="12" cy="9" r="3" fill="currentColor" stroke="none"/><path fill="currentColor" stroke="none" d="M6 19a6 6 0 0 1 12 0Z"/><path d="M2 7h3M2 12h3M2 17h3"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="4" fill="currentColor" stroke="none"/><path d="M7 2v5M17 2v5"/><path stroke="#c96d7c" d="M7 11h10M8 15h2M14 15h2M8 18h2"/>',
+  trackers: '<path d="M3 5h18M3 12h18M3 19h18" opacity=".6"/><circle cx="8" cy="5" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="3" fill="currentColor" stroke="none"/><circle cx="10" cy="19" r="3" fill="currentColor" stroke="none"/>',
+  settings: '<path d="m10 2 4 0 .7 3 2.3 1.3 3-.8 2 3.5-2.2 2.2v2.6L22 16l-2 3.5-3-.8-2.3 1.3-.7 3h-4l-.7-3L7 18.7l-3 .8L2 16l2.2-2.2v-2.6L2 9l2-3.5 3 .8L9.3 5Z"/><circle cx="12" cy="12.5" r="4"/>'
+};
+function launcherIcon(app) {
+  const node = document.createElement("span");
+  node.setAttribute("aria-hidden", "true");
+  node.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${paths[app]}</svg>`;
+  return node;
+}
+
+// src/frontend/components/store-banners.ts
+var STORE_BANNER_SCENES = {
+  camera: `
+    <defs><linearGradient id="$id-bg" x2="1" y2="1"><stop stop-color="#f8c9b3"/><stop offset="1" stop-color="#c5b5f0"/></linearGradient><linearGradient id="$id-photo" x2="0" y2="1"><stop stop-color="#859cca"/><stop offset="1" stop-color="#e2a9b9"/></linearGradient></defs>
+    <path fill="url(#$id-bg)" d="M0 0h480v300H0z"/>
+    <circle cx="414" cy="34" r="122" fill="#fff" opacity=".16"/><circle cx="38" cy="308" r="152" fill="#995b99" opacity=".13"/>
+    <g transform="translate(102 31) rotate(-9 110 120)"><rect x="6" y="10" width="220" height="244" rx="18" fill="#654d79" opacity=".16"/><rect width="220" height="244" rx="18" fill="#fff8ef"/><rect x="13" y="13" width="194" height="185" rx="10" fill="url(#$id-photo)"/><circle cx="156" cy="56" r="24" fill="#fff0c9"/><path d="m13 166 66-73 74 79 54-44v70H13Z" fill="#7e79a4"/><path d="m13 189 87-64 107 58v15H13Z" fill="#424f78"/><path d="M28 219h83" stroke="#d4c8c5" stroke-width="7" stroke-linecap="round"/></g>
+    <g transform="translate(295 151) rotate(12)"><rect width="118" height="95" rx="24" fill="#354166"/><rect x="11" y="11" width="96" height="73" rx="17" fill="#515d82"/><circle cx="59" cy="47" r="28" fill="#222c4a"/><circle cx="59" cy="47" r="18" fill="#9caec8"/><circle cx="54" cy="42" r="8" fill="#f8e6dd"/><circle cx="93" cy="23" r="5" fill="#f4c6a5"/></g>
+    <path d="M365 66v22m-11-11h22M65 72v14m-7-7h14" stroke="#fff8ef" stroke-width="4" stroke-linecap="round"/>`,
+  weather: `
+    <defs><linearGradient id="$id-bg" x2="0" y2="1"><stop stop-color="#91c5f4"/><stop offset="1" stop-color="#d8e8e5"/></linearGradient></defs>
+    <path fill="url(#$id-bg)" d="M0 0h480v300H0z"/><circle cx="331" cy="86" r="53" fill="#fff0ab"/><circle cx="331" cy="86" r="72" fill="#fff4bf" opacity=".2"/>
+    <path d="M0 232q98-66 207-3t273-22v93H0Z" fill="#7bb4a5"/><path d="M0 273q134-94 271-8t209-5v40H0Z" fill="#488d8c"/>
+    <g fill="#fff" opacity=".93"><rect x="95" y="99" width="227" height="64" rx="32"/><circle cx="177" cy="103" r="48"/><circle cx="243" cy="115" r="39"/></g>
+    <g transform="translate(69 206)"><rect width="102" height="67" rx="18" fill="#f5fbff" opacity=".9"/><circle cx="30" cy="30" r="13" fill="#e9bd63"/><path d="M54 25h27m-27 12h19" stroke="#7d9bb1" stroke-width="5" stroke-linecap="round"/></g>
+    <g transform="translate(189 206)"><rect width="102" height="67" rx="18" fill="#f5fbff" opacity=".9"/><path d="M19 38h29M22 29h23" stroke="#9ab7cb" stroke-width="8" stroke-linecap="round"/><path d="M61 25h22m-22 12h15" stroke="#7d9bb1" stroke-width="5" stroke-linecap="round"/></g>
+    <path d="M387 165v18m-9-9h18M60 72v14m-7-7h14" stroke="#fff" stroke-width="3" stroke-linecap="round"/>`,
+  trackers: `
+    <defs><linearGradient id="$id-bg" x2="1" y2="1"><stop stop-color="#383158"/><stop offset="1" stop-color="#7472ab"/></linearGradient></defs>
+    <path fill="url(#$id-bg)" d="M0 0h480v300H0z"/><circle cx="432" cy="4" r="172" fill="#b5acff" opacity=".13"/>
+    <g transform="translate(59 49) rotate(-7 120 90)"><rect x="4" y="8" width="245" height="184" rx="26" fill="#211e3a" opacity=".25"/><rect width="245" height="184" rx="26" fill="#f3eefb"/><path d="M23 29h76m-76 15h45" stroke="#aaa1be" stroke-width="6" stroke-linecap="round"/><circle cx="74" cy="111" r="39" fill="none" stroke="#dfd7ed" stroke-width="13"/><path d="M74 72a39 39 0 1 1-35 56" fill="none" stroke="#8a75d2" stroke-width="13" stroke-linecap="round"/><path d="M141 90h62m-62 22h42m-42 22h54" stroke="#bdb3cf" stroke-width="8" stroke-linecap="round"/></g>
+    <g transform="translate(278 117) rotate(8)"><rect width="147" height="120" rx="23" fill="#252642"/><path d="M23 30h57" stroke="#9c9fc1" stroke-width="6" stroke-linecap="round"/><path d="m21 87 21-17 19 9 24-32 20 15 21-26" fill="none" stroke="#8ed3c6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <path d="M349 54v20m-10-10h20M42 240v14m-7-7h14" stroke="#e2ddfb" stroke-width="3" stroke-linecap="round"/>`,
+  social: `
+    <defs><linearGradient id="$id-bg" x2="1" y2="1"><stop stop-color="#c5b9ec"/><stop offset="1" stop-color="#f0b8c4"/></linearGradient></defs>
+    <path fill="url(#$id-bg)" d="M0 0h480v300H0z"/><circle cx="45" cy="36" r="121" fill="#fff" opacity=".17"/>
+    <g transform="translate(67 47) rotate(-6)"><rect width="239" height="121" rx="29" fill="#fff8f7"/><path d="m48 111-9 30 46-26" fill="#fff8f7"/><circle cx="42" cy="43" r="16" fill="#c0a9d7"/><path d="M76 37h123M76 54h83M29 83h170" stroke="#d1bfda" stroke-width="8" stroke-linecap="round"/></g>
+    <g transform="translate(209 159) rotate(6)"><rect width="199" height="88" rx="26" fill="#74618f"/><path d="m142 81 28 27-2-30" fill="#74618f"/><path d="M28 29h136M28 49h93" stroke="#f3dce7" stroke-width="8" stroke-linecap="round"/></g>
+    <path d="M378 72v25m-12-12h24M99 220v17m-8-8h16" stroke="#fff8f7" stroke-width="4" stroke-linecap="round"/>`
+};
+function storeBanner(kind) {
+  const node = el("div", "lp-store-banner"), id = requestId("store_art").replace(/[^a-zA-Z0-9_-]/g, "_");
+  node.setAttribute("aria-hidden", "true");
+  node.innerHTML = `<svg viewBox="0 0 480 300" preserveAspectRatio="xMidYMid slice" focusable="false" fill="none" xmlns="http://www.w3.org/2000/svg">${STORE_BANNER_SCENES[kind].replaceAll("$id", id)}</svg>`;
+  return node;
+}
+
+// src/frontend/apps/app-store.ts
+var POCKET_APP_DESCRIPTIONS = {
+  twitter: ["A little bird told you", "Quick posts, replies, quotes, and voices from across your world."],
+  discord: ["Find your people", "Your own servers, channels, and conversations with the community."],
+  instagram: ["Little moments, shared", "Photos, captions, and comments from your cast and beyond."],
+  tumblr: ["Your very own corner", "Text posts, tags, art, and reblog trails. Make a little noise."],
+  messages: ["Stay in touch", "Direct messages, group chats, and voice messages."],
+  contacts: ["Your people", "Keep your cast and their details close."],
+  camera: ["Capture the moment", "Turn a moment in your story into a picture."],
+  gallery: ["Little memories", "Your photos, character images, and wallpapers."],
+  notes: ["Keep a little note", "A private journal, or memories to share with the story."],
+  weather: ["A world outside", "The weather where your story takes place."],
+  calendar: ["Make some plans", "Story time, invitations, and what happens next."],
+  trackers: ["Watch things change", "Health, relationships, countdowns, and your own trackers."],
+  settings: ["Make it yours", "Themes, wallpapers, connections, and Pocket preferences."]
+};
+var storeViewUpdates = new WeakMap;
+function updateAppStore(page, layout) {
+  const update = storeViewUpdates.get(page);
+  if (!update)
+    return false;
+  update(layout);
+  return true;
+}
+function renderAppStore(host) {
+  const { page, content } = host.page(), { ui } = host;
+  let layout = host.layout;
+  const installControls = [];
+  content.classList.add("lp-store");
+  const searchLabel = el("label", "lp-store-search"), search = el("input", "lp-input");
+  const searchIcon = el("span", "lp-store-search-icon");
+  searchIcon.setAttribute("aria-hidden", "true");
+  searchIcon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>';
+  searchLabel.append(el("span", "lp-sr-only", "Search Pocket apps"), searchIcon, search);
+  search.type = "search";
+  search.placeholder = "Search Pocket apps";
+  search.value = ui.query || "";
+  search.dataset.storeFocus = "search";
+  search.disabled = Boolean(ui.pending);
+  content.append(searchLabel);
+  const error = el("p", "lp-store-error");
+  error.setAttribute("role", "alert");
+  error.hidden = !ui.error;
+  content.append(error);
+  const filters = el("div", "lp-store-filters");
+  filters.setAttribute("role", "group");
+  filters.setAttribute("aria-label", "Filter Pocket apps");
+  content.append(filters);
+  const discovery = el("div", "lp-store-discovery");
+  const intro = el("header", "lp-store-intro");
+  intro.append(el("span", "lp-store-eyebrow", "DISCOVER"), el("h2", "", "Made for your pocket."));
+  discovery.append(intro);
+  const rails = [];
+  let scrollRestored = false;
+  const collection = (title, key) => {
+    const section = el("section", "lp-store-collection"), heading = el("div", "lp-store-section-heading"), label = el("h2", "", title), controls = el("div", "lp-store-rail-controls");
+    const rail = el("div", `lp-store-rail lp-store-rail-${key}`), id = requestId("store_rail");
+    label.id = id + "_label";
+    section.setAttribute("aria-labelledby", label.id);
+    rail.id = id;
+    rail.tabIndex = 0;
+    rail.setAttribute("role", "region");
+    rail.setAttribute("aria-label", `${title} app cards`);
+    rail.dataset.storeFocus = `rail:${key}`;
+    const previous = button("‹", "lp-store-rail-control"), next = button("›", "lp-store-rail-control");
+    for (const [control, direction] of [[previous, "Previous"], [next, "Next"]]) {
+      control.setAttribute("aria-label", `${direction} ${title.toLowerCase()} apps`);
+      control.setAttribute("aria-controls", id);
+      control.dataset.storeFocus = `${key}:${direction}`;
+      control.disabled = Boolean(ui.pending);
+    }
+    previous.disabled = true;
+    const update = () => {
+      previous.disabled = Boolean(ui.pending) || rail.scrollLeft < 1;
+      next.disabled = Boolean(ui.pending) || rail.clientWidth > 0 && rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 1;
+    };
+    const move = (amount) => {
+      const reduce = rail.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      if (rail.scrollBy)
+        rail.scrollBy({ left: amount, behavior: reduce ? "instant" : "smooth" });
+      else
+        rail.scrollLeft += amount;
+    };
+    previous.onclick = () => move(-rail.clientWidth * 0.9);
+    next.onclick = () => move(rail.clientWidth * 0.9);
+    rail.onscroll = () => {
+      if (!rail.isConnected || !scrollRestored)
+        return;
+      ui.rails ||= {};
+      ui.rails[key] = rail.scrollLeft;
+      update();
+    };
+    rail.onkeydown = (event) => {
+      if (event.target !== rail || ui.pending)
+        return;
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        move(rail.clientWidth * (event.key === "ArrowRight" ? 0.9 : -0.9));
+      } else if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        rail.scrollLeft = event.key === "Home" ? 0 : rail.scrollWidth;
+      }
+    };
+    controls.append(previous, next);
+    heading.append(label, controls);
+    section.append(heading, rail);
+    rails.push({ node: rail, key, update });
+    discovery.append(section);
+    return rail;
+  };
+  const rememberScroll = () => {
+    if (!scrollRestored)
+      return;
+    ui.scrollTop = page.scrollTop;
+    ui.rails ||= {};
+    for (const rail of rails)
+      ui.rails[rail.key] = rail.node.scrollLeft;
+  };
+  host.onCleanup?.(() => {
+    if (content.isConnected)
+      rememberScroll();
+  });
+  const primaryAction = (app, context = "", focusKey = `app:${app}`) => {
+    const meta = LAUNCHER_APPS.find((meta) => meta.app === app);
+    const action = button("", "lp-store-get");
+    action.dataset.storeFocus = focusKey;
+    const update = () => {
+      const verb = pocketAppInstalled(layout, app) ? "Open" : "Get";
+      action.textContent = verb;
+      action.setAttribute("aria-label", `${verb} ${meta.label}${context ? ` from ${context}` : ""}`);
+      action.disabled = Boolean(ui.pending);
+    };
+    installControls.push(update);
+    update();
+    action.onclick = () => {
+      rememberScroll();
+      if (pocketAppInstalled(layout, app))
+        host.open(app);
+      else {
+        if (ui.filter && ui.filter !== "all")
+          ui.retainedApps = [...new Set([...ui.retainedApps || [], app])];
+        host.install(app, true, focusKey);
+      }
+    };
+    return action;
+  };
+  const spotlight = collection("Spotlight", "spotlight");
+  for (const [app, kicker, title] of [["camera", "MAKE A MEMORY", "Stories, in focus."], ["weather", "OUTSIDE YOUR WINDOW", "A world with weather."], ["trackers", "FOLLOW THE STORY", "Every little change."]]) {
+    const card = el("article", "lp-store-feature"), art = storeBanner(app), headline = el("div", "lp-store-feature-headline");
+    art.dataset.bannerApp = app;
+    headline.append(el("span", "lp-store-eyebrow", kicker), el("h3", "", title));
+    art.append(headline);
+    const caption = el("div", "lp-store-feature-caption"), icon = el("span", `lp-store-app-icon lp-icon-${app}`), copy = el("div");
+    icon.append(launcherIcon(app));
+    copy.append(el("h3", "", LAUNCHER_APPS.find((meta) => meta.app === app).label), el("span", "", POCKET_APP_DESCRIPTIONS[app][0]));
+    caption.append(icon, copy, primaryAction(app, "Spotlight", `spotlight:${app}`));
+    card.append(art, caption);
+    spotlight.append(card);
+  }
+  const everyday = collection("Everyday favorites", "everyday");
+  for (const app of ["messages", "notes", "gallery"]) {
+    const meta = LAUNCHER_APPS.find((meta) => meta.app === app);
+    const tile = button("", "lp-store-tile"), art = el("span", `lp-store-app-icon lp-icon-${meta.icon}`);
+    tile.dataset.storeFocus = `everyday:${app}`;
+    const action = el("span", "lp-store-tile-action");
+    art.append(launcherIcon(app));
+    tile.append(art, el("strong", "", meta.label), el("span", "lp-store-tile-tagline", POCKET_APP_DESCRIPTIONS[app][0]), action);
+    const update = () => {
+      const installed = pocketAppInstalled(layout, app);
+      tile.setAttribute("aria-label", `${installed ? "Open" : "Get"} ${meta.label} from Everyday favorites`);
+      action.textContent = installed ? "Open ↗" : "Get +";
+      tile.disabled = Boolean(ui.pending);
+    };
+    installControls.push(update);
+    update();
+    tile.onclick = () => {
+      rememberScroll();
+      if (pocketAppInstalled(layout, app))
+        host.open(app);
+      else
+        host.install(app, true, `everyday:${app}`);
+    };
+    everyday.append(tile);
+  }
+  content.append(discovery);
+  const list = el("div", "lp-store-list"), empty = el("p", "lp-copy", "No matching apps.");
+  const catalogHeading = el("h2", "lp-store-catalog-title", "All Pocket apps");
+  const filterButtons = [];
+  const entries = LAUNCHER_APPS.filter((meta) => meta.app !== "appstore").map((meta) => {
+    const system = POCKET_SYSTEM_APPS.includes(meta.app);
+    const card = el("article", "lp-store-app"), art = el("span", `lp-store-app-icon lp-icon-${meta.icon}`);
+    art.append(launcherIcon(meta.app));
+    const copy = el("div", "lp-store-copy"), [tagline, description] = POCKET_APP_DESCRIPTIONS[meta.app];
+    copy.append(el("h3", "", meta.label), el("span", "lp-store-tagline", tagline), el("p", "", description));
+    const actions = el("div", "lp-store-actions"), primary = primaryAction(meta.app);
+    actions.append(primary);
+    if (system)
+      actions.append(el("span", "lp-store-system", "System app"));
+    else {
+      const remove = button("Remove", "lp-store-remove");
+      remove.setAttribute("aria-label", `Remove ${meta.label} from this phone`);
+      remove.disabled = Boolean(ui.pending);
+      remove.onclick = () => {
+        rememberScroll();
+        if (ui.filter && ui.filter !== "all")
+          ui.retainedApps = [...new Set([...ui.retainedApps || [], meta.app])];
+        host.install(meta.app, false);
+      };
+      actions.append(remove);
+      installControls.push(() => {
+        const installed = pocketAppInstalled(layout, meta.app);
+        remove.style.visibility = installed ? "" : "hidden";
+        remove.disabled = Boolean(ui.pending) || !installed;
+      });
+    }
+    card.append(art, copy, actions);
+    if (ui.focusApp === meta.app)
+      card.dataset.highlighted = "true";
+    list.append(card);
+    return { card, meta, text: `${meta.label} ${tagline} ${description}`.toLowerCase() };
+  });
+  const applyFilter = () => {
+    for (const entry of entries)
+      entry.card.hidden = !(entry.text.includes((ui.query || "").trim().toLowerCase()) && (ui.retainedApps?.includes(entry.meta.app) || (ui.filter === "installed" ? pocketAppInstalled(layout, entry.meta.app) : ui.filter === "available" ? !pocketAppInstalled(layout, entry.meta.app) : true)));
+    for (const [value, control] of filterButtons)
+      control.setAttribute("aria-pressed", String(value === (ui.filter || "all")));
+    empty.hidden = entries.some((entry) => !entry.card.hidden);
+    discovery.hidden = Boolean(ui.query?.trim() || ui.filter && ui.filter !== "all");
+    soon.hidden = discovery.hidden;
+    catalogHeading.textContent = ui.query?.trim() ? "Search results" : ui.filter === "installed" ? "On your phone" : ui.filter === "available" ? "Available apps" : "All Pocket apps";
+  };
+  for (const [value, name] of [["all", "All apps"], ["installed", "On your phone"], ["available", "Available"]]) {
+    const filter = button(name, "lp-store-filter");
+    filter.dataset.storeFocus = `filter:${value}`;
+    filter.disabled = Boolean(ui.pending);
+    filter.onclick = () => {
+      ui.filter = value;
+      ui.retainedApps = [];
+      applyFilter();
+      page.scrollTop = 0;
+    };
+    filters.append(filter);
+    filterButtons.push([value, filter]);
+  }
+  search.oninput = () => {
+    ui.query = search.value;
+    ui.retainedApps = [];
+    applyFilter();
+    page.scrollTop = 0;
+  };
+  content.append(catalogHeading, list, empty);
+  const soon = el("section", "lp-store-soon");
+  soon.setAttribute("aria-label", "Socials for your pocket");
+  soon.append(storeBanner("social"), el("span", "lp-store-eyebrow", "A LITTLE MORE WORLD"), el("strong", "", "Socials are here."), el("p", "", "Your cast, your communities, and people you haven’t met yet."));
+  for (const app of ["twitter", "discord", "instagram", "tumblr"]) {
+    const row = el("div", "lp-store-feature-caption"), art = el("span", `lp-store-app-icon lp-icon-${app}`), copy = el("div");
+    art.append(launcherIcon(app));
+    copy.append(el("h3", "", LAUNCHER_APPS.find((meta) => meta.app === app).label), el("span", "", POCKET_APP_DESCRIPTIONS[app][0]));
+    row.append(art, copy, primaryAction(app, "Socials", `socials:${app}`));
+    soon.append(row);
+  }
+  discovery.insertBefore(soon, everyday.parentElement);
+  const note = el("p", "lp-store-note", "Removing an app hides it from this phone. Your saved data and layout stay safe.");
+  content.append(note);
+  const update = (next) => {
+    const top = page.scrollTop;
+    layout = next;
+    error.textContent = ui.error || "";
+    error.hidden = !ui.error;
+    search.disabled = Boolean(ui.pending);
+    if (search.value !== (ui.query || ""))
+      search.value = ui.query || "";
+    for (const [, control] of filterButtons)
+      control.disabled = Boolean(ui.pending);
+    for (const updateControl of installControls)
+      updateControl();
+    for (const rail of rails)
+      rail.update();
+    applyFilter();
+    page.scrollTop = top;
+  };
+  storeViewUpdates.set(page, update);
+  update(layout);
+  page.onscroll = () => {
+    if (content.isConnected && scrollRestored)
+      ui.scrollTop = page.scrollTop;
+  };
+  content.ownerDocument.defaultView?.requestAnimationFrame?.(() => {
+    if (!page.isConnected)
+      return;
+    page.scrollTop = ui.scrollTop || 0;
+    for (const rail of rails) {
+      rail.node.scrollLeft = ui.rails?.[rail.key] || 0;
+      rail.update();
+    }
+    scrollRestored = true;
+  });
+  return page;
+}
+
+// src/domain/social-dms.ts
+var socialDirectApp = (thread) => thread.app || "instagram";
+var dmText = (value, max = 180) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var dmRecord = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
+function normalizeSocialDirectThreads(raw) {
+  const ids = new Set;
+  const threads = (Array.isArray(raw) ? raw : []).slice(-160).flatMap((item) => {
+    if (!dmRecord(item) || !dmRecord(item.account) || item.app !== undefined && item.app !== "instagram" && item.app !== "tumblr")
+      return [];
+    const id = dmText(item.id), owner = dmText(item.owner), accountId = dmText(item.account.id), name = dmText(item.account.name, 100);
+    if (!id || !owner || !accountId || !name || accountId === owner || ids.has(id))
+      return [];
+    ids.add(id);
+    const messageIds = new Set, messages = (Array.isArray(item.messages) ? item.messages : []).slice(-100).flatMap((message) => {
+      if (!dmRecord(message))
+        return [];
+      const id = dmText(message.id), text = dmText(message.text, 4000);
+      if (!id || !text || messageIds.has(id) || !["owner", "account"].includes(message.sender))
+        return [];
+      messageIds.add(id);
+      return [{ id, text, sender: message.sender, createdAt: dmText(message.createdAt, 80) }];
+    });
+    const avatar = dmText(item.account.avatarUrl, 2000);
+    return [{ id, owner, app: item.app === "tumblr" ? "tumblr" : "instagram", account: {
+      id: accountId,
+      name,
+      handle: dmText(item.account.handle, 48),
+      actorId: dmText(item.account.actorId) || undefined,
+      cardId: dmText(item.account.cardId) || undefined,
+      bankId: dmText(item.account.bankId) || undefined,
+      avatarUrl: /^(https?:\/\/|\/[^/])/.test(avatar) ? avatar : undefined,
+      bio: dmText(item.account.bio, 280) || undefined
+    }, messages, updatedAt: dmText(item.updatedAt, 80) }];
+  });
+  const counts = { instagram: 0, tumblr: 0 };
+  return threads.reverse().filter((thread) => ++counts[socialDirectApp(thread)] <= 40).reverse();
+}
+
+// src/domain/social.ts
+var SOCIAL_APPS = ["twitter", "discord", "instagram", "tumblr"];
+var SOCIAL_NAMES = { twitter: "Twitter", discord: "Discord", instagram: "Instagram", tumblr: "Tumblr" };
+var isSocialApp = (value) => SOCIAL_APPS.includes(value);
+var TUMBLR_THEMES = ["true-blue", "goth-rave", "dark-mode", "pride"];
+var socialRecord = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
+var socialText = (value, max = 180) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var socialStrings = (value, max = 40) => [...new Set((Array.isArray(value) ? value : []).map((item) => socialText(item)).filter(Boolean))].slice(0, max);
+var socialHandle = (value) => value.toLowerCase().replace(/^@/, "").replace(/[^\p{L}\p{N}_.-]+/gu, "_").slice(0, 48) || "account";
+var SOCIAL_USERNAME_LIMITS = { twitter: 15, discord: 32, instagram: 30, tumblr: 32 };
+function validSocialUsername(app, value) {
+  return value.length >= (app === "discord" ? 2 : 1) && value.length <= SOCIAL_USERNAME_LIMITS[app] && (app === "twitter" ? /^[a-z0-9_]+$/ : app === "tumblr" ? /^[a-z0-9]+(?:-[a-z0-9]+)*$/ : /^[a-z0-9_.]+$/).test(value) && !value.includes("..");
+}
+function generatedSocialHandle(app, name, proposed, scope = "") {
+  if (app === "instagram")
+    return socialHandle(typeof proposed === "string" && proposed.trim() ? proposed.trim() : name);
+  const candidate = typeof proposed === "string" ? proposed.trim().replace(/^@/, "").toLowerCase() : "";
+  if (validSocialUsername(app, candidate))
+    return candidate;
+  let seed = 2166136261;
+  for (const letter of `${app}:${scope}:${name.toLowerCase()}`)
+    seed = Math.imul(seed ^ letter.charCodeAt(0), 16777619) >>> 0;
+  const first = ["moss", "velvet", "lunar", "quiet", "neon", "pixel", "amber", "cloud", "sleepy", "tiny", "paper", "cosmic"][seed % 12];
+  const second = ["moth", "orbit", "fern", "ghost", "kite", "echo", "bloom", "fox", "tide", "moon", "crow", "rain"][Math.floor(seed / 12) % 12];
+  const separator = app === "tumblr" ? "-" : app === "discord" ? "." : "_";
+  return `${first}${separator}${second}${seed % 1000}`;
+}
+var safeSocialOwnerKey = (key) => Boolean(key && key.length <= 180 && key === key.trim() && !["__proto__", "prototype", "constructor"].includes(key));
+var isTumblrTheme = (value) => TUMBLR_THEMES.includes(value);
+function socialBio(state, owner) {
+  const profile = state.social?.profiles && Object.hasOwn(state.social.profiles, owner) ? state.social.profiles[owner] : undefined;
+  if (profile && typeof profile.bio === "string")
+    return socialText(profile.bio, 280);
+  return socialText(owner === pocketPersonaActorId(state) ? state.pocketPersona.role : state.contacts.find((contact) => contact.id === owner)?.role, 280);
+}
+function socialFollowing(world, owner, app) {
+  return world.following && Object.hasOwn(world.following, owner) ? socialStrings(world.following[owner]?.[app], 120) : [];
+}
+function socialTumblrTheme(world, owner) {
+  const theme = world.preferences && Object.hasOwn(world.preferences, owner) ? world.preferences[owner]?.tumblrTheme : undefined;
+  return isTumblrTheme(theme) ? theme : "true-blue";
+}
+var isRefreshMode = (value) => value === "manual" || value === "turn" || value === "timer";
+var refreshMinutes = (value) => typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.min(120, Math.round(value))) : 5;
+function socialAppSettings(world, owner, app) {
+  const raw = world.preferences && Object.hasOwn(world.preferences, owner) ? world.preferences[owner]?.apps?.[app] : undefined;
+  const refreshMode = isRefreshMode(raw?.refreshMode) ? raw.refreshMode : raw?.autoRefresh === true ? "turn" : "manual";
+  return { refreshMode, refreshIntervalMinutes: refreshMinutes(raw?.refreshIntervalMinutes), autoRefresh: refreshMode !== "manual", generateImages: raw?.generateImages === true, randomCards: raw?.randomCards === true, friendEntryIds: socialStrings(raw?.friendEntryIds, 24) };
+}
+function socialCanMessage(world, owner, app, account) {
+  if (account.id === owner || account.actorId === owner)
+    return false;
+  const friends = socialAppSettings(world, owner, app).friendEntryIds;
+  return socialFollowing(world, owner, app).includes(account.id) || Boolean(account.bankId && friends.includes(account.bankId)) || Boolean(account.actorId && friends.includes(`actor:${account.actorId}`)) || account.id.startsWith("bank:") && friends.includes(account.id.slice(5)) || Boolean(world.dmThreads?.some((thread) => (thread.app || "instagram") === app && thread.owner === owner && thread.account.id === account.id));
+}
+var socialUrl = (value) => {
+  const clean = socialText(value, 2000);
+  return /^(https?:\/\/|\/[^/])/.test(clean) ? clean : "";
+};
+function socialOwner(state, actorId, app) {
+  const profile = state.social?.profiles && Object.hasOwn(state.social.profiles, actorId) ? state.social.profiles[actorId] : undefined;
+  const savedHandle = app ? profile?.usernames?.[app] : undefined;
+  if (actorId === pocketPersonaActorId(state))
+    return { id: actorId, actorId, name: state.pocketPersona.displayName || "You", handle: savedHandle || socialHandle(state.pocketPersona.displayName || "you") };
+  const contact = state.contacts.find((contact) => contact.id === actorId), discovered = state.discoveredActors?.find((actor) => actor.id === actorId);
+  const name = contact?.name || (discovered?.promotedContactId ? state.contacts.find((contact) => contact.id === discovered.promotedContactId)?.name : "") || discovered?.displayName;
+  if (!name)
+    throw new Error("That phone is no longer available.");
+  const published = app ? state.social?.posts.find((post) => post.app === app && post.account.actorId === actorId)?.account : undefined;
+  return { id: actorId, actorId, name, handle: savedHandle || published?.handle || (app && app !== "instagram" ? generatedSocialHandle(app, name) : socialHandle(name)) };
+}
+function normalizeSocialState(raw) {
+  const value = socialRecord(raw) ? raw : {}, ids = new Set, channelIds = new Set;
+  const servers = (Array.isArray(value.servers) ? value.servers : []).slice(0, 16).flatMap((item) => {
+    if (!socialRecord(item))
+      return [];
+    const id = socialText(item.id), name = socialText(item.name, 80), memberActorIds = socialStrings(item.memberActorIds);
+    if (!id || !name || ids.has(id) || !memberActorIds.length)
+      return [];
+    ids.add(id);
+    const channels = (Array.isArray(item.channels) ? item.channels : []).slice(0, 12).flatMap((channel) => {
+      if (!socialRecord(channel))
+        return [];
+      const id = socialText(channel.id), name = socialText(channel.name, 40);
+      if (!id || !name || channelIds.has(id))
+        return [];
+      channelIds.add(id);
+      return [{ id, name, topic: socialText(channel.topic, 160) }];
+    });
+    const server = { id, name, description: socialText(item.description, 240), memberActorIds, channels };
+    if (socialText(item.imageId) && socialUrl(item.imageUrl)) {
+      server.imageId = socialText(item.imageId);
+      server.imageUrl = socialUrl(item.imageUrl);
+    }
+    if (Array.isArray(item.participants)) {
+      const participantIds = new Set;
+      server.participants = item.participants.slice(0, 40).flatMap((raw) => {
+        if (!socialRecord(raw))
+          return [];
+        const name = socialText(raw.name, 100), handle = socialHandle(socialText(raw.handle) || name), id = socialText(raw.id).startsWith(`discord:${server.id}:`) ? socialText(raw.id) : `discord:${server.id}:${handle}`;
+        if (!name || participantIds.has(id))
+          return [];
+        participantIds.add(id);
+        return [{ id, name, handle, bio: socialText(raw.bio, 280), actorId: socialText(raw.actorId) || undefined, cardId: socialText(raw.cardId, 120) || undefined, bankId: socialText(raw.bankId, 120) || undefined, avatarUrl: socialUrl(raw.avatarUrl) || undefined, accent: typeof raw.accent === "string" && /^#[0-9a-f]{6}$/i.test(raw.accent) ? raw.accent : undefined }];
+      });
+    }
+    return channels.length ? [server] : [];
+  });
+  const postIds = new Set;
+  const posts = (Array.isArray(value.posts) ? value.posts : []).slice(-800).flatMap((item) => {
+    if (!socialRecord(item) || !isSocialApp(item.app) || !socialRecord(item.account))
+      return [];
+    const id = socialText(item.id), name = socialText(item.account.name, 100), accountId = socialText(item.account.id);
+    const text = socialText(item.text, item.app === "twitter" ? 280 : 6000), photo = socialText(item.photo, 1000);
+    const channelId = socialText(item.channelId) || undefined;
+    if (!id || postIds.has(id) || !accountId || !name || !text && !photo && !item.imageId && !item.reblogOf && !socialGif(item.gif) || item.app === "discord" && !channelIds.has(channelId || ""))
+      return [];
+    postIds.add(id);
+    return [{
+      id,
+      app: item.app,
+      account: { id: accountId, name, handle: socialHandle(socialText(item.account.handle) || name), actorId: socialText(item.account.actorId) || undefined, cardId: socialText(item.account.cardId, 120) || undefined, bankId: socialText(item.account.bankId, 120) || undefined, avatarUrl: item.account.cardId || item.account.bankId ? socialUrl(item.account.avatarUrl) || undefined : undefined, bio: socialText(item.account.bio, 280) || undefined, accent: typeof item.account.accent === "string" && /^#[0-9a-f]{6}$/i.test(item.account.accent) ? item.account.accent : undefined },
+      ...item.app === "discord" ? { reactions: normalizeReactions(item.reactions), pinned: item.pinned === true } : {},
+      gif: item.app === "discord" || item.app === "twitter" ? socialGif(item.gif) : undefined,
+      text,
+      title: socialText(item.title, 160) || undefined,
+      photo: photo || undefined,
+      tags: socialStrings(item.tags, 12).map((tag) => tag.replace(/^#/, "").slice(0, 60)),
+      createdAt: socialText(item.createdAt, 80),
+      channelId,
+      replyTo: socialText(item.replyTo) || undefined,
+      reblogOf: socialText(item.reblogOf) || undefined,
+      likedBy: socialStrings(item.likedBy),
+      authoredBy: socialText(item.authoredBy) || undefined,
+      imageId: socialText(item.imageId) || undefined,
+      imageUrl: socialUrl(item.imageUrl) || undefined
+    }];
+  });
+  for (const server of servers) {
+    const channelIds = new Set(server.channels.map((channel) => channel.id));
+    for (const post of posts.filter((post) => post.app === "discord" && channelIds.has(post.channelId || ""))) {
+      if (post.authoredBy)
+        continue;
+      const member = server.participants?.find((person) => person.id === post.account.id);
+      const account = member || { ...post.account, id: post.account.id.startsWith(`discord:${server.id}:`) ? post.account.id : `discord:${server.id}:${post.account.handle}` };
+      post.account = account;
+      if (!server.participants)
+        server.participants = [];
+      if (!server.participants.some((person) => person.id === account.id) && server.participants.length < 40)
+        server.participants.push(account);
+    }
+  }
+  for (const post of posts)
+    for (const field of ["replyTo", "reblogOf"]) {
+      const index = posts.indexOf(post), parent = posts.findIndex((parent) => parent.id === post[field] && parent.app === post.app && parent.channelId === post.channelId);
+      if (parent < 0 || parent >= index)
+        delete post[field];
+    }
+  const refreshedAt = {};
+  if (socialRecord(value.refreshedAt))
+    for (const app of SOCIAL_APPS) {
+      const at = socialText(value.refreshedAt[app], 80);
+      if (at)
+        refreshedAt[app] = at;
+    }
+  const world = { posts, servers, refreshedAt };
+  if (socialRecord(value.profiles))
+    world.profiles = Object.fromEntries(Object.entries(value.profiles).filter(([owner, profile]) => safeSocialOwnerKey(owner) && socialRecord(profile) && typeof profile.bio === "string").slice(0, 160).map(([owner, profile]) => [owner, { bio: socialText(profile.bio, 280), ...gradientColors(profile.discordGradient) ? { discordGradient: gradientColors(profile.discordGradient) } : {}, ...socialRecord(profile.usernames) ? { usernames: Object.fromEntries(SOCIAL_APPS.filter((app) => typeof profile.usernames[app] === "string" && validSocialUsername(app, profile.usernames[app])).map((app) => [app, profile.usernames[app]])) } : {} }]));
+  if (socialRecord(value.following))
+    world.following = Object.fromEntries(Object.entries(value.following).filter(([owner, apps]) => safeSocialOwnerKey(owner) && socialRecord(apps)).slice(0, 160).map(([owner, apps]) => [owner, Object.fromEntries(SOCIAL_APPS.filter((app) => Array.isArray(apps[app])).map((app) => [app, socialStrings(apps[app], 120).filter((account) => account !== owner)]))]));
+  if (socialRecord(value.preferences))
+    world.preferences = Object.fromEntries(Object.entries(value.preferences).filter(([owner, preference]) => safeSocialOwnerKey(owner) && socialRecord(preference) && (isTumblrTheme(preference.tumblrTheme) || socialRecord(preference.apps))).slice(0, 160).map(([owner, rawPreference]) => {
+      const preference = rawPreference, result = { tumblrTheme: isTumblrTheme(preference.tumblrTheme) ? preference.tumblrTheme : "true-blue" };
+      if (["gray", "amoled", "gradient"].includes(String(preference.discordTheme)))
+        result.discordTheme = preference.discordTheme;
+      if (gradientColors(preference.discordGradient))
+        result.discordGradient = gradientColors(preference.discordGradient);
+      if (socialRecord(preference.apps))
+        result.apps = Object.fromEntries(SOCIAL_APPS.filter((app) => socialRecord(preference.apps[app])).map((app) => {
+          const settings = preference.apps[app];
+          const refreshMode = isRefreshMode(settings.refreshMode) ? settings.refreshMode : settings.autoRefresh === true ? "turn" : "manual";
+          return [app, { refreshMode, refreshIntervalMinutes: refreshMinutes(settings.refreshIntervalMinutes), autoRefresh: refreshMode !== "manual", generateImages: settings.generateImages === true, randomCards: settings.randomCards === true, ...Array.isArray(settings.friendEntryIds) ? { friendEntryIds: socialStrings(settings.friendEntryIds, 24) } : {} }];
+        }));
+      return [owner, result];
+    }));
+  if (Object.hasOwn(value, "dmThreads"))
+    world.dmThreads = normalizeSocialDirectThreads(value.dmThreads);
+  return world;
+}
+
+// src/frontend/components/social-icons.ts
+var SOCIAL_ICON_PATHS = {
+  settings: '<path d="m10 3 4 0 .8 3 2.3 1.3 3-.8 2 3.5-2.2 2.2v2.6L22 17l-2 3.5-3-.8-2.3 1.3-.7 3h-4l-.7-3L7 19.7l-3 .8L2 17l2.2-2.2v-2.6L2 10l2-3.5 3 .8L9.3 6Z" transform="translate(0 -1) scale(1 .95)"/><circle cx="12" cy="12" r="3.2"/>',
+  back: '<path d="m14 5-7 7 7 7"/>',
+  refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 13 3M18 18A8 8 0 0 1 5 15"/>',
+  home: '<path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/>',
+  search: '<circle cx="10.5" cy="10.5" r="7.5"/><path d="m16 16 6 6"/>',
+  activity: '<path d="m13 2-9 12h7l-1 8 10-13h-7Z"/>',
+  profile: '<circle cx="12" cy="8" r="4"/><path d="M4 22v-2a8 8 0 0 1 16 0v2"/>',
+  plus: '<path d="M12 4v16M4 12h16"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="m22 2-11 11"/>',
+  smile: '<circle cx="12" cy="12" r="9"/><path d="M8 14a4 4 0 0 0 8 0M8 9h.01M16 9h.01"/>',
+  compose: '<path d="m15 4 5 5M4 20l5-1 12-12-5-5L4 14Z"/>',
+  heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/>',
+  reply: '<path d="M20.5 11.5a8.5 8.5 0 0 1-8.5 8.5H4l1.5-4A8.5 8.5 0 1 1 20.5 11.5Z"/>',
+  reblog: '<path d="m4 8 4-4 4 4M8 4v12a3 3 0 0 0 3 3h1M20 16l-4 4-4-4M16 20V8a3 3 0 0 0-3-3h-1"/>',
+  quote: '<path d="M4 4h7v7H7v4H4Zm10 0h7v7h-4v4h-3Z"/>',
+  thread: '<path d="M4 5h16M4 12h16M4 19h10"/>',
+  trash: '<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>',
+  camera: '<rect x="3" y="6" width="18" height="15" rx="3"/><path d="m7 6 2-3h6l2 3"/><circle cx="12" cy="13" r="4"/>',
+  pin: '<path d="M12 17v5M9 3h6l-1 8 3 3v3H7v-3l3-3Z" transform="rotate(30 12 12)"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  channels: '<path d="M5 7h14M4 17h14M10 3 7 21M18 3l-3 18"/>',
+  bird: '<path fill="currentColor" stroke="none" d="M22 5a8 8 0 0 1-2 .6A4 4 0 0 0 21.6 3a8 8 0 0 1-2.5 1 4 4 0 0 0-6.8 3.6A11 11 0 0 1 4 3.5a4 4 0 0 0 1.2 5.3A4 4 0 0 1 3.4 8v.1a4 4 0 0 0 3.2 4 4 4 0 0 1-1.8.1 4 4 0 0 0 3.7 2.8A8 8 0 0 1 2 17a11.3 11.3 0 0 0 17.4-9.5V7A8 8 0 0 0 22 5Z"/>'
+};
+function socialIcon(name) {
+  const node = document.createElement("span");
+  node.className = "lp-social-glyph";
+  node.setAttribute("aria-hidden", "true");
+  node.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">${SOCIAL_ICON_PATHS[name]}</svg>`;
+  return node;
+}
+
+// src/frontend/apps/tumblr.ts
+function tumblrHub(selected, body, change) {
+  const hub = el("section", "lp-tumblr-hub"), tabs = el("div", "lp-tumblr-hub-tabs");
+  hub.setAttribute("aria-label", "Tumblr activity and messages");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Tumblr inbox");
+  const controls = [];
+  for (const [value, label] of [["activity", "Activity"], ["messages", "Messages"]]) {
+    const tab = button(label, "lp-tumblr-hub-pill"), panel = el("section", "lp-tumblr-hub-panel");
+    tab.id = requestId("tumblr_tab");
+    panel.id = requestId("tumblr_panel");
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(value === selected));
+    tab.setAttribute("aria-controls", panel.id);
+    tab.tabIndex = value === selected ? 0 : -1;
+    tab.dataset.socialFocus = `Tumblr ${label} tab`;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", tab.id);
+    panel.hidden = value !== selected;
+    if (value === selected)
+      panel.append(body);
+    tab.onclick = () => {
+      const mount = hub.closest(".lp-social-page")?.parentElement || hub.ownerDocument.body;
+      change(value);
+      mount?.querySelector(`[data-social-focus="Tumblr ${label} tab"]`)?.focus({ preventScroll: true });
+    };
+    tab.onkeydown = (event) => {
+      const index = controls.indexOf(tab), next = event.key === "ArrowRight" || event.key === "ArrowLeft" ? (index + 1) % 2 : event.key === "Home" ? 0 : event.key === "End" ? 1 : -1;
+      if (next >= 0) {
+        event.preventDefault();
+        controls[next].click();
+      }
+    };
+    controls.push(tab);
+    tabs.append(tab);
+    hub.append(panel);
+  }
+  hub.prepend(tabs);
+  return hub;
+}
+function tumblrActivity(options) {
+  const { posts, owner, followed } = options, list = el("section", "lp-tumblr-activity");
+  list.setAttribute("aria-label", "Tumblr activity");
+  list.append(el("h2", "", "All activity"));
+  const byId = new Map(posts.map((post) => [post.id, post])), owned = (post) => Boolean(post && (post.authoredBy === owner || post.account.actorId === owner));
+  const relatedToOwner = (post) => {
+    let parent = byId.get(post.replyTo || post.reblogOf || "");
+    for (let count = 0;parent && count < 40; count++) {
+      if (owned(parent))
+        return true;
+      parent = byId.get(parent.replyTo || parent.reblogOf || "");
+    }
+    return false;
+  };
+  const add = (post, actor, verb, quote) => {
+    const row = button("", "lp-tumblr-activity-row"), copy = el("span", "lp-tumblr-activity-copy"), time = el("time", "", options.time(post));
+    row.dataset.socialFocus = `Tumblr activity ${post.id} ${actor.id}`;
+    row.onclick = () => options.open(post, row.dataset.socialFocus);
+    time.dateTime = post.createdAt;
+    copy.append(el("strong", "", actor.handle), el("span", "", verb), el("p", "", quote.slice(0, 170)), time);
+    const preview = el("span", "lp-tumblr-activity-preview");
+    if (post.imageUrl) {
+      const image = el("img");
+      image.src = post.imageUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      preview.append(image);
+    } else
+      preview.append(el("span", "", post.reblogOf ? "↻" : "Aa"));
+    row.append(options.avatar(actor), copy, preview);
+    list.append(row);
+  };
+  for (const post of [...posts].reverse().slice(0, 200)) {
+    if (!owned(post) && relatedToOwner(post))
+      add(post, post.account, post.reblogOf ? "Reblogged your post" : "Replied to your post", post.text || post.tags.map((tag) => "#" + tag).join(" "));
+    else if (!owned(post) && !post.replyTo && followed.includes(post.account.id))
+      add(post, post.account, "Made a new post", post.text || post.title || post.photo || "");
+    if (owned(post))
+      for (const actorId of post.likedBy.filter((id) => id !== owner).slice(-20)) {
+        const actor = posts.find((item) => item.account.id === actorId || item.account.actorId === actorId)?.account || options.resolveAccount?.(actorId);
+        if (actor)
+          add(post, actor, "Liked your post", post.text || post.title || post.photo || "");
+      }
+  }
+  if (list.children.length === 1)
+    list.append(el("p", "lp-tumblr-view-empty", "Replies, reblogs, likes, and new posts from blogs you follow will appear here."));
+  return list;
+}
+function tumblrSearch(options) {
+  const { posts, ui } = options, screen = el("section", "lp-tumblr-explore"), hero = el("header", "lp-tumblr-explore-hero");
+  screen.setAttribute("aria-label", "Explore Tumblr");
+  hero.append(el("h2", "", "Explore"));
+  const form = el("form", "lp-tumblr-search-form"), label = el("label"), input = el("input"), submit = button("Search", "lp-tumblr-search-submit");
+  form.setAttribute("role", "search");
+  form.setAttribute("aria-label", "Search Tumblr posts");
+  input.type = "search";
+  input.placeholder = "Search Tumblr";
+  input.value = ui.tumblrSearch || "";
+  input.maxLength = 180;
+  input.autocomplete = "off";
+  input.dataset.socialFocus = "Tumblr search";
+  label.append(el("span", "lp-social-visually-hidden", "Search Tumblr posts"), socialIcon("search"), input);
+  submit.type = "submit";
+  form.append(label, submit);
+  hero.append(form);
+  screen.append(hero);
+  const results = el("section", "lp-tumblr-search-results");
+  results.id = requestId("tumblr_search_results");
+  input.setAttribute("aria-controls", results.id);
+  screen.append(results);
+  const roots = new Map(posts.map((post) => [post.id, post]));
+  const root = (post) => {
+    for (let count = 0;post.replyTo && count < 40; count++) {
+      const parent = roots.get(post.replyTo);
+      if (!parent)
+        break;
+      post = parent;
+    }
+    return post;
+  };
+  const thumbnail = (post, context = "feed") => {
+    const node = button("", "lp-tumblr-explore-tile");
+    node.dataset.socialFocus = `Tumblr explore ${encodeURIComponent(context)} ${post.id}`;
+    node.setAttribute("aria-label", `Open post by ${post.account.handle}: ${(post.title || post.text || post.photo || "Photo post").slice(0, 70)}${context === "feed" ? "" : ` in #${context}`}`);
+    node.onclick = () => options.open(post, node.dataset.socialFocus);
+    if (post.imageUrl) {
+      const image = el("img");
+      image.src = post.imageUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      node.append(image);
+    } else
+      node.append(el("span", "lp-tumblr-tile-text", post.text.slice(0, 110) || post.photo?.slice(0, 110) || post.title || "A little post"));
+    node.append(el("small", "", post.account.handle));
+    return node;
+  };
+  const update = () => {
+    ui.tumblrSearch = input.value;
+    results.replaceChildren();
+    const query = input.value.trim().toLocaleLowerCase().replace(/^#/, "");
+    if (query) {
+      const matching = new Map;
+      for (const post of [...posts].reverse())
+        if ([post.text, post.title, post.photo, post.account.name, post.account.handle, ...post.tags].filter(Boolean).join(" ").toLocaleLowerCase().includes(query)) {
+          const parent = root(post);
+          matching.set(parent.id, parent);
+        }
+      results.append(el("h3", "lp-tumblr-search-heading", `${matching.size} ${matching.size === 1 ? "post" : "posts"} found`));
+      for (const post of matching.values())
+        results.append(options.renderPost(post));
+      if (!matching.size)
+        results.append(el("p", "lp-tumblr-view-empty", "No posts match this search yet."));
+    } else {
+      results.append(el("h3", "lp-tumblr-search-heading", "Trending in your feed"));
+      const tags = new Map;
+      for (const post of [...posts].reverse())
+        for (const tag of post.tags) {
+          const entries = tags.get(tag) || [];
+          if (!entries.some((entry) => entry.id === root(post).id))
+            entries.push(root(post));
+          tags.set(tag, entries);
+        }
+      for (const [index, [tag, entries]] of [...tags].sort((a, b) => b[1].length - a[1].length).slice(0, 8).entries()) {
+        const section = el("section", "lp-tumblr-trending-tag"), choose = button("", "lp-tumblr-tag-link"), rail = el("div", "lp-tumblr-explore-rail");
+        choose.append(el("span", "lp-tumblr-trend-number", String(index + 1)), el("strong", "", "#" + tag));
+        choose.setAttribute("aria-label", `Search #${tag}`);
+        choose.onclick = () => {
+          input.value = "#" + tag;
+          update();
+          input.focus({ preventScroll: true });
+        };
+        section.append(choose);
+        for (const post of entries.slice(0, 8))
+          rail.append(thumbnail(post, tag));
+        section.append(rail);
+        results.append(section);
+      }
+      if (!tags.size) {
+        const rail = el("div", "lp-tumblr-explore-rail");
+        for (const post of [...posts].reverse().filter((post) => !post.replyTo).slice(0, 8))
+          rail.append(thumbnail(post));
+        results.append(rail);
+        if (!posts.length)
+          results.append(el("p", "lp-tumblr-view-empty", "Your generated posts and tags will show up here."));
+      }
+    }
+  };
+  input.oninput = update;
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    update();
+  };
+  update();
+  return screen;
+}
+
+// src/frontend/apps/discord-chat.ts
+function discordNameColor(state, account) {
+  const actor = state.discoveredActors?.find((actor) => actor.id === account.actorId), contact = state.contacts.find((contact) => contact.id === (actor?.promotedContactId || account.actorId));
+  const color = contact ? contactAccent(contact) : account.actorId === state.pocketPersonaActorId ? state.pocketPersona.accent || "#8b7dff" : account.accent;
+  return color && /^#[0-9a-f]{6}$/i.test(color) ? color : "#c4c9ce";
+}
+function sheet(anchor, title, body) {
+  body.classList.add("lp-discord-sheet");
+  const handle = showPocketSheet(anchor, title, body), dialog = body.closest("dialog");
+  if (dialog) {
+    dialog.classList.add("lp-discord-dialog");
+    const style = anchor.ownerDocument.defaultView.getComputedStyle(anchor);
+    for (const key of ["--social-bg", "--social-surface", "--social-text", "--social-muted", "--social-border", "--social-accent", "--discord-input"])
+      dialog.style.setProperty(key, style.getPropertyValue(key));
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape")
+        event.stopPropagation();
+    });
+  }
+  return handle;
+}
+function emojiChoices(choose) {
+  const body = el("div"), label = el("label", "lp-discord-search-label", "Find an emoji"), search = el("input", "lp-input"), grid = el("div", "lp-discord-emoji-grid");
+  search.type = "search";
+  search.placeholder = "Search emoji";
+  label.append(search);
+  body.append(label, grid);
+  const draw = () => {
+    grid.replaceChildren();
+    for (const [emoji, name] of EMOJI_CHOICES.filter(([emoji, name]) => (emoji + " " + name).includes(search.value.toLowerCase()))) {
+      const pick = button(emoji, "lp-discord-emoji");
+      pick.setAttribute("aria-label", name);
+      pick.onclick = () => choose(emoji);
+      grid.append(pick);
+    }
+  };
+  search.oninput = draw;
+  draw();
+  return { body, focus: () => search.focus() };
+}
+function emojiPicker(anchor, choose) {
+  let handle;
+  const choices = emojiChoices((emoji) => {
+    handle?.dismiss();
+    choose(emoji);
+  });
+  handle = sheet(anchor, "Add a reaction", choices.body);
+  choices.focus();
+}
+function gifMedia(gif) {
+  const figure = el("figure", "lp-social-gif"), image = el("img");
+  image.src = gif.url;
+  image.alt = gif.description || "Tenor GIF";
+  image.loading = "lazy";
+  image.onerror = () => {
+    image.replaceWith(el("p", "", "This GIF is unavailable."));
+  };
+  figure.append(image, el("figcaption", "", "GIF · Tenor"));
+  return figure;
+}
+function gifSearchContent(searchGifs, choose) {
+  const body = el("div", "lp-gif-picker"), form = el("form"), label = el("label", "lp-discord-search-label", "Search Tenor GIFs"), input = el("input", "lp-input"), submit = button("Search", "lp-button"), status = el("p", "lp-copy"), grid = el("div", "lp-gif-results");
+  input.type = "search";
+  input.required = true;
+  input.maxLength = 100;
+  input.placeholder = "A little reaction…";
+  label.append(input);
+  submit.type = "submit";
+  status.setAttribute("role", "status");
+  form.append(label, submit);
+  body.append(form, status, grid);
+  let revision = 0;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const current = ++revision;
+    submit.disabled = true;
+    status.textContent = "Searching Tenor…";
+    grid.replaceChildren();
+    try {
+      const gifs = await searchGifs(input.value);
+      if (!body.isConnected || current !== revision)
+        return;
+      status.textContent = gifs.length ? "Choose a GIF to attach." : "No GIFs found. Try another search.";
+      for (const gif of gifs) {
+        const pick = button("", "lp-gif-result");
+        pick.setAttribute("aria-label", `Attach ${gif.description} GIF`);
+        const image = el("img");
+        image.src = gif.url;
+        image.alt = "";
+        image.loading = "lazy";
+        pick.append(image);
+        pick.onclick = () => choose(gif);
+        grid.append(pick);
+      }
+    } catch (error) {
+      if (body.isConnected && current === revision)
+        status.textContent = error instanceof Error ? error.message : "GIF search failed.";
+    } finally {
+      if (body.isConnected && current === revision)
+        submit.disabled = false;
+    }
+  };
+  return { body, focus: () => input.focus() };
+}
+function gifPicker(anchor, searchGifs, choose) {
+  let handle;
+  const search = gifSearchContent(searchGifs, (gif) => {
+    handle?.dismiss();
+    choose(gif);
+  });
+  handle = sheet(anchor, "GIFs from Tenor", search.body);
+  search.focus();
+}
+function discordExpressionPicker(anchor, searchGifs, chooseEmoji, chooseGif) {
+  const body = el("div", "lp-discord-expression-picker"), tabs = el("div", "lp-discord-expression-tabs"), id = requestId("discord_expressions");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Message expressions");
+  let handle, active = 0;
+  const emoji = emojiChoices((value) => {
+    handle?.dismiss();
+    chooseEmoji(value);
+  });
+  const gifs = searchGifs ? gifSearchContent(searchGifs, (value) => {
+    handle?.dismiss();
+    chooseGif(value);
+  }) : undefined;
+  const choices = [{ name: "Emoji", content: emoji }, { name: "GIFs", content: gifs }];
+  const controls = choices.map((choice, index) => {
+    const control = button(choice.name);
+    control.id = id + "_tab_" + index;
+    control.setAttribute("role", "tab");
+    control.setAttribute("aria-controls", id + "_panel_" + index);
+    control.disabled = !choice.content;
+    tabs.append(control);
+    return control;
+  });
+  const panels = choices.map((choice, index) => {
+    const panel = el("div");
+    panel.id = id + "_panel_" + index;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", controls[index].id);
+    if (choice.content)
+      panel.append(choice.content.body);
+    return panel;
+  });
+  const select = (index, focusContent = false) => {
+    active = index;
+    controls.forEach((control, i) => {
+      control.setAttribute("aria-selected", String(i === index));
+      control.tabIndex = i === index ? 0 : -1;
+      panels[i].hidden = i !== index;
+    });
+    if (focusContent)
+      choices[index].content?.focus();
+  };
+  controls.forEach((control, index) => {
+    control.onclick = () => select(index, true);
+  });
+  tabs.onkeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? 1 : 1 - active;
+    if (controls[next].disabled)
+      return;
+    select(next);
+    controls[next].focus();
+  };
+  body.append(tabs, ...panels);
+  select(0);
+  handle = sheet(anchor, "Emoji and GIFs", body);
+  emoji.focus();
+}
+function discordGradientEditor(anchor, colors, save, title = "Profile gradient") {
+  const body = el("form", "lp-discord-gradient-editor"), preview = el("div", "lp-discord-gradient-preview"), values = [...colors];
+  const update = () => {
+    preview.style.background = `linear-gradient(135deg,${values[0]},${values[1]})`;
+  };
+  update();
+  body.append(preview);
+  for (const index of [0, 1]) {
+    const label = el("label", "", index === 0 ? "First color" : "Second color"), input = el("input");
+    input.type = "color";
+    input.value = values[index];
+    input.oninput = () => {
+      values[index] = input.value;
+      update();
+    };
+    label.append(input);
+    body.append(label);
+  }
+  const submit = button("Save gradient", "lp-button");
+  submit.type = "submit";
+  body.append(submit);
+  const handle = sheet(anchor, title, body);
+  body.onsubmit = (event) => {
+    event.preventDefault();
+    handle?.dismiss();
+    save(values);
+  };
+}
+function discordOwnProfile(profile, state, owner, account, world, request) {
+  const colors = gradientColors(world.profiles?.[owner]?.discordGradient) || ["#5865f2", "#b48bf1"], body = el("div", "lp-discord-profile-body"), banner = el("div", "lp-discord-profile-banner");
+  profile.style.setProperty("--profile-start", colors[0]);
+  profile.style.setProperty("--profile-end", colors[1]);
+  body.append(...profile.childNodes);
+  profile.replaceChildren(banner, body);
+  const count = body.querySelector(".lp-social-profile-count");
+  if (count)
+    count.textContent = "Your Discord profile";
+  const name = body.querySelector(".lp-social-profile-identity strong");
+  if (name)
+    name.style.color = discordNameColor(state, account);
+  const bio = body.querySelector(".lp-social-bio");
+  if (bio) {
+    const about = el("section", "lp-discord-about");
+    about.append(el("h3", "", "ABOUT ME"), bio);
+    body.insertBefore(about, body.querySelector(".lp-social-edit-profile"));
+  }
+  const gradient = button("Customize gradient", "lp-social-button lp-social-edit-profile");
+  gradient.dataset.socialFocus = "Discord profile gradient";
+  gradient.setAttribute("aria-haspopup", "dialog");
+  gradient.onclick = () => discordGradientEditor(gradient, colors, (colors) => request({ action: "profile", app: "discord", gradient: colors }));
+  body.append(gradient);
+}
+function discordMemberProfile(anchor, person, state, world, avatar) {
+  const body = el("div", "lp-discord-member-profile"), colors = gradientColors(world.profiles?.[person.actorId || person.id]?.discordGradient) || [discordNameColor(state, person), "#27283d"], banner = el("div", "lp-discord-profile-banner"), identity = el("div", "lp-discord-profile-body"), name = el("h2", "", person.name);
+  body.style.setProperty("--profile-start", colors[0]);
+  body.style.setProperty("--profile-end", colors[1]);
+  name.style.color = discordNameColor(state, person);
+  identity.append(avatar(person.name, person.actorId, person.avatarUrl), name, el("p", "lp-copy", person.handle), el("h3", "", "ABOUT ME"), el("p", "lp-discord-member-bio", person.bio || "A person in your little corner of Discord."));
+  const shared = world.servers.filter((server) => server.participants?.some((member) => member.id === person.id));
+  if (shared.length)
+    identity.append(el("h3", "", "SHARED SERVERS"), el("p", "lp-copy", shared.map((server) => server.name).join(" · ")));
+  body.append(banner, identity);
+  sheet(anchor, `${person.name}’s profile`, body);
+}
+function discordMessage(host, post) {
+  const { state, owner, world, avatar } = host, member = world.servers.flatMap((server) => server.participants || []).find((person) => person.id === post.account.id) || post.account;
+  const row = el("article", "lp-social-post lp-discord-message");
+  row.dataset.socialPost = post.id;
+  row.tabIndex = -1;
+  const avatarButton = button("", "lp-discord-message-avatar");
+  avatarButton.setAttribute("aria-label", `View ${member.name}’s profile`);
+  avatarButton.setAttribute("aria-haspopup", "dialog");
+  avatarButton.append(avatar(member.name, member.actorId, member.avatarUrl));
+  avatarButton.onclick = () => discordMemberProfile(avatarButton, member, state, world, avatar);
+  const main = el("div", "lp-discord-message-main"), head = el("header", "lp-discord-message-head"), name = button(member.handle, "lp-discord-message-name"), time = el("time", "", host.timestamp(post)), menu = button("⋯", "lp-discord-message-menu");
+  name.setAttribute("aria-haspopup", "dialog");
+  name.style.color = discordNameColor(state, member);
+  name.setAttribute("aria-label", `View profile of ${member.name}`);
+  name.onclick = () => discordMemberProfile(name, member, state, world, avatar);
+  time.dateTime = post.createdAt;
+  time.title = post.createdAt;
+  menu.setAttribute("aria-haspopup", "dialog");
+  menu.setAttribute("aria-label", `Message actions for ${member.name} · ${post.id}`);
+  menu.dataset.socialFocus = `Discord message ${post.id}`;
+  const react = (emoji) => host.request({ action: "react", app: "discord", postId: post.id, emoji, channelId: post.channelId });
+  menu.onclick = () => {
+    const body = el("div", "lp-discord-message-actions"), quick = el("div", "lp-discord-quick-reactions");
+    let handle;
+    for (const emoji of QUICK_REACTIONS) {
+      const pick = button(emoji, "lp-discord-emoji");
+      pick.setAttribute("aria-label", `React with ${emoji}`);
+      pick.disabled = Boolean(host.pending);
+      pick.onclick = () => {
+        handle?.dismiss();
+        react(emoji);
+      };
+      quick.append(pick);
+    }
+    const more = button("+", "lp-discord-emoji");
+    more.setAttribute("aria-label", "Choose another emoji");
+    more.disabled = Boolean(host.pending);
+    more.onclick = () => {
+      handle?.dismiss();
+      emojiPicker(menu, react);
+    };
+    quick.append(more);
+    body.append(quick);
+    const reply = button("↩  Reply", "lp-discord-context-action");
+    reply.onclick = () => {
+      handle?.dismiss();
+      host.reply(post);
+    };
+    const pin = button(post.pinned ? "Unpin message" : "Pin message", "lp-discord-context-action");
+    pin.disabled = Boolean(host.pending);
+    pin.onclick = () => {
+      handle?.dismiss();
+      host.request({ action: "pin", app: "discord", postId: post.id, channelId: post.channelId });
+    };
+    body.append(reply, pin);
+    handle = sheet(menu, "Message actions", body);
+  };
+  if (post.replyTo) {
+    const original = host.posts.find((other) => other.id === post.replyTo);
+    if (original) {
+      const hook = button("", "lp-discord-reply-hook");
+      hook.setAttribute("aria-label", `Jump to message by ${original.account.name}`);
+      hook.append(avatar(original.account.name, original.account.actorId, original.account.avatarUrl), el("strong", "", original.account.handle), el("span", "", original.text || original.gif?.description || "GIF"));
+      hook.onclick = () => {
+        const target = [...row.parentElement.querySelectorAll("[data-social-post]")].find((node) => node.dataset.socialPost === original.id);
+        target?.scrollIntoView({ block: "center", behavior: "smooth" });
+        target?.focus({ preventScroll: true });
+      };
+      main.append(hook);
+    }
+  }
+  head.append(name, time, menu);
+  main.append(head);
+  if (post.text)
+    main.append(el("p", "lp-discord-message-text", post.text));
+  if (post.gif)
+    main.append(gifMedia(post.gif));
+  const reactions = el("div", "lp-discord-reactions");
+  for (const reaction of post.reactions || []) {
+    const choice = button(`${reaction.emoji} ${reaction.actorIds.length}`, "lp-discord-reaction");
+    choice.setAttribute("aria-label", `${reaction.emoji} reaction, ${reaction.actorIds.length} people`);
+    choice.setAttribute("aria-pressed", String(reaction.actorIds.includes(owner)));
+    choice.title = reaction.actorIds.map((id) => id === owner ? "You" : world.servers.flatMap((server) => server.participants || []).find((member) => member.id === id)?.name || host.posts.find((post) => post.account.id === id)?.account.name || "Member").join(", ");
+    choice.disabled = Boolean(host.pending);
+    choice.onclick = () => react(reaction.emoji);
+    reactions.append(choice);
+  }
+  if (reactions.childElementCount) {
+    const add = button("+", "lp-discord-reaction");
+    add.setAttribute("aria-label", `Add reaction to ${member.name}’s message`);
+    add.disabled = Boolean(host.pending);
+    add.onclick = () => emojiPicker(add, react);
+    reactions.append(add);
+    main.append(reactions);
+  }
+  if (post.pinned)
+    main.append(el("span", "lp-discord-pinned-label", "Pinned"));
+  row.append(avatarButton, main);
+  return row;
+}
+function discordPins(anchor, posts, jump) {
+  const body = el("div", "lp-discord-pins");
+  let handle;
+  for (const post of posts.filter((post) => post.pinned)) {
+    const open = button("", "lp-discord-pin-card");
+    open.append(el("strong", "", post.account.handle), el("p", "", post.text || post.gif?.description || "GIF"));
+    open.onclick = () => {
+      handle?.dismiss();
+      jump(post.id);
+    };
+    body.append(open);
+  }
+  if (!body.childElementCount)
+    body.append(el("p", "lp-copy", "Keep something worth coming back to. Pin a message from its ⋯ menu."));
+  handle = sheet(anchor, "Pinned messages", body);
+}
+
+// src/frontend/apps/discord-people.ts
+function discordServerPicture(options) {
+  const row = el("div", "lp-discord-picture-editor"), preview = el("div", "lp-discord-picture-preview");
+  if (options.url) {
+    const image = el("img");
+    image.src = options.url;
+    image.alt = options.name + " server picture";
+    preview.append(image);
+  } else
+    preview.append(socialIcon("camera"));
+  const copy = el("div"), change = button(options.url ? "Change picture" : "Upload picture", "lp-discord-soft-button");
+  change.setAttribute("aria-label", "Upload server picture for " + options.name);
+  change.disabled = Boolean(options.ui.pending || options.ui.imageBusy);
+  change.onclick = options.upload;
+  copy.append(el("strong", "", options.name), change);
+  if (options.ui.imageBusy) {
+    const progress = el("span", "lp-discord-picture-progress", options.ui.imageProgress || "Uploading picture…");
+    progress.setAttribute("role", "status");
+    copy.append(progress);
+    if (options.cancel) {
+      const cancel = button("Cancel upload", "lp-discord-text-button");
+      cancel.onclick = options.cancel;
+      copy.append(cancel);
+    }
+  }
+  row.append(preview, copy);
+  return row;
+}
+function discordPeople(options) {
+  const { server, ui, contacts, bank, casts } = options, page = el("section", "lp-discord-people lp-discord-member-manager");
+  page.setAttribute("aria-label", "People in " + server.name);
+  page.append(discordServerPicture({ name: server.name, url: server.imageUrl, ui, upload: () => options.upload?.(), cancel: options.cancelUpload }));
+  const tabs = el("div", "lp-discord-member-tabs");
+  tabs.setAttribute("role", "group");
+  tabs.setAttribute("aria-label", "Server people views");
+  const selected = ui.peopleViews?.[server.id] || "members";
+  for (const [view, label] of [["members", "Members"], ["add", "Add people"]]) {
+    const control = button(label + (view === "members" ? " · " + (server.participants?.length || 0) : ""), "lp-discord-member-tab");
+    control.setAttribute("aria-label", label + " in " + server.name);
+    control.setAttribute("aria-pressed", String(view === selected));
+    control.dataset.socialFocus = view + ":" + server.id;
+    control.onclick = () => {
+      ui.peopleViews ||= {};
+      ui.peopleViews[server.id] = view;
+      ui.scrollTop = 0;
+      const mount = page.closest(".lp-social-page")?.parentElement || page.ownerDocument.body;
+      options.render();
+      mount?.querySelector(`[data-social-focus="${view}:${server.id}"]`)?.focus({ preventScroll: true });
+    };
+    tabs.append(control);
+  }
+  page.append(tabs);
+  const body = el("div", "lp-discord-member-body");
+  page.append(body);
+  const action = (label, name, run, added = false) => {
+    const node = button(label, "lp-discord-soft-button");
+    node.setAttribute("aria-label", name);
+    node.disabled = added || Boolean(ui.pending || ui.imageBusy);
+    node.onclick = run;
+    node.dataset.socialFocus = name;
+    return node;
+  };
+  const disclosure = (key, label, count, initiallyOpen = false) => {
+    const group = el("details", "lp-discord-picker-group"), summary = el("summary"), inner = el("div", "lp-discord-picker-body"), id = server.id + ":" + key;
+    group.open = ui.peopleFriendsOpen?.[id] ?? initiallyOpen;
+    summary.append(el("strong", "", label));
+    if (count)
+      summary.append(el("span", "lp-discord-group-count", String(count)));
+    group.append(summary, inner);
+    summary.onclick = () => {
+      ui.peopleFriendsOpen ||= {};
+      ui.peopleFriendsOpen[id] = !group.open;
+    };
+    return { group, inner };
+  };
+  if (selected === "members") {
+    const heading = el("div", "lp-discord-members-heading");
+    heading.append(el("h2", "", "Server members"));
+    const generate = action("Generate people", "Generate people for " + server.name, () => options.generate?.());
+    generate.disabled ||= !options.generate;
+    heading.append(generate);
+    body.append(heading);
+    const list = el("ul", "lp-discord-people-list");
+    list.setAttribute("aria-label", server.name + " members");
+    for (const person of server.participants || []) {
+      const item = el("li"), member = disclosure("member:" + person.id, person.name, 0);
+      member.group.className = "lp-discord-member-card";
+      const summary = member.group.querySelector("summary"), copy = el("span", "lp-discord-member-copy");
+      copy.append(el("strong", "", person.name), el("small", "", "@" + person.handle));
+      const chevron = el("span", "lp-discord-member-chevron", "›");
+      chevron.setAttribute("aria-hidden", "true");
+      summary.replaceChildren(options.avatar(person.name, person.actorId, person.avatarUrl), copy, chevron);
+      member.inner.append(el("p", "", person.bio || "No bio yet."));
+      item.append(member.group);
+      list.append(item);
+    }
+    body.append(list);
+    if (!server.participants?.length)
+      body.append(el("p", "lp-discord-member-empty", "A quiet server, for now. Add a cast, invite someone, or generate a few new faces."));
+    return page;
+  }
+  body.append(el("h2", "", "Bring your people"), el("p", "lp-discord-picker-hint", "Add a whole cast in one click, or choose individual people."));
+  const castSection = disclosure("casts", "Portable casts", casts.length, true);
+  for (const cast of casts) {
+    const entries = bank.filter((entry) => cast.memberIds.includes(entry.id)), added = entries.filter((entry) => server.participants?.some((person) => person.bankId === entry.id)).length;
+    const card = el("div", "lp-discord-cast-card"), preview = el("div", "lp-discord-cast-avatars"), copy = el("div", "lp-discord-cast-copy");
+    for (const entry of entries.slice(0, 3))
+      preview.append(options.avatar(entry.name, undefined, entry.avatarUrl));
+    copy.append(el("strong", "", cast.name), el("small", "", entries.length + " people" + (added ? " · " + added + " already here" : "")));
+    const add = action(added === entries.length ? "Added" : "Add cast", "Add " + cast.name + " cast to " + server.name, () => options.request({ action: "participant", app: "discord", serverId: server.id, castId: cast.id }), !entries.length || added === entries.length);
+    card.append(preview, copy, add);
+    castSection.inner.append(card);
+  }
+  if (!casts.length)
+    castSection.inner.append(el("p", "lp-discord-picker-hint", "Your saved portable casts will appear here."));
+  body.append(castSection.group);
+  const picker = (label, key, entries, bankSource) => {
+    const section = disclosure(key, label, entries.length);
+    for (const entry of entries) {
+      const added = Boolean(server.participants?.some((person) => bankSource ? person.bankId === entry.id : person.actorId === entry.id)), row = el("div", "lp-discord-picker-row"), copy = el("span", "lp-discord-member-copy");
+      copy.append(el("strong", "", entry.name), el("small", "", entry.role || "Pocket contact"));
+      const name = bankSource ? `Add ${entry.name} to ${server.name}` : `Add ${entry.name} from Characters to ${server.name}`;
+      row.append(options.avatar(entry.name, entry.actorId, entry.avatarUrl), copy, action(added ? "Added" : "Add", name, () => options.request({ action: "participant", app: "discord", serverId: server.id, ...bankSource ? { bankEntryId: entry.id } : { accountId: entry.id } }), added));
+      section.inner.append(row);
+    }
+    return section.group;
+  };
+  body.append(picker("Characters", "characters", contacts.map((contact) => ({ ...contact, actorId: contact.id })), false), picker("NPC Bank", "bank", bank, true));
+  const manual = disclosure("manual", "Create a person", 0), form = el("form", "lp-discord-person-form");
+  form.setAttribute("aria-label", "Add person to " + server.name);
+  ui.personDrafts ||= {};
+  const draft = ui.personDrafts[server.id] ||= { name: "", bio: "" };
+  for (const [key, label] of [["name", "Person name"], ["bio", "Person bio"]]) {
+    const field = el("label", "lp-social-field"), input = key === "name" ? el("input", "lp-input") : el("textarea", "lp-input");
+    input.value = draft[key];
+    input.maxLength = key === "name" ? 100 : 280;
+    input.required = key === "name";
+    input.disabled = Boolean(ui.pending);
+    input.dataset.socialFocus = server.id + ":" + label;
+    input.oninput = () => {
+      draft[key] = input.value;
+    };
+    field.append(el("span", "", label), input);
+    form.append(field);
+  }
+  const add = action("Add person", "Add person", () => {});
+  add.type = "submit";
+  form.append(add);
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    options.request({ action: "participant", app: "discord", serverId: server.id, name: draft.name, bio: draft.bio });
+  };
+  manual.inner.append(form);
+  body.append(manual.group);
+  return page;
+}
+
+// src/frontend/components/social-previews.ts
+var previewHash = (value) => [...value].reduce((hash, letter) => hash * 31 + letter.charCodeAt(0) >>> 0, 7);
+function socialPortrait(name) {
+  const hash = previewHash(name), hue = hash % 360, turn = (hash >>> 4) % 180;
+  return `<svg viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" focusable="false"><rect width="96" height="96" fill="hsl(${hue} 38% 25%)"/><g transform="rotate(${turn} 48 48)"><circle cx="28" cy="27" r="29" fill="hsl(${(hue + 40) % 360} 61% 71%)"/><path d="M22 96 57 10l50 86Z" fill="hsl(${(hue + 150) % 360} 54% 57%)"/><circle cx="75" cy="72" r="28" fill="hsl(${(hue + 280) % 360} 58% 81%)"/><path d="M-8 54h112" stroke="hsl(${hue} 25% 20%)" stroke-width="12"/></g></svg>`;
+}
+var svgUrl = (content) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content)}`;
+function socialPreviewImage(kind) {
+  const scene = kind === "window" ? '<rect width="600" height="600" fill="#1d304a"/><rect x="85" y="65" width="430" height="460" rx="170" fill="#b9d6e7"/><circle cx="380" cy="210" r="69" fill="#fff0ba"/><path d="M85 355 230 270l190 120 95-60v195H85" fill="#6c889d"/><path d="M300 65v460M85 350h430" stroke="#374963" stroke-width="22"/><path d="M55 525h490v25H55" fill="#e0b191"/><path d="M410 525v-50h55v50M405 475h65" fill="#c98178"/><path d="M437 480c-55-25-45-70-32-74 39 3 41 45 32 74m0-15c38-49 62-32 58-12-5 24-34 33-58 33" fill="#638d6f"/>' : kind === "coffee" ? '<rect width="600" height="600" fill="#dfc9aa"/><path d="M0 190h600M200 0v600" stroke="#d1b38e" stroke-width="3"/><ellipse cx="315" cy="360" rx="160" ry="80" fill="#c7a582"/><ellipse cx="300" cy="330" rx="135" ry="92" fill="#f1e9db"/><path d="M190 230v90c0 105 220 105 220 0v-90" fill="#e9e0cf"/><path d="M405 245c98-35 116 92 5 91" fill="none" stroke="#e9e0cf" stroke-width="30"/><ellipse cx="300" cy="230" rx="111" ry="66" fill="#f8f1e5"/><ellipse cx="300" cy="231" rx="94" ry="51" fill="#9a6341"/><path d="M248 227c25-40 80-35 102 0-23 32-65 32-102 0" fill="#f6e0b8"/><path d="M160 435h170l-40 75H130Z" fill="#a77855"/><path d="M105 95h145v90H105" fill="#6b866b"/>' : '<rect width="600" height="600" fill="#dce8dc"/><circle cx="470" cy="130" r="80" fill="#f9e7b0"/><path d="M0 410c120-130 230-140 600-50v240H0Z" fill="#93b49a"/><path d="M50 600c40-170 160-200 270-250s100-120 120-180" fill="none" stroke="#d5c7a8" stroke-width="70"/><g fill="#4d7d62"><ellipse cx="140" cy="240" rx="58" ry="110"/><ellipse cx="80" cy="340" rx="50" ry="75"/><ellipse cx="510" cy="440" rx="80" ry="120"/></g><g fill="#c8889c"><circle cx="100" cy="360" r="14"/><circle cx="150" cy="290" r="12"/><circle cx="510" cy="400" r="15"/><circle cx="540" cy="470" r="13"/></g>';
+  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600">${scene}</svg>`);
+}
+var SOCIAL_PREVIEW_STORIES = [
+  { name: "Fern", handle: "fern.frames", caption: "A quiet corner, before the day gets loud.", image: socialPreviewImage("window") },
+  { name: "Mika", handle: "mika.mornings", caption: "One small ritual. Very good coffee.", image: socialPreviewImage("coffee") },
+  { name: "June", handle: "junebug", caption: "Taking the long way home.", image: socialPreviewImage("garden") }
+];
+function socialPreviewPosts(app) {
+  if (app === "discord")
+    return [];
+  const rows = app === "twitter" ? [{ name: "Mika", handle: "mika_mornings", text: "opening a window counts as going outside. i have decided.", tags: [] }, { name: "The little bookshop", handle: "littlebookshop", text: "A small reminder: you are allowed to buy a book just because the cover makes you happy.", tags: [] }, { name: "Fern", handle: "fernframes", text: "Today’s weather report: excellent light, questionable plans.", imageUrl: socialPreviewImage("window"), photo: "An illustrated arched window, sunlit hills and a small plant.", tags: [] }] : app === "instagram" ? [{ name: "Fern", handle: "fern.frames", text: "soft light, slow morning. a little space to breathe.", imageUrl: socialPreviewImage("window"), photo: "An illustrated sunlit window looking over hills.", tags: ["quietcorners", "morninglight"] }, { name: "Mika", handle: "mika.mornings", text: "the first sip is a personality trait", imageUrl: socialPreviewImage("coffee"), photo: "An illustrated latte on a warm café table.", tags: ["coffeeandcompany"] }, { name: "June", handle: "junebug", text: "somewhere along the long way home \uD83C\uDF3F", imageUrl: socialPreviewImage("garden"), photo: "An illustrated garden path winding through flowers.", tags: ["littlewalks"] }] : [{ name: "June", handle: "junebug", title: "A small collection of good things", text: `windows left open
+books with notes in the margins
+someone remembering how you take your tea
+
+that’s it. that’s the post.`, tags: ["little things", "a very small list"] }, { name: "Mika", handle: "moonlit-mika", text: "we should bring back taking a notebook everywhere and writing down one incredibly dramatic sentence at a time", tags: ["writer problems", "actually i never stopped"] }, { name: "Fern", handle: "fern-and-fiction", text: "a window seat is a state of mind", imageUrl: socialPreviewImage("window"), photo: "An illustrated window seat in warm afternoon light.", tags: ["soft places", "art"] }];
+  return rows.map((row, index) => ({ ...row, id: `preview:${app}:${index}`, app, account: { id: `preview:${row.handle}`, name: row.name, handle: row.handle }, text: row.text, createdAt: "", likedBy: [] }));
+}
+
+// src/frontend/apps/social.ts
+function renderSocial(host) {
+  const { state, app, ui, owner } = host, world = normalizeSocialState(state.social), account = socialOwner(state, owner, app);
+  const { page, content } = host.page(SOCIAL_NAMES[app], app === "discord" ? "Your little communities" : `@${account.handle}`);
+  page.classList.add("lp-social-page", `lp-social-page-${app}`);
+  page.dataset.socialPlatform = app;
+  content.classList.add("lp-social", `lp-social-${app}`);
+  if (app === "discord") {
+    ui.threadId = undefined;
+    ui.reblogOf = undefined;
+    const preference = world.preferences?.[owner];
+    page.dataset.discordTheme = preference?.discordTheme || "gray";
+    const colors = preference?.discordGradient || ["#302659", "#171d37"];
+    page.style.setProperty("--discord-start", colors[0]);
+    page.style.setProperty("--discord-end", colors[1]);
+  }
+  if (app === "tumblr")
+    page.dataset.tumblrTheme = socialTumblrTheme(world, owner);
+  const accountAvatar = (name, actorId, trustedAvatarUrl) => {
+    const avatar = el("span", "lp-social-avatar");
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.innerHTML = socialPortrait(name);
+    const contactId = state.discoveredActors?.find((actor) => actor.id === actorId)?.promotedContactId || actorId;
+    const contact = state.contacts.find((contact) => contact.id === contactId);
+    const imageUrl = trustedAvatarUrl || (actorId === state.pocketPersonaActorId ? state.pocketPersona.avatarUrl : contact ? contactAvatar(contact) : "");
+    const hue = [...name].reduce((value, letter) => (value * 31 + letter.charCodeAt(0)) % 360, 0);
+    avatar.style.background = `hsl(${hue} 27% 38%)`;
+    if (imageUrl) {
+      const image = el("img");
+      image.src = imageUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      image.onerror = () => image.remove();
+      avatar.append(image);
+    }
+    return avatar;
+  };
+  const postTimestamp = (post) => {
+    const clock = activityClock({ presentation: { storyAt: post.createdAt, storyTimezoneOffsetMinutes: state.roleplayTimezoneOffsetMinutes } });
+    if (app === "discord")
+      return clock.time || "Story time";
+    const elapsed = Date.parse(state.roleplayNow) - Date.parse(post.createdAt);
+    if ((state.roleplayClockSource === "manual" || state.roleplayClockPrecision === "exact") && Number.isFinite(elapsed) && elapsed >= 0 && elapsed < 86400000) {
+      const minutes = Math.floor(elapsed / 60000);
+      return minutes < 1 ? "now" : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`;
+    }
+    return clock.date.split(", ").at(-1) || "Story time";
+  };
+  const actionButton = (text, name, fn, className = "lp-social-button") => {
+    const node = button(text, className);
+    if (name !== text)
+      node.setAttribute("aria-label", name);
+    node.dataset.socialFocus = name;
+    node.disabled = Boolean(ui.pending);
+    node.onclick = fn;
+    return node;
+  };
+  const iconAction = (kind, name, fn, className = "") => {
+    const node = actionButton("", name, fn, `lp-social-button lp-social-icon-button ${className}`);
+    node.append(socialIcon(kind));
+    return node;
+  };
+  const saveDmDraft = () => {
+    if (ui.dmOpen && ui.dmAccountId) {
+      ui.dmDrafts ||= {};
+      ui.dmDrafts[ui.dmAccountId] = ui.dmDraft || "";
+    }
+  };
+  const leaveDm = () => {
+    saveDmDraft();
+    ui.dmOpen = false;
+    ui.dmAccountId = undefined;
+    ui.dmThreadId = undefined;
+    ui.dmDraft = "";
+  };
+  const openDm = (accountId, threadId) => {
+    saveDmDraft();
+    if (app === "tumblr") {
+      ui.tumblrView = "activity";
+      ui.tumblrHubTab = "messages";
+    }
+    ui.dmOpen = true;
+    ui.settingsOpen = false;
+    ui.dmAccountId = accountId;
+    ui.dmThreadId = threadId;
+    ui.dmDraft = ui.dmDrafts?.[accountId] || "";
+    ui.dmError = undefined;
+    ui.scrollTop = 0;
+    host.render();
+  };
+  const resetNavigation = () => {
+    leaveDm();
+    ui.tumblrView = undefined;
+    ui.friendsScreen = false;
+    ui.settingsOpen = false;
+    ui.replyTo = undefined;
+    ui.reblogOf = undefined;
+    ui.threadId = undefined;
+    ui.composing = false;
+  };
+  const navigateBack = () => {
+    const returnToChannels = app === "discord" && Boolean(ui.serverOpen || ui.peopleOpen || ui.channelsOpen);
+    const returnToUsername = !ui.settingsOpen && Boolean(ui.usernameEdit);
+    const returnToDiscussion = !ui.settingsOpen && !ui.dmOpen && Boolean(ui.threadId || ui.replyTo) && !ui.reblogOf;
+    if (ui.friendsScreen)
+      ui.friendsScreen = false;
+    else if (ui.settingsOpen)
+      ui.settingsOpen = false;
+    else if (ui.profileEdit)
+      ui.profileEdit = false;
+    else if (ui.usernameEdit) {
+      ui.usernameEdit = false;
+      ui.usernameFocus = "button";
+    } else if (ui.dmOpen) {
+      if (ui.dmAccountId || ui.dmThreadId) {
+        saveDmDraft();
+        ui.dmAccountId = undefined;
+        ui.dmThreadId = undefined;
+        ui.dmDraft = "";
+      } else {
+        leaveDm();
+        ui.tumblrView = undefined;
+      }
+    } else if (ui.serverOpen || ui.peopleOpen || ui.channelsOpen) {
+      ui.serverOpen = false;
+      ui.peopleOpen = false;
+      ui.channelsOpen = false;
+      ui.focusChannels = true;
+    } else if (ui.threadId || ui.replyTo || ui.reblogOf) {
+      ui.threadId = undefined;
+      ui.replyTo = undefined;
+      ui.reblogOf = undefined;
+      ui.composing = false;
+      ui.focusDiscussion = true;
+    } else if (ui.composing)
+      ui.composing = false;
+    else if (ui.tumblrView)
+      ui.tumblrView = undefined;
+    else if (ui.ownOnly) {
+      ui.ownOnly = false;
+      if (app === "discord")
+        ui.focusChannels = true;
+    } else
+      return false;
+    ui.scrollTop = 0;
+    const mount = page.parentElement;
+    host.render();
+    const discussionTarget = returnToDiscussion ? [...mount?.querySelectorAll("[data-social-focus]") || []].find((node) => node.dataset.socialFocus === ui.discussionFocus) : undefined;
+    if (discussionTarget) {
+      ui.focusDiscussion = false;
+      discussionTarget.focus({ preventScroll: true });
+    } else
+      mount?.querySelector(returnToUsername ? '[data-social-focus="Change username"]' : returnToChannels ? '[data-social-focus="Channels"]' : '[data-social-focus="App navigation"]')?.focus({ preventScroll: true });
+    return true;
+  };
+  const internalView = Boolean(ui.settingsOpen || ui.profileEdit || ui.usernameEdit || ui.dmOpen || ui.serverOpen || ui.peopleOpen || ui.channelsOpen || ui.threadId || ui.replyTo || ui.reblogOf || ui.composing || ui.ownOnly || ui.tumblrView);
+  const backName = ui.friendsScreen ? `Back to ${SOCIAL_NAMES[app]} settings` : ui.settingsOpen ? `Close ${SOCIAL_NAMES[app]} settings` : ui.usernameEdit ? `Back to ${SOCIAL_NAMES[app]} profile` : ui.threadId && ui.tumblrView ? `Back to Tumblr ${ui.tumblrView === "search" ? "search" : "activity"}` : ui.dmOpen ? ui.dmAccountId || ui.dmThreadId ? `Back to ${SOCIAL_NAMES[app]} ${app === "tumblr" ? "messages" : "inbox"}` : `Back to ${SOCIAL_NAMES[app]} feed` : app === "discord" ? "Back to Discord channels" : `Back to ${SOCIAL_NAMES[app]} feed`;
+  page.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && navigateBack()) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+  const toolbar = el("div", "lp-social-toolbar"), identity = el("div", "lp-social-wordmark", app === "twitter" ? "" : app === "instagram" ? "Instagram" : app === "tumblr" ? "tumblr" : "Discord");
+  if (app === "twitter") {
+    identity.append(socialIcon("bird"));
+    identity.setAttribute("aria-label", "Twitter");
+  }
+  const refresh = actionButton("Refresh feed now", `Refresh ${SOCIAL_NAMES[app]}`, () => {
+    ui.settingsOpen = false;
+    host.request({ action: "refresh", app, channelId: ui.channelId });
+  }, "lp-social-button lp-social-settings-refresh");
+  const settings = el("section", "lp-social-settings lp-settings-section");
+  settings.id = requestId("social_settings");
+  settings.setAttribute("aria-label", `${SOCIAL_NAMES[app]} settings`);
+  settings.hidden = !ui.settingsOpen;
+  const gear = iconAction("settings", `${SOCIAL_NAMES[app]} settings`, () => {
+    ui.settingsOpen = !ui.settingsOpen;
+    ui.scrollTop = 0;
+    host.render();
+  });
+  gear.setAttribute("aria-expanded", String(Boolean(ui.settingsOpen)));
+  gear.setAttribute("aria-controls", settings.id);
+  const quickRefresh = iconAction("refresh", `Refresh ${SOCIAL_NAMES[app]}`, () => host.request({ action: "refresh", app, channelId: ui.channelId }), "lp-social-quick-refresh");
+  quickRefresh.title = "Refresh feed";
+  quickRefresh.hidden = Boolean(ui.dmOpen || ui.serverOpen || ui.peopleOpen || ui.settingsOpen);
+  refresh.setAttribute("aria-label", "Refresh feed now");
+  refresh.dataset.socialFocus = "Refresh feed now";
+  const inbox = app === "instagram" ? iconAction("reply", "Instagram messages", () => {
+    saveDmDraft();
+    ui.dmOpen = true;
+    ui.settingsOpen = false;
+    ui.dmThreadId = undefined;
+    ui.dmAccountId = undefined;
+    ui.dmDraft = "";
+    ui.scrollTop = 0;
+    host.render();
+  }) : undefined;
+  const nav = page.querySelector(".lp-nav"), navTitle = nav?.querySelector(".lp-nav-title");
+  if (nav && navTitle) {
+    nav.classList.add("lp-social-app-header");
+    navTitle.replaceChildren(identity);
+    const oldBack = nav.querySelector(".lp-nav-action"), oldRight = nav.querySelector(".lp-nav-action:last-child");
+    if (oldRight && oldRight !== oldBack)
+      oldRight.remove();
+    if (oldBack) {
+      const back = internalView || host.home ? button("", "lp-nav-action lp-social-back") : oldBack;
+      if (internalView || host.home) {
+        back.onclick = () => {
+          if (internalView)
+            navigateBack();
+          else
+            host.home?.();
+        };
+        oldBack.replaceWith(back);
+      }
+      back.disabled = false;
+      back.setAttribute("aria-label", internalView ? backName : "Return to Pocket home");
+      back.title = internalView ? backName : "Pocket home";
+      back.dataset.socialFocus = "App navigation";
+      back.replaceChildren(socialIcon(internalView ? "back" : "home"));
+      back.classList.add("lp-social-back");
+    }
+    const actions = el("div", "lp-social-header-actions");
+    actions.append(quickRefresh);
+    if (inbox)
+      actions.append(inbox);
+    actions.append(gear);
+    nav.append(actions);
+  } else {
+    toolbar.append(identity);
+    const actions = el("div", "lp-social-header-actions");
+    actions.append(quickRefresh);
+    if (inbox)
+      actions.append(inbox);
+    actions.append(gear);
+    toolbar.append(actions);
+    content.append(toolbar);
+  }
+  const operation = el("div", "lp-social-operation"), status = el("p", "lp-social-status", ui.status || (ui.refreshing ? "Finding new posts in your world…" : ""));
+  status.setAttribute("role", "status");
+  operation.hidden = (app === "instagram" || app === "tumblr") && Boolean(ui.dmOpen && !ui.settingsOpen && !ui.refreshing) || app === "tumblr" && Boolean(ui.tumblrView || ui.ownOnly) && !ui.refreshing;
+  const stop = button("Stop", "lp-social-button lp-social-stop");
+  stop.setAttribute("aria-label", `Stop refreshing ${SOCIAL_NAMES[app]}`);
+  stop.onclick = host.cancel;
+  stop.hidden = !ui.refreshing;
+  operation.append(status, stop);
+  page.insertBefore(operation, content);
+  if (ui.error) {
+    const error = el("p", "lp-social-error", ui.error);
+    error.setAttribute("role", "alert");
+    content.append(error);
+  }
+  settings.append(el("h2", "", `${SOCIAL_NAMES[app]} settings`), refresh, el("p", "lp-copy", "Choose when your feed updates. Each app keeps its own schedule."));
+  const savedSettings = socialAppSettings(world, owner, app);
+  const scheduleSection = sectionBlock("Feed updates", "Choose when new posts arrive.");
+  const generationSection = sectionBlock("Generation", "Photos and guest authors");
+  const peopleSection = sectionBlock(app === "discord" ? "Server participants" : "People", app === "discord" ? "Each server keeps its own participant bank." : "Friends, characters, and portable casts");
+  settings.append(scheduleSection.section, generationSection.section, peopleSection.section);
+  const modeField = el("label", "lp-field lp-social-field lp-social-setting-field"), mode = el("select", "lp-select");
+  modeField.append(el("span", "", "Feed refresh"), mode);
+  for (const [value, label] of [["manual", "Manual"], ["turn", "After each turn"], ["timer", "Automatic"]]) {
+    const option = el("option", "", label);
+    option.value = value;
+    option.selected = savedSettings.refreshMode === value;
+    mode.append(option);
+  }
+  mode.disabled = Boolean(ui.pending);
+  mode.dataset.socialFocus = "Feed refresh";
+  mode.onchange = () => {
+    ui.settingsFocus = "Feed refresh";
+    host.request({ action: "settings", app, refreshMode: mode.value });
+  };
+  scheduleSection.body.append(modeField);
+  if (savedSettings.refreshMode === "timer") {
+    const intervalField = el("label", "lp-field lp-social-field lp-social-setting-field"), interval = el("input", "lp-input");
+    intervalField.append(el("span", "", "Refresh interval (minutes)"), interval);
+    interval.type = "number";
+    interval.min = "1";
+    interval.max = "120";
+    interval.step = "1";
+    interval.value = String(savedSettings.refreshIntervalMinutes);
+    interval.disabled = Boolean(ui.pending);
+    interval.dataset.socialFocus = "Refresh interval (minutes)";
+    interval.onchange = () => {
+      const value = Math.min(120, Math.max(1, Math.round(Number(interval.value) || 5)));
+      ui.settingsFocus = "Refresh interval (minutes)";
+      host.request({ action: "settings", app, refreshIntervalMinutes: value });
+    };
+    scheduleSection.body.append(intervalField);
+  }
+  for (const [key, label] of [["generateImages", "Generate feed photos"], ["randomCards", "Allow installed character cards to post"]]) {
+    if (app === "discord" && key === "randomCards")
+      continue;
+    const field = el("label", "lp-card lp-control-row lp-social-settings-toggle"), input = el("input");
+    input.type = "checkbox";
+    input.checked = savedSettings[key];
+    input.disabled = Boolean(ui.pending);
+    input.dataset.socialFocus = label;
+    input.onchange = () => {
+      ui.settingsFocus = label;
+      host.request({ action: "settings", app, [key]: input.checked });
+    };
+    field.append(el("span", "lp-control-label", label), input);
+    generationSection.body.append(field);
+  }
+  if (app === "discord") {
+    const appearance = sectionBlock("Appearance", "Choose a home for your conversations."), label = el("label", "lp-field"), select = el("select", "lp-select");
+    label.append(el("span", "", "Discord theme"), select);
+    for (const [value, title] of [["gray", "Discord gray"], ["amoled", "AMOLED"], ["gradient", "Custom gradient"]]) {
+      const option = el("option", "", title);
+      option.value = value;
+      option.selected = (world.preferences?.[owner]?.discordTheme || "gray") === value;
+      select.append(option);
+    }
+    select.disabled = Boolean(ui.pending);
+    select.dataset.socialFocus = "Discord theme";
+    select.onchange = () => {
+      ui.settingsFocus = "Discord theme";
+      host.request({ action: "preferences", app, discordTheme: select.value });
+    };
+    appearance.body.append(label);
+    if (world.preferences?.[owner]?.discordTheme === "gradient") {
+      const customize = actionButton("Edit theme gradient", "Edit Discord theme gradient", () => discordGradientEditor(customize, world.preferences?.[owner]?.discordGradient || ["#302659", "#171d37"], (colors) => {
+        ui.settingsFocus = "Edit Discord theme gradient";
+        host.request({ action: "preferences", app, discordTheme: "gradient", gradient: colors });
+      }, "Discord theme gradient"));
+      appearance.body.append(customize);
+    }
+    settings.insertBefore(appearance.section, scheduleSection.section);
+  }
+  const friends = el("div", "lp-social-friend-picker");
+  const friendGroup = (key, title, count, defaultOpen = true) => {
+    const group = el("details", "lp-social-friends-group"), summary = el("summary"), body = el("div", "lp-social-friends-group-body");
+    summary.append(el("span", "", title), el("span", "lp-social-group-count", String(count)));
+    group.append(summary, body);
+    group.dataset.friendGroup = key;
+    group.open = ui.friendGroups?.[key] ?? defaultOpen;
+    summary.onclick = () => {
+      ui.friendGroups ||= {};
+      ui.friendGroups[key] = !group.open;
+    };
+    friends.append(group);
+    return body;
+  };
+  if (host.bankGroups?.length) {
+    const casts = friendGroup("casts", "Portable casts", host.bankGroups.length);
+    for (const cast of host.bankGroups)
+      casts.append(actionButton(`Add ${cast.name} · ${cast.memberIds.length} people`, `Add portable cast ${cast.name}`, () => host.request({ action: "settings", app, friendEntryIds: [...new Set([...savedSettings.friendEntryIds, ...cast.memberIds])].slice(0, 24) }), "lp-social-cast-choice"));
+  }
+  const contacts = state.contacts.filter((contact) => contact.id !== owner);
+  if (contacts.length) {
+    const characters = friendGroup("characters", "Characters", contacts.length);
+    for (const contact of contacts) {
+      const id = `actor:${contact.id}`, field = el("label", "lp-social-friend-row"), input = el("input");
+      input.type = "checkbox";
+      input.checked = savedSettings.friendEntryIds.includes(id);
+      input.disabled = Boolean(ui.pending);
+      input.setAttribute("aria-label", `Include ${contact.name} from Characters`);
+      input.onchange = () => {
+        const selected = new Set(savedSettings.friendEntryIds);
+        input.checked ? selected.add(id) : selected.delete(id);
+        host.request({ action: "settings", app, friendEntryIds: [...selected] });
+      };
+      field.append(accountAvatar(contact.name, contact.id), el("strong", "lp-social-friend-identity", contact.name), input);
+      characters.append(field);
+    }
+  }
+  const bank = friendGroup("bank", "NPC Bank", host.npcBank?.length || 0, (host.npcBank?.length || 0) <= 6);
+  if (!host.npcBank?.length)
+    bank.append(el("p", "lp-copy", "Save people in NPC Bank to invite them into this app."));
+  for (const entry of host.npcBank || []) {
+    const field = el("label", "lp-social-friend-row"), input = el("input");
+    input.type = "checkbox";
+    input.checked = savedSettings.friendEntryIds.includes(entry.id);
+    input.disabled = Boolean(ui.pending);
+    input.dataset.socialFocus = `Friend ${entry.id}`;
+    input.setAttribute("aria-label", `Include ${entry.name} from NPC Bank`);
+    input.onchange = () => {
+      const selected = new Set(savedSettings.friendEntryIds);
+      input.checked ? selected.add(entry.id) : selected.delete(entry.id);
+      ui.settingsFocus = `Friend ${entry.id}`;
+      host.request({ action: "settings", app, friendEntryIds: [...selected] });
+    };
+    const identity = el("span", "lp-social-friend-identity");
+    identity.append(el("strong", "", entry.name));
+    if (entry.role)
+      identity.append(el("small", "", entry.role));
+    field.append(accountAvatar(entry.name, undefined, entry.avatarUrl), identity, input);
+    bank.append(field);
+  }
+  if (app === "discord") {
+    for (const server of world.servers.filter((server) => server.memberActorIds.includes(owner)))
+      peopleSection.body.append(actionButton(`People in ${server.name}`, `Manage people in ${server.name}`, () => {
+        ui.serverId = server.id;
+        ui.channelId = server.channels[0]?.id;
+        ui.ownOnly = false;
+        ui.settingsOpen = false;
+        ui.peopleOpen = true;
+        ui.channelsOpen = false;
+        ui.serverOpen = false;
+        ui.scrollTop = 0;
+        host.render();
+      }, "lp-button lp-button-quiet"));
+    if (!world.servers.some((server) => server.memberActorIds.includes(owner)))
+      peopleSection.body.append(el("p", "lp-copy", "Create a server to choose its participants."));
+  } else {
+    const peopleButton = actionButton("Friends & casts", "Choose friends and portable casts", () => {
+      ui.friendsScreen = true;
+      ui.scrollTop = 0;
+      host.render();
+    }, "lp-button lp-button-quiet");
+    peopleSection.body.append(peopleButton);
+  }
+  const servers = world.servers.filter((server) => server.memberActorIds.includes(owner));
+  let discordPeople2, discordPanel, discordCreation, discordRail, discordHeader, channelsToggle, serverNameInput;
+  if (app === "discord") {
+    const server = servers.find((server) => server.id === ui.serverId) || servers[0];
+    ui.serverId = server?.id;
+    const panel = el("section", "lp-discord-channel-panel");
+    panel.id = requestId("social_channels");
+    panel.setAttribute("aria-label", "Server channels");
+    discordPanel = panel;
+    const rail = el("nav", "lp-discord-server-rail");
+    rail.setAttribute("aria-label", "Discord servers");
+    discordRail = rail;
+    for (const item of servers) {
+      const control = actionButton(item.name.split(/\s+/).map((word) => word[0]).join("").slice(0, 2).toUpperCase(), `Open server ${item.name}`, () => {
+        ui.serverId = item.id;
+        ui.channelId = undefined;
+        ui.ownOnly = false;
+        ui.usernameEdit = false;
+        ui.profileEdit = false;
+        ui.serverOpen = false;
+        ui.settingsOpen = false;
+        ui.peopleOpen = false;
+        ui.channelsOpen = true;
+        host.render();
+      }, "lp-discord-server");
+      control.setAttribute("aria-pressed", String(item.id === server?.id));
+      control.title = item.name;
+      if (item.imageUrl) {
+        const image = el("img");
+        image.src = item.imageUrl;
+        image.alt = "";
+        control.replaceChildren(image);
+      }
+      rail.append(control);
+    }
+    rail.append(iconAction("plus", "Create a Discord server", () => {
+      ui.ownOnly = false;
+      ui.usernameEdit = false;
+      ui.profileEdit = false;
+      ui.channelsOpen = false;
+      ui.peopleOpen = false;
+      ui.serverOpen = true;
+      ui.focusServerCreate = true;
+      host.render();
+    }, "lp-discord-server lp-discord-add-server"));
+    const profileButton = actionButton("", "Discord profile", () => {
+      resetNavigation();
+      ui.ownOnly = true;
+      ui.serverOpen = false;
+      ui.peopleOpen = false;
+      ui.channelsOpen = false;
+      ui.scrollTop = 0;
+      host.render();
+    }, "lp-discord-server lp-discord-profile-launch");
+    profileButton.append(accountAvatar(account.name, account.actorId));
+    profileButton.title = "Your Discord profile";
+    profileButton.setAttribute("aria-pressed", String(Boolean(ui.ownOnly)));
+    rail.append(profileButton);
+    const selected = server?.channels.find((channel) => channel.id === ui.channelId) || server?.channels[0];
+    ui.channelId = selected?.id;
+    refresh.disabled ||= !selected || Boolean(ui.serverOpen);
+    quickRefresh.disabled ||= !selected || Boolean(ui.serverOpen);
+    const channelHeading = el("header", "lp-discord-channel-heading");
+    discordHeader = channelHeading;
+    const renderChannelNavigation = () => {
+      const mount = page.parentElement;
+      ui.focusChannels = false;
+      host.render();
+      mount?.querySelector('[data-social-focus="Channels"]')?.focus({ preventScroll: true });
+    };
+    channelsToggle = iconAction(ui.peopleOpen ? "back" : "channels", ui.peopleOpen ? "Back to server channels" : ui.channelsOpen ? "Hide channels" : "Show channels", () => {
+      ui.channelsOpen = !ui.channelsOpen;
+      ui.peopleOpen = false;
+      ui.serverOpen = false;
+      renderChannelNavigation();
+    });
+    channelsToggle.disabled = false;
+    channelsToggle.dataset.socialFocus = "Channels";
+    channelsToggle.setAttribute("aria-expanded", String(Boolean(ui.channelsOpen)));
+    channelsToggle.setAttribute("aria-controls", panel.id);
+    const pins = button("", "lp-social-button lp-social-icon-button lp-discord-pins-open");
+    pins.append(socialIcon("pin"));
+    pins.setAttribute("aria-label", "Pinned messages");
+    pins.setAttribute("aria-haspopup", "dialog");
+    pins.onclick = () => discordPins(pins, world.posts.filter((post) => post.app === "discord" && post.channelId === ui.channelId), (id) => {
+      const target = [...page.querySelectorAll("[data-social-post]")].find((node) => node.dataset.socialPost === id);
+      target?.scrollIntoView({ block: "center" });
+      target?.focus({ preventScroll: true });
+    });
+    pins.hidden = Boolean(ui.peopleOpen || ui.serverOpen);
+    channelHeading.append(channelsToggle, el("strong", "", ui.peopleOpen && server ? server.name : selected ? `# ${selected.name}` : "Your servers"), pins);
+    panel.hidden = Boolean(!ui.channelsOpen || ui.serverOpen || ui.peopleOpen);
+    if (server) {
+      const menu = el("div", "lp-discord-server-menu"), menuBody = el("div", "lp-discord-server-menu-body"), menuId = requestId("discord_server_menu"), menuOpen = Boolean(ui.serverMenus?.[server.id]);
+      const menuToggle = button("", "lp-discord-server-menu-toggle"), name = el("strong", "", server.name), picture = el("span", "lp-discord-server-menu-picture", server.name.slice(0, 2).toUpperCase());
+      picture.setAttribute("aria-hidden", "true");
+      if (server.imageUrl) {
+        const image = el("img");
+        image.src = server.imageUrl;
+        image.alt = "";
+        picture.replaceChildren(image);
+      }
+      menuToggle.append(picture, name, socialIcon("chevron"));
+      menuToggle.setAttribute("aria-label", server.name + " server menu");
+      menuToggle.setAttribute("aria-expanded", String(menuOpen));
+      menuToggle.setAttribute("aria-controls", menuId);
+      menuToggle.dataset.socialFocus = "Server menu";
+      const setMenu = (open) => {
+        ui.serverMenus ||= {};
+        ui.serverMenus[server.id] = open;
+        const mount = page.parentElement;
+        host.render();
+        mount?.querySelector('[data-social-focus="Server menu"]')?.focus({ preventScroll: true });
+      };
+      menuToggle.onclick = () => setMenu(!menuOpen);
+      menu.onkeydown = (event) => {
+        if (event.key === "Escape" && menuOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          setMenu(false);
+        }
+      };
+      menuBody.id = menuId;
+      menuBody.hidden = !menuOpen;
+      menuBody.append(discordServerPicture({ name: server.name, url: server.imageUrl, ui, upload: () => host.uploadServerPicture?.(server.id), cancel: host.cancelPhoto }), actionButton("People", `People in ${server.name}`, () => {
+        ui.serverMenus ||= {};
+        ui.serverMenus[server.id] = false;
+        ui.peopleOpen = true;
+        ui.channelsOpen = false;
+        ui.serverOpen = false;
+        ui.scrollTop = 0;
+        host.render();
+      }, "lp-discord-menu-people"));
+      menu.append(menuToggle, menuBody);
+      const channels = el("div", "lp-social-channels");
+      channels.setAttribute("role", "group");
+      channels.setAttribute("aria-label", `${server.name} channels`);
+      for (const channel of server.channels) {
+        const control = actionButton(`# ${channel.name}`, `Open ${server.name} channel ${channel.name}`, () => {
+          ui.serverMenus ||= {};
+          ui.serverMenus[server.id] = false;
+          ui.channelId = channel.id;
+          ui.replyTo = undefined;
+          ui.channelsOpen = false;
+          ui.focusChannels = true;
+          ui.scrollTop = 0;
+          host.render();
+        });
+        control.setAttribute("aria-pressed", String(channel.id === selected?.id));
+        channels.append(control);
+      }
+      panel.append(menu);
+      const menuError = content.querySelector(".lp-social-error");
+      if (menuError && ui.channelsOpen)
+        panel.append(menuError);
+      panel.append(el("span", "lp-discord-channel-label", "TEXT CHANNELS"), channels);
+      if (server.description || selected?.topic)
+        panel.append(el("p", "lp-copy", selected?.topic || server.description));
+    }
+    if (!server)
+      panel.append(el("p", "lp-copy", "No servers yet. Use + in the server rail to create your first community."));
+    const create = el("section", "lp-discord-server-create");
+    create.setAttribute("aria-label", "Create a Discord server");
+    discordCreation = create;
+    create.hidden = !ui.serverOpen;
+    if (!nav)
+      create.append(actionButton("Back to channels", "Back to Discord channels", () => {
+        ui.serverOpen = false;
+        ui.focusChannels = true;
+        host.render();
+      }));
+    create.append(el("h2", "", "Create your server"), el("p", "lp-copy", "Give your community a name and a few places to talk."));
+    const form = el("form", "lp-social-compose");
+    form.setAttribute("aria-label", "Create Discord server form");
+    for (const [key, label, placeholder] of [["serverName", "Server name", "The midnight club"], ["serverTopic", "What is it about?", "A place for…"], ["serverChannels", "Channels, separated by commas", "general, off-topic, pictures"]]) {
+      const field = el("label", "lp-social-field"), input = el("input", "lp-input");
+      field.append(el("span", "", label), input);
+      input.value = ui[key] || "";
+      input.placeholder = placeholder;
+      input.maxLength = key === "serverName" ? 80 : 240;
+      input.required = key !== "serverTopic";
+      input.disabled = Boolean(ui.pending);
+      input.oninput = () => {
+        ui[key] = input.value;
+      };
+      input.dataset.socialFocus = key;
+      if (key === "serverName")
+        serverNameInput = input;
+      form.append(field);
+    }
+    const submit = button("Create server", "lp-social-button");
+    submit.type = "submit";
+    submit.disabled = Boolean(ui.pending || ui.imageBusy);
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      host.request({ action: "server", app, imageId: ui.serverImage?.id, name: ui.serverName, text: ui.serverTopic, channels: (ui.serverChannels || "").split(",").map((name) => name.trim()).filter(Boolean) });
+    };
+    form.append(submit);
+    create.append(discordServerPicture({ name: "new server", url: ui.serverImage?.url, ui, upload: () => host.uploadServerPicture?.(), cancel: host.cancelPhoto }), form);
+    const people = server ? discordPeople({
+      server,
+      ui,
+      contacts,
+      bank: host.npcBank || [],
+      casts: host.bankGroups || [],
+      avatar: accountAvatar,
+      render: host.render,
+      request: host.request,
+      generate: host.generateParticipants ? () => host.generateParticipants(server.id) : undefined,
+      upload: () => host.uploadServerPicture?.(server.id),
+      cancelUpload: host.cancelPhoto
+    }) : el("section", "lp-discord-people");
+    discordPeople2 = people;
+    people.hidden = !ui.peopleOpen;
+  } else {
+    const filters = el("div", "lp-social-filters");
+    filters.hidden = Boolean(ui.ownOnly);
+    filters.setAttribute("role", "group");
+    filters.setAttribute("aria-label", `${SOCIAL_NAMES[app]} feed`);
+    for (const [second, label] of [[false, app === "tumblr" ? "Dashboard" : app === "twitter" ? "For you" : "Feed"], [true, app === "tumblr" ? "Your blog" : app === "twitter" ? "Following" : "Your posts"]]) {
+      const selected = app === "twitter" ? ui.twitterFeed === "following" === second : Boolean(ui.ownOnly) === second;
+      const control = actionButton(label, label, () => {
+        if (app === "twitter") {
+          ui.twitterFeed = second ? "following" : "for-you";
+          ui.ownOnly = false;
+        } else
+          ui.ownOnly = second;
+        ui.threadId = undefined;
+        ui.scrollTop = 0;
+        host.render();
+      });
+      control.setAttribute("aria-pressed", String(selected));
+      filters.append(control);
+    }
+    filters.hidden = Boolean(ui.ownOnly || ui.threadId || ui.replyTo || ui.reblogOf || ui.dmOpen || ui.tumblrView);
+    content.append(filters);
+  }
+  const actualPlatformPosts = world.posts.filter((post) => post.app === app && (app !== "discord" || post.channelId === ui.channelId));
+  const showingPreviews = app !== "discord" && !actualPlatformPosts.length && !ui.hidePreviews;
+  const platformPosts = showingPreviews ? socialPreviewPosts(app) : actualPlatformPosts;
+  const following = socialFollowing(world, owner, app);
+  if (app === "tumblr") {
+    const palette = el("details", "lp-tumblr-palettes"), summary = el("summary", "", "Palette");
+    palette.open = Boolean(ui.paletteOpen);
+    summary.onclick = () => {
+      ui.paletteOpen = !palette.open;
+    };
+    const options = el("div", "lp-tumblr-palette-options");
+    options.setAttribute("role", "group");
+    options.setAttribute("aria-label", "Tumblr palette");
+    const names = { "goth-rave": "Goth Rave", "true-blue": "True Blue", "dark-mode": "Dark Mode", pride: "Pride" };
+    for (const theme of TUMBLR_THEMES) {
+      const choice = actionButton(names[theme], names[theme], () => host.request({ action: "preferences", app, theme }));
+      choice.dataset.palette = theme;
+      choice.setAttribute("aria-pressed", String(socialTumblrTheme(world, owner) === theme));
+      options.append(choice);
+    }
+    const appearance = sectionBlock("Appearance", "Choose your Tumblr palette.");
+    appearance.body.append(options);
+    settings.append(appearance.section);
+  }
+  if (showingPreviews && !ui.ownOnly) {
+    const notice = el("div", "lp-social-preview-notice");
+    notice.append(el("span", "", "Sample posts · a local preview, outside your roleplay"), actionButton("Hide", "Hide sample posts", () => {
+      ui.hidePreviews = true;
+      ui.threadId = undefined;
+      host.render();
+    }));
+    content.append(notice);
+    if (app === "instagram") {
+      const stories = el("section", "lp-instagram-stories");
+      stories.setAttribute("aria-label", "Sample Instagram stories");
+      for (const story of SOCIAL_PREVIEW_STORIES) {
+        const open = actionButton("", `Preview story by ${story.name}`, () => {
+          const preview = el("div", "lp-social-story-viewer"), image = el("img");
+          image.src = story.image;
+          image.alt = story.caption;
+          preview.append(el("span", "lp-social-preview-label", "Sample story · not part of your roleplay"), image, el("strong", "", `@${story.handle}`), el("p", "", story.caption));
+          showPocketSheet(open, `Preview story by ${story.name}`, preview);
+          preview.closest("dialog")?.addEventListener("keydown", (event) => {
+            if (event.key === "Escape")
+              event.stopPropagation();
+          });
+        }, "lp-instagram-story");
+        open.append(accountAvatar(story.name), el("span", "", story.name));
+        stories.append(open);
+      }
+      content.append(stories);
+    }
+  }
+  if (ui.ownOnly) {
+    const profile = el("section", `lp-social-profile lp-${app}-profile`);
+    profile.setAttribute("aria-label", `Your ${SOCIAL_NAMES[app]} profile`);
+    profile.hidden = Boolean(ui.settingsOpen);
+    if (app === "twitter" || app === "tumblr") {
+      const banner = el("div", "lp-social-profile-banner");
+      banner.setAttribute("role", "img");
+      banner.setAttribute("aria-label", "Profile banner · phone wallpaper");
+      profile.append(banner);
+    }
+    const profileHead = el("div", "lp-social-profile-head"), profileIdentity = el("div", "lp-social-profile-identity");
+    profileIdentity.append(el("strong", "", account.name), el("span", "lp-social-profile-handle", `@${account.handle}`));
+    const postCount = actualPlatformPosts.filter((post) => post.account.actorId === owner && !post.replyTo).length;
+    profileHead.append(accountAvatar(account.name, account.actorId), profileIdentity);
+    if (app === "instagram") {
+      const stats = el("div", "lp-instagram-profile-stats");
+      for (const [value, label] of [[postCount, "posts"], [following.length, "following"]]) {
+        const stat = el("div");
+        stat.append(el("strong", "", String(value)), el("span", "", label));
+        stats.append(stat);
+      }
+      profileHead.append(stats);
+    } else
+      profileIdentity.append(el("span", "lp-social-profile-count", `${postCount} ${postCount === 1 ? "post" : "posts"}`));
+    profile.append(profileHead);
+    if (app === "tumblr")
+      profile.append(el("h2", "lp-tumblr-blog-title", `${account.name}’s corner of the internet`));
+    profile.append(el("p", "lp-social-bio", socialBio(state, owner) || "A little space for a bio."), actionButton("Edit bio", "Edit bio", () => {
+      ui.profileEdit = !ui.profileEdit;
+      ui.usernameEdit = false;
+      ui.bioDraft ??= socialBio(state, owner);
+      host.render();
+    }, "lp-social-button lp-social-edit-profile"));
+    if (ui.profileEdit) {
+      const form = el("form", "lp-social-bio-form"), label = el("label", "lp-social-field"), bio = el("textarea", "lp-input");
+      label.append(el("span", "", "Bio"), bio);
+      bio.value = ui.bioDraft ?? socialBio(state, owner);
+      bio.maxLength = 280;
+      bio.rows = 3;
+      bio.disabled = Boolean(ui.pending);
+      bio.oninput = () => {
+        ui.bioDraft = bio.value;
+      };
+      bio.dataset.socialFocus = "Bio";
+      const save = button("Save bio", "lp-social-primary");
+      save.type = "submit";
+      save.disabled = Boolean(ui.pending);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        host.request({ action: "profile", app, bio: bio.value });
+      };
+      form.append(label, save);
+      profile.append(form);
+    }
+    const changeUsername = actionButton("Change username", "Change username", () => {
+      ui.usernameEdit = !ui.usernameEdit;
+      ui.profileEdit = false;
+      ui.usernameDraft ??= account.handle;
+      ui.usernameFocus = ui.usernameEdit ? "field" : "button";
+      host.render();
+    }, "lp-social-button lp-social-edit-profile");
+    const usernameFormId = requestId("social_username");
+    changeUsername.setAttribute("aria-expanded", String(Boolean(ui.usernameEdit)));
+    changeUsername.setAttribute("aria-controls", usernameFormId);
+    profile.append(changeUsername);
+    const usernameForm = el("form", "lp-social-bio-form lp-social-username-form");
+    usernameForm.id = usernameFormId;
+    usernameForm.hidden = !ui.usernameEdit;
+    usernameForm.setAttribute("aria-label", `Change ${SOCIAL_NAMES[app]} username`);
+    const usernameLabel = el("label", "lp-social-field"), username = el("input", "lp-input"), hint = el("p", "lp-social-username-hint", `Your username on ${SOCIAL_NAMES[app]}. ${app === "twitter" ? "Letters, numbers and underscores" : app === "tumblr" ? "Letters, numbers and hyphens" : "Letters, numbers, underscores and periods"}; ${app === "discord" ? "2–32" : `up to ${SOCIAL_USERNAME_LIMITS[app]}`} characters.`);
+    hint.id = requestId("social_username_hint");
+    username.setAttribute("aria-describedby", hint.id);
+    username.value = ui.usernameDraft ?? account.handle;
+    username.maxLength = SOCIAL_USERNAME_LIMITS[app] + 1;
+    username.required = true;
+    username.minLength = app === "discord" ? 2 : 1;
+    username.autocomplete = "off";
+    username.autocapitalize = "none";
+    username.spellcheck = false;
+    username.disabled = Boolean(ui.pending);
+    username.dataset.socialFocus = "Username";
+    const saveUsername = button("Save username", "lp-social-primary");
+    saveUsername.type = "submit";
+    saveUsername.disabled = Boolean(ui.pending) || !validSocialUsername(app, username.value.trim().replace(/^@/, "").toLowerCase());
+    username.oninput = () => {
+      ui.usernameDraft = username.value;
+      saveUsername.disabled = Boolean(ui.pending) || !validSocialUsername(app, username.value.trim().replace(/^@/, "").toLowerCase());
+    };
+    usernameLabel.append(el("span", "", "Username"), username);
+    usernameForm.append(usernameLabel, hint, saveUsername);
+    usernameForm.onsubmit = (event) => {
+      event.preventDefault();
+      if (!saveUsername.disabled)
+        host.request({ action: "profile", app, username: username.value });
+    };
+    profile.append(usernameForm);
+    if (app === "discord")
+      discordOwnProfile(profile, state, owner, account, world, (input) => {
+        ui.discussionFocus = "Discord profile gradient";
+        ui.focusDiscussion = true;
+        host.request(input);
+      });
+    content.append(profile);
+  }
+  const rootOf = (post) => {
+    const parent = platformPosts.find((item) => item.id === (post.replyTo || (app === "tumblr" ? post.reblogOf : undefined)));
+    return parent ? rootOf(parent) : post;
+  };
+  const threadPost = platformPosts.find((post) => post.id === ui.threadId), thread = threadPost ? rootOf(threadPost) : undefined;
+  if (thread && !nav)
+    content.append(actionButton("Back to feed", "Back to social feed", () => {
+      navigateBack();
+    }));
+  if (thread) {
+    page.dataset.socialDiscussion = "true";
+    const heading = el("h2", "lp-social-discussion-heading", app === "twitter" ? "Post" : app === "instagram" ? "Comments" : "Notes");
+    content.append(heading);
+  }
+  let notesTabs;
+  if (thread && app === "tumblr") {
+    const tabs = el("div", "lp-tumblr-notes-tabs");
+    tabs.setAttribute("role", "group");
+    tabs.setAttribute("aria-label", "Tumblr notes");
+    for (const [mode, label] of [["comments", "Comments"], ["reblogs", "Reblogs"]]) {
+      const tab = actionButton(label, label, () => {
+        ui.notesView = mode;
+        ui.scrollTop = 0;
+        host.render();
+      });
+      tab.setAttribute("aria-pressed", String((ui.notesView || "comments") === mode));
+      tabs.append(tab);
+    }
+    notesTabs = tabs;
+  }
+  const reply = platformPosts.find((post) => post.id === ui.replyTo), reblog = platformPosts.find((post) => post.id === ui.reblogOf);
+  const compose = el("form", "lp-social-compose");
+  compose.setAttribute("aria-label", `${SOCIAL_NAMES[app]} composer`);
+  const composerTitle = el("div", "lp-social-compose-title", reply ? `${app === "tumblr" ? "Commenting on" : "Replying to"} @${reply.account.handle}` : reblog ? `${app === "twitter" ? "Quoting" : "Reblogging"} @${reblog.account.handle}` : `Posting as ${account.name}`);
+  if (reblog) {
+    const original = reply || reblog, context = el("blockquote", "lp-social-compose-context");
+    context.setAttribute("aria-label", `${reply ? "Reply to" : app === "twitter" ? "Quote Tweet" : "Reblog"} @${original.account.handle}`);
+    context.append(el("strong", "", `@${original.account.handle}`), el("p", "", original.text || original.photo || original.title || "Photo post"));
+    compose.append(context);
+  }
+  compose.append(composerTitle);
+  if (reblog)
+    compose.append(actionButton("Cancel", "Cancel social reply or reblog", () => {
+      ui.replyTo = undefined;
+      ui.reblogOf = undefined;
+      host.render();
+    }));
+  if (reply) {
+    compose.classList.add("lp-social-reply-compose", `lp-${app}-reply-compose`);
+    compose.prepend(accountAvatar(account.name, account.actorId));
+    composerTitle.append(actionButton("Cancel", "Cancel reply", () => {
+      ui.replyTo = undefined;
+      ui.composing = false;
+      host.render();
+    }, "lp-social-reply-cancel"));
+  }
+  if (app === "tumblr" && !reply) {
+    const titleLabel = el("label", "lp-social-field lp-social-post-title-field"), title = el("input", "lp-input");
+    titleLabel.append(el("span", "", "Title (optional)"), title);
+    title.placeholder = "Title";
+    title.value = ui.title || "";
+    title.maxLength = 160;
+    title.disabled = Boolean(ui.pending);
+    title.oninput = () => {
+      ui.title = title.value;
+    };
+    title.dataset.socialFocus = "Post title";
+    compose.append(titleLabel);
+  }
+  const textLabel = el("label", "lp-social-field lp-social-post-text-field"), text = el("textarea", "lp-input");
+  textLabel.append(el("span", "", reply ? app === "tumblr" ? "Your comment" : "Your reply" : app === "instagram" ? "Caption" : app === "discord" ? "Message" : "Your post"), text);
+  text.value = ui.draft || "";
+  text.rows = reply ? app === "twitter" ? 2 : 1 : app === "tumblr" ? 4 : 2;
+  text.maxLength = app === "twitter" ? 280 : 6000;
+  text.placeholder = reply ? app === "tumblr" ? "Add a comment" : "Post your reply" : reblog && app === "twitter" ? "Add a comment" : app === "twitter" ? "What’s happening in your world?" : app === "tumblr" ? "Go on. Make a little post." : app === "discord" ? "Say something to the channel…" : "A little moment, a little caption…";
+  text.dataset.socialFocus = "Social composer";
+  text.disabled = Boolean(ui.pending);
+  const footer = el("div", "lp-social-compose-footer"), count = el("span", "lp-social-count", `${text.value.length}/${text.maxLength}`), submit = button(app === "discord" ? "Send" : reply ? app === "tumblr" ? "Comment" : app === "instagram" ? "Post" : "Reply" : reblog ? app === "twitter" ? "Quote" : "Reblog" : "Post", "lp-social-primary");
+  submit.type = "submit";
+  let updatePhotoTools = () => {};
+  const updateSubmit = () => {
+    count.textContent = `${text.value.length}/${text.maxLength}`;
+    submit.disabled = Boolean(ui.pending || ui.imageBusy) || app === "discord" && !ui.channelId || !(text.value.trim() || ui.photo?.trim() || ui.imageId || ui.gif || reblog);
+    if (app === "instagram" && !reply && !reblog && !ui.imageId && !ui.photo?.trim())
+      submit.disabled = true;
+    updatePhotoTools();
+  };
+  text.oninput = () => {
+    ui.draft = text.value;
+    updateSubmit();
+  };
+  compose.append(textLabel);
+  if (app !== "discord" && !reply) {
+    const media = el("details", "lp-social-media"), summary = el("summary", "", ui.imageId ? "Photo attached" : "Add a photo or description");
+    media.open = Boolean(ui.mediaOpen || ui.photosOpen || ui.photo || ui.imageId);
+    summary.onclick = () => {
+      ui.mediaOpen = !media.open;
+    };
+    const field = el("label", "lp-social-field"), photo = el("textarea", "lp-input");
+    field.append(el("span", "", "Photo description (optional)"), photo);
+    photo.value = ui.photo || "";
+    photo.maxLength = 1000;
+    photo.rows = 2;
+    photo.disabled = Boolean(ui.pending);
+    photo.oninput = () => {
+      ui.photo = photo.value;
+      updateSubmit();
+    };
+    photo.dataset.socialFocus = "Photo description";
+    media.append(summary, field);
+    const promptLabel = el("label", "lp-social-field"), prompt = el("textarea", "lp-input");
+    promptLabel.append(el("span", "", "Photo prompt"), prompt);
+    prompt.value = ui.photoPrompt || "";
+    prompt.rows = 2;
+    prompt.maxLength = 2000;
+    prompt.placeholder = "Describe the photo you want to make…";
+    prompt.dataset.socialFocus = "Photo prompt";
+    prompt.oninput = () => {
+      ui.photoPrompt = prompt.value;
+      updatePhotoTools();
+    };
+    const tools = el("div", "lp-social-photo-tools"), generate = actionButton("Generate photo", "Generate photo", () => host.generatePhoto?.(prompt.value.trim() || ui.photo?.trim() || ui.draft?.trim() || ""));
+    updatePhotoTools = () => {
+      generate.disabled = Boolean(ui.pending || ui.imageBusy) || !host.generatePhoto || !(prompt.value.trim() || ui.photo?.trim() || ui.draft?.trim());
+    };
+    updatePhotoTools();
+    const upload = actionButton("Upload photo", "Upload photo", () => host.uploadPhoto?.());
+    upload.disabled ||= !host.uploadPhoto || Boolean(ui.imageBusy);
+    tools.append(generate, upload);
+    if (ui.imageBusy) {
+      const cancel = button("Cancel photo operation", "lp-social-button");
+      cancel.onclick = () => host.cancelPhoto?.();
+      tools.append(cancel);
+    }
+    media.append(promptLabel, tools);
+    if (ui.imageProgress) {
+      const progress = el("p", "lp-social-image-progress", ui.imageProgress);
+      progress.setAttribute("role", "status");
+      media.append(progress);
+    }
+    if (ui.imagePreview) {
+      const preview = el("img", "lp-social-attachment-preview");
+      preview.src = ui.imagePreview;
+      preview.alt = "Attached photo preview";
+      media.append(preview);
+    }
+    const gallery = actionButton("Choose from Gallery", "Choose social photo from Gallery", () => {
+      ui.photosOpen = true;
+      host.photos();
+    });
+    gallery.disabled ||= Boolean(ui.imageBusy);
+    media.append(gallery);
+    if (ui.photosOpen) {
+      const photos = el("div", "lp-social-photo-picker");
+      photos.setAttribute("role", "group");
+      photos.setAttribute("aria-label", "Gallery photos for this post");
+      for (const image of host.gallery.data) {
+        const choose = actionButton("", `Attach ${image.filename || image.id}`, () => {
+          ui.imageId = image.id;
+          ui.imagePreview = image.fullUrl || image.url || image.thumbnailUrl;
+          ui.imageProgress = undefined;
+          host.render();
+        });
+        choose.disabled ||= Boolean(ui.imageBusy);
+        choose.setAttribute("aria-pressed", String(ui.imageId === image.id));
+        const preview = el("img");
+        preview.src = image.thumbnailUrl || image.url;
+        preview.alt = "";
+        preview.loading = "lazy";
+        choose.append(preview);
+        photos.append(choose);
+      }
+      if (!host.gallery.data.length)
+        photos.append(el("p", "lp-copy", "No Gallery photos loaded. You can describe the photo, or take one in Camera first."));
+      media.append(photos);
+    }
+    if (ui.imageId) {
+      const remove = actionButton("Remove photo", "Remove attached social photo", () => {
+        ui.imageId = undefined;
+        ui.imagePreview = undefined;
+        ui.imageProgress = undefined;
+        host.render();
+      });
+      remove.disabled ||= Boolean(ui.imageBusy);
+      media.append(remove);
+    }
+    if (app === "instagram")
+      compose.prepend(media);
+    else
+      compose.append(media);
+    const tagLabel = el("label", "lp-social-field lp-social-post-tags-field"), tags = el("input", "lp-input");
+    tagLabel.append(el("span", "", "Tags, separated by commas"), tags);
+    tags.placeholder = app === "tumblr" ? "# Add tags" : "Add hashtags";
+    tags.value = ui.tags || "";
+    tags.maxLength = 400;
+    tags.disabled = Boolean(ui.pending);
+    tags.oninput = () => {
+      ui.tags = tags.value;
+    };
+    tags.dataset.socialFocus = "Post tags";
+    if (app === "instagram" || app === "tumblr")
+      compose.append(tagLabel);
+  }
+  if (app === "discord" || app === "twitter" && host.searchGifs) {
+    const gifs = button(app === "discord" ? "" : "GIF", app === "discord" ? "lp-discord-expression-button" : "lp-discord-gif-button");
+    gifs.setAttribute("aria-label", app === "discord" ? "Emoji and GIFs" : "Attach a GIF");
+    gifs.setAttribute("aria-haspopup", "dialog");
+    gifs.disabled = Boolean(ui.pending);
+    const chooseGif = (gif) => {
+      ui.gif = gif;
+      ui.focusComposer = true;
+      host.render();
+    };
+    if (app === "discord") {
+      gifs.append(socialIcon("smile"));
+      gifs.onclick = () => discordExpressionPicker(gifs, host.searchGifs, (emoji) => {
+        const { selectionStart: start, selectionEnd: end } = text;
+        if (text.value.length - (end - start) + emoji.length > text.maxLength)
+          return;
+        text.setRangeText(emoji, start, end, "end");
+        ui.draft = text.value;
+        ui.focusComposer = true;
+        const mount = page.parentElement;
+        host.render();
+        const replacement = mount?.querySelector('[data-social-focus="Social composer"]');
+        replacement?.focus({ preventScroll: true });
+        replacement?.setSelectionRange(start + emoji.length, start + emoji.length);
+      }, chooseGif);
+    } else
+      gifs.onclick = () => gifPicker(gifs, host.searchGifs, chooseGif);
+    footer.append(gifs);
+    if (ui.gif) {
+      const preview = el("div", "lp-social-gif-draft"), remove = actionButton("Remove GIF", "Remove attached GIF", () => {
+        ui.gif = undefined;
+        host.render();
+      });
+      preview.append(gifMedia(ui.gif), remove);
+      compose.append(preview);
+    }
+  }
+  if (app === "discord")
+    text.onkeydown = (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        if (!submit.disabled)
+          compose.requestSubmit();
+      }
+    };
+  updateSubmit();
+  footer.append(count, submit);
+  compose.append(footer);
+  if (app === "discord") {
+    submit.setAttribute("aria-label", "Send");
+    submit.replaceChildren(socialIcon("send"));
+    const bar = el("div", "lp-discord-composer-bar");
+    bar.append(textLabel, footer);
+    compose.append(bar);
+  }
+  compose.onsubmit = (event) => {
+    event.preventDefault();
+    if (!submit.disabled)
+      host.request({ action: reblog ? "reblog" : "post", app, text: ui.draft, title: ui.title, photo: ui.photo, tags: (ui.tags || "").split(",").map((tag) => tag.trim()).filter(Boolean), imageId: ui.imageId, gif: ui.gif, replyTo: reply?.id, postId: reblog?.id, channelId: ui.channelId });
+  };
+  const composeShell = el("section", "lp-social-compose-disclosure"), composeSummary = actionButton(app === "instagram" ? "Create a photo post" : app === "tumblr" ? "Create a post" : "What’s happening?", `Write a ${SOCIAL_NAMES[app]} post`, () => {
+    ui.composing = true;
+    ui.focusComposer = true;
+    host.render();
+  }, "lp-social-new-post");
+  composeSummary.dataset.socialFocus = "Start social post";
+  composeShell.append(composeSummary);
+  if (app === "twitter" && !thread && !ui.ownOnly)
+    content.append(composeShell);
+  const feed = el("section", "lp-social-feed");
+  feed.setAttribute("aria-label", `${SOCIAL_NAMES[app]} ${thread ? "thread" : "posts"}`);
+  const visible = thread ? platformPosts.filter((post) => rootOf(post).id === thread.id && (app !== "tumblr" || post.id === thread.id || ((ui.notesView || "comments") === "reblogs" ? Boolean(post.reblogOf) : !post.reblogOf))) : app === "discord" ? platformPosts : [...platformPosts].reverse().filter((post) => !post.replyTo && (!ui.ownOnly || post.account.actorId === owner) && (app !== "twitter" || ui.ownOnly || ui.twitterFeed !== "following" || following.includes(post.account.id)));
+  const quoteBlock = (post) => {
+    const quote = el("blockquote", "lp-social-quote");
+    quote.append(el("strong", "", `@${post.account.handle}`), el("p", "", post.text || post.photo || post.gif?.description || "Photo post"));
+    return quote;
+  };
+  const renderPost = (post) => {
+    if (app === "discord")
+      return discordMessage({ state, world, owner, posts: platformPosts, avatar: accountAvatar, timestamp: postTimestamp, request: (input) => {
+        ui.discussionFocus = `Discord message ${post.id}`;
+        ui.focusDiscussion = true;
+        host.request(input);
+      }, pending: Boolean(ui.pending), reply: (post) => {
+        ui.replyTo = post.id;
+        ui.threadId = undefined;
+        ui.focusComposer = true;
+        host.render();
+      } }, post);
+    const preview = post.id.startsWith("preview:");
+    const card = el("article", "lp-social-post");
+    card.dataset.socialPost = post.id;
+    if (preview)
+      card.dataset.socialPreview = "true";
+    const heading = el("header", "lp-social-post-heading"), avatar = accountAvatar(post.account.name, post.account.actorId, post.account.avatarUrl);
+    const identity = el("div", "lp-social-post-identity");
+    identity.append(el("strong", "", app === "tumblr" ? post.account.handle : post.account.name), el("span", "", `@${post.account.handle}`));
+    heading.append(avatar, identity);
+    const time = el("time", "", preview ? "Sample" : postTimestamp(post));
+    time.dateTime = post.createdAt;
+    time.title = post.createdAt;
+    heading.append(time);
+    card.append(heading);
+    const body = el("div", "lp-social-post-body");
+    if (post.reblogOf) {
+      const trail = [];
+      let original = platformPosts.find((item) => item.id === post.reblogOf);
+      while (original && trail.length < 8) {
+        trail.push(original);
+        original = platformPosts.find((item) => item.id === original.reblogOf);
+      }
+      body.append(el("span", "lp-social-reblog-label", app === "tumblr" ? "↻ reblogged" : "↻ quoted"));
+      for (const entry of trail.reverse())
+        body.append(quoteBlock(entry));
+    } else if (post.replyTo && !thread) {
+      const original = platformPosts.find((item) => item.id === post.replyTo);
+      if (original)
+        body.append(el("span", "lp-social-reblog-label", "↳ replying"), quoteBlock(original));
+    }
+    if (post.title && app === "tumblr")
+      body.append(el("h2", "lp-social-post-title", post.title));
+    if (post.imageUrl) {
+      const image = el("img", "lp-social-photo");
+      image.src = post.imageUrl;
+      image.alt = post.photo || `Photo shared by ${post.account.name}`;
+      image.loading = "lazy";
+      image.onerror = () => {
+        image.replaceWith(el("p", "lp-social-photo-description", post.photo || "This photo is unavailable."));
+      };
+      body.append(image);
+    } else if (post.photo && (app === "instagram" || app === "tumblr")) {
+      const photo = el("figure", "lp-social-photo-description");
+      photo.append(socialIcon("camera"), el("span", "", "PHOTO DESCRIPTION"), el("figcaption", "", post.photo));
+      body.append(photo);
+    }
+    if (post.gif)
+      body.append(gifMedia(post.gif));
+    if (post.text) {
+      const copy = el("p", "lp-social-post-text");
+      if (app === "instagram") {
+        copy.classList.add("lp-social-caption");
+        copy.append(el("strong", "", post.account.handle + " "), el("span", "", post.text));
+      } else
+        copy.textContent = post.text;
+      body.append(copy);
+    }
+    if (post.tags.length && (app === "instagram" || app === "tumblr"))
+      body.append(el("p", "lp-social-tags", post.tags.map((tag) => `#${tag}`).join(" ")));
+    const actions = el("div", "lp-social-post-actions"), label = `${post.account.name}’s post ${post.id}`;
+    const openDiscussion = actionButton("", `Open discussion for ${label}`, () => {
+      ui.discussionFocus = `Open discussion for ${rootOf(post).account.name}’s post ${rootOf(post).id}`;
+      ui.threadId = rootOf(post).id;
+      ui.replyTo = undefined;
+      ui.reblogOf = undefined;
+      ui.composing = false;
+      if (app === "tumblr")
+        ui.notesView = post.reblogOf ? "reblogs" : "comments";
+      ui.scrollTop = 0;
+      host.render();
+    }, "lp-social-open-discussion");
+    card.append(openDiscussion);
+    if (!preview && !thread && app === "instagram" && socialCanMessage(world, owner, app, post.account))
+      heading.append(iconAction("reply", `Message ${post.account.name}`, () => openDm(post.account.id, state.social?.dmThreads?.find((thread) => thread.owner === owner && thread.account.id === post.account.id)?.id), "lp-instagram-message-account"));
+    if (!preview && !thread && post.account.actorId !== owner) {
+      const follow = actionButton(following.includes(post.account.id) ? "Following" : "Follow", `${following.includes(post.account.id) ? "Unfollow" : "Follow"} ${post.account.name}`, () => host.request({ action: "follow", app, accountId: post.account.id }), "lp-social-follow");
+      follow.setAttribute("aria-pressed", String(following.includes(post.account.id)));
+      if (app === "twitter") {
+        follow.textContent = following.includes(post.account.id) ? "Following" : "· Follow";
+        identity.append(follow);
+      } else
+        heading.append(follow);
+    }
+    if (preview) {
+      actions.append(el("span", "lp-social-preview-label", "Sample post · open to preview the discussion"));
+      body.append(actions);
+      card.append(body);
+      return card;
+    }
+    const like = iconAction("heart", `Like ${label}`, () => host.request({ action: "like", app, postId: post.id }), "lp-social-like");
+    if (post.likedBy.length)
+      like.append(el("span", "lp-social-action-count", String(post.likedBy.length)));
+    like.setAttribute("aria-pressed", String(post.likedBy.includes(owner)));
+    actions.append(like);
+    const replies = platformPosts.filter((item) => item.replyTo === post.id).length;
+    const replyAction = iconAction("reply", `${app === "tumblr" ? "Comment on" : "Reply to"} ${label}`, () => {
+      ui.replyTo = app === "tumblr" ? rootOf(post).id : post.id;
+      ui.reblogOf = undefined;
+      ui.threadId = rootOf(post).id;
+      if (app === "tumblr")
+        ui.notesView = "comments";
+      ui.composing = true;
+      ui.focusComposer = true;
+      host.render();
+    });
+    if (app === "tumblr")
+      replyAction.append(el("span", "", "Comment"));
+    actions.append(replyAction);
+    if (replies && !thread)
+      actions.append(iconAction("thread", `Read replies to ${label}`, () => {
+        ui.threadId = post.id;
+        ui.scrollTop = 0;
+        host.render();
+      }));
+    if (app === "tumblr" || app === "twitter")
+      actions.append(iconAction(app === "tumblr" ? "reblog" : "quote", `${app === "tumblr" ? "Reblog" : "Quote"} ${label}`, () => {
+        ui.reblogOf = post.id;
+        ui.replyTo = undefined;
+        ui.threadId = undefined;
+        ui.scrollTop = 0;
+        ui.composing = true;
+        ui.focusComposer = true;
+        host.render();
+      }));
+    if (post.authoredBy === owner)
+      actions.append(iconAction("trash", `Delete ${label}`, () => host.request({ action: "delete", app, postId: post.id })));
+    if (app === "tumblr") {
+      const notes = el("span", "lp-tumblr-notes", `${post.likedBy.length + replies} notes`);
+      actions.prepend(notes);
+    }
+    body.append(actions);
+    card.append(body);
+    return card;
+  };
+  const renderComment = (post) => {
+    const preview = post.id.startsWith("preview:"), label = `${post.account.name}’s post ${post.id}`;
+    const comment = el("article", `lp-social-comment lp-${app}-comment`);
+    comment.dataset.socialPost = post.id;
+    comment.setAttribute("aria-label", `${app === "twitter" ? "Reply" : post.reblogOf ? "Reblog" : "Comment"} by ${post.account.name}`);
+    if (preview)
+      comment.dataset.socialPreview = "true";
+    const avatar = accountAvatar(post.account.name, post.account.actorId, post.account.avatarUrl), body = el("div", "lp-social-comment-body"), heading = el("header", "lp-social-comment-heading");
+    heading.append(el("strong", "", app === "tumblr" ? post.account.handle : post.account.name));
+    if (app === "twitter")
+      heading.append(el("span", "", `@${post.account.handle}`));
+    const time = el("time", "", preview ? "Sample" : postTimestamp(post));
+    time.dateTime = post.createdAt;
+    heading.append(time);
+    body.append(heading);
+    if (post.reblogOf)
+      body.append(el("span", "lp-social-reblog-label", "Reblogged with tags"));
+    const parent = platformPosts.find((item) => item.id === post.replyTo);
+    if (app === "twitter" && parent && parent.id !== thread?.id)
+      body.append(el("span", "lp-social-reply-target", `Replying to @${parent.account.handle}`));
+    body.append(el("p", "lp-social-comment-text", post.text || post.photo || ""));
+    if (post.gif)
+      body.append(gifMedia(post.gif));
+    if (post.tags.length && app === "tumblr")
+      body.append(el("p", "lp-social-tags", post.tags.map((tag) => `#${tag}`).join(" ")));
+    if (!preview) {
+      const actions = el("div", "lp-social-comment-actions"), liked = post.likedBy.includes(owner);
+      const like = iconAction("heart", `Like ${label}`, () => host.request({ action: "like", app, postId: post.id }), "lp-social-like");
+      like.setAttribute("aria-pressed", String(liked));
+      if (post.likedBy.length)
+        like.append(el("span", "", String(post.likedBy.length)));
+      const replyAction = actionButton("Reply", `${app === "tumblr" ? "Comment on" : "Reply to"} ${label}`, () => {
+        ui.replyTo = app === "tumblr" ? thread.id : post.id;
+        ui.reblogOf = undefined;
+        ui.composing = true;
+        ui.focusComposer = true;
+        host.render();
+      }, "lp-social-comment-reply");
+      actions.append(replyAction, like);
+      if (post.authoredBy === owner)
+        actions.append(iconAction("trash", `Delete ${label}`, () => host.request({ action: "delete", app, postId: post.id })));
+      body.append(actions);
+    }
+    comment.append(avatar, body);
+    return comment;
+  };
+  if (thread?.id.startsWith("preview:")) {
+    composeShell.hidden = true;
+    const previewReblog = app === "tumblr" && ui.notesView === "reblogs";
+    const sampleReply = { ...thread, id: `preview:reply:${thread.id}`, account: { id: "preview:commenter", name: "Mika", handle: "moonlit-mika" }, text: previewReblog ? "this belongs on the very small list of things keeping me going" : "A small moment, perfectly captured.", title: undefined, imageUrl: undefined, photo: undefined, tags: previewReblog ? ["a tiny reblog", "sample commentary"] : [], replyTo: previewReblog ? undefined : thread.id, reblogOf: previewReblog ? thread.id : undefined };
+    visible.push(sampleReply);
+  }
+  for (const post of visible) {
+    feed.append(thread && post.id !== thread.id ? renderComment(post) : renderPost(post));
+    if (thread && post.id === thread.id) {
+      if (notesTabs)
+        feed.append(notesTabs);
+      if (reply && app === "twitter")
+        feed.append(compose);
+    }
+  }
+  if (thread && reply && app !== "twitter")
+    feed.append(compose);
+  if (thread && !reply && !thread.id.startsWith("preview:"))
+    feed.append(actionButton(app === "twitter" ? "Post your reply" : "Add a comment…", app === "twitter" ? "Write a reply" : "Write a comment", () => {
+      ui.replyTo = thread.id;
+      ui.composing = true;
+      ui.focusComposer = true;
+      host.render();
+    }, `lp-social-comment-prompt lp-${app}-comment-prompt`));
+  if (!visible.length) {
+    const empty = el("div", "lp-social-empty");
+    empty.append(el("strong", "", app === "discord" && !ui.channelId ? "Find your people." : ui.ownOnly ? "Your corner of the internet." : "A whole world, waiting."), el("p", "", app === "discord" && !ui.channelId ? "Create a server, then Refresh a channel to meet its voices." : ui.ownOnly ? "Your posts will appear here." : "Tap Refresh for posts from your cast and people beyond it."));
+    feed.append(empty);
+  }
+  if (reblog && app === "twitter") {
+    feed.hidden = true;
+    page.dataset.socialComposeMode = "quote";
+  }
+  if (app === "instagram" && ui.ownOnly && !thread && visible.length) {
+    feed.classList.add("lp-instagram-profile-grid");
+    for (const card of feed.querySelectorAll(".lp-social-post"))
+      card.classList.add("lp-instagram-profile-tile");
+  }
+  content.append(feed);
+  if (app !== "discord" && !reply && (ui.composing || reblog)) {
+    page.dataset.socialView = "compose";
+    compose.classList.add(`lp-${app}-new-compose`);
+    const editorBar = el("header", "lp-social-editor-bar"), heading = el("h2", "lp-social-editor-title", reblog ? app === "twitter" ? "Quote post" : "Reblog" : "New post");
+    if (app === "instagram" && !reblog)
+      submit.textContent = "Share";
+    editorBar.append(heading, submit);
+    compose.prepend(editorBar);
+    editorBar.after(composerTitle);
+    composerTitle.replaceChildren(accountAvatar(account.name, account.actorId), el("strong", "", `@${account.handle}`));
+    content.replaceChildren(...!nav ? [toolbar] : [], compose);
+    settings.hidden = true;
+    content.append(settings);
+    quickRefresh.hidden = true;
+    if (inbox)
+      inbox.hidden = true;
+    operation.hidden = !ui.refreshing && (!ui.status || ui.status === "Saved.");
+    text.placeholder = app === "tumblr" ? "Add something, if you’d like" : reblog && app === "twitter" ? "Add a comment" : app === "twitter" ? "What’s happening?" : "Write a caption…";
+    if (app === "instagram") {
+      const hint = el("p", "lp-social-photo-hint", "Choose a photo, then add your caption.");
+      compose.querySelector(".lp-social-media")?.before(hint);
+    }
+    if (ui.error) {
+      const error = el("p", "lp-social-error", ui.error);
+      error.setAttribute("role", "alert");
+      content.prepend(error);
+    }
+  }
+  settings.hidden = !ui.settingsOpen;
+  if (ui.settingsOpen && app !== "discord") {
+    for (const child of [...content.children])
+      if (child !== settings)
+        child.hidden = true;
+  }
+  content.append(settings);
+  if (ui.friendsScreen && app !== "discord") {
+    const people = el("section", "lp-social-settings lp-settings-section lp-social-friends-screen");
+    people.setAttribute("aria-label", "Friends and portable casts");
+    people.append(el("h2", "", "Friends & casts"), el("p", "lp-copy", "Choose familiar characters, NPC Bank people, or a portable cast."));
+    people.append(friends);
+    settings.hidden = true;
+    content.replaceChildren(people, settings);
+  }
+  const switchTumblrTab = (tab) => {
+    saveDmDraft();
+    ui.tumblrView = "activity";
+    ui.tumblrHubTab = tab;
+    ui.dmOpen = tab === "messages";
+    ui.dmAccountId = undefined;
+    ui.dmThreadId = undefined;
+    ui.dmDraft = "";
+    ui.scrollTop = 0;
+    host.render();
+  };
+  const openTumblrPost = (post, focus) => {
+    ui.discussionFocus = focus;
+    ui.threadId = rootOf(post).id;
+    ui.notesView = post.reblogOf ? "reblogs" : "comments";
+    ui.replyTo = undefined;
+    ui.reblogOf = undefined;
+    ui.composing = false;
+    leaveDm();
+    ui.scrollTop = 0;
+    const mount = page.parentElement;
+    host.render();
+    mount?.querySelector('[data-social-focus="App navigation"],[data-social-focus="Back to social feed"]')?.focus({ preventScroll: true });
+  };
+  if (app === "tumblr" && ui.tumblrView && !ui.settingsOpen && !ui.friendsScreen && !ui.threadId && !ui.composing) {
+    if (ui.tumblrView === "search")
+      content.replaceChildren(tumblrSearch({ posts: platformPosts, ui, open: openTumblrPost, renderPost }), settings);
+    else if (ui.tumblrHubTab === "messages")
+      ui.dmOpen = true;
+    else {
+      identity.textContent = account.handle;
+      identity.classList.add("lp-tumblr-hub-title");
+      ui.dmOpen = false;
+      content.replaceChildren(tumblrHub("activity", tumblrActivity({ posts: actualPlatformPosts, owner, followed: following, avatar: (person) => accountAvatar(person.name, person.actorId, person.avatarUrl), time: postTimestamp, open: openTumblrPost, resolveAccount: (id) => state.contacts.some((contact) => contact.id === id) ? socialOwner(state, id, "tumblr") : undefined }), switchTumblrTab), settings);
+    }
+    quickRefresh.hidden = true;
+  }
+  if ((app === "instagram" || app === "tumblr") && ui.dmOpen && !ui.settingsOpen && !ui.friendsScreen) {
+    const threads = (state.social?.dmThreads || []).filter((thread) => thread.owner === owner && socialDirectApp(thread) === app), thread = threads.find((thread) => thread.id === ui.dmThreadId) || threads.find((thread) => thread.account.id === ui.dmAccountId);
+    const accounts = new Map;
+    const addAccount = (person) => {
+      if (person.id === owner || person.actorId === owner || person.actorId === state.pocketPersonaActorId)
+        return;
+      if ([...accounts.values()].some((prior) => prior.id === person.id || person.actorId && prior.actorId === person.actorId || person.bankId && prior.bankId === person.bankId))
+        return;
+      accounts.set(person.id, person);
+    };
+    for (const thread of threads)
+      addAccount(thread.account);
+    for (const post of actualPlatformPosts)
+      if (socialCanMessage(world, owner, app, post.account))
+        addAccount(post.account);
+    for (const entry of host.npcBank || [])
+      if (savedSettings.friendEntryIds.includes(entry.id))
+        addAccount(actualPlatformPosts.find((post) => post.account.bankId === entry.id)?.account || { id: `bank:${entry.id}`, bankId: entry.id, name: entry.name, handle: generatedSocialHandle(app, entry.name), avatarUrl: entry.avatarUrl });
+    for (const contact of state.contacts)
+      if (savedSettings.friendEntryIds.includes(`actor:${contact.id}`))
+        addAccount(actualPlatformPosts.find((post) => post.account.actorId === contact.id)?.account || { id: `bank:actor:${contact.id}`, actorId: contact.id, name: contact.name, handle: socialOwner(state, contact.id, app).handle });
+    const target = thread?.account || (ui.dmAccountId ? accounts.get(ui.dmAccountId) : undefined);
+    const dmClass = (part) => `lp-social-private-${part} lp-${app}-${part}`;
+    const dms = el("section", dmClass("dms"));
+    dms.setAttribute("aria-label", `${SOCIAL_NAMES[app]} messages`);
+    page.dataset.socialDmView = target ? "thread" : "inbox";
+    if (app === "instagram")
+      page.dataset.instagramView = target ? "thread" : "inbox";
+    if (inbox)
+      inbox.hidden = true;
+    if (!nav)
+      dms.append(actionButton(target ? "Back to inbox" : "Back to feed", target ? `Back to ${SOCIAL_NAMES[app]} ${app === "tumblr" ? "messages" : "inbox"}` : `Back to ${SOCIAL_NAMES[app]} feed`, () => {
+        navigateBack();
+      }));
+    identity.classList.add(...dmClass("message-title").split(" "));
+    identity.replaceChildren();
+    if (target) {
+      identity.classList.add(...dmClass("recipient").split(" "));
+      const who = el("span");
+      who.append(el("strong", "", target.name), el("small", "", `@${target.handle}`));
+      identity.append(accountAvatar(target.name, target.actorId, target.avatarUrl), who);
+      const log = el("section", dmClass("dm-log"));
+      log.setAttribute("aria-label", `Conversation with ${target.name}`);
+      if (!thread?.messages.length) {
+        const intro = el("div", dmClass("dm-intro"));
+        intro.append(accountAvatar(target.name, target.actorId, target.avatarUrl), el("strong", "", target.name), el("span", "", `@${target.handle}`), el("p", "", "Send a message to start the conversation."));
+        log.append(intro);
+      }
+      for (const message of thread?.messages || []) {
+        const row = el("div", `${dmClass("dm-row")} lp-${app}-dm-row-${message.sender}`), group = el("div", dmClass("dm-message")), bubble = el("p", `${dmClass("dm-bubble")} lp-${app}-dm-${message.sender}`, message.text), time = el("time", dmClass("dm-time"));
+        time.dateTime = message.createdAt;
+        const clock = activityClock({ presentation: { storyAt: message.createdAt, storyTimezoneOffsetMinutes: state.roleplayTimezoneOffsetMinutes } });
+        time.textContent = clock.time || "Story time";
+        time.title = clock.date;
+        group.append(bubble, time);
+        if (message.sender === "account")
+          row.append(accountAvatar(target.name, target.actorId, target.avatarUrl));
+        row.append(group);
+        log.append(row);
+      }
+      if (ui.dmBusy) {
+        const typing = el("p", dmClass("typing"), `${target.name} is typing…`);
+        typing.setAttribute("role", "status");
+        log.append(typing);
+      }
+      dms.append(log);
+      if (ui.dmError) {
+        const error = el("p", "lp-social-error", ui.dmError);
+        error.setAttribute("role", "alert");
+        dms.append(error);
+      }
+      const form = el("form", dmClass("dm-compose"));
+      form.setAttribute("aria-label", `${SOCIAL_NAMES[app]} message composer`);
+      const label = el("label", "lp-social-field"), text = el("textarea", "lp-input");
+      label.append(el("span", "lp-social-visually-hidden", "Message"), text);
+      text.value = ui.dmDraft || "";
+      text.rows = 1;
+      text.maxLength = 2000;
+      text.placeholder = "Message…";
+      text.disabled = Boolean(ui.dmBusy || ui.pending);
+      text.dataset.socialFocus = `${SOCIAL_NAMES[app]} DM composer`;
+      const send = button("Send", "lp-social-primary");
+      send.setAttribute("aria-label", "Send message");
+      send.type = "submit";
+      const update = () => {
+        send.disabled = Boolean(ui.dmBusy || ui.pending) || !host.dmSend || !text.value.trim();
+      };
+      update();
+      text.oninput = () => {
+        ui.dmDraft = text.value;
+        ui.dmDrafts ||= {};
+        ui.dmDrafts[target.id] = text.value;
+        update();
+      };
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        if (!send.disabled)
+          host.dmSend?.(target.id, text.value.trim(), thread?.id);
+      };
+      form.append(label, send);
+      dms.append(form);
+      log.onscroll = () => {
+        if (!log.isConnected)
+          return;
+        ui.dmScrollTop ||= {};
+        ui.dmStickToBottom ||= {};
+        ui.dmScrollTop[target.id] = log.scrollTop;
+        ui.dmStickToBottom[target.id] = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+      };
+      content.ownerDocument.defaultView?.requestAnimationFrame?.(() => {
+        if (log.isConnected)
+          log.scrollTop = ui.dmStickToBottom?.[target.id] === false ? ui.dmScrollTop?.[target.id] || 0 : log.scrollHeight;
+      });
+    } else {
+      identity.textContent = app === "tumblr" ? account.handle : "Messages";
+      if (app === "tumblr")
+        identity.classList.add("lp-tumblr-hub-title");
+      dms.append(el("h2", dmClass("inbox-heading"), "Your messages"));
+      if (ui.dmError) {
+        const error = el("p", "lp-social-error", ui.dmError);
+        error.setAttribute("role", "alert");
+        dms.append(error);
+      }
+      const list = el("div", dmClass("inbox-list"));
+      list.setAttribute("aria-label", "Private conversations");
+      for (const account of accounts.values()) {
+        const existing = threads.find((thread) => thread.account.id === account.id), open = actionButton("", `Message ${account.name}`, () => openDm(account.id, existing?.id), dmClass("inbox-account")), copy = el("span");
+        copy.append(el("strong", "", account.name), el("span", "", existing?.messages.at(-1)?.text || `Say hello to @${account.handle}`));
+        open.append(accountAvatar(account.name, account.actorId, account.avatarUrl), copy);
+        list.append(open);
+      }
+      if (!accounts.size)
+        list.append(el("p", "lp-copy", `Follow a blog or choose friends in ${SOCIAL_NAMES[app]} settings to start a conversation.`));
+      dms.append(list);
+    }
+    content.replaceChildren(app === "tumblr" && !target ? tumblrHub("messages", dms, switchTumblrTab) : dms, settings);
+  }
+  let scroller = content;
+  if (app === "discord") {
+    const main = el("div", "lp-discord-main"), messages = el("div", "lp-discord-messages");
+    for (const node of [...content.childNodes])
+      if (node !== feed)
+        main.append(node);
+    messages.append(feed);
+    main.prepend(discordHeader, discordPanel);
+    main.append(discordCreation, discordPeople2, messages, compose);
+    if (ui.settingsOpen || ui.ownOnly) {
+      discordPanel.hidden = true;
+      discordCreation.hidden = true;
+      discordPeople2.hidden = true;
+    }
+    discordHeader.hidden = Boolean(ui.ownOnly || ui.settingsOpen);
+    messages.hidden = Boolean(ui.serverOpen || ui.peopleOpen || ui.settingsOpen || ui.ownOnly);
+    compose.hidden = Boolean(ui.serverOpen || ui.peopleOpen || ui.settingsOpen || ui.ownOnly);
+    page.dataset.discordView = ui.ownOnly ? "profile" : ui.serverOpen ? "create" : ui.peopleOpen ? "people" : "chat";
+    for (const control of discordRail.querySelectorAll("button"))
+      control.disabled = false;
+    content.replaceChildren(discordRail, main);
+    scroller = ui.ownOnly && !ui.settingsOpen ? main.querySelector(".lp-discord-profile") : ui.peopleOpen && !ui.settingsOpen ? discordPeople2 : ui.serverOpen ? discordCreation : messages;
+  } else {
+    const bottom = el("nav", "lp-social-bottomnav");
+    bottom.setAttribute("aria-label", `${SOCIAL_NAMES[app]} navigation`);
+    const home = iconAction("home", `${SOCIAL_NAMES[app]} home`, () => {
+      resetNavigation();
+      ui.ownOnly = false;
+      ui.scrollTop = 0;
+      host.render();
+    });
+    home.setAttribute("aria-pressed", String(!ui.ownOnly));
+    const create = iconAction(app === "instagram" ? "plus" : "compose", `Compose ${SOCIAL_NAMES[app]} post`, () => {
+      resetNavigation();
+      ui.composing = true;
+      ui.focusComposer = true;
+      host.render();
+    }, "lp-social-create");
+    const profile = iconAction("profile", `${SOCIAL_NAMES[app]} profile`, () => {
+      resetNavigation();
+      ui.ownOnly = true;
+      ui.scrollTop = 0;
+      host.render();
+    });
+    profile.setAttribute("aria-pressed", String(Boolean(ui.ownOnly)));
+    if (app === "tumblr") {
+      const search = iconAction("search", "Search Tumblr posts", () => {
+        resetNavigation();
+        ui.ownOnly = false;
+        ui.tumblrView = "search";
+        ui.focusTumblrSearch = true;
+        ui.scrollTop = 0;
+        host.render();
+      });
+      const activity = iconAction("activity", "Tumblr activity and messages", () => {
+        resetNavigation();
+        ui.ownOnly = false;
+        ui.tumblrView = "activity";
+        ui.dmOpen = ui.tumblrHubTab === "messages";
+        ui.scrollTop = 0;
+        host.render();
+      });
+      home.setAttribute("aria-pressed", String(!ui.ownOnly && !ui.tumblrView));
+      search.setAttribute("aria-pressed", String(ui.tumblrView === "search"));
+      activity.setAttribute("aria-pressed", String(ui.tumblrView === "activity"));
+      bottom.append(home, search, activity, profile);
+      create.classList.add("lp-tumblr-floating-compose");
+      create.hidden = Boolean(ui.composing || ui.settingsOpen || ui.friendsScreen || ui.threadId || ui.tumblrView);
+      page.append(create);
+    } else
+      bottom.append(home, create, profile);
+    bottom.hidden = Boolean((app === "instagram" && ui.dmOpen || app === "tumblr" && ui.dmOpen && (ui.dmAccountId || ui.dmThreadId)) && !ui.settingsOpen);
+    page.append(bottom);
+  }
+  scroller.onscroll = () => {
+    if (scroller.isConnected)
+      ui.scrollTop = scroller.scrollTop;
+  };
+  content.ownerDocument.defaultView?.requestAnimationFrame?.(() => {
+    if (!page.isConnected)
+      return;
+    const canRestoreFocus = () => {
+      const active = page.ownerDocument.activeElement;
+      return !page.contains(active) && !active?.closest("dialog[open]");
+    };
+    if (app === "discord" && ui.discordBottom && !ui.settingsOpen && !ui.ownOnly && !ui.peopleOpen && !ui.serverOpen) {
+      scroller.scrollTop = scroller.scrollHeight;
+      ui.scrollTop = scroller.scrollTop;
+      ui.discordBottom = false;
+    } else if (canRestoreFocus())
+      scroller.scrollTop = ui.scrollTop || 0;
+    if (ui.settingsFocus && !ui.pending && ui.settingsOpen) {
+      if (canRestoreFocus())
+        [...page.querySelectorAll(".lp-social-settings input,.lp-social-settings select")].find((node) => node.dataset.socialFocus === ui.settingsFocus)?.focus({ preventScroll: true });
+      ui.settingsFocus = undefined;
+    }
+    if (ui.usernameFocus && !ui.pending) {
+      if (canRestoreFocus())
+        page.querySelector(ui.usernameFocus === "field" ? '[data-social-focus="Username"]' : '[data-social-focus="Change username"]')?.focus({ preventScroll: true });
+      ui.usernameFocus = undefined;
+    }
+    if (ui.focusTumblrSearch) {
+      ui.focusTumblrSearch = false;
+      if (canRestoreFocus())
+        page.querySelector('[data-social-focus="Tumblr search"]')?.focus({ preventScroll: true });
+    }
+    if (ui.focusDiscussion && !ui.pending) {
+      ui.focusDiscussion = false;
+      if (canRestoreFocus())
+        [...page.querySelectorAll("[data-social-focus]")].find((node) => node.dataset.socialFocus === ui.discussionFocus)?.focus({ preventScroll: true });
+    }
+    if (ui.focusServerCreate) {
+      ui.focusServerCreate = false;
+      if (canRestoreFocus())
+        serverNameInput?.focus({ preventScroll: true });
+    }
+    if (ui.focusChannels) {
+      ui.focusChannels = false;
+      if (canRestoreFocus())
+        channelsToggle?.focus({ preventScroll: true });
+    }
+    if (ui.focusStart) {
+      ui.focusStart = false;
+      if (canRestoreFocus())
+        (app === "twitter" ? composeSummary : app === "tumblr" && ui.tumblrView === "search" ? page.querySelector('[data-social-focus="Tumblr search"]') : app === "tumblr" && ui.tumblrView === "activity" ? page.querySelector('[role="tab"][aria-selected="true"]') : page.querySelector(`[data-social-focus="Compose ${SOCIAL_NAMES[app]} post"]`))?.focus({ preventScroll: true });
+    }
+    if (ui.focusComposer) {
+      ui.focusComposer = false;
+      if (canRestoreFocus()) {
+        text.focus();
+        text.scrollIntoView?.({ block: "nearest" });
+      }
+    }
+  });
+  return page;
+}
+
 // src/frontend/controller.ts
 var PHONE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.7" y="2.5" width="10.6" height="19" rx="2.6"/><path d="M10 5h4M10.7 18.7h2.6"/></svg>';
 var EMPTY_RESOLVED_IMAGE = { url: "", status: "empty", sourceKind: "none", sourceLabel: "Theme gradient" };
@@ -7272,17 +11876,6 @@ var ICONS2 = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>'
 };
-var APP_META = [
-  { app: "messages", label: "Messages", icon: "messages", dock: true },
-  { app: "camera", label: "Camera", icon: "camera", dock: true },
-  { app: "gallery", label: "Gallery", icon: "gallery", dock: true },
-  { app: "notes", label: "Notes", icon: "notes", dock: true },
-  { app: "weather", label: "Weather", icon: "weather" },
-  { app: "contacts", label: "Contacts", icon: "contacts" },
-  { app: "calendar", label: "Timeline", icon: "calendar" },
-  { app: "trackers", label: "Trackers", icon: "trackers" },
-  { app: "settings", label: "Settings", icon: "settings" }
-];
 function icon2(name) {
   const node = el("span");
   node.innerHTML = ICONS2[name] || ICONS2.home;
@@ -7317,6 +11910,25 @@ class PocketController {
   clock;
   expanded = false;
   currentApp = "home";
+  launcherSessions = new Map;
+  launcherSaves = new Map;
+  storeSessions = new Map;
+  storeSaves = new Map;
+  socialSessions = new Map;
+  socialGifRequests = new Map;
+  socialRequests = new Map;
+  socialRequestModes = new Map;
+  settledSocialRequests = new Set;
+  socialDmRequests = new Map;
+  socialImages = new Map;
+  portalView = "home";
+  freeformDirectory = null;
+  freeformSession = null;
+  freeformDraft = { personaId: "", sessionId: "", name: "" };
+  freeformRequest = "";
+  freeformListRequest = "";
+  freeformCopyRequest = "";
+  freeformError = "";
   state = null;
   preferences = defaultPreferences();
   settingsDraft = null;
@@ -7340,6 +11952,7 @@ class PocketController {
   galleryRequestId = "";
   galleryLoading = false;
   galleryActionButtons = new Map;
+  pendingWallpaperSelection = null;
   pendingWallpaperTarget = null;
   pendingContactPhotoId = "";
   pendingContactPhotoDraft = null;
@@ -7351,6 +11964,7 @@ class PocketController {
   collectionRequest = "";
   collectionRequestKey = "";
   npcBriefs = new Map;
+  contactBrowsers = new Map;
   contactFormDrafts = new Map;
   npcDraft = null;
   previousNpcDraft = null;
@@ -7371,6 +11985,7 @@ class PocketController {
   trackerSaveDraftKey = "";
   cameraDraft = { scene: "", enhance: undefined };
   selectedMessageId = "";
+  pendingMessageScrollId = "";
   selectedNoteId = "";
   selectedEventId = "";
   pendingEventSuggestion = null;
@@ -7378,6 +11993,7 @@ class PocketController {
   selectedGalleryImageId = "";
   selectedSettingsSection = "";
   selectedTrackerView = "detail";
+  cameraVariants = [];
   cameraPreview = "";
   cameraContactId = "";
   cameraReady = false;
@@ -7514,7 +12130,7 @@ class PocketController {
     homeButton.addEventListener("click", () => {
       if (this.currentApp !== "home")
         this.home();
-      else
+      else if (!this.leaveLauncher())
         this.close();
     });
     this.installSwipeDismiss(status);
@@ -7525,9 +12141,16 @@ class PocketController {
     this.refresh();
   }
   destroy() {
+    for (const job of this.socialGifRequests.values()) {
+      clearTimeout(job.timer);
+      job.reject(new Error("Pocket was closed."));
+    }
+    this.socialGifRequests.clear();
     this.voicePlayer.stop();
     this.setupModalDismiss?.();
     this.destroyed = true;
+    for (const id of [...this.socialImages.keys()])
+      this.cancelSocialImage(id);
     window.clearTimeout(this.collapseTimer);
     window.clearTimeout(this.alertTimer);
     window.clearInterval(this.receiptSweepTimer);
@@ -7554,6 +12177,7 @@ class PocketController {
     this.drawer.destroy();
   }
   installHostIntegrations() {
+    this.cleanups.push(installEventQuickstartCards(this.ctx));
     this.cleanups.push(this.drawer.onActivate(() => this.renderDrawerLanding()));
     const action = this.ctx.ui.registerInputBarAction({
       id: "open-lumiphone",
@@ -7594,6 +12218,11 @@ class PocketController {
     this.installInlineArtifactObserver();
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload)));
     this.cleanups.push(this.ctx.events.on("CHAT_SWITCHED", () => {
+      if (this.freeformSession) {
+        if (this.currentApp === "settings")
+          this.render(false);
+        return;
+      }
       this.setupModalDismiss?.();
       this.settledOperationRequests.clear();
       this.operations.clear();
@@ -7636,11 +12265,17 @@ class PocketController {
     const focusin = (event) => {
       if (!this.expanded || this.handsetHost.dataset.fullscreen !== "true")
         return;
-      this.resizeExpanded();
       const target = event.target instanceof HTMLElement ? event.target : null;
+      const opensKeyboard = target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable || target instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "range", "color", "file", "hidden", "image"].includes(target.type);
+      if (!target || !opensKeyboard)
+        return;
+      this.resizeExpanded();
       window.setTimeout(() => {
+        if (!this.expanded || !target.isConnected || document.activeElement !== target)
+          return;
         this.resizeExpanded();
-        target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        if (!target.closest(".lp-compose-stack,.lp-instagram-dm-compose"))
+          target.scrollIntoView({ block: "nearest", inline: "nearest" });
       }, 60);
     };
     this.shell.addEventListener("focusin", focusin);
@@ -7651,7 +12286,7 @@ class PocketController {
       if (event.key === "Escape") {
         if (this.currentApp !== "home")
           this.back();
-        else
+        else if (!this.leaveLauncher())
           this.close();
         return;
       }
@@ -7684,7 +12319,7 @@ class PocketController {
         return;
       if (this.destroyed)
         return;
-      const initialPosition = resolveLauncherPosition(this.preferences.launcherPosition);
+      const initialPosition = resolveLauncherPosition(this.preferences.launcherPosition, this.launcherViewport());
       this.widget = this.ctx.ui.createFloatWidget({
         width: LAUNCHER_SIZE,
         height: LAUNCHER_SIZE,
@@ -7713,6 +12348,13 @@ class PocketController {
       this.mountPhoneInDrawer();
     }
   }
+  launcherViewport() {
+    if (this.ctx.ui.geometry?.layoutViewportSize)
+      return this.ctx.ui.geometry.layoutViewportSize();
+    const rawScale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--lumiverse-ui-scale"));
+    const scale = Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1;
+    return { width: window.innerWidth / scale, height: window.innerHeight / scale };
+  }
   persistLauncherPosition() {
     if (!this.widget)
       return;
@@ -7720,7 +12362,7 @@ class PocketController {
       const position = this.widget.getPosition?.();
       if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y))
         return;
-      const clamped = clampLauncherPosition(position.x, position.y);
+      const clamped = clampLauncherPosition(position.x, position.y, this.launcherViewport());
       const previous = this.preferences.launcherPosition;
       if (previous && previous.x === clamped.x && previous.y === clamped.y)
         return;
@@ -7731,7 +12373,7 @@ class PocketController {
     if (!this.widget || this.expanded)
       return;
     try {
-      const next = resolveLauncherPosition(this.preferences.launcherPosition);
+      const next = resolveLauncherPosition(this.preferences.launcherPosition, this.launcherViewport());
       const current = this.widget.getPosition?.();
       if (current?.x === next.x && current.y === next.y)
         return;
@@ -7747,9 +12389,117 @@ class PocketController {
     this.lastLauncherWindowWidth = width;
     this.applyLauncherPosition();
   }
+  navigatePortal(view) {
+    this.portalView = view;
+    if (view !== "freeform")
+      this.freeformRequest = "";
+    if (view === "devices" && this.freeformSession) {
+      this.resetPocketSession();
+      this.freeformSession = null;
+      this.refresh();
+    }
+    if (view === "freeform")
+      this.loadFreeformDirectory();
+    this.renderDrawerLanding();
+    this.drawer.root.querySelector("h2")?.focus({ preventScroll: true });
+  }
+  loadFreeformDirectory() {
+    this.freeformError = "";
+    this.freeformListRequest = this.send("lumiphone:freeform_list");
+  }
+  resetPocketSession() {
+    if (this.cameraBusy)
+      this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
+    this.setupModalDismiss?.();
+    this.clearActivitySurfaces(true, true);
+    this.hideComposerReferencePill();
+    this.state = null;
+    this.deviceOwnerActorId = "";
+    this.selectedConversationId = "";
+    this.selectedMessageId = "";
+    this.currentApp = "home";
+    this.router.reset({ app: "home" });
+    this.settingsDraft = null;
+    this.contextPreview = null;
+    this.personaPreview = null;
+    this.operations.clear();
+    this.messageRequests.clear();
+    this.selectedSettingsSection = "";
+    this.cameraBusy = false;
+    this.cameraRequestId = "";
+    this.cameraPreview = "";
+    this.cameraReady = false;
+    this.npcDraft = null;
+    this.previousNpcDraft = null;
+    this.galleryRequestId = "";
+    this.galleryLoading = false;
+    this.gallery = { data: [], total: 0 };
+    this.pendingRoute = null;
+    this.pendingEventSuggestion = null;
+    this.cameraDraft = { scene: "", enhance: undefined };
+    this.cameraImageId = "";
+    this.cameraContactId = "";
+    this.cameraNpcDraft = null;
+    this.trackerMutationRequest = "";
+    this.trackerJevRequest = "";
+    this.jevWorking = false;
+    this.collectionRequest = "";
+    this.groupSaveRequest = "";
+    this.trackerSaveRequest = "";
+    this.voicePlayer.stop();
+    window.clearTimeout(this.notificationTimer);
+    this.shell.querySelector(".lp-floating-notification")?.remove();
+    this.render(false);
+  }
+  openFreeform(sessionId, personaId, name) {
+    this.freeformError = "";
+    this.freeformRequest = this.send(sessionId ? "lumiphone:freeform_open" : "lumiphone:freeform_create", { sessionId, personaId, name });
+    this.renderDrawerLanding();
+  }
+  confirmFreeformCopy() {
+    const target = this.ctx.getActiveChat();
+    if (!target.chatId || !target.characterId) {
+      this.showError("Create or open a roleplay chat in Lumiverse first.");
+      return;
+    }
+    const modal = this.ctx.ui.showModal({ title: "Start a chat from Freeform", width: 460, maxHeight: 440 });
+    modal.root.classList.add("lp-media-viewer", "pocket-freeform-confirm");
+    const body = el("div", "lp-settings-section");
+    body.append(el("p", "lp-copy", `Copy “${this.freeformSession?.name || "this session"}” into the Pocket for your currently open roleplay chat? Your Freeform session stays separate. Existing Pocket data in that chat will be backed up before replacement.`));
+    const keep = button("Keep base Pocket", "lp-button lp-button-quiet");
+    keep.onclick = () => modal.dismiss();
+    const override = button("Override with this Freeform session", "lp-button");
+    override.dataset.primary = "true";
+    override.onclick = () => {
+      this.freeformCopyRequest = this.send("lumiphone:freeform_copy_to_chat", { targetChatId: target.chatId, override: true });
+      modal.dismiss();
+    };
+    body.append(keep, override);
+    modal.root.append(body);
+    keep.focus();
+  }
   renderDrawerLanding() {
+    const activeField = this.drawer.root.contains(document.activeElement) ? document.activeElement?.dataset.freeformField : undefined;
+    const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     this.drawer.root.replaceChildren();
-    const outer = el("div", "lumiphone-drawer lumiphone-device-drawer");
+    if (this.portalView === "freeform") {
+      const lock = renderFreeformLock(this.freeformDirectory, this.freeformDraft, Boolean(this.freeformRequest), this.freeformError, {
+        login: (session) => this.openFreeform(session.id),
+        create: (personaId, name) => this.openFreeform(undefined, personaId, name),
+        refresh: () => {
+          this.loadFreeformDirectory();
+          this.renderDrawerLanding();
+        }
+      });
+      this.drawer.root.append(renderPocketPortal("freeform", (view) => this.navigatePortal(view), lock));
+      if (activeField) {
+        const field = this.drawer.root.querySelector(`[data-freeform-field="${activeField}"]`);
+        field?.focus({ preventScroll: true });
+        if (field instanceof HTMLInputElement && selection?.[0] != null && selection[1] != null)
+          field.setSelectionRange(selection[0], selection[1]);
+      }
+      return;
+    }
     const card = el("div", "lumiphone-device-switcher");
     const logo = el("div", "lumiphone-device-mark");
     logo.innerHTML = PHONE_ICON;
@@ -7808,8 +12558,7 @@ class PocketController {
       actions.append(resume);
     }
     card.appendChild(actions);
-    outer.appendChild(card);
-    this.drawer.root.appendChild(outer);
+    this.drawer.root.appendChild(renderPocketPortal(this.portalView, (view) => this.navigatePortal(view), card));
   }
   ensureDockPanel() {
     if (this.dockPanel && this.dockSide !== this.preferences.desktopDockSide)
@@ -8017,6 +12766,8 @@ class PocketController {
     this.cleanups.push(() => window.clearInterval(timer));
   }
   activeContext() {
+    if (this.freeformSession)
+      return { chatId: this.freeformSession.id, characterId: "_none" };
     const active = this.ctx.getActiveChat();
     return {
       chatId: active.chatId || this.state?.chatId || null,
@@ -8232,11 +12983,126 @@ class PocketController {
     }
     this.lastComposerReferenceId = reference.id;
   }
+  settleSocialRequest(requestId) {
+    const key = this.socialRequests.get(requestId);
+    if (!key)
+      return null;
+    this.socialRequests.delete(requestId);
+    this.socialRequestModes.delete(requestId);
+    this.settledSocialRequests.add(requestId);
+    if (this.settledSocialRequests.size > 100)
+      this.settledSocialRequests.delete(this.settledSocialRequests.values().next().value);
+    const ui = this.socialSessions.get(key);
+    const next = [...this.socialRequests].reverse().find(([, pendingKey]) => pendingKey === key)?.[0];
+    if (ui && ui.pending !== next) {
+      ui.pending = next;
+      ui.refreshing = Boolean(next && this.socialRequestModes.has(next));
+      if (next)
+        ui.status = this.socialRequestModes.get(next) === "reply" ? "Waiting for a reply…" : ui.refreshing ? "Finding new posts in your world…" : "Saving…";
+    }
+    return { key, ui };
+  }
   onBackend(payload) {
+    if (this.handleSocialImage(payload))
+      return;
+    const dmRequest = this.socialDmRequests.get(payload.requestId);
+    if (dmRequest && ["lumiphone:social_dm_sent", "lumiphone:social_dm_done", "lumiphone:social_dm_error", "lumiphone:error"].includes(payload.type)) {
+      const ui = this.socialSessions.get(dmRequest.key);
+      if (ui) {
+        const selected = ui.dmOpen && ui.dmAccountId === dmRequest.accountId;
+        if (payload.type === "lumiphone:social_dm_sent") {
+          if (ui.dmDrafts)
+            delete ui.dmDrafts[dmRequest.accountId];
+          if (selected) {
+            if (payload.threadId)
+              ui.dmThreadId = payload.threadId;
+            ui.dmDraft = "";
+            ui.dmError = undefined;
+          }
+        } else {
+          ui.dmBusy = false;
+          if (selected)
+            ui.dmError = payload.error || undefined;
+          this.socialDmRequests.delete(payload.requestId);
+        }
+      }
+      this.refreshSocialImageView(dmRequest.key);
+      return;
+    }
+    if (payload.type === "lumiphone:social_gifs" || payload.type === "lumiphone:error" && this.socialGifRequests.has(payload.requestId)) {
+      const job = this.socialGifRequests.get(payload.requestId);
+      if (!job)
+        return;
+      clearTimeout(job.timer);
+      this.socialGifRequests.delete(payload.requestId);
+      if (payload.error)
+        job.reject(new Error(payload.error));
+      else
+        job.resolve((Array.isArray(payload.gifs) ? payload.gifs : []).map(socialGif).filter((gif) => Boolean(gif)));
+      return;
+    }
+    if (payload.type === "lumiphone:social_started" && isSocialApp(payload.app)) {
+      if (!this.state || payload.chatId !== this.state.chatId || payload.characterId !== this.state.characterId)
+        return;
+      const key = `${pocketDeviceKey(payload.chatId, payload.characterId, payload.owner)}:${payload.app}`;
+      const ui = this.socialSessions.get(key) || {};
+      this.socialSessions.set(key, ui);
+      ui.pending = payload.requestId;
+      ui.refreshing = true;
+      ui.status = payload.mode === "reply" ? "Waiting for a reply…" : "Finding new posts in your world…";
+      ui.error = undefined;
+      this.socialRequests.set(payload.requestId, key);
+      this.socialRequestModes.set(payload.requestId, payload.mode === "reply" ? "reply" : "refresh");
+      this.refreshSocialImageView(key);
+      return;
+    }
+    if (payload.type === "lumiphone:social_reply_error" || payload.type === "lumiphone:social_error") {
+      const settled = this.settleSocialRequest(payload.requestId);
+      if (!settled)
+        return;
+      const { key, ui } = settled;
+      if (ui && !ui.pending)
+        ui.error = payload.error || "The reply did not arrive. Your comment is saved.";
+      this.refreshSocialImageView(key);
+      return;
+    }
     if (!payload || typeof payload !== "object" || typeof payload.type !== "string")
       return;
+    if (payload.type === "lumiphone:freeform_directory" && payload.requestId === this.freeformListRequest) {
+      this.freeformListRequest = "";
+      this.freeformDirectory = payload.directory;
+      this.freeformError = "";
+      this.renderDrawerLanding();
+      return;
+    }
+    if (payload.type === "lumiphone:freeform_opened" && payload.requestId === this.freeformRequest) {
+      this.resetPocketSession();
+      this.freeformSession = payload.session;
+      this.freeformDraft.sessionId = payload.session.id;
+      this.freeformDraft.personaId = payload.session.personaId;
+      this.freeformRequest = "";
+      this.freeformDraft.name = "";
+      this.loadFreeformDirectory();
+      return;
+    }
+    if (payload.type === "lumiphone:freeform_copied" && payload.requestId === this.freeformCopyRequest) {
+      this.freeformCopyRequest = "";
+      if (this.ctx.getActiveChat().chatId === payload.chatId) {
+        this.resetPocketSession();
+        this.freeformSession = null;
+        this.freeformRequest = "";
+        this.freeformListRequest = "";
+        this.portalView = "devices";
+        this.renderDrawerLanding();
+        this.refresh();
+      }
+      this.showFeedback(payload.backupPath ? "Copied into the current chat. Its previous Pocket was backed up. Freeform stays separate." : "Copied into the current chat. Freeform stays separate.");
+      return;
+    }
     if (payload.type === "lumiphone:state" && payload.state) {
-      const active = this.ctx.getActiveChat();
+      const active = this.freeformSession ? { chatId: this.freeformSession.id, characterId: "_none" } : this.ctx.getActiveChat();
+      if (!this.freeformSession && isFreeformChat(payload.state.chatId))
+        return;
       if (active.chatId && payload.state.chatId !== active.chatId)
         return;
       if (active.characterId && payload.state.characterId !== active.characterId)
@@ -8264,6 +13130,8 @@ class PocketController {
         this.previousNpcDraft = null;
       }
       this.state = payload.state;
+      if (payload.freeformSession)
+        this.freeformSession = payload.freeformSession;
       const personaDeviceId = pocketPersonaActorId(this.state);
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state, conversation))]);
       if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId))
@@ -8332,6 +13200,104 @@ class PocketController {
         ], { duration: 420, easing: "ease-out" });
       return;
     }
+    if (payload.type === "lumiphone:social_done") {
+      const settled = this.settleSocialRequest(payload.requestId);
+      if (!settled)
+        return;
+      const { key, ui } = settled;
+      if (ui) {
+        if (payload.app === "discord" && (payload.action === "post" || payload.action === "reply"))
+          ui.discordBottom = true;
+        if (!ui.pending) {
+          ui.refreshing = false;
+          ui.error = undefined;
+          ui.status = payload.action === "cancel" ? "Stopped. Your saved feed is unchanged." : payload.action === "refresh" ? `${payload.count || 0} new posts. All caught up for now.` : payload.action === "reply" ? "New reply." : "Saved.";
+        }
+        if (payload.action === "post" || payload.action === "reblog") {
+          ui.draft = "";
+          ui.title = "";
+          ui.photo = "";
+          ui.tags = "";
+          ui.gif = undefined;
+          ui.imageId = undefined;
+          ui.imagePreview = undefined;
+          ui.photoPrompt = "";
+          ui.imageProgress = undefined;
+          ui.replyTo = undefined;
+          ui.reblogOf = undefined;
+          ui.photosOpen = false;
+          ui.mediaOpen = false;
+          ui.composing = false;
+          ui.focusComposer = payload.app === "discord";
+          ui.focusStart = payload.app !== "discord";
+        }
+        if (payload.action === "participant" && payload.participantSource === "manual" && payload.serverId && ui.personDrafts)
+          delete ui.personDrafts[payload.serverId];
+        if (payload.action === "profile") {
+          if (ui.usernameEdit)
+            ui.usernameFocus = "button";
+          ui.profileEdit = false;
+          ui.bioDraft = undefined;
+          ui.usernameEdit = false;
+          ui.usernameDraft = undefined;
+        }
+        if (payload.action === "server" && !payload.serverId) {
+          ui.serverImage = undefined;
+          ui.serverName = "";
+          ui.serverTopic = "";
+          ui.serverChannels = "";
+          ui.serverOpen = false;
+          ui.peopleOpen = false;
+          ui.serverId = this.state?.social?.servers.filter((server) => server.memberActorIds.includes(this.currentDeviceOwnerActorId())).at(-1)?.id;
+          ui.channelId = undefined;
+        }
+      }
+      if (isSocialApp(this.currentApp) && key === `${this.deviceIdentity().key}:${this.currentApp}` && this.expanded)
+        this.render(false);
+      return;
+    }
+    if (payload.type === "lumiphone:app_install_done") {
+      const key = this.storeSaves.get(payload.requestId);
+      if (!key)
+        return;
+      this.storeSaves.delete(payload.requestId);
+      const ui = this.storeSessions.get(key);
+      if (ui) {
+        ui.pending = false;
+        ui.error = undefined;
+      }
+      const home = this.launcherSessions.get(key);
+      if (home?.draft)
+        home.draft.installedApps = pocketInstalledApps(normalizeLauncherLayout(payload.layout));
+      if (key === this.deviceIdentity().key && this.expanded) {
+        this.render(false);
+        this.focusStoreApp(ui?.focusApp);
+      }
+      return;
+    }
+    if (payload.type === "lumiphone:launcher_saved") {
+      const key = this.launcherSaves.get(payload.requestId);
+      if (!key)
+        return;
+      this.launcherSaves.delete(payload.requestId);
+      const ui = this.launcherSessions.get(key);
+      if (ui) {
+        ui.pending = false;
+        ui.draft = undefined;
+        ui.selected = undefined;
+        ui.selectedItem = undefined;
+        ui.placingSlot = undefined;
+        ui.folderId = undefined;
+        ui.widgetPicker = false;
+        ui.drawer = false;
+        ui.error = undefined;
+      }
+      if (key === this.deviceIdentity().key && this.currentApp === "home" && this.expanded) {
+        this.render(false);
+        this.screen.querySelector('[aria-label="Edit home screen"]')?.focus({ preventScroll: true });
+      }
+      return;
+    }
     if (payload.type === "lumiphone:jev_status") {
       const context = this.activeContext();
       if (payload.chatId !== context.chatId || payload.characterId !== context.characterId)
@@ -8345,6 +13311,8 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:reconciliation_status") {
+      if (this.freeformSession)
+        return;
       if (!this.preferences.showReconciliationStatus)
         return;
       window.clearTimeout(this.syncIndicatorTimer);
@@ -8421,6 +13389,8 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:notification" && payload.notification) {
+      if (this.freeformSession && !this.state?.notifications.some((n) => n.id === payload.notification.id))
+        return;
       this.showIncomingNotification(payload.notification);
       return;
     }
@@ -8530,7 +13500,7 @@ class PocketController {
         return;
       this.galleryLoading = false;
       this.gallery = { data: payload.data || [], total: Number(payload.total) || 0, offset: Number(payload.offset) || 0, limit: Number(payload.limit) || GALLERY_PAGE_SIZE };
-      if (this.currentApp === "gallery")
+      if (this.currentApp === "gallery" || isSocialApp(this.currentApp))
         this.render(false);
       return;
     }
@@ -8543,6 +13513,9 @@ class PocketController {
           pending.button.textContent = pending.idle;
         }, 1400);
         this.galleryActionButtons.delete(payload.requestId);
+        if (pending.feedback)
+          pending.feedback.textContent = payload.message || "Saved.";
+        pending.complete?.();
       }
       if (payload.action === "delete" && payload.imageId === this.selectedGalleryImageId)
         this.selectedGalleryImageId = "";
@@ -8557,6 +13530,12 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:contact_draft" && payload.draft) {
+      if (this.state && (payload.chatId && payload.chatId !== this.state.chatId || payload.characterId && payload.characterId !== this.state.characterId))
+        return;
+      this.operations.delete(payload.requestId);
+      this.settledOperationRequests.add(payload.requestId);
+      if (this.settledOperationRequests.size > 100)
+        this.settledOperationRequests.delete(this.settledOperationRequests.values().next().value);
       if (this.npcDraft)
         this.previousNpcDraft = structuredClone(this.npcDraft);
       this.npcDraft = structuredClone(payload.draft);
@@ -8585,10 +13564,13 @@ class PocketController {
       for (const key of this.contactFormDrafts.keys())
         if (key.startsWith(`${this.state?.chatId}:${this.state?.characterId}:`))
           this.contactFormDrafts.delete(key);
+      if (payload.requestId === this.collectionRequest)
+        this.collectionRequest = "";
       this.contactSourcesRequested = false;
+      const finishedDraft = Boolean(this.npcDraft) && ["quick-gen", "draft", "new"].includes(this.selectedContactView);
       this.npcDraft = null;
       this.previousNpcDraft = null;
-      const settled = this.router.settle({ app: "contacts", contactId: payload.contactId, view: "detail" });
+      const settled = this.router.settle({ app: "contacts", contactId: payload.contactId, view: "detail" }, finishedDraft ? (route) => route.app === "contacts" && ["quick-gen", "draft", "new"].includes(route.view || "") : undefined);
       this.openPocket(settled, false);
       return;
     }
@@ -8668,6 +13650,8 @@ class PocketController {
       this.cameraPreview = payload.imageUrl || this.cameraPreview;
       this.cameraReady = Boolean(payload.imageUrl);
       this.cameraImageId = payload.imageId || "";
+      if (payload.imageId && payload.imageUrl && !this.cameraVariants.some((item) => item.id === payload.imageId))
+        this.cameraVariants = [...this.cameraVariants, { id: payload.imageId, url: payload.imageUrl }].slice(-12);
       if (payload.profile)
         this.swarmProfile = payload.profile;
       if (this.currentApp === "camera")
@@ -8708,6 +13692,52 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      if (payload.requestId === this.freeformRequest || payload.requestId === this.freeformListRequest) {
+        this.freeformRequest = "";
+        this.freeformListRequest = "";
+        this.freeformError = payload.error || "Could not open Freeform. Try again.";
+        this.renderDrawerLanding();
+        return;
+      }
+      if (payload.requestId === this.freeformCopyRequest)
+        this.freeformCopyRequest = "";
+      const social = this.settleSocialRequest(payload.requestId);
+      if (social) {
+        const { key: socialKey, ui } = social;
+        if (ui && !ui.pending)
+          ui.error = payload.error || "Could not update this feed. Try again.";
+        if (isSocialApp(this.currentApp) && socialKey === `${this.deviceIdentity().key}:${this.currentApp}` && this.expanded)
+          this.render(false);
+        return;
+      }
+      if (this.settledSocialRequests.has(payload.requestId))
+        return;
+      const storeKey = this.storeSaves.get(payload.requestId);
+      if (storeKey) {
+        this.storeSaves.delete(payload.requestId);
+        const ui = this.storeSessions.get(storeKey);
+        if (ui) {
+          ui.pending = false;
+          ui.error = payload.error || "Could not update this app. Try again.";
+        }
+        if (storeKey === this.deviceIdentity().key && this.currentApp === "appstore" && this.expanded) {
+          this.render(false);
+          this.focusStoreApp(ui?.focusApp);
+        }
+        return;
+      }
+      const launcherKey = this.launcherSaves.get(payload.requestId);
+      if (launcherKey) {
+        this.launcherSaves.delete(payload.requestId);
+        const ui = this.launcherSessions.get(launcherKey);
+        if (ui) {
+          ui.pending = false;
+          ui.error = payload.error || "Could not save the layout. Try again.";
+        }
+        if (launcherKey === this.deviceIdentity().key && this.currentApp === "home" && this.expanded)
+          this.render(false);
+        return;
+      }
       if (payload.requestId === this.galleryRequestId)
         this.galleryLoading = false;
       if (payload.requestId === this.trackerMutationRequest)
@@ -8737,6 +13767,10 @@ class PocketController {
       if (galleryAction) {
         galleryAction.button.disabled = false;
         galleryAction.button.textContent = galleryAction.idle;
+        if (galleryAction.feedback) {
+          galleryAction.feedback.setAttribute("role", "alert");
+          galleryAction.feedback.textContent = payload.error || "Could not save. Try again.";
+        }
         this.galleryActionButtons.delete(payload.requestId);
       }
       const identitySaveError = this.screen.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]') || this.setupModalBody?.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]');
@@ -8779,7 +13813,7 @@ class PocketController {
     }
     this.operations.set(operation.requestId, operation);
     const updated = this.updateOperationProgress(operation);
-    if (this.currentApp === "contacts" && !updated)
+    if (this.currentApp === "contacts" && (terminal || !updated))
       this.render(false);
     if (terminal)
       window.setTimeout(() => {
@@ -8894,6 +13928,8 @@ class PocketController {
     }, 240);
   }
   showIncomingNotification(notification) {
+    if (this.expanded && notification.app === "messages" && this.currentApp === "messages" && notification.route?.app === "messages" && notification.route.conversationId === this.selectedConversationId)
+      return;
     if (this.state && !notificationBelongsToDevice(this.state, this.currentDeviceOwnerActorId(), notification.deviceOwnerActorId))
       return;
     if (!this.expanded) {
@@ -8929,10 +13965,10 @@ class PocketController {
     this.shell.style.setProperty("--lp-text", appearance.colors.text);
     const homeWallpaper = wallpaperCss(appearance.colors.wallpaperPrimary, appearance.colors.wallpaperSecondary);
     const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary);
-    const homeSetting = persona?.enabled && persona.homeWallpaper.source ? persona.homeWallpaper : settings.homeWallpaper;
-    const chatSetting = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : settings.chatWallpaper;
-    const homeImage = (persona?.enabled && persona.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url;
-    const chatImage = (persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url;
+    const homeSetting = personaWallpaperActive(persona, "home") ? persona.homeWallpaper : settings.homeWallpaper;
+    const chatSetting = personaWallpaperActive(persona, "chat") ? persona.chatWallpaper : settings.chatWallpaper;
+    const homeImage = (personaWallpaperActive(persona, "home") ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url;
+    const chatImage = (personaWallpaperActive(persona, "chat") ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url;
     const imageLayer = (url, setting, gradient) => url ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}` : gradient;
     this.shell.style.setProperty("--lp-wallpaper", imageLayer(homeImage, homeSetting, homeWallpaper));
     this.shell.style.setProperty("--lp-chat-wallpaper", imageLayer(chatImage, chatSetting, chatWallpaper));
@@ -8976,6 +14012,20 @@ class PocketController {
   }
   close() {
     this.voicePlayer.stop();
+    for (const ui of this.launcherSessions.values()) {
+      ui.placingSlot = undefined;
+      ui.drawer = false;
+      ui.query = "";
+      if (!ui.pending) {
+        ui.draft = undefined;
+        ui.selected = undefined;
+        ui.selectedItem = undefined;
+        ui.placingSlot = undefined;
+        ui.folderId = undefined;
+        ui.widgetPicker = false;
+        ui.error = undefined;
+      }
+    }
     if (!this.widget && !this.dockPanel && !this.mobileWidget)
       return;
     this.expanded = false;
@@ -9010,8 +14060,8 @@ class PocketController {
     const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId());
     const persona = owner === pocketPersonaActorId(this.state) && this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null;
     const appearance = persona?.enabled ? persona : this.preferences;
-    const image = persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat;
-    const wallpaper = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : this.preferences.chatWallpaper;
+    const image = personaWallpaperActive(persona, "chat") ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat;
+    const wallpaper = personaWallpaperActive(persona, "chat") ? persona.chatWallpaper : this.preferences.chatWallpaper;
     const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary);
     const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient;
     return {
@@ -9055,14 +14105,55 @@ class PocketController {
     }
     this.openPocket(activity.route);
   }
+  leaveLauncher() {
+    const ui = this.launcherSessions.get(this.deviceIdentity().key);
+    if (!ui || !ui.drawer && !ui.draft && !ui.folderId && !ui.widgetPicker)
+      return false;
+    if (ui.pending)
+      return true;
+    if (ui.folderId || ui.widgetPicker) {
+      ui.folderId = undefined;
+      ui.widgetPicker = false;
+      this.render(false);
+      this.screen.querySelector('[aria-label="Open app drawer"]')?.focus({ preventScroll: true });
+      return true;
+    }
+    const focus = ui.draft ? "Edit home screen" : "Open app drawer";
+    ui.placingSlot = undefined;
+    ui.drawer = false;
+    ui.query = "";
+    ui.draft = undefined;
+    ui.selected = undefined;
+    ui.selectedItem = undefined;
+    ui.error = undefined;
+    this.render(false);
+    this.screen.querySelector(`[aria-label="${focus}"]`)?.focus({ preventScroll: true });
+    return true;
+  }
   back() {
     this.openPocket(this.router.back(), false);
   }
   home() {
+    const ui = this.launcherSessions.get(this.deviceIdentity().key);
+    if (ui) {
+      ui.drawer = false;
+      ui.query = "";
+      ui.placingSlot = undefined;
+      ui.folderId = undefined;
+      ui.widgetPicker = false;
+    }
     this.openPocket(this.router.home(), false);
   }
   openPocket(routeInput, pushHistory = true) {
-    const normalized = normalizePocketRoute(routeInput);
+    let normalized = normalizePocketRoute(routeInput);
+    if (this.state && LAUNCHER_APPS.some((entry) => entry.app === normalized.app) && !pocketAppInstalled(normalizeLauncherLayout(this.state.launcherLayouts?.[this.currentDeviceOwnerActorId()]), normalized.app)) {
+      const key = this.deviceIdentity().key, ui = this.storeSessions.get(key) || {};
+      ui.focusApp = normalized.app;
+      ui.query = "";
+      ui.filter = "all";
+      this.storeSessions.set(key, ui);
+      normalized = { app: "appstore" };
+    }
     const route = this.router.navigate(normalized, !pushHistory);
     if (!this.state) {
       this.pendingRoute = route;
@@ -9074,6 +14165,8 @@ class PocketController {
       this.open();
     if (this.currentApp === "settings" && route.app !== "settings")
       this.settingsDraft = null;
+    if (this.currentApp === "calendar" && route.app !== "calendar")
+      this.pendingEventSuggestion = null;
     this.currentApp = route.app;
     if (route.app === "messages") {
       const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
@@ -9081,6 +14174,7 @@ class PocketController {
       this.selectedConversationId = conversation?.id || "";
       this.selectedConversationView = route.view || "thread";
       this.selectedMessageId = conversation && route.messageId && conversation.messages.some((entry) => entry.id === route.messageId) ? route.messageId : "";
+      this.pendingMessageScrollId = this.selectedMessageId;
       this.send("lumiphone:mark_read", conversation ? { app: "messages", conversationId: conversation.id } : { app: "messages" });
     } else if (route.app === "contacts") {
       const contact = route.contactId ? this.state.contacts.find((entry) => entry.id === route.contactId) : null;
@@ -9110,6 +14204,7 @@ class PocketController {
         this.cameraProgress = "";
         const contact = this.state.contacts.find((entry) => entry.id === contactId);
         this.cameraNpcDraft = route.draft ? this.npcDraft : null;
+        this.cameraVariants = [];
         const subject = contact || this.cameraNpcDraft;
         this.cameraDraft = { scene: subject ? [`Portrait of ${subject.name}`, subject.phoneProfile?.appearance || subject.identityBrief, "Head and shoulders, one subject, looking at the camera, clean background"].filter(Boolean).map((part) => part.trim().replace(/[.!]+$/, "")).join(". ") + "." : "", enhance: false };
         this.cameraOptions = { purpose: route.draft ? "draft" : contactId ? "contact" : "scene", aspect: contactId ? "1:1" : "", connectionId: "", model: "" };
@@ -9173,6 +14268,8 @@ class PocketController {
     return provisional && this.provisionalActivityIsActive(provisional) ? provisional.activity : undefined;
   }
   mountInlineArtifacts() {
+    if (this.freeformSession)
+      return;
     const active = this.activeContext();
     const entries = [];
     for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
@@ -9255,6 +14352,8 @@ class PocketController {
     return true;
   }
   queueActivityReceipt(activity) {
+    if (this.freeformSession)
+      return;
     const active = this.activeContext();
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId)
       return;
@@ -9295,14 +14394,27 @@ class PocketController {
     }
   }
   render(transition = false) {
+    if (!transition && this.state && this.currentApp === "appstore") {
+      const mounted = this.screen.querySelector(".lumiphone-app-view[data-store-device]");
+      if (mounted?.dataset.storeDevice === this.deviceIdentity().key && updateAppStore(mounted, normalizeLauncherLayout(this.state.launcherLayouts?.[this.currentDeviceOwnerActorId()]))) {
+        this.applyAppearance();
+        return;
+      }
+    }
     const oldView = this.screen.querySelector(".lumiphone-app-view");
     const oldViewScroll = oldView?.scrollTop || 0;
     const oldThread = this.screen.querySelector("[data-pocket-thread]");
-    const oldEventStripOpen = this.screen.querySelector(".lp-event-strip")?.open;
-    const oldScheduledInvites = new Set([...this.screen.querySelectorAll(".lp-event-strip [data-suggestion-id]")].map((card) => card.dataset.suggestionId));
+    const pendingMessageScroll = this.currentApp === "messages" ? this.pendingMessageScrollId : "";
+    const focusedReplyControl = this.screen.contains(document.activeElement) && Boolean(document.activeElement?.matches(".lp-compose > button"));
     const oldThreadScroll = oldThread?.scrollTop;
+    const oldMessageComposerHeight = oldThread?.parentElement?.querySelector("[data-pocket-composer]")?.style.height;
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false;
     const focusedDockSide = document.activeElement?.getAttribute("aria-label") === "Desktop phone side";
+    const focusedContact = this.currentApp === "contacts" && this.screen.contains(document.activeElement) ? document.activeElement?.dataset.contactFocus : "";
+    const focusedSocial = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.socialFocus : "";
+    const socialSelection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : undefined;
+    const focusedLauncher = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.launcherFocus : "";
+    const focusedLauncherSelection = document.activeElement instanceof HTMLInputElement && focusedLauncher ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : "";
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     for (const cleanup of this.viewCleanups.splice(0))
@@ -9312,7 +14424,7 @@ class PocketController {
       return;
     }
     this.applyAppearance();
-    const view = this.currentApp === "home" ? this.renderHome() : this.currentApp === "messages" ? this.renderMessages() : this.currentApp === "contacts" ? this.renderContacts() : this.currentApp === "gallery" ? this.renderGallery() : this.currentApp === "camera" ? this.renderCamera() : this.currentApp === "notes" ? this.renderNotes() : this.currentApp === "weather" ? this.renderWeather() : this.currentApp === "calendar" ? this.renderCalendar() : this.currentApp === "trackers" ? this.renderTrackers() : this.currentApp === "notifications" ? this.renderNotifications() : this.renderSettings();
+    const view = this.currentApp === "home" ? this.renderHome() : this.currentApp === "messages" ? this.renderMessages() : this.currentApp === "contacts" ? this.renderContacts() : this.currentApp === "gallery" ? this.renderGallery() : this.currentApp === "camera" ? this.renderCamera() : this.currentApp === "notes" ? this.renderNotes() : this.currentApp === "weather" ? this.renderWeather() : this.currentApp === "calendar" ? this.renderCalendar() : this.currentApp === "trackers" ? this.renderTrackers() : this.currentApp === "notifications" ? this.renderNotifications() : this.currentApp === "appstore" ? this.renderStore() : isSocialApp(this.currentApp) ? this.renderSocial(this.currentApp) : this.renderSettings();
     view.classList.add("lumiphone-app-view");
     if (this.currentApp === "contacts" && ["config", "new", "draft"].includes(this.selectedContactView)) {
       const key = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactId}:${this.selectedContactView}`;
@@ -9336,20 +14448,68 @@ class PocketController {
       view.addEventListener("animationend", () => view.removeAttribute("data-animate"), { once: true });
     }
     this.screen.replaceChildren(view);
-    if (!transition && oldEventStripOpen) {
-      const strip = view.querySelector(".lp-event-strip");
-      if (strip && [...strip.querySelectorAll("[data-suggestion-id]")].every((card) => oldScheduledInvites.has(card.dataset.suggestionId)))
-        strip.open = true;
+    const replacementThread = view.querySelector("[data-pocket-thread]");
+    if (view.matches(".lp-thread"))
+      view.scrollTop = 0;
+    if (replacementThread && oldThreadScroll !== undefined && replacementThread.dataset.pocketThread === oldThread?.dataset.pocketThread && !pendingMessageScroll) {
+      if (oldMessageComposerHeight) {
+        const composer = view.querySelector("[data-pocket-composer]");
+        if (composer)
+          composer.style.height = oldMessageComposerHeight;
+      }
+      replacementThread.scrollTop = oldThreadNearBottom ? replacementThread.scrollHeight : oldThreadScroll;
     }
+    if (!transition && this.currentApp === "discord" && focusedSocial === "Channels" && !view.contains(document.activeElement)) {
+      const target = [...view.querySelectorAll("[data-social-focus]")].find((node) => node.dataset.socialFocus === focusedSocial && !node.closest("[hidden],details:not([open])"));
+      target?.focus({ preventScroll: true });
+      if (target instanceof HTMLTextAreaElement && socialSelection)
+        target.setSelectionRange(...socialSelection);
+    }
+    if (!transition && focusedReplyControl && !view.contains(document.activeElement))
+      view.querySelector(".lp-compose > button")?.focus({ preventScroll: true });
+    if (!transition && focusedComposer && !view.contains(document.activeElement)) {
+      const composer = view.querySelector(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`);
+      composer?.focus({ preventScroll: true });
+      if (composer && selection)
+        composer.setSelectionRange(selection[0], selection[1]);
+    }
+    if (pendingMessageScroll)
+      requestAnimationFrame(() => {
+        if (view.isConnected && this.screen.contains(view) && this.pendingMessageScrollId === pendingMessageScroll)
+          this.pendingMessageScrollId = "";
+      });
     if (!transition)
       requestAnimationFrame(() => {
-        view.scrollTop = oldViewScroll;
+        if (this.destroyed || !view.isConnected || !this.screen.contains(view))
+          return;
+        if (!view.dataset.storeDevice && !view.matches(".lp-thread"))
+          view.scrollTop = oldViewScroll;
+        if (focusedContact && !view.contains(document.activeElement))
+          [...view.querySelectorAll("[data-contact-focus]")].find((node) => node.dataset.contactFocus === focusedContact)?.focus({ preventScroll: true });
+        if (focusedSocial && !view.contains(document.activeElement))
+          view.querySelectorAll("[data-social-focus]").forEach((node) => {
+            if (node.dataset.socialFocus === focusedSocial && !node.closest("[hidden],details:not([open])")) {
+              node.focus({ preventScroll: true });
+              if (node instanceof HTMLTextAreaElement && socialSelection)
+                node.setSelectionRange(...socialSelection);
+            }
+          });
+        if (focusedLauncher)
+          view.querySelectorAll("[data-launcher-focus]").forEach((node) => {
+            if (node.dataset.launcherFocus !== focusedLauncher)
+              return;
+            node.focus({ preventScroll: true });
+            if (node instanceof HTMLInputElement && node.type !== "search" && focusedLauncherSelection)
+              node.setSelectionRange(...focusedLauncherSelection);
+          });
         const thread = this.screen.querySelector("[data-pocket-thread]");
-        if (thread && oldThreadScroll !== undefined)
+        if (thread && oldThreadScroll !== undefined && thread.dataset.pocketThread === oldThread?.dataset.pocketThread && !pendingMessageScroll)
           thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll;
+        if (focusedReplyControl && !view.contains(document.activeElement))
+          view.querySelector(".lp-compose > button")?.focus({ preventScroll: true });
         if (focusedDockSide)
           this.screen.querySelector('select[aria-label="Desktop phone side"]')?.focus({ preventScroll: true });
-        if (focusedComposer) {
+        if (focusedComposer && !view.contains(document.activeElement)) {
           const composer = this.screen.querySelector(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`);
           composer?.focus({ preventScroll: true });
           if (composer && selection)
@@ -9383,21 +14543,230 @@ class PocketController {
     page.append(nav, content);
     return { page, content };
   }
+  focusStoreApp(app) {
+    const preferred = this.storeSessions.get(this.deviceIdentity().key)?.actionFocus || `app:${app}`;
+    const focus = [...this.screen.querySelectorAll("[data-store-focus]")].find((node) => node.dataset.storeFocus === preferred && !node.closest("[hidden]"));
+    const target = focus || this.screen.querySelector('.lp-store-filter[aria-pressed="true"]') || this.screen.querySelector('[data-store-focus="search"]');
+    target?.focus({ preventScroll: true });
+  }
+  refreshSocialImageView(key) {
+    if (!this.destroyed && isSocialApp(this.currentApp) && key === `${this.deviceIdentity().key}:${this.currentApp}` && this.expanded)
+      this.render(false);
+  }
+  beginSocialImage(key, app, progress, targetServer) {
+    const ui = this.socialSessions.get(key), id = requestId("social_photo");
+    this.socialImages.set(id, { key, app, context: this.activeContext(), owner: this.currentDeviceOwnerActorId(), targetServer, previousId: ui.imageId, previousPreview: ui.imagePreview });
+    ui.imageRequestId = id;
+    ui.imageBusy = true;
+    ui.imageProgress = progress;
+    ui.error = undefined;
+    this.refreshSocialImageView(key);
+    return id;
+  }
+  cancelSocialImage(id) {
+    const job = this.socialImages.get(id);
+    if (!job)
+      return;
+    this.socialImages.delete(id);
+    const ui = this.socialSessions.get(job.key);
+    if (ui?.imageRequestId === id) {
+      ui.imageRequestId = undefined;
+      ui.imageBusy = false;
+      ui.imageProgress = "Photo operation stopped.";
+      ui.imageId = job.previousId;
+      ui.imagePreview = job.previousPreview;
+    }
+    this.send("lumiphone:social_photo_cancel", { ...job.context, deviceOwnerActorId: job.owner, requestId: id, app: job.app });
+    this.refreshSocialImageView(job.key);
+  }
+  handleSocialImage(payload) {
+    const job = this.socialImages.get(payload.requestId);
+    if (!job || !["lumiphone:camera_progress", "lumiphone:camera_done", "lumiphone:camera_cancelled", "lumiphone:social_photo_uploaded", "lumiphone:error"].includes(payload.type))
+      return false;
+    const ui = this.socialSessions.get(job.key);
+    if (!ui || ui.imageRequestId !== payload.requestId) {
+      this.socialImages.delete(payload.requestId);
+      return true;
+    }
+    if (payload.type === "lumiphone:camera_progress") {
+      ui.imageProgress = payload.message || (payload.phase === "preview" ? "Your photo is developing…" : "Making your photo…");
+      if (payload.imageDataUrl)
+        ui.imagePreview = payload.imageDataUrl;
+    } else {
+      this.socialImages.delete(payload.requestId);
+      ui.imageRequestId = undefined;
+      ui.imageBusy = false;
+      if (payload.type === "lumiphone:error" || payload.type === "lumiphone:camera_cancelled" || !payload.imageId) {
+        ui.imageId = job.previousId;
+        ui.imagePreview = job.previousPreview;
+        ui.imageProgress = payload.type === "lumiphone:camera_cancelled" ? "Photo operation stopped." : undefined;
+        if (payload.type !== "lumiphone:camera_cancelled")
+          ui.error = payload.error || "No photo came back. Your draft is still here; try again.";
+      } else if (job.targetServer !== undefined) {
+        ui.imageProgress = undefined;
+        if (job.targetServer) {
+          const id = this.send("lumiphone:social_mutate", { ...job.context, deviceOwnerActorId: job.owner, app: "discord", action: "server", serverId: job.targetServer, imageId: payload.imageId });
+          ui.pending = id;
+          this.socialRequests.set(id, job.key);
+        } else
+          ui.serverImage = { id: payload.imageId, url: payload.imageUrl || "" };
+      } else {
+        ui.imageId = payload.imageId;
+        ui.imagePreview = payload.imageUrl || "";
+        ui.imageProgress = "Photo attached. Ready when you are.";
+        ui.mediaOpen = true;
+        ui.composing = true;
+      }
+    }
+    this.refreshSocialImageView(job.key);
+    return true;
+  }
+  async uploadSocialImage(key, app, targetServer) {
+    const ui = this.socialSessions.get(key);
+    if (!ui || ui.imageBusy || ui.pending)
+      return;
+    const deviceKey = this.deviceIdentity().key, id = this.beginSocialImage(key, app, "Choose a photo…", targetServer), job = this.socialImages.get(id);
+    try {
+      const files = await this.ctx.uploads.pickFile({ accept: ["image/png", "image/jpeg", "image/webp", "image/gif"], multiple: false, maxSizeBytes: 8 * 1024 * 1024 });
+      const file = files[0];
+      if (!this.socialImages.has(id) || this.destroyed)
+        return;
+      if (!file || this.deviceIdentity().key !== deviceKey) {
+        this.cancelSocialImage(id);
+        return;
+      }
+      if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.mimeType) || file.bytes.length > 8 * 1024 * 1024)
+        throw new Error("Choose a PNG, JPEG, WebP, or GIF photo up to 8 MB.");
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader;
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("Could not read this photo."));
+        reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }));
+      });
+      if (!this.socialImages.has(id) || this.destroyed || this.deviceIdentity().key !== deviceKey) {
+        this.cancelSocialImage(id);
+        return;
+      }
+      ui.imageProgress = "Uploading your photo…";
+      this.refreshSocialImageView(key);
+      this.send("lumiphone:social_photo_upload", { ...job.context, deviceOwnerActorId: job.owner, requestId: id, app, ...job.targetServer !== undefined ? { targetServer: job.targetServer } : {}, dataUrl, filename: file.name });
+    } catch (error) {
+      this.handleSocialImage({ type: "lumiphone:error", requestId: id, error: error instanceof Error ? error.message : "Could not upload this photo." });
+    }
+  }
+  renderSocial(app) {
+    const key = `${this.deviceIdentity().key}:${app}`, owner = this.currentDeviceOwnerActorId();
+    let ui = this.socialSessions.get(key);
+    if (!ui) {
+      ui = {};
+      this.socialSessions.set(key, ui);
+    }
+    return renderSocial({
+      state: this.state,
+      owner,
+      app,
+      ui,
+      gallery: this.gallery,
+      npcBank: this.npcBank,
+      bankGroups: this.npcBankGroups,
+      page: (title, subtitle) => this.page(title, subtitle),
+      render: () => this.render(false),
+      home: () => this.home(),
+      photos: () => {
+        this.requestGallery("chat");
+        this.render(false);
+      },
+      generateParticipants: (serverId) => {
+        if (ui.pending)
+          return;
+        ui.error = undefined;
+        ui.status = "Finding people for this server…";
+        const id = this.send("lumiphone:social_participants_generate", { serverId });
+        ui.pending = id;
+        this.socialRequests.set(id, key);
+        this.render(false);
+      },
+      dmSend: (accountId, text, threadId) => {
+        if (ui.dmBusy || !text.trim())
+          return;
+        ui.dmBusy = true;
+        ui.dmError = undefined;
+        const id = this.send("lumiphone:social_dm_send", { app, accountId, text, threadId });
+        this.socialDmRequests.set(id, { key, accountId });
+        this.render(false);
+      },
+      generatePhoto: (prompt) => {
+        if (!prompt.trim() || ui.imageBusy || ui.pending)
+          return;
+        const id = this.beginSocialImage(key, app, "Making your photo…");
+        this.send("lumiphone:social_photo_generate", { requestId: id, app, scene: prompt.trim(), aspect: app === "instagram" ? "1:1" : "4:3" });
+      },
+      uploadPhoto: () => {
+        this.uploadSocialImage(key, app);
+      },
+      uploadServerPicture: (serverId) => {
+        this.uploadSocialImage(key, "discord", serverId || "");
+      },
+      searchGifs: (query) => new Promise((resolve, reject) => {
+        const id = this.send("lumiphone:social_gif_search", { app, query });
+        const timer = setTimeout(() => {
+          this.socialGifRequests.delete(id);
+          reject(new Error("Tenor took too long. Try again."));
+        }, 15000);
+        this.socialGifRequests.set(id, { resolve, reject, timer });
+      }),
+      cancelPhoto: () => {
+        if (ui.imageRequestId)
+          this.cancelSocialImage(ui.imageRequestId);
+      },
+      cancel: () => {
+        if (ui.pending)
+          this.send("lumiphone:social_cancel", { app, operationRequestId: ui.pending });
+      },
+      request: (input) => {
+        if (ui.pending)
+          return;
+        ui.error = undefined;
+        ui.status = input.action === "refresh" ? "Refreshing…" : "Saving…";
+        ui.refreshing = input.action === "refresh";
+        const id = this.send(input.action === "refresh" ? "lumiphone:social_refresh" : "lumiphone:social_mutate", { ...input });
+        ui.pending = id;
+        this.socialRequests.set(id, key);
+        if (input.action === "refresh")
+          this.socialRequestModes.set(id, "refresh");
+        this.render(false);
+      }
+    });
+  }
+  renderStore() {
+    const key = this.deviceIdentity().key, owner = this.currentDeviceOwnerActorId();
+    let ui = this.storeSessions.get(key);
+    if (!ui) {
+      ui = {};
+      this.storeSessions.set(key, ui);
+    }
+    const view = renderAppStore({
+      layout: normalizeLauncherLayout(this.state.launcherLayouts?.[owner]),
+      ui,
+      page: () => this.page("App Store", "Pocket apps"),
+      open: (app) => this.openApp(app),
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
+      install: (app, installed, focusKey) => {
+        ui.pending = true;
+        ui.error = undefined;
+        ui.focusApp = app;
+        ui.actionFocus = focusKey || `app:${app}`;
+        const id = this.send("lumiphone:app_install", { appId: app, installed });
+        this.storeSaves.set(id, key);
+        this.render(false);
+      }
+    });
+    view.dataset.storeDevice = key;
+    return view;
+  }
   renderHome() {
     const state = this.state;
-    const home = el("div", "lp-home");
-    const head = el("div", "lp-home-head");
-    const left = el("div");
-    const roleplayClockText = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? clockLabel(state.roleplayClockLabel) || "Story time" : formatTime(state.roleplayNow);
-    left.append(el("div", "lp-home-date", formatDate(state.roleplayNow, false)), el("div", "lp-home-clock", roleplayClockText));
-    const weather = el("button", "lp-home-weather");
-    weather.type = "button";
-    weather.append(icon2("weather"), el("span", "", `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`));
-    weather.addEventListener("click", () => this.openApp("weather"));
-    head.append(left, weather);
-    const grid = el("div", "lp-app-grid");
-    for (const meta of APP_META.filter((entry) => !entry.dock))
-      grid.appendChild(this.appIcon(meta));
+    const extras = [];
     const activity = el("div", "lp-home-activity");
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(state);
     const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read && notificationBelongsToDevice(state, owner, entry.deviceOwnerActorId)).slice(0, 3);
@@ -9416,10 +14785,6 @@ class PocketController {
       all.addEventListener("click", () => this.openPocket({ app: "notifications" }));
       activity.appendChild(all);
     }
-    const dock = el("div", "lp-home-dock");
-    for (const meta of APP_META.filter((entry) => entry.dock))
-      dock.appendChild(this.appIcon(meta));
-    home.append(head);
     if (!state.setup.initialized && !state.setup.dismissed && owner === pocketPersonaActorId(state)) {
       const prompt = el("section", "lp-home-setup");
       prompt.setAttribute("aria-label", "Set up Pocket");
@@ -9434,26 +14799,42 @@ class PocketController {
       });
       actions.append(run, skip);
       prompt.append(actions);
-      home.append(prompt);
+      extras.push(prompt);
     }
-    home.append(grid);
     if (activity.childElementCount)
-      home.appendChild(activity);
-    home.appendChild(dock);
-    return home;
+      extras.push(activity);
+    const key = this.deviceIdentity().key;
+    let ui = this.launcherSessions.get(key);
+    if (!ui) {
+      ui = {};
+      this.launcherSessions.set(key, ui);
+    }
+    return renderLauncher({
+      state,
+      layout: normalizeLauncherLayout(state.launcherLayouts?.[owner]),
+      ui,
+      openTracker: (id) => this.openPocket({ app: "trackers", trackerId: id, view: "detail" }),
+      onCleanup: (cleanup) => this.viewCleanups.push(cleanup),
+      appIcon: (meta, activate) => this.appIcon(meta, activate),
+      open: (app) => this.openApp(app),
+      save: (layout) => {
+        const id = this.send("lumiphone:save_launcher", { layout });
+        this.launcherSaves.set(id, key);
+      }
+    }, extras);
   }
-  appIcon(meta) {
+  appIcon(meta, activate) {
     const node = el("button", "lp-app-icon");
     node.type = "button";
     node.setAttribute("aria-label", meta.label);
     const box = el("span", `lp-app-icon-box lp-icon-${meta.icon}`);
-    box.appendChild(icon2(meta.icon));
+    box.appendChild(launcherIcon(meta.app));
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
     const unread = meta.app === "messages" ? this.state.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state, conversation, owner), 0) : this.state.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state, owner, item.deviceOwnerActorId)).length;
     if (unread)
       box.appendChild(el("span", "lp-app-dot", unread > 99 ? "99+" : String(unread)));
     node.append(box, el("span", "lp-app-label", meta.label));
-    node.addEventListener("click", () => this.openApp(meta.app));
+    node.addEventListener("click", activate || (() => this.openApp(meta.app)));
     return node;
   }
   renderMessages() {
@@ -9466,6 +14847,8 @@ class PocketController {
       deviceOwnerActorId: owner,
       readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
+      scrollToMessageId: this.pendingMessageScrollId,
+      preserveThreadScroll: !this.pendingMessageScrollId && this.screen.querySelector("[data-pocket-thread]")?.dataset.pocketThread === this.selectedConversationId,
       selectedView: this.selectedConversationView,
       groupDraft: this.groupDrafts.get(`${this.state.chatId}:${this.state.characterId}:${this.selectedConversationId || "new"}`),
       updateGroupDraft: (draft) => {
@@ -9540,7 +14923,7 @@ class PocketController {
       },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: "calendar", eventId }),
-      quickstartEvent: (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
+      quickstartEvent: isFreeformChat(this.state?.chatId) ? undefined : (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
       declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
@@ -9597,7 +14980,7 @@ class PocketController {
     if (!conversation || !message || !suggestion || suggestion.status !== "pending")
       return;
     this.pendingEventSuggestion = { conversationId, messageId, suggestion: structuredClone(suggestion) };
-    this.openPocket({ app: "calendar", eventId: "__new__" });
+    this.openPocket({ app: "calendar", eventId: suggestion.updateEventId || "__new__" });
   }
   declineEventSuggestion(conversationId, messageId) {
     const conversation = this.state?.conversations.find((entry) => entry.id === conversationId);
@@ -9612,7 +14995,7 @@ class PocketController {
     });
     requestAnimationFrame(() => {
       const composer = this.screen.querySelector(`[data-pocket-composer="${CSS.escape(conversationId)}"]`);
-      composer?.focus({ preventScroll: false });
+      composer?.focus({ preventScroll: true });
       composer?.classList.add("lp-scheduler-composer-focus");
       window.setTimeout(() => composer?.classList.remove("lp-scheduler-composer-focus"), 900);
     });
@@ -9874,7 +15257,11 @@ ${body}`;
   }
   renderContacts() {
     const collectionKey = `${this.state.chatId}:${this.state.characterId}:${this.selectedContactView}:${this.selectedContactGroupId}:${this.selectedContactId}`;
+    const browserKey = `${this.state.chatId}:${this.state.characterId}:${this.deviceOwnerActorId}`;
+    if (!this.contactBrowsers.has(browserKey))
+      this.contactBrowsers.set(browserKey, {});
     return renderContactsView({
+      browser: this.contactBrowsers.get(browserKey),
       state: this.state,
       selectedContactId: this.selectedContactId,
       selectedView: this.selectedContactView,
@@ -9978,6 +15365,7 @@ ${body}`;
   chooseContactPhoto(contactId = "__draft__") {
     if (contactId === "__draft__" && !this.npcDraft)
       return;
+    this.pendingWallpaperSelection = null;
     this.pendingContactPhotoDraft = contactId === "__draft__" ? this.npcDraft : null;
     this.pendingWallpaperTarget = "contact-avatar";
     this.pendingContactPhotoId = contactId;
@@ -10046,123 +15434,134 @@ ${body}`;
   }
   inspectImage(item) {
     const modal = this.ctx.ui.showModal({ title: item.filename || "Pocket photo", width: 760, maxHeight: 820 });
+    modal.root.classList.add("lp-media-viewer");
     const image = el("img");
     image.src = item.fullUrl || item.url;
     image.alt = item.filename || "Pocket photo";
-    image.style.cssText = "display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808";
-    const actions = el("div", "lp-gallery-actions");
-    if (item.canDelete) {
-      const remove = button("Delete photo", "lp-button lp-button-quiet");
-      remove.addEventListener("click", () => {
-        const confirmation = el("div", "lp-camera-sheet-fields");
-        confirmation.append(el("p", "lp-copy", "Permanently delete this Pocket photo from Lumiverse Gallery? Chats, avatars and wallpapers using it may lose their image. This cannot be undone."));
-        const cancel = button("Keep photo", "lp-button");
-        const confirm = button("Permanently delete", "lp-button");
-        const sheet = showPocketSheet(remove, "Delete photo?", confirmation);
-        cancel.addEventListener("click", () => sheet?.dismiss());
-        confirm.addEventListener("click", () => {
-          this.runGalleryAction(confirm, "Deleting…", "lumiphone:gallery_delete", { imageId: item.id, scope: this.galleryScope, offset: this.gallery.offset || 0, confirmed: true });
-          sheet?.dismiss();
-          modal.dismiss();
-        });
-        confirmation.append(cancel, confirm);
-      });
-      actions.append(remove);
-    }
+    image.style.cssText = "display:block;width:100%;max-height:65vh;object-fit:contain;border-radius:12px;background:#080808";
+    const actions = el("div", "lp-gallery-actions"), feedback = el("p", "lp-wallpaper-result");
+    feedback.setAttribute("role", "status");
+    const originatingSelection = this.pendingWallpaperSelection;
+    const finish = (selection) => {
+      if (selection && this.pendingWallpaperSelection === selection) {
+        this.pendingWallpaperSelection = null;
+        this.pendingWallpaperTarget = null;
+      }
+      if (!modal.root.isConnected)
+        return;
+      modal.dismiss();
+      if (selection && this.currentApp === "gallery" && selection.contextKey === this.activeContext().chatId + ":" + this.activeContext().characterId)
+        this.openPocket(this.router.settle(selection.route), false);
+    };
     if (this.pendingWallpaperTarget === "contact-avatar" && this.pendingContactPhotoId) {
-      const contactId = this.pendingContactPhotoId;
-      const targetContact = this.state?.contacts.find((entry) => entry.id === contactId);
-      const draft = contactId === "__draft__" ? this.pendingContactPhotoDraft : null;
-      const use = button(`Use for ${draft?.name || targetContact?.name || "contact"}`, "lp-button lp-button-primary");
-      use.addEventListener("click", () => {
+      const contactId = this.pendingContactPhotoId, draft = contactId === "__draft__" ? this.pendingContactPhotoDraft : null;
+      const use = button(`Use for ${draft?.name || this.state?.contacts.find((entry) => entry.id === contactId)?.name || "contact"}`, "lp-button lp-button-primary");
+      use.onclick = () => {
+        const done = () => {
+          this.pendingWallpaperTarget = null;
+          this.pendingContactPhotoId = "";
+          this.pendingContactPhotoDraft = null;
+          modal.dismiss();
+        };
         if (draft) {
           if (draft !== this.npcDraft) {
-            this.showFeedback("That NPC preview has changed. Choose its portrait again.");
+            feedback.textContent = "That NPC preview changed. Choose its portrait again.";
             return;
           }
           draft.avatarUrl = item.fullUrl || item.url;
           draft.avatarSource = { kind: "gallery", imageId: item.id };
           draft.avatarFocus = { x: 50, y: 50 };
-          modal.dismiss();
+          done();
           this.openPocket({ app: "contacts", view: "quick-gen" });
         } else
-          this.runGalleryAction(use, "Applying…", "lumiphone:set_contact_photo", { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url });
-        this.pendingContactPhotoDraft = null;
-        this.pendingWallpaperTarget = null;
-        this.pendingContactPhotoId = "";
-      });
-      actions.appendChild(use);
-    } else if (this.pendingWallpaperTarget) {
-      const target = this.pendingWallpaperTarget;
-      const use = button("Use this image", "lp-button");
-      use.addEventListener("click", () => {
-        const personaTarget = target.startsWith("persona-");
-        this.runGalleryAction(use, "Applying…", "lumiphone:gallery_set_wallpaper", {
-          imageId: item.id,
-          target: target.endsWith("chat") ? "chat" : "home",
-          personaId: personaTarget ? this.activePersona?.id : undefined
-        });
-        this.pendingWallpaperTarget = null;
-      });
-      actions.appendChild(use);
+          this.runGalleryAction(use, "Saving…", "lumiphone:set_contact_photo", { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url }, { feedback, complete: done });
+      };
+      actions.append(use);
+    } else if (this.pendingWallpaperSelection) {
+      const selection = this.pendingWallpaperSelection, use = button("Set " + wallpaperDestinationLabel(selection), "lp-button lp-button-primary");
+      use.onclick = () => this.runGalleryAction(use, "Saving…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, ...selection }, { feedback, complete: () => finish(selection) });
+      actions.append(use);
     }
     const open = button("Open image", "lp-button");
-    open.addEventListener("click", () => window.open(item.fullUrl || item.url, "_blank", "noopener,noreferrer"));
+    open.onclick = () => window.open(item.fullUrl || item.url, "_blank", "noopener,noreferrer");
     const attach = button("Add to current RP chat", "lp-button");
     attach.disabled = !this.caps?.sceneSync;
-    attach.addEventListener("click", () => this.runGalleryAction(attach, "Adding…", "lumiphone:gallery_add_to_chat", { imageId: item.id, imageUrl: item.fullUrl || item.url, filename: item.filename }));
-    const homeWallpaper = button("Set as home wallpaper", "lp-button lp-button-quiet");
-    homeWallpaper.addEventListener("click", () => this.runGalleryAction(homeWallpaper, "Applying…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, imageUrl: item.fullUrl || item.url, target: "home" }));
-    const chatWallpaper = button("Set as chat wallpaper", "lp-button lp-button-quiet");
-    chatWallpaper.addEventListener("click", () => this.runGalleryAction(chatWallpaper, "Applying…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, imageUrl: item.fullUrl || item.url, target: "chat" }));
-    const contact = el("select", "lp-select");
-    const choose = el("option", "", "Choose a contact photo…");
-    choose.value = "";
-    contact.appendChild(choose);
-    for (const entry of this.state?.contacts || []) {
-      const option = el("option", "", entry.name);
-      option.value = entry.id;
-      contact.appendChild(option);
-    }
-    const setPhoto = button("Set contact photo", "lp-button lp-button-quiet");
-    setPhoto.addEventListener("click", () => {
-      if (!contact.value) {
-        this.showError("Choose a contact first.");
-        return;
-      }
-      this.runGalleryAction(setPhoto, "Applying…", "lumiphone:set_contact_photo", { contactId: contact.value, imageId: item.id, imageUrl: item.fullUrl || item.url });
-    });
-    const uses = el("div", "lp-sheet-actions");
+    attach.onclick = () => this.runGalleryAction(attach, "Adding…", "lumiphone:gallery_add_to_chat", { imageId: item.id, imageUrl: item.fullUrl || item.url, filename: item.filename }, { feedback });
     const useAs = button("Use as…", "lp-button");
-    useAs.addEventListener("click", () => showPocketSheet(useAs, "Use photo as", uses));
-    actions.append(attach, useAs, open);
-    uses.append(homeWallpaper, chatWallpaper);
-    const personaAppearance = this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null;
-    if (this.activePersona && personaAppearance?.enabled) {
-      const personaHome = button(`Set ${this.activePersona.name} home wallpaper`, "lp-button lp-button-quiet");
-      personaHome.addEventListener("click", () => this.runGalleryAction(personaHome, "Applying…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, imageUrl: item.fullUrl || item.url, target: "home", personaId: this.activePersona.id }));
-      const personaChat = button(`Set ${this.activePersona.name} chat wallpaper`, "lp-button lp-button-quiet");
-      personaChat.addEventListener("click", () => this.runGalleryAction(personaChat, "Applying…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, imageUrl: item.fullUrl || item.url, target: "chat", personaId: this.activePersona.id }));
-      uses.append(personaHome, personaChat);
+    useAs.onclick = () => {
+      const persona = this.activePersona ? { id: this.activePersona.id, name: this.activePersona.name } : null;
+      let sheet;
+      const choices = wallpaperChoice(persona, (control, destination) => this.runGalleryAction(control, "Saving…", "lumiphone:gallery_set_wallpaper", { imageId: item.id, ...destination }, { feedback: result, complete: () => {
+        sheet?.dismiss();
+        finish(originatingSelection);
+      } }));
+      const result = el("p", "lp-wallpaper-result");
+      result.setAttribute("role", "status");
+      choices.append(result);
+      const contact = el("select", "lp-select");
+      contact.append(new Option("Choose a contact…", ""));
+      for (const entry of this.state?.contacts || [])
+        contact.append(new Option(entry.name, entry.id));
+      const save = button("Set contact photo", "lp-button lp-button-quiet");
+      save.disabled = true;
+      contact.onchange = () => {
+        save.disabled = !contact.value;
+      };
+      save.onclick = () => this.runGalleryAction(save, "Saving…", "lumiphone:set_contact_photo", { contactId: contact.value, imageId: item.id, imageUrl: item.fullUrl || item.url }, { feedback: result, complete: () => {
+        sheet?.dismiss();
+        modal.dismiss();
+      } });
+      choices.append(disclosure("Contact photo", fieldBlock("Contact", contact), save));
+      sheet = showPocketSheet(useAs, "Use photo as", choices);
+    };
+    actions.append(useAs, attach, open);
+    if (item.canDelete) {
+      const remove = button("Delete photo", "lp-button lp-button-quiet");
+      remove.onclick = () => {
+        const confirmation = el("div", "lp-camera-sheet-fields");
+        confirmation.append(el("p", "lp-copy", "Permanently delete this Pocket photo? Chats, avatars and wallpapers using it may lose their image."));
+        const keep = button("Keep photo", "lp-button"), confirm = button("Permanently delete", "lp-button lp-button-danger"), result = el("p", "lp-wallpaper-result");
+        result.setAttribute("role", "status");
+        const sheet = showPocketSheet(remove, "Delete photo?", confirmation);
+        keep.onclick = () => sheet?.dismiss();
+        confirm.onclick = () => this.runGalleryAction(confirm, "Deleting…", "lumiphone:gallery_delete", { imageId: item.id, scope: this.galleryScope, offset: this.gallery.offset || 0, confirmed: true }, { feedback: result, complete: () => {
+          sheet?.dismiss();
+          modal.dismiss();
+        } });
+        confirmation.append(keep, confirm, result);
+      };
+      actions.append(remove);
     }
-    if (!(this.pendingWallpaperTarget === "contact-avatar" && this.pendingContactPhotoId))
-      uses.append(fieldBlock("Contact photo", contact), setPhoto);
-    modal.root.classList.add("lp-media-viewer");
-    modal.root.append(image, actions);
+    modal.root.append(image, actions, feedback);
   }
-  runGalleryAction(buttonNode, progress, type, payload) {
+  runGalleryAction(buttonNode, progress, type, payload, options = {}) {
     const idle = buttonNode.textContent || "Action";
     const actionRequestId = requestId("gallery");
     buttonNode.disabled = true;
     buttonNode.textContent = progress;
-    this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle });
+    if (options.feedback) {
+      options.feedback.setAttribute("role", "status");
+      options.feedback.textContent = progress;
+    }
+    this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle, ...options });
     this.send(type, { ...payload, requestId: actionRequestId });
   }
-  wallpaperTargetPayload(target) {
-    return { target, personaId: target.startsWith("persona-") ? this.activePersona?.id : undefined };
-  }
   async chooseImage(target, mode) {
+    if (target === "contact-avatar")
+      return;
+    if (target.startsWith("persona-") && !this.activePersona?.id) {
+      this.showError("Choose a Persona for this wallpaper.");
+      return;
+    }
+    const context = this.activeContext();
+    const selection = { target, ...target.startsWith("persona-") ? { personaId: this.activePersona.id, personaName: this.activePersona.name } : {}, route: structuredClone(this.router.current), contextKey: context.chatId + ":" + context.characterId };
+    const refreshOrigin = () => {
+      const active = this.activeContext();
+      if (this.currentApp === "settings" && active.chatId === context.chatId && active.characterId === context.characterId)
+        this.render(false);
+    };
     if (mode === "gallery") {
+      this.pendingWallpaperSelection = selection;
       this.pendingWallpaperTarget = target;
       this.requestGallery("all");
       this.openPocket({ app: "gallery" });
@@ -10180,29 +15579,36 @@ ${body}`;
           reader.addEventListener("error", () => reject(reader.error || new Error("Could not read the image.")), { once: true });
           reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }));
         });
-        this.send("lumiphone:upload_wallpaper_asset", { ...this.wallpaperTargetPayload(target), dataUrl, filename: file.name });
+        const pending = button("Upload wallpaper");
+        this.showFeedback("Saving " + wallpaperDestinationLabel(selection) + "…");
+        this.runGalleryAction(pending, "Saving…", "lumiphone:upload_wallpaper_asset", { ...selection, dataUrl, filename: file.name }, { complete: refreshOrigin });
       } catch (error) {
         this.showError(error instanceof Error ? error.message : String(error));
       }
       return;
     }
     const modal = this.ctx.ui.showModal({ title: "Use image URL", width: 460, maxHeight: 320 });
+    modal.root.classList.add("lp-media-viewer");
     const content = el("div", "lp-settings-section");
     content.appendChild(el("p", "lp-copy", "Use a durable HTTPS image URL. Pocket stores the URL, never a downloaded base64 copy."));
     const input = el("input", "lp-input");
     input.type = "url";
     input.placeholder = "https://example.com/wallpaper.jpg";
-    const apply = button("Use image", "lp-button");
+    const result = el("p", "lp-wallpaper-result");
+    result.setAttribute("role", "status");
+    const apply = button("Set " + wallpaperDestinationLabel(selection), "lp-button");
     apply.addEventListener("click", () => {
       const url = input.value.trim();
       if (!/^https:\/\//i.test(url)) {
         this.showError("Enter an HTTPS image URL.");
         return;
       }
-      this.send("lumiphone:set_wallpaper", { ...this.wallpaperTargetPayload(target), source: { kind: "url", url } });
-      modal.dismiss();
+      this.runGalleryAction(apply, "Saving…", "lumiphone:set_wallpaper", { ...selection, source: { kind: "url", url } }, { feedback: result, complete: () => {
+        modal.dismiss();
+        refreshOrigin();
+      } });
     });
-    content.append(input, apply);
+    content.append(fieldBlock("HTTPS image URL", input), apply, result);
     modal.root.appendChild(content);
     input.focus();
   }
@@ -10251,8 +15657,8 @@ ${body}`;
     floating.hidden = this.cameraReady && !this.cameraBusy;
     viewfinder.append(floating);
     const footer = el("div", "lp-camera-bottom-strip");
-    const optionRow = el("div", "lp-row-between");
-    const enhanceLabel = el("label", "lp-row");
+    const optionRow = el("div", "lp-camera-option-basics");
+    const enhanceLabel = el("label", "lp-camera-enhance");
     const enhance = el("input");
     enhance.type = "checkbox";
     enhance.checked = this.cameraDraft.enhance ?? this.preferences.sceneEnhancer;
@@ -10260,7 +15666,9 @@ ${body}`;
       this.cameraDraft.enhance = enhance.checked;
     });
     enhanceLabel.append(enhance, el("span", "lp-copy", "Enhance scene description"));
-    const source = el("span", "lp-copy", this.swarmProfile?.source === "swarm_studio" ? "Swarm Studio" : "Manual profile");
+    const source = el("div", "lp-camera-profile-status");
+    source.append(el("strong", "", this.swarmProfile?.source === "swarm_studio" ? `Swarm Studio · ${this.swarmProfile.status}` : "Lumiverse image settings"));
+    source.append(el("small", "", subject ? `Portrait subject: ${subject.name}. ${this.swarmProfile?.source === "swarm_studio" ? `Image settings inherited from ${this.state.characterName}; portrait identity stays ${subject.name}.` : "Uses the portrait description below."}` : "Uses your active image profile."));
     optionRow.append(enhanceLabel, source);
     const makeChoice = (label, values, value, update) => {
       const select = el("select", "lp-select");
@@ -10326,11 +15734,12 @@ ${body}`;
     progress.setAttribute("aria-live", "polite");
     const optionsDrawer = button("Camera options", "lp-camera-options-chip");
     const optionFields = el("div", "lp-camera-sheet-fields");
-    optionFields.append(pipelineCopy, nativeSettings, purpose, aspect, connection, (() => {
-      const row = el("div", "lp-field");
-      row.append(el("div", "lp-label", "Checkpoint override"), model);
-      return row;
-    })(), optionRow);
+    const modelRow = el("div", "lp-field");
+    modelRow.append(el("div", "lp-label", "Checkpoint override"), model);
+    const profileDetail = el("p", "lp-copy lp-camera-profile-detail", this.swarmProfile?.checkpoint ? `Profile checkpoint: ${this.swarmProfile.checkpoint}` : "The active Lumiverse workflow chooses the checkpoint.");
+    const advanced = disclosure("Advanced image settings", connection, modelRow, profileDetail, pipelineCopy, nativeSettings);
+    advanced.classList.add("lp-camera-advanced");
+    optionFields.append(purpose, aspect, optionRow, advanced);
     optionsDrawer.addEventListener("click", () => {
       showPocketSheet(optionsDrawer, "Camera options", optionFields);
       mountModel();
@@ -10388,6 +15797,40 @@ ${body}`;
       const review = el("div", "lp-camera-review-actions");
       review.append(el("span", "lp-copy", "Ready for " + (subject?.name || "this contact")), frame, use);
       footer.append(review);
+    }
+    if (subject && !this.cameraReady && !(("avatarUrl" in subject) && subject.avatarUrl)) {
+      const skip = button(this.cameraBusy ? "Skip portrait generation" : "Continue without a new photo", "lp-button lp-button-quiet");
+      skip.onclick = () => {
+        if (this.cameraBusy)
+          this.send("lumiphone:camera_cancel", { requestId: this.cameraRequestId });
+        this.cameraBusy = false;
+        this.cameraRequestId = "";
+        this.back();
+      };
+      footer.prepend(skip);
+    }
+    if (this.cameraVariants.length) {
+      const variants = el("div", "lp-portrait-variants");
+      variants.setAttribute("role", "group");
+      variants.setAttribute("aria-label", "Generated portrait choices");
+      for (const [index, item] of this.cameraVariants.entries()) {
+        const choose = button("", "lp-portrait-choice");
+        choose.disabled = this.cameraBusy;
+        choose.setAttribute("aria-label", `Choose generated image ${index + 1}`);
+        choose.setAttribute("aria-pressed", String(item.id === this.cameraImageId));
+        const image = el("img");
+        image.src = item.url;
+        image.alt = "";
+        choose.append(image);
+        choose.onclick = () => {
+          this.cameraImageId = item.id;
+          this.cameraPreview = item.url;
+          this.cameraReady = true;
+          this.render(false);
+        };
+        variants.append(choose);
+      }
+      footer.prepend(variants);
     }
     controls.append(mode, viewfinder, footer);
     shutter.setAttribute("aria-label", this.cameraBusy ? "Stop generating photo" : this.cameraReady ? "Retake photo" : "Take photo");
@@ -10561,9 +16004,10 @@ ${body}`;
     const { page, content } = this.page("Timeline", formatDate(state.roleplayNow, true), { label: "Add", callback: () => this.openPocket({ app: "calendar", eventId: "__new__" }) });
     const nowCard = el("div", "lp-card");
     const nowField = el("input", "lp-input");
+    nowField.setAttribute("aria-label", isFreeformChat(state.chatId) ? "Session time" : "Roleplay time");
     nowField.type = "datetime-local";
     nowField.value = dateTimeLocal(state.roleplayNow);
-    const setNow = button("Set roleplay now", "lp-button");
+    const setNow = button(isFreeformChat(state.chatId) ? "Set session time" : "Set roleplay now", "lp-button");
     setNow.addEventListener("click", () => {
       const parsed = new Date(nowField.value);
       if (!Number.isNaN(parsed.getTime()))
@@ -10572,16 +16016,18 @@ ${body}`;
     const clockSource = state.roleplayClockSource === "manual" ? "Manual" : state.roleplayClockSource === "narrative" ? "Narrative" : "Legacy / fallback";
     const clockPrecision = state.roleplayClockPrecision && state.roleplayClockPrecision !== "unknown" ? ` · ${state.roleplayClockPrecision}` : "";
     const clockLabel = state.roleplayClockLabel ? ` · ${state.roleplayClockLabel}` : "";
-    nowCard.append(el("div", "lp-eyebrow", "Roleplay clock"), nowField, el("p", "lp-copy", `${clockSource}${clockPrecision}${clockLabel}`), setNow);
-    content.appendChild(disclosure("Story clock · " + formatTime(state.roleplayNow), nowCard));
+    nowCard.append(el("div", "lp-eyebrow", isFreeformChat(state.chatId) ? "Session clock" : "Roleplay clock"), nowField, el("p", "lp-copy", `${clockSource}${clockPrecision}${clockLabel}`), setNow);
+    content.appendChild(disclosure((isFreeformChat(state.chatId) ? "Session clock " : "Story clock ") + "· " + formatTime(state.roleplayNow), nowCard));
     const overview = el("div", "lp-timeline-overview");
     overview.append(el("strong", "", String(state.events.filter((event) => !event.completed).length)), el("span", "lp-copy", "open beats"), el("strong", "", String(state.events.filter((event) => event.completed).length)), el("span", "lp-copy", "resolved"));
-    content.append(overview, this.appReviewControl("timeline-review", "Review recent story", "lumiphone:timeline_review"));
+    content.append(overview);
+    if (!isFreeformChat(state.chatId))
+      content.append(this.appReviewControl("timeline-review", "Review recent story", "lumiphone:timeline_review"));
     const timeline = el("div", "lp-timeline");
     const events = [...state.events].sort((a, b) => Number(a.completed) - Number(b.completed) || (a.completed ? Date.parse(b.start) - Date.parse(a.start) : Date.parse(a.start) - Date.parse(b.start)));
     let section = "";
     for (const event of events) {
-      const nextSection = event.completed ? "Resolved" : "In the story";
+      const nextSection = event.completed ? "Resolved" : isFreeformChat(state.chatId) ? "In this session" : "In the story";
       if (section !== nextSection) {
         section = nextSection;
         timeline.append(el("h3", "lp-timeline-section", section));
@@ -10607,23 +16053,23 @@ ${body}`;
     return page;
   }
   renderEventEditor(event) {
-    const { page, content } = this.page(event ? "Edit Event" : "New Event", "Roleplay timeline", { label: "Save", callback: () => save() });
-    const schedulerSeed = !event ? this.pendingEventSuggestion : null;
+    const { page, content } = this.page(event ? "Edit Event" : "New Event", isFreeformChat(this.state?.chatId) ? "Session timeline" : "Roleplay timeline", { label: "Save", callback: () => save() });
+    const schedulerSeed = !event || this.pendingEventSuggestion?.suggestion.updateEventId === event.id ? this.pendingEventSuggestion : null;
     const suggestion = schedulerSeed?.suggestion || null;
-    const title = this.field("Title", event?.title || suggestion?.title || "");
+    const title = this.field("Title", suggestion?.title || event?.title || "");
     const lane = this.field("Timeline lane", event?.lane || (suggestion ? "Plans" : "Main timeline"));
     const whenKindLabel = el("label", "lp-label", "Time precision");
     const whenKind = el("select", "lp-select");
     for (const [value, label] of [["exact", "Exact date/time"], ["approximate", "Approximate"], ["relative", "Relative to story"], ["unscheduled", "Unscheduled"]]) {
       const option = el("option", "", label);
       option.value = value;
-      option.selected = (event?.whenKind || suggestion?.whenKind || "exact") === value;
+      option.selected = (suggestion?.whenKind || event?.whenKind || "exact") === value;
       whenKind.appendChild(option);
     }
     whenKindLabel.appendChild(whenKind);
-    const whenText = this.field("Timeline label", event?.whenText || suggestion?.whenText || (event ? formatDate(event.start, true) : ""));
-    const start = this.field("Start", event ? dateTimeLocal(event.start) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
-    const end = this.field("End", event ? dateTimeLocal(event.end) : suggestion?.end ? dateTimeLocal(suggestion.end) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
+    const whenText = this.field("Timeline label", suggestion?.whenText || event?.whenText || (event ? formatDate(event.start, true) : ""));
+    const start = this.field("Start", suggestion?.start ? dateTimeLocal(suggestion.start) : event ? dateTimeLocal(event.start) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
+    const end = this.field("End", suggestion?.end ? dateTimeLocal(suggestion.end) : suggestion?.start ? dateTimeLocal(suggestion.start) : event ? dateTimeLocal(event.end) : dateTimeLocal(this.state.roleplayNow), "datetime-local");
     const exactTiming = el("div", "lp-settings-section");
     exactTiming.style.minWidth = "0";
     exactTiming.style.width = "100%";
@@ -10636,8 +16082,8 @@ ${body}`;
     syncTimingPrecision();
     const description = el("textarea", "lp-textarea");
     description.placeholder = "What happens?";
-    description.value = event?.description || suggestion?.description || "";
-    const selectedParticipantNames = new Set(event?.participantNames || suggestion?.participantNames || []);
+    description.value = suggestion?.description || event?.description || "";
+    const selectedParticipantNames = new Set(suggestion?.participantNames || event?.participantNames || []);
     const participants = el("section", "lp-card lp-settings-section");
     participants.appendChild(el("div", "lp-eyebrow", "Participants"));
     const picker = el("div", "lp-contact-checklist lp-participant-picker");
@@ -10690,9 +16136,9 @@ ${body}`;
         whenText: inputValue(whenText.input),
         completed: completed.checked,
         participants: [...selectedParticipantNames],
-        sourceConversationId: event?.source?.conversationId || schedulerSeed?.conversationId,
-        sourceMessageId: event?.source?.messageId || schedulerSeed?.messageId,
-        sourceSuggestionId: event?.source?.suggestionId || schedulerSeed?.suggestion.id
+        sourceConversationId: schedulerSeed?.conversationId || event?.source?.conversationId,
+        sourceMessageId: schedulerSeed?.messageId || event?.source?.messageId,
+        sourceSuggestionId: schedulerSeed?.suggestion.id || event?.source?.suggestionId
       } });
       this.pendingEventSuggestion = null;
       this.back();
@@ -10756,6 +16202,16 @@ ${body}`;
   renderSettings() {
     this.settingsDraft ||= structuredClone(this.preferences);
     return renderSettingsView({
+      freeformSession: this.freeformSession,
+      renameFreeform: (name) => {
+        this.send("lumiphone:freeform_rename", { name });
+      },
+      chooseFreeform: () => {
+        this.close();
+        this.navigatePortal("freeform");
+        this.drawer.activate();
+      },
+      copyFreeformToChat: () => this.confirmFreeformCopy(),
       identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
       jevKeyConfigured: this.jevKeyConfigured,
@@ -11403,6 +16859,1061 @@ var VOICE_MESSAGE_STYLES = `
 .lp-voice-transcript p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
 `;
 
+// src/frontend/components/launcher-styles.ts
+var LAUNCHER_STYLES = `
+  .lumiphone-shell .lp-launcher { --lp-launcher-row:max(74px,calc(clamp(44px,calc(54px * var(--pocket-ui-scale)),64px) + 14px + clamp(10px,calc(11px * var(--pocket-ui-scale)),13px) * 1.4)); --lp-launcher-row-gap:22px; gap:18px; padding:10px 18px 14px; overflow:hidden; }
+  .lp-launcher-body { flex:1; min-height:0; display:flex; flex-direction:column; gap:18px; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; scrollbar-width:thin; padding:6px; margin:-6px; }
+  .lp-launcher-body > * { flex-shrink:0; }
+  .lp-launcher-toolbar { display:flex; align-items:center; gap:6px; flex:none; position:sticky; top:0; z-index:3; }
+  .lp-launcher-toolbar > :first-child { margin-right:auto; }
+  .lp-launcher-action { appearance:none; min-height:32px; padding:6px 10px; border:0; border-radius:8px; background:transparent; color:#fff; font-family:inherit; font-size:12px; font-weight:600; line-height:1.3; cursor:pointer; }
+  .lp-launcher .lp-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+  .lp-launcher-toolbar .lp-launcher-action { font-size:12px; font-weight:600; }
+  .lp-launcher-toolbar { border-radius:10px; background:#151b2b80; backdrop-filter:blur(18px); }
+  .lp-launcher-action:hover:not(:disabled) { background:#ffffff12; }
+  .lp-launcher-action:disabled { opacity:.45; cursor:default; }
+  .lp-launcher :is(button,input):focus-visible { outline:2px solid #fff; outline-offset:4px; }
+  .lumiphone-shell .lp-launcher .lp-home-head { padding:10px 2px 14px; flex-wrap:wrap; gap:16px; }
+  .lumiphone-shell .lp-launcher .lp-home-clock { font-size:clamp(36px,calc(46px * var(--pocket-ui-scale)),58px); font-weight:300; letter-spacing:-.055em; }
+  .lp-launcher .lp-home-date { margin-bottom:7px; font-weight:500; }
+  .lp-launcher .lp-home-weather { min-height:44px; max-width:100%; cursor:pointer; }
+  .lumiphone-shell .lp-launcher .lp-app-grid { gap:var(--lp-launcher-row-gap) 8px; grid-auto-rows:minmax(var(--lp-launcher-row),auto); flex:none; }
+  .lp-launcher .lp-app-grid > .lp-app-icon { align-self:start; align-content:start; height:var(--lp-launcher-row); }
+  .lumiphone-shell .lp-launcher .lp-app-icon { gap:8px; min-height:74px; border-radius:16px; padding:3px 0; }
+  .lumiphone-shell .lp-launcher .lp-app-icon-box { width:min(100%,clamp(44px,calc(54px * var(--pocket-ui-scale)),64px)); height:auto; aspect-ratio:1; border-radius:26%; color:#fff; box-shadow:0 5px 12px #0003,inset 0 1px 1px #ffffff50; }
+  .lp-launcher .lp-app-icon-box > [aria-hidden="true"] { display:grid; place-items:center; width:100%; height:100%; }
+  .lumiphone-shell .lp-launcher .lp-app-icon-box svg { display:block; width:54%; height:54%; stroke-width:1.8; }
+  .lumiphone-shell .lp-launcher .lp-app-label { font-size:clamp(10px,calc(11px * var(--pocket-ui-scale)),13px); line-height:1.4; text-shadow:0 1px 5px #000b; text-align:center; max-width:100%; overflow-wrap:anywhere; }
+  .lp-launcher .lp-app-icon[aria-pressed="true"] { outline:2px solid #fff; outline-offset:4px; background:#ffffff14; }
+  .lp-launcher [hidden] { display:none !important; }
+  .lp-launcher-footer { margin-top:auto; padding-top:8px; flex:none; }
+  .lp-launcher-pages { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:0; padding-bottom:4px; }
+  .lp-launcher-page-dot { display:grid; place-items:center; padding:0; width:28px; }
+  .lp-launcher-page-dot > span { width:5px; height:5px; border-radius:5px; background:#ffffff60; }
+  .lp-launcher-page-dot[aria-current="page"] > span { width:14px; background:#fff; }
+  .lp-launcher-page-add { font-size:20px; padding:0; width:28px; }
+  .lp-launcher-edit-tools { display:flex; flex-wrap:wrap; gap:4px; }
+  .lp-launcher-edit-tools > button { font-size:11px; color:#ffffffbc; }
+  .lp-launcher-folder-heading { display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  .lp-launcher-folder-heading h2 { min-width:0; overflow-wrap:anywhere; }
+  .lp-launcher .lp-launcher-folder { background:#ffffff26; border:1px solid #ffffff30; box-shadow:0 4px 12px #0002; }
+  .lp-launcher .lp-launcher-folder > .lp-launcher-folder-preview { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:4px; padding:7px; }
+  .lumiphone-shell .lp-launcher .lp-launcher-folder-preview .lp-app-icon-box { width:100%; border-radius:5px; box-shadow:none; }
+  .lp-launcher-location input { width:100%; min-width:0; min-height:34px; padding:5px 8px; border:1px solid #ffffff25; border-radius:8px; background:#232b3c; color:#fff; font:inherit; font-size:12px; }
+  .lp-launcher-widget { grid-column:span 2; min-width:0; position:relative; }
+  .lp-launcher-widget[data-size="wide"] { grid-column:1/-1; }
+  .lp-launcher-widget[data-system-widget="clock"], .lp-launcher-widget[data-weather-variant="stripe"] { height:var(--lp-launcher-row); align-self:start; }
+  .lp-launcher-widget[data-weather-variant="card"] { grid-row:span 2; height:calc(var(--lp-launcher-row) * 2 + var(--lp-launcher-row-gap)); align-self:start; }
+  .lumiphone-shell .lp-launcher-widget > .lp-tracker-card { height:100%; width:100%; margin:0; padding:12px; border-radius:18px; }
+  .lp-launcher-widget .lp-tracker-top { flex-wrap:wrap; gap:4px; }
+  .lp-launcher-widget[data-size="compact"] .lp-tracker-update { display:none; }
+  .lp-launcher-widget .lp-tracker-readout { overflow-wrap:anywhere; }
+  .lp-launcher-widget .lp-tracker-reading { min-width:0; }
+  .lp-launcher-weather-card { height:100%; padding:14px; border:1px solid #ffffff25; border-radius:18px; background:linear-gradient(145deg,#305e87,#20394f); color:#fff; display:grid; align-content:start; gap:6px; }
+  .lp-launcher-weather-card h3, .lp-launcher-clock-card h3 { margin:0; font-family:inherit; font-size:12px; line-height:1.4; font-weight:600; }
+  .lp-launcher-weather-card p { margin:0; font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+  .lp-launcher-weather-location, .lp-launcher-weather-range { opacity:.75; }
+  .lp-launcher-weather-reading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+  .lp-launcher-weather-temp { font-size:clamp(24px,calc(28px * var(--pocket-ui-scale)),36px); font-weight:400; line-height:1.2; }
+  .lp-launcher-weather-card .lp-weather-glyph { width:36px; height:36px; flex:none; color:#ffe6b2; }
+  .lp-launcher-weather-card[data-variant="card"] { align-content:space-between; }
+  .lp-launcher-weather-card[data-variant="stripe"] { padding:10px; container-type:inline-size; }
+  .lp-launcher-weather-card[data-variant="stripe"] :is(h3,.lp-launcher-weather-location,.lp-launcher-weather-range) { display:none; }
+  .lp-launcher-weather-card[data-variant="stripe"] .lp-weather-glyph { width:24px; height:24px; }
+  .lp-launcher-weather-card[data-variant="stripe"] .lp-launcher-weather-reading { flex-wrap:nowrap; gap:6px; }
+  .lp-launcher-weather-card[data-variant="stripe"] .lp-launcher-weather-temp { font-size:min(calc(26px * var(--pocket-ui-scale)),20cqw); }
+  .lp-launcher-clock-card { height:100%; padding:4px 2px; border:0; background:transparent; color:#fff; display:grid; align-content:center; gap:4px; container-type:inline-size; text-shadow:0 2px 12px #0006; }
+  .lp-launcher-clock-date { margin:0; font-size:clamp(10px,calc(11px * var(--pocket-ui-scale)),13px); line-height:1.4; opacity:.82; }
+  .lp-launcher-clock-time { font-size:min(calc(34px * var(--pocket-ui-scale)),22cqw); line-height:1.1; font-weight:300; white-space:nowrap; letter-spacing:-.045em; }
+  .lp-launcher-clock-card[data-clock-kind="label"] .lp-launcher-clock-time { font-size:min(calc(24px * var(--pocket-ui-scale)),18cqw); white-space:normal; overflow-wrap:anywhere; }
+  .lp-launcher-widget-open { appearance:none; position:absolute; inset:0; width:100%; height:100%; border:0; border-radius:18px; background:transparent; cursor:pointer; }
+  .lp-launcher-widget-open:disabled { cursor:default; }
+  .lp-launcher-widget-open[aria-pressed="true"] { outline:2px solid #fff; outline-offset:3px; }
+  .lp-launcher-missing-widget { min-height:100px; font-size:12px; line-height:1.5; color:var(--lp-muted); }
+  .lp-launcher-widget-picker { flex:1; min-height:0; overflow:auto; display:grid; gap:12px; align-content:start; }
+  .lp-launcher-widget-picker > button { text-align:left; background:#ffffff0c; }
+  .lp-launcher-widget-picker .lp-launcher-subtitle { margin:0; }
+  .lumiphone-shell .lp-launcher .lp-home-dock { margin:0; gap:8px; padding:14px 10px; min-height:84px; border-radius:28px; background:linear-gradient(135deg,#ffffff26,#ffffff12); border:1px solid #ffffff30; box-shadow:0 8px 24px #0002; }
+  .lumiphone-shell .lp-launcher .lp-home-dock .lp-app-icon { min-height:44px; padding:0; }
+  .lp-launcher-empty-slot { justify-self:center; width:44px; height:44px; border:1px dashed #ffffff40; background:#ffffff08; color:#ffffffb0; font-size:22px; }
+  .lp-launcher-drawer { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:24px; padding:6px 6px 20px; margin:0 -6px; }
+  .lp-launcher-title { font-size:28px; font-weight:600; letter-spacing:-.035em; margin:0; }
+  .lp-launcher-subtitle { font-size:12px; line-height:1.5; margin:-16px 0 0; color:#ffffffb0; }
+  .lp-launcher-search { display:block; }
+  .lp-launcher-search input { box-sizing:border-box; width:100%; min-height:46px; padding:12px 16px; border:1px solid #ffffff30; border-radius:16px; background:#ffffff12; color:#fff; font:inherit; font-size:14px; }
+  .lp-launcher-search input::placeholder { color:#ffffffb0; }
+  .lp-launcher[data-drawer="true"] { background-image:linear-gradient(#141a2ae8,#141a2af2),var(--lp-wallpaper); }
+  .lp-launcher-editor { display:grid; gap:8px; padding:10px 12px; border:1px solid #ffffff25; border-radius:14px; background:#151b2bc9; color:#fff; }
+  .lp-launcher-editor-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .lp-launcher-editor-heading > strong { font-size:13px; font-weight:600; }
+  .lp-launcher-editor-heading > button { color:#ffc0c5; font-size:11px; }
+  .lp-launcher-editor p { margin:0; font-size:12px; line-height:1.5; color:#ffffffb0; }
+  .lp-launcher-editor-actions { display:grid; grid-template-columns:minmax(0,1fr) 34px 34px; gap:6px; }
+  .lp-launcher-editor-actions > button { padding:0; background:#ffffff0c; font-size:18px; }
+  .lp-launcher-location { min-width:0; display:flex; }
+  .lp-launcher-location select { width:100%; min-width:0; min-height:34px; padding:5px 8px; border:1px solid #ffffff25; border-radius:8px; background:#232b3c; color:#fff; font-family:inherit; font-size:12px; }
+  .lp-launcher-location option { background:#232b3c; color:#fff; }
+  .lp-launcher select:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+  @media (pointer:coarse) {
+    .lp-launcher-action, .lp-launcher-location select, .lp-launcher-location input { min-height:44px; }
+    .lp-launcher-page-dot, .lp-launcher-page-add { width:36px; }
+    .lp-launcher-editor-actions { grid-template-columns:minmax(0,1fr) 44px 44px; }
+  }
+  .lp-launcher-empty { grid-column:1/-1; font-size:13px; line-height:1.6; color:#ffffffb0; padding:22px 10px; text-align:center; }
+  .lp-launcher-error { padding:12px; border-radius:12px; background:#771d35; color:#fff; font-size:13px; }
+  .lp-launcher .lp-home-activity { margin:4px 0 0; }
+  .lp-launcher .lp-home-setup { margin-bottom:0; }
+  :is(.lp-launcher,.lp-store) .lp-icon-messages { background:linear-gradient(145deg,#66d694,#249c69); }
+  :is(.lp-launcher,.lp-store) .lp-icon-camera { background:linear-gradient(145deg,#657081,#323b4b); }
+  :is(.lp-launcher,.lp-store) .lp-icon-gallery { background:linear-gradient(145deg,#edac79,#c66792); }
+  :is(.lp-launcher,.lp-store) .lp-icon-notes { background:linear-gradient(145deg,#eed891,#bda35b); }
+  :is(.lp-launcher,.lp-store) .lp-icon-weather { background:linear-gradient(145deg,#87c9ed,#4488c8); }
+  :is(.lp-launcher,.lp-store) .lp-icon-contacts { background:linear-gradient(145deg,#c2afee,#8574c5); }
+  :is(.lp-launcher,.lp-store) .lp-icon-calendar { background:linear-gradient(145deg,#eea6a7,#c66477); }
+  :is(.lp-launcher,.lp-store) .lp-icon-trackers { background:linear-gradient(145deg,#8ccdc1,#469d93); }
+  :is(.lp-launcher,.lp-store) .lp-icon-settings { background:linear-gradient(145deg,#a8b4c4,#64758b); }
+`;
+
+// src/frontend/components/app-store-styles.ts
+var APP_STORE_STYLES = `
+  .lumiphone-shell .lp-store { gap:18px; }
+  .lp-store-discovery { display:grid; gap:24px; min-width:0; }
+  .lp-store-intro h2 { margin:7px 0 0; font-size:clamp(23px,calc(25px * var(--pocket-ui-scale)),30px); line-height:1.13; letter-spacing:-.04em; font-weight:650; color:var(--lp-text); }
+  .lp-store-eyebrow { display:block; font-size:9px; font-weight:650; letter-spacing:.12em; opacity:.7; }
+  .lp-store-note { margin:0; font-size:11px; line-height:1.5; color:var(--lp-muted); }
+  .lp-store .lp-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+  .lp-store-search { display:flex; align-items:center; gap:9px; width:100%; min-width:0; position:sticky; top:0; z-index:4; border:1px solid var(--lp-border); border-radius:999px; padding:0 14px; background:color-mix(in srgb,var(--lp-surface) 94%,var(--lp-bg)); backdrop-filter:blur(20px); box-shadow:0 3px 14px #0000000a; }
+  .lp-store-search-icon { width:19px; height:19px; flex:none; display:grid; place-items:center; color:var(--lp-muted); }
+  .lp-store-search-icon svg { display:block; width:100%; height:100%; }
+  .lumiphone-shell .lp-store-search input { flex:1; width:100%; min-width:0; min-height:46px; padding:10px 0; border:0; border-radius:0; background:transparent; box-shadow:none; font-size:clamp(12px,calc(13px * var(--pocket-ui-scale)),15px); }
+  .lp-store-search:focus-within { border-color:var(--lp-accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--lp-accent) 18%,transparent); }
+  .lp-store .lp-store-search input:focus-visible { outline:0; }
+  .lp-store-filters { display:flex; flex-wrap:nowrap; gap:6px; overflow-x:auto; scrollbar-width:none; padding:2px; }
+  .lp-store-filter { flex:none; border:1px solid var(--lp-border); border-radius:999px; padding:7px 12px; min-height:34px; font:inherit; font-size:11px; color:var(--lp-muted); background:transparent; cursor:pointer; }
+  .lp-store-filter[aria-pressed="true"] { color:var(--lp-text); background:var(--lp-surface-2); border-color:var(--lp-accent); }
+  .lp-store-collection { min-width:0; display:grid; gap:10px; }
+  .lp-store-section-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .lp-store-section-heading h2, .lp-store-catalog-title { margin:0; font-size:clamp(17px,calc(18px * var(--pocket-ui-scale)),22px); font-weight:650; letter-spacing:-.025em; color:var(--lp-text); }
+  .lp-store-rail-controls { display:flex; gap:4px; flex:none; }
+  .lp-store-rail-control { width:30px; height:30px; border:1px solid var(--lp-border); border-radius:50%; padding:0; background:var(--lp-surface); color:var(--lp-text); font:inherit; font-size:20px; cursor:pointer; }
+  .lp-store-rail { min-width:0; width:100%; display:grid; grid-auto-flow:column; grid-auto-columns:min(86%,300px); gap:12px; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x proximity; scroll-padding:4px; overscroll-behavior-x:contain; scrollbar-width:none; padding:4px 4px 10px; border-radius:8px; }
+  .lp-store-rail:focus-visible { outline:2px solid var(--lp-accent); outline-offset:2px; }
+  .lp-store-rail > * { scroll-snap-align:start; min-width:0; }
+  .lp-store-feature { border:1px solid var(--lp-border); border-radius:22px; overflow:hidden; background:var(--lp-surface); }
+  .lp-store-banner { position:relative; overflow:hidden; width:100%; aspect-ratio:16/10; background:#434466; }
+  .lp-store-banner > svg { display:block; width:100%; height:100%; }
+  .lp-store-feature .lp-store-banner::after { content:''; position:absolute; inset:0; background:linear-gradient(transparent 24%,#172137a6); }
+  .lp-store-feature-headline { position:absolute; z-index:1; left:14px; right:14px; bottom:14px; color:#fff; text-shadow:0 2px 9px #0003; }
+  .lp-store-feature-headline .lp-store-eyebrow { font-size:8px; opacity:.85; }
+  .lp-store-feature-headline h3 { margin:6px 0 0; font-size:clamp(20px,calc(22px * var(--pocket-ui-scale)),26px); line-height:1.07; font-weight:650; letter-spacing:-.035em; }
+  .lp-store-feature-caption { display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:center; gap:9px; min-height:78px; padding:12px; }
+  .lp-store-feature-caption .lp-store-app-icon { width:34px; height:34px; border-radius:10px; }
+  .lp-store-feature-caption .lp-store-app-icon svg { width:21px; height:21px; }
+  .lp-store-feature-caption > div { display:grid; gap:3px; min-width:0; }
+  .lp-store-feature-caption h3 { margin:0; color:var(--lp-text); font-size:12px; line-height:1.35; font-weight:650; }
+  .lp-store-feature-caption > div > span { color:var(--lp-muted); font-size:10px; line-height:1.4; }
+  .lp-store-rail-everyday { grid-auto-columns:min(43%,160px); }
+  .lp-store-tile { display:flex; flex-direction:column; align-items:flex-start; text-align:left; gap:9px; padding:14px; min-height:186px; border:1px solid var(--lp-border); border-radius:20px; color:var(--lp-text); background:color-mix(in srgb,var(--lp-text) 4%,var(--lp-bg)); cursor:pointer; font:inherit; }
+  .lp-store-tile strong { font-size:13px; font-weight:650; }
+  .lp-store-tile-tagline { font-size:11px; line-height:1.4; color:var(--lp-muted); }
+  .lp-store-tile-action { margin-top:auto; font-size:11px; font-weight:650; color:var(--lp-accent); }
+  .lp-store-tile:hover, .lp-store-feature:focus-within { border-color:color-mix(in srgb,var(--lp-accent) 60%,var(--lp-border)); }
+  .lp-store-list { display:grid; gap:4px; }
+  .lp-store-app { display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:10px; align-items:center; padding:15px 0; border-bottom:1px solid var(--lp-border); }
+  .lp-store-app[data-highlighted="true"] { outline:1px solid var(--lp-accent); outline-offset:4px; border-radius:12px; }
+  .lp-store-app-icon { display:grid; place-items:center; width:44px; height:44px; border-radius:13px; color:#fff; box-shadow:inset 0 1px #ffffff40; }
+  .lp-store-app-icon > span { width:100%; height:100%; display:grid; place-items:center; }
+  .lp-store-app-icon svg { display:block; width:25px; height:25px; }
+  .lp-store-copy { min-width:0; }
+  .lp-store-copy h3 { margin:0 0 3px; font-size:13px; line-height:1.35; font-weight:650; color:var(--lp-text); }
+  .lp-store-tagline { font-size:10px; line-height:1.4; color:var(--lp-muted); }
+  .lp-store-copy p { margin:5px 0 0; font-size:10px; line-height:1.5; color:var(--lp-muted); overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .lp-store-actions { display:grid; justify-items:center; gap:4px; }
+  .lp-store-get { min-width:56px; min-height:34px; border:1px solid color-mix(in srgb,var(--lp-accent) 35%,var(--lp-border)); border-radius:18px; background:color-mix(in srgb,var(--lp-accent) 14%,var(--lp-surface)); color:var(--lp-text); padding:6px 12px; font:inherit; font-size:11px; font-weight:650; cursor:pointer; }
+  .lp-store-remove { appearance:none; border:0; background:transparent; color:var(--lp-muted); font:inherit; font-size:9px; min-height:28px; padding:4px 7px; cursor:pointer; }
+  .lp-store-system { font-size:8px; color:var(--lp-muted); padding:6px 0; }
+  .lp-store :is(button,input):focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; }
+  .lp-store button:disabled { opacity:.5; cursor:default; }
+  .lp-store [hidden] { display:none !important; }
+  .lp-store-error { border:1px solid #f1859a60; border-radius:12px; padding:12px; color:var(--lp-text); background:#8d294022; font-size:12px; }
+  .lp-store-soon { display:grid; gap:8px; padding:16px; border:1px solid var(--lp-border); border-radius:18px; background:var(--lp-surface); }
+  .lp-store-soon .lp-store-banner { aspect-ratio:16/7; border-radius:12px; margin-bottom:5px; }
+  .lp-store-soon strong { font-size:17px; font-weight:600; }
+  .lp-store-soon p { margin:0; color:var(--lp-muted); font-size:11px; line-height:1.5; }
+  .lp-store-coming { color:var(--lp-muted); font-size:10px; }
+  .lp-launcher .lp-icon-appstore { background:linear-gradient(145deg,#89c9f4,#507cce); }
+  @media (pointer:coarse) { .lp-store :is(.lp-store-get,.lp-store-remove,.lp-store-filter) { min-height:44px; } .lp-store-rail-control { width:44px; height:44px; } }
+`;
+
+// src/frontend/components/contacts-media-styles.ts
+var CONTACTS_MEDIA_STYLES = `
+  .lumiphone-shell .lp-directory,.lumiphone-shell .lp-npc-review { height:100%; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+  .lp-directory > .lp-nav,.lp-npc-review > .lp-nav { flex:none; }
+  .lumiphone-shell .lp-directory .lp-content { flex:1; min-height:0; display:block; padding:0 16px 20px; min-width:0; overflow:auto; scroll-padding-top:174px; }
+  .lp-directory-sticky { position:sticky; top:0; z-index:4; display:grid; gap:10px; padding:14px 0 10px; background:var(--lp-bg); }
+  .lp-directory .lp-input { min-height:40px; border-radius:13px; }
+  .lp-directory-pills { display:flex; gap:6px; padding:2px; }
+  .lp-directory-pill { appearance:none; border:0; background:transparent; color:var(--lp-muted); border-radius:10px; padding:9px 12px; min-height:36px; font:inherit; font-size:12px; font-weight:600; line-height:1.2; cursor:pointer; flex:1; }
+  .lp-directory-pill:is([aria-pressed="true"],[aria-selected="true"]) { background:color-mix(in srgb,var(--lp-accent) 17%,var(--lp-surface)); color:var(--lp-text); }
+  .lp-directory-library { display:flex; gap:16px; justify-content:space-between; border-bottom:1px solid var(--lp-border); padding-bottom:10px; }
+  .lp-directory-link { font:inherit; font-size:11px; font-weight:600; line-height:1.4; color:var(--lp-accent); border:0; background:transparent; padding:8px 2px; cursor:pointer; min-height:34px; }
+  .lp-directory-list { display:flex; flex-direction:column; min-width:0; }
+  .lp-directory .lp-directory-row { display:flex; align-items:center; justify-content:flex-start; gap:12px; width:100%; min-width:0; min-height:62px; padding:10px 0; background:none; border:0; border-bottom:1px solid var(--lp-border); border-radius:0; color:var(--lp-text); font:inherit; text-align:left; box-shadow:none; }
+  button.lp-directory-row { cursor:pointer; }
+  button.lp-directory-row:hover { background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
+  .lp-directory-identity { display:flex; flex:1; flex-direction:column; min-width:0; gap:4px; }
+  .lp-directory-identity strong { font-size:13px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-directory-identity small { font-size:10px; color:var(--lp-muted); line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-directory-avatar { flex:none; display:grid; place-items:center; width:38px; height:38px; border-radius:50%; overflow:hidden; font-size:16px; font-weight:600; background:color-mix(in srgb,var(--person-color,var(--lp-accent)) 38%,var(--lp-surface)); color:var(--lp-text); }
+  .lp-directory-avatar img { width:100%; height:100%; object-fit:cover; }
+  .lp-directory-here { flex:none; font-size:9px; color:var(--lp-accent); }
+  .lp-directory-letter { font-size:10px; font-weight:650; color:var(--lp-muted); margin:0; padding:14px 0 4px; scroll-margin-top:180px; }
+  .lp-directory-body { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; }
+  .lp-directory-index { position:sticky; top:175px; align-self:start; display:flex; flex-direction:column; width:20px; background:var(--lp-bg); border-radius:10px; }
+  .lp-directory-jump { border:0; background:transparent; color:var(--lp-accent); min-height:23px; min-width:22px; padding:2px; font:inherit; font-size:10px; font-weight:600; line-height:1.2; cursor:pointer; }
+  .lp-directory-alphabet { display:flex; overflow-x:auto; }
+  .lp-directory-alphabet .lp-directory-jump { flex:none; }
+  .lp-directory-scene { margin:0 0 6px; border:0; background:none; padding:0; }
+  .lp-directory-scene > summary { font-size:10px; color:var(--lp-muted); padding:8px 0; cursor:pointer; }
+  .lp-directory-creator { padding:16px; margin:16px 0; background:var(--lp-surface); border:1px solid var(--lp-border); border-radius:18px; }
+  .lp-directory-creator h2 { font-size:15px; margin:0 0 4px; }
+  .lp-directory-creator p { margin:0 0 12px; }
+  .lp-directory-creator .lp-textarea { min-height:60px; margin:0; }
+  .lp-directory-creator-actions { display:flex; gap:12px; align-items:center; margin-top:10px; }
+  .lp-directory-creator-actions .lp-button { flex:1; }
+  .lp-directory-global-search { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .lp-directory-global-search .lp-input { min-width:0; flex:1; }
+  .lp-directory-sources { display:flex; flex-direction:column; }
+  .lp-directory-source { display:flex; align-items:center; width:100%; gap:12px; padding:15px 4px; border:0; border-bottom:1px solid var(--lp-border); color:var(--lp-text); background:none; text-align:left; font:inherit; cursor:pointer; }
+  .lp-directory-source-count { font-size:11px; color:var(--lp-muted); }
+  .lp-directory-chevron { font-size:22px; color:var(--lp-muted); }
+  .lp-directory-add { border:0; border-radius:12px; background:color-mix(in srgb,var(--lp-accent) 18%,var(--lp-surface)); color:var(--lp-accent); padding:8px 12px; min-height:34px; min-width:48px; font:inherit; font-size:11px; font-weight:600; line-height:1.3; cursor:pointer; flex:none; }
+  .lp-directory-add:disabled { background:none; color:var(--lp-muted); opacity:.7; }
+  .lp-directory-stack { display:flex; width:65px; flex:none; padding-left:8px; }
+  .lp-directory-stack .lp-directory-avatar { width:30px; height:30px; font-size:12px; margin-left:-8px; border:2px solid var(--lp-bg); }
+  .lp-directory-count { margin:0; font-size:10px; color:var(--lp-muted); }
+  .lp-directory-pagination { display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:12px 0; }
+  .lp-directory-resume { display:flex; align-items:center; gap:12px; border:1px solid var(--lp-border); background:var(--lp-surface); padding:12px; border-radius:14px; width:100%; color:var(--lp-text); text-align:left; cursor:pointer; margin:6px 0; }
+  .lp-bank-hero { display:grid; justify-items:center; gap:8px; padding:24px 0 12px; }
+  .lp-bank-hero .lp-directory-avatar { width:84px; height:84px; font-size:30px; }
+  .lp-bank-hero :is(h2,p) { margin:0; text-align:center; }
+  .lp-bank-hero h2 { font-size:20px; }
+  .lp-bank-bio { font-size:12px; line-height:1.65; }
+  .lp-bank-tags { color:var(--lp-accent); font-size:9px; line-height:1.5; overflow-wrap:anywhere; }
+  .lp-bank-info { padding:12px 0; border-top:1px solid var(--lp-border); }
+  .lp-bank-info h3 { font-size:11px; margin:0 0 6px; }
+  .lp-bank-info p { margin:0; }
+  .lp-npc-library .lp-content > .lp-button { width:100%; margin-top:14px; }
+  .lp-bank-remove { display:block; color:var(--lp-destructive,#ff899a); margin:10px auto; }
+  .lumiphone-shell .lp-npc-review .lp-content { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:14px; padding:16px; align-items:stretch; }
+  .lp-npc-review-photo { display:block; flex:none; width:100%; max-height:300px; aspect-ratio:4/3; border-radius:18px; object-fit:cover; }
+  .lp-npc-review-placeholder { display:grid; place-items:center; height:150px; border-radius:18px; font-size:52px; background:linear-gradient(135deg,var(--lp-surface),color-mix(in srgb,var(--lp-accent) 30%,var(--lp-bg))); color:var(--lp-text); }
+  .lp-npc-review-heading h2 { font-size:23px; margin:0 0 5px; }
+  .lp-npc-review-heading p { margin:0; }
+  .lp-npc-review-tools { display:flex; gap:8px; flex-wrap:wrap; }
+  .lp-npc-review-tools .lp-button { flex:1; min-width:74px; padding:9px 5px; font-size:10px; }
+  .lp-npc-review-tools .lp-directory-link { flex:1; }
+  .lp-camera-option-basics { display:grid; gap:12px; min-width:0; }
+  .lp-camera-enhance { display:flex; align-items:center; gap:10px; width:100%; min-height:42px; font-size:12px; }
+  .lp-camera-enhance input { flex:none; }
+  .lp-camera-profile-status { display:grid; gap:5px; padding:10px 12px; border-radius:12px; background:#ffffff0b; border:1px solid var(--lp-border); font-size:11px; }
+  .lp-camera-profile-status small { color:var(--lp-muted); line-height:1.45; font-size:10px; }
+  .lp-camera-advanced { padding:0; border:0; background:none; }
+  .lp-camera-advanced > summary { padding:10px 0; cursor:pointer; font-size:12px; color:var(--lp-text); }
+  .lp-camera-advanced > .lp-field { margin:12px 0; }
+  .lp-camera-profile-detail { overflow-wrap:anywhere; }
+  .lp-directory :is(button,input,select,textarea,summary):focus-visible,.lp-npc-review :is(button,summary):focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; }
+  .lp-directory [hidden],.lp-npc-review [hidden] { display:none !important; }
+  .lp-media-viewer { --lp-accent:#a99bff; font:400 13px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .lp-media-viewer .lp-sheet { font-family:inherit; }
+  .lp-media-viewer .lp-wallpaper-choice .lp-button-primary { background:#8b7dff; color:#fff; }
+  .lp-wallpaper-choice label:has(input:checked) { border-color:var(--lp-accent,#a99bff); background:#a99bff0d; }
+  .lp-wallpaper-choice { display:grid; gap:14px; min-width:0; }
+  .lp-wallpaper-choice fieldset { border:0; margin:0; padding:0; min-width:0; display:grid; gap:8px; }
+  .lp-wallpaper-choice legend { margin:0 0 8px; color:var(--lp-muted); font-size:11px; }
+  .lp-wallpaper-choice label { display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--lp-border); border-radius:12px; font-size:13px; }
+  .lp-wallpaper-choice input { accent-color:var(--lp-accent,#a99bff); }
+  .lp-wallpaper-choice :is(input,button):focus-visible { outline:2px solid var(--lp-accent,#a99bff); outline-offset:3px; }
+  .lp-wallpaper-result { font-size:12px; line-height:1.5; color:var(--lp-text); margin:0; }
+`;
+
+// src/frontend/components/tumblr-styles.ts
+var TUMBLR_STYLES = `
+  .lumiphone-shell .lp-social-page-tumblr { position:relative; }
+  .lp-social-page-tumblr:not([data-social-discussion="true"]) > .lp-content > .lp-social-feed { padding-bottom:90px; }
+  .lp-tumblr-floating-compose { position:absolute; z-index:8; right:17px; bottom:68px; display:grid; place-items:center; width:52px; height:52px; min-height:52px; padding:13px; border:0; border-radius:50%; background:var(--social-accent); color:#001935; box-shadow:0 5px 20px #0005; }
+  .lp-tumblr-floating-compose .lp-social-glyph { width:27px; height:27px; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-tumblr-floating-compose { background:#c13de6; color:#08070d; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-tumblr-floating-compose .lp-social-glyph { color:inherit; }
+  .lp-social-page-tumblr .lp-social-bottomnav { padding-inline:14px; }
+  .lp-social-page-tumblr .lp-social-bottomnav [aria-pressed="true"] .lp-social-glyph { color:var(--social-accent); }
+  .lp-tumblr-hub { min-height:100%; }
+  .lp-tumblr-hub-tabs { position:sticky; top:0; z-index:5; display:flex; justify-content:center; gap:9px; padding:22px 16px; background:var(--social-bg); }
+  .lp-tumblr-hub-pill { appearance:none; padding:12px 22px; min-height:44px; border:0; border-radius:30px; background:color-mix(in srgb,var(--social-text) 10%,var(--social-bg)); color:var(--social-text); font:650 13px/1.2 system-ui,sans-serif; cursor:pointer; }
+  .lp-tumblr-hub-pill[aria-selected="true"] { background:var(--social-accent); color:#001935; }
+  .lp-social-page-tumblr .lp-social-wordmark.lp-tumblr-hub-title { position:static !important; transform:none !important; font:700 17px/1.2 system-ui,sans-serif; letter-spacing:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-tumblr-activity > h2 { margin:0; padding:14px 18px; border-block:1px solid var(--social-border); color:var(--social-muted); font-size:12px; }
+  .lp-tumblr-activity-row { appearance:none; display:flex; align-items:flex-start; gap:12px; width:100%; padding:18px 16px; border:0; border-bottom:1px solid var(--social-border); background:transparent; color:var(--social-text); text-align:left; font:inherit; cursor:pointer; }
+  .lp-tumblr-activity-row > .lp-social-avatar { width:39px; height:39px; border-radius:6px; }
+  .lp-tumblr-activity-copy { flex:1; min-width:0; font-size:12px; line-height:1.5; }
+  .lp-tumblr-activity-copy strong { display:block; overflow-wrap:anywhere; font-size:13px; color:var(--social-accent); }
+  .lp-tumblr-activity-copy > span { color:var(--social-muted); }
+  .lp-tumblr-activity-copy p { margin:5px 0; overflow-wrap:anywhere; }
+  .lp-tumblr-activity-copy time { color:var(--social-muted); font-size:10px; }
+  .lp-tumblr-activity-preview { flex:none; width:43px; height:43px; border-radius:5px; overflow:hidden; background:color-mix(in srgb,var(--social-accent) 25%,var(--social-bg)); display:grid; place-items:center; font-size:21px; font-weight:700; }
+  .lp-tumblr-activity-preview img { width:100%; height:100%; object-fit:cover; }
+  .lp-tumblr-view-empty { margin:30px 24px; color:var(--social-muted); font-size:13px; line-height:1.6; text-align:center; }
+  .lp-tumblr-explore-hero { position:relative; isolation:isolate; padding:23px 18px 42px; min-height:175px; display:flex; flex-direction:column; justify-content:space-between; gap:32px; background:var(--lp-wallpaper); background-size:cover; background-position:center; border-bottom:1px solid var(--social-border); }
+  .lp-tumblr-explore-hero::before { content:''; position:absolute; inset:0; z-index:-1; background:linear-gradient(180deg,#001935b3,#00193540); }
+  .lp-tumblr-explore-hero h2 { color:#fff; margin:0; font-size:20px; text-shadow:0 1px 10px #0005; }
+  .lp-tumblr-search-form { display:flex; align-items:center; gap:8px; }
+  .lp-tumblr-search-form > label { min-width:0; display:flex; align-items:center; gap:10px; flex:1; background:#fff; color:#59626d; border-radius:26px; padding:0 14px; min-height:46px; }
+  .lumiphone-shell .lp-social-page .lp-tumblr-search-form input { min-width:0; width:100%; padding:12px 0; border:0; background:transparent; color:#24313d; font:14px/1.4 system-ui,sans-serif; box-shadow:none; }
+  .lp-tumblr-search-form > label:focus-within { outline:2px solid var(--social-accent); outline-offset:3px; }
+  .lumiphone-shell .lp-social-page .lp-tumblr-search-form input:focus-visible { outline:none; }
+  .lp-tumblr-search-submit { border:0; border-radius:23px; min-height:44px; padding:10px 14px; background:var(--social-accent); color:#001935; font:700 12px/1 system-ui,sans-serif; cursor:pointer; }
+  .lp-tumblr-search-heading { font-size:16px; margin:23px 16px 12px; }
+  .lp-tumblr-trending-tag { padding:0 0 20px; }
+  .lp-tumblr-tag-link { display:flex; align-items:center; gap:10px; padding:10px 16px; min-height:44px; width:100%; border:0; background:transparent; color:var(--social-text); font:15px/1.3 system-ui,sans-serif; text-align:left; cursor:pointer; }
+  .lp-tumblr-tag-link strong { overflow-wrap:anywhere; }
+  .lp-tumblr-trend-number { display:grid; place-items:center; flex:none; width:24px; height:24px; font-size:11px; background:var(--social-accent); color:#001935; border-radius:50%; }
+  .lp-tumblr-trending-tag:nth-child(3n) .lp-tumblr-trend-number { background:#eb5fc1; }
+  .lp-tumblr-trending-tag:nth-child(3n+1) .lp-tumblr-trend-number { background:#f5ba67; }
+  .lp-tumblr-explore-rail { display:flex; gap:8px; padding:7px 16px; overflow:auto; scrollbar-width:thin; }
+  .lp-tumblr-explore-tile { position:relative; width:132px; height:148px; flex:none; padding:0; border:0; border-radius:7px; background:color-mix(in srgb,var(--social-accent) 20%,var(--social-bg)); color:var(--social-text); overflow:hidden; cursor:pointer; text-align:left; }
+  .lp-tumblr-explore-tile:nth-child(2n) { background:color-mix(in srgb,#a856aa 25%,var(--social-bg)); }
+  .lp-tumblr-explore-tile img { width:100%; height:100%; object-fit:cover; display:block; }
+  .lp-tumblr-tile-text { display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; margin:12px 10px 30px; font:12px/1.4 system-ui,sans-serif; }
+  .lp-tumblr-explore-tile small { position:absolute; inset:auto 0 0; display:block; padding:8px; background:#001935d9; color:#fff; font-size:9px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; }
+  .lumiphone-shell .lp-social-page-tumblr[data-social-dm-view="thread"] > .lp-content { display:flex; flex-direction:column; overflow:hidden; }
+  .lp-tumblr-dms { min-height:0; background:var(--social-bg); }
+  [data-social-dm-view="thread"] .lp-tumblr-dms { display:flex; flex:1; flex-direction:column; overflow:hidden; }
+  .lp-social-page-tumblr .lp-social-wordmark.lp-tumblr-recipient { position:static; transform:none; max-width:100%; overflow:hidden; letter-spacing:0; font:700 13px/1.2 system-ui,sans-serif; }
+  .lp-tumblr-recipient { display:flex; align-items:center; gap:10px; font:700 13px/1.2 system-ui,sans-serif; }
+  .lp-tumblr-recipient > .lp-social-avatar { width:32px; height:32px; border-radius:5px; }
+  .lp-tumblr-recipient > span:not(.lp-social-avatar) { display:grid; gap:3px; min-width:0; }
+  .lp-tumblr-recipient strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-tumblr-recipient small { color:var(--social-muted); font-size:10px; font-weight:400; }
+  .lp-tumblr-inbox-heading { font-size:15px; margin:12px 16px; }
+  .lp-tumblr-inbox-list { padding:0 16px; }
+  .lp-tumblr-inbox-account { display:flex; align-items:center; gap:12px; width:100%; min-height:78px; padding:12px 0; border:0; border-bottom:1px solid var(--social-border); background:transparent; color:var(--social-text); text-align:left; cursor:pointer; }
+  .lp-tumblr-inbox-account > .lp-social-avatar { width:45px; height:45px; border-radius:7px; }
+  .lp-tumblr-inbox-account > span:not(.lp-social-avatar) { flex:1; min-width:0; display:grid; gap:6px; font-size:13px; }
+  .lp-tumblr-inbox-account span span { font-size:11px; color:var(--social-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-tumblr-dm-log { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; display:flex; flex-direction:column; gap:15px; padding:20px 14px; }
+  .lp-tumblr-dm-intro { display:grid; justify-items:center; gap:10px; text-align:center; padding:24px 10px; font-size:14px; }
+  .lp-tumblr-dm-intro p { font-size:12px; color:var(--social-muted); }
+  .lp-tumblr-dm-row { display:flex; align-items:flex-end; gap:7px; width:100%; }
+  .lp-tumblr-dm-row-owner { justify-content:flex-end; }
+  .lp-tumblr-dm-row > .lp-social-avatar { width:25px; height:25px; margin-bottom:16px; border-radius:4px; }
+  .lp-tumblr-dm-message { max-width:82%; min-width:0; }
+  .lp-tumblr-dm-bubble { margin:0; border-radius:14px; padding:11px 13px; font:13px/1.5 system-ui,sans-serif; overflow-wrap:anywhere; white-space:pre-wrap; }
+  .lp-tumblr-dm-account { background:color-mix(in srgb,var(--social-text) 10%,var(--social-bg)); color:var(--social-text); border-bottom-left-radius:4px; }
+  .lp-tumblr-dm-owner { background:var(--social-accent); color:#001935; border-bottom-right-radius:4px; }
+  .lp-tumblr-dm-time { display:block; color:var(--social-muted); font-size:9px; margin:4px 5px 0; }
+  .lp-tumblr-dm-row-owner .lp-tumblr-dm-time { text-align:right; }
+  .lp-tumblr-typing { margin:0 14px 8px; font-size:11px; color:var(--social-muted); }
+  .lp-tumblr-dm-compose { display:flex; align-items:flex-end; gap:10px; padding:10px 14px 14px; background:var(--social-bg); border-top:1px solid var(--social-border); }
+  .lp-tumblr-dm-compose > label { min-width:0; flex:1; }
+  .lumiphone-shell .lp-social-page .lp-tumblr-dm-compose textarea { min-height:42px; max-height:120px; border-radius:20px; padding:11px 14px; resize:none; }
+  .lp-tumblr-dm-compose .lp-social-primary { align-self:center; min-height:38px; background:var(--social-accent); color:#001935; }
+`;
+
+// src/frontend/components/discord-chat-styles.ts
+var DISCORD_CHAT_STYLES = `
+  .lumiphone-shell .lp-social-page-discord[data-discord-theme] { --social-bg:#313338;--social-surface:#313338;--social-text:#f2f3f5;--social-muted:#b5bac1;--social-border:#25262b;--social-accent:#b5baff;--discord-rail:#1e1f22;--discord-panel:#2b2d31;--discord-input:#383a40; }
+  .lumiphone-shell .lp-social-page-discord[data-discord-theme="amoled"] { --social-bg:#000;--social-surface:#080808;--social-border:#202024;--discord-rail:#000;--discord-panel:#0c0c0f;--discord-input:#17171c; }
+  .lumiphone-shell .lp-social-page-discord[data-discord-theme="gradient"] { --social-bg:transparent;--social-surface:#16151e88;--social-border:#ffffff16;--discord-rail:#0d0b168c;--discord-panel:#151220ec;--discord-input:#151220b3;background:linear-gradient(155deg,var(--discord-start),var(--discord-end)); }
+  .lp-social-page-discord[data-discord-theme="gradient"] .lp-content.lp-social-discord,.lp-social-page-discord[data-discord-theme="gradient"] .lp-discord-main {background:transparent;}
+  .lp-discord-channel-heading > strong {flex:1;min-width:0;}
+  .lp-discord-pins-open {font-size:18px;flex:none;}
+  .lumiphone-shell .lp-social-discord .lp-discord-message {display:grid;grid-template-columns:32px minmax(0,1fr);gap:9px;padding:7px 10px 8px;border:0;background:transparent;border-radius:0;position:relative;min-width:0;}
+  .lp-discord-message:focus {outline:2px solid var(--social-accent);outline-offset:-2px;background:#5865f214;}
+  .lp-discord-message-avatar {border:0;background:transparent;padding:0;align-self:start;cursor:pointer;}
+  .lp-discord-message-avatar .lp-social-avatar {width:32px;height:32px;border-radius:50%;}
+  .lp-discord-message-main {min-width:0;}
+  .lp-discord-message-head {display:flex;align-items:baseline;gap:7px;min-width:0;line-height:20px;}
+  .lp-discord-message-name {font:inherit;font-size:12px;font-weight:700;background:none;border:0;padding:0;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .lp-discord-message-head time {color:var(--social-muted);font-size:8px;white-space:nowrap;}
+  .lp-discord-message-menu {margin-left:auto;flex:none;align-self:center;border:0;background:transparent;color:var(--social-muted);font-size:19px;line-height:20px;padding:0 4px;cursor:pointer;}
+  .lp-discord-message-text {margin:1px 0 3px;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--social-text);}
+  .lp-discord-reply-hook {display:flex;align-items:center;gap:5px;max-width:100%;min-width:0;height:23px;position:relative;margin:-2px 0 2px;padding:0;border:0;background:none;color:var(--social-muted);font-size:10px;text-align:left;cursor:pointer;}
+  .lp-discord-reply-hook:before {content:'';position:absolute;width:19px;height:12px;border-left:2px solid #697078;border-top:2px solid #697078;border-radius:7px 0 0;left:-25px;top:11px;}
+  .lp-discord-reply-hook .lp-social-avatar {width:15px;height:15px;flex:none;}
+  .lp-discord-reply-hook > strong {max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lp-discord-reply-hook > span:last-child {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lp-discord-message:has(.lp-discord-reply-hook) > .lp-discord-message-avatar {margin-top:24px;}
+  .lp-discord-reactions {display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;}
+  .lp-discord-reaction {display:flex;align-items:center;gap:4px;border:1px solid #ffffff15;background:var(--discord-input);border-radius:7px;min-height:25px;padding:2px 6px;color:var(--social-text);font-size:12px;cursor:pointer;}
+  .lp-discord-reaction[aria-pressed="true"] {background:#5865f240;border-color:#949cf7;}
+  .lp-discord-pinned-label {font-size:8px;color:var(--social-muted);}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose {display:flex;flex-direction:column;gap:4px;padding:8px 10px 12px;border:0;background:var(--social-bg);flex:none;}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose > .lp-social-avatar {display:none;}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-social-compose-title {display:none;}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose.lp-discord-reply-compose .lp-social-compose-title {grid-column:1/-1;grid-row:auto;display:flex;align-items:center;justify-content:space-between;gap:5px;min-width:0;margin:0;padding:6px 9px;background:var(--discord-panel);border-radius:7px 7px 0 0;font-size:10px;color:var(--social-muted);}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-discord-composer-bar {display:flex;align-items:center;gap:3px;padding:5px 6px;min-width:0;max-width:100%;border-radius:24px;background:var(--discord-input);}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-discord-composer-bar .lp-social-post-text-field {display:block;flex:1;min-width:0;margin:0;}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-social-post-text-field > span {position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-discord-composer-bar textarea {display:block;width:100%;height:34px;min-height:34px;max-height:100px;padding:8px 6px;font-size:12px;line-height:18px;box-sizing:border-box;border:0;resize:none;border-radius:16px;background:transparent;color:var(--social-text);}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-discord-composer-bar .lp-social-compose-footer {display:flex;align-items:center;flex:none;gap:4px;min-height:0;margin:0;padding:0;background:transparent;border-radius:0;}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose .lp-discord-composer-bar .lp-social-primary {display:grid;place-items:center;flex:none;padding:0;width:30px;min-width:30px;max-width:30px;height:30px;min-height:30px;max-height:30px;border:0;border-radius:50%;line-height:1;}
+  .lp-discord-composer-bar .lp-social-primary .lp-social-glyph {width:17px;height:17px;}
+  .lp-discord-expression-button {display:grid;place-items:center;flex:none;width:30px;height:30px;padding:0;border:0;border-radius:50%;color:var(--social-muted);background:transparent;cursor:pointer;}
+  .lp-discord-expression-button .lp-social-glyph {width:22px;height:22px;}
+  .lp-discord-expression-button:hover {color:var(--social-text);background:#ffffff0b;}
+  .lp-discord-expression-tabs {display:flex;gap:5px;padding:4px;margin-bottom:16px;background:var(--discord-input,#33343d);border-radius:12px;}
+  .lp-discord-expression-tabs [role="tab"] {flex:1;min-width:0;min-height:36px;padding:7px 12px;border:0;border-radius:9px;color:var(--social-muted,#b5bac1);background:transparent;font:inherit;font-weight:700;cursor:pointer;}
+  .lp-discord-expression-tabs [aria-selected="true"] {color:var(--social-text,#fff);background:#ffffff17;}
+  .lp-discord-expression-tabs [disabled] {opacity:.45;cursor:default;}
+  .lp-discord-expression-picker [role="tabpanel"][hidden] {display:none;}
+  .lp-discord-expression-picker .lp-discord-emoji-grid {max-height:240px;}
+
+  .lp-discord-gif-button {border:1px solid #9da2ab;border-radius:3px;font-size:9px;font-weight:800;color:var(--social-text);background:transparent;cursor:pointer;padding:2px 4px;}
+  .lp-social-gif {margin:7px 0;max-width:100%;width:fit-content;}
+  .lp-social-gif img {display:block;max-width:100%;max-height:280px;object-fit:contain;border-radius:8px;}
+  .lp-social-gif figcaption {font-size:8px;color:var(--social-muted);margin-top:3px;}
+  .lumiphone-shell .lp-discord-main > .lp-social-compose > .lp-social-gif-draft {grid-column:1/-1;}
+  .lp-social-gif-draft {grid-column:1/-1;max-height:160px;overflow:auto;position:relative;padding:5px;}
+  .lp-social-gif-draft img {max-height:115px;}
+  .lp-social-gif-draft button {font-size:10px;}
+  .lumiphone-shell .lp-discord-main > .lp-discord-profile {padding:0;display:flex;flex-direction:column;background:linear-gradient(170deg,var(--profile-start),var(--profile-end));}
+  .lp-discord-profile-banner {height:110px;background:linear-gradient(120deg,var(--profile-start),var(--profile-end));flex:none;}
+  .lp-discord-profile-body {flex:1;padding:0 16px 22px;background:#15151a70;min-width:0;min-height:220px;display:flow-root;}
+  .lp-discord-profile-body > .lp-social-profile-head {margin-top:-33px;gap:9px;margin-bottom:20px;display:flex;flex-direction:column;align-items:flex-start;}
+  .lp-discord-profile-body .lp-social-profile-head > .lp-social-avatar,.lp-discord-member-profile .lp-social-avatar {width:74px;height:74px;outline:6px solid #282735;border-radius:50%;flex:none;}
+  .lp-discord-profile-body .lp-social-profile-identity {display:grid;gap:4px;width:100%;}
+  .lp-discord-profile-body .lp-social-profile-identity strong {font-size:23px;}
+  .lp-discord-profile-body .lp-social-profile-handle {font-size:12px;color:#e0ddec;}
+  .lp-discord-profile-body .lp-social-profile-count {font-size:9px;opacity:.65;margin-top:4px;}
+  .lp-discord-about {background:#17131e70;border-radius:9px;padding:14px;margin:18px 0 12px;}
+  .lp-discord-about h3,.lp-discord-member-profile h3 {font-size:10px;letter-spacing:.5px;margin:0 0 8px;}
+  .lp-discord-about .lp-social-bio {margin:0;font-size:12px;line-height:1.6;}
+  .lp-discord-profile-body > .lp-social-edit-profile {margin:4px 5px 4px 0;border:1px solid #ffffff22;background:#ffffff13;border-radius:6px;font-size:10px;min-height:30px;padding:6px 9px;color:#fff;}
+  .lp-discord-profile-body .lp-social-bio-form {margin-top:12px;}
+  .lp-discord-dialog {background:var(--social-surface,#232428);color:var(--social-text,#fff);}
+  .lp-discord-sheet {font-size:12px;min-width:0;color:var(--social-text,#f2f3f5);}
+  .lp-discord-quick-reactions {display:flex;gap:5px;justify-content:space-between;margin-bottom:14px;}
+  .lp-discord-emoji {border:0;background:var(--discord-input,#33343d);border-radius:9px;width:34px;height:36px;display:grid;place-items:center;padding:0;font-size:22px;cursor:pointer;color:var(--social-text,#fff);}
+  .lp-discord-context-action {display:block;text-align:left;width:100%;padding:14px 12px;border:0;border-bottom:1px solid var(--social-border,#ffffff12);background:var(--discord-input,#33343d);color:inherit;font-size:13px;cursor:pointer;}
+  .lp-discord-context-action:first-of-type {border-radius:8px 8px 0 0;}
+  .lp-discord-context-action:last-child {border:0;border-radius:0 0 8px 8px;}
+  .lp-discord-emoji-grid {display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin-top:15px;max-height:280px;overflow:auto;}
+  .lp-discord-search-label {display:grid;gap:8px;min-width:0;font-size:11px;}
+  .lp-discord-gradient-editor {display:grid;gap:15px;}
+  .lp-discord-gradient-editor > label {display:flex;align-items:center;justify-content:space-between;}
+  .lp-discord-gradient-editor input[type="color"] {width:52px;height:32px;padding:2px;border:1px solid #ffffff30;border-radius:6px;}
+  .lp-discord-gradient-preview {height:100px;border-radius:12px;}
+  .lp-discord-member-profile {margin:-4px -4px 0;overflow:hidden;border-radius:10px;background:linear-gradient(170deg,var(--profile-start),var(--profile-end));color:#fff;}
+  .lp-discord-member-profile .lp-discord-profile-body > .lp-social-avatar {margin-top:-34px;}
+  .lp-discord-member-profile .lp-copy {color:#d2cfdf;}
+  .lp-discord-member-profile h2 {margin:17px 0 5px;font-size:23px;}
+  .lp-discord-member-profile h3 {margin-top:25px;}
+  .lp-discord-member-bio {white-space:pre-wrap;line-height:1.6;}
+  .lp-discord-pin-card {display:block;width:100%;padding:12px;border:1px solid var(--social-border,#555);background:var(--discord-input,#33343d);color:inherit;border-radius:8px;text-align:left;margin-bottom:10px;cursor:pointer;}
+  .lp-discord-pin-card p {margin:5px 0 0;white-space:pre-wrap;line-height:1.5;}
+  .lp-gif-picker form {display:flex;gap:8px;align-items:end;}
+  .lp-gif-picker form label {flex:1;}
+  .lp-gif-results {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:330px;overflow:auto;margin-top:12px;}
+  .lp-gif-result {padding:0;border:0;background:transparent;cursor:pointer;min-width:0;}
+  .lp-gif-result img {width:100%;border-radius:7px;display:block;}
+`;
+
+// src/frontend/components/discord-people-styles.ts
+var DISCORD_PEOPLE_STYLES = `
+  .lp-discord-server-menu { margin-bottom:14px; }
+  .lp-discord-server-menu-toggle { display:flex; align-items:center; gap:10px; width:100%; min-height:52px; padding:9px 10px; border:0; border-radius:10px; background:var(--discord-input); color:var(--social-text); cursor:pointer; text-align:left; }
+  .lp-discord-server-menu-toggle > strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; }
+  .lp-discord-server-menu-picture { display:grid; place-items:center; width:32px; height:32px; flex:none; border-radius:10px; overflow:hidden; background:#5865f2; color:#fff; font-size:11px; font-weight:750; }
+  .lp-discord-server-menu-picture img { width:100%; height:100%; object-fit:cover; }
+  .lp-discord-server-menu-toggle > .lp-social-glyph { width:18px; height:18px; color:var(--social-muted); }
+  .lp-discord-server-menu-toggle[aria-expanded="true"] > .lp-social-glyph { transform:rotate(180deg); }
+  .lp-discord-server-menu-body { margin-top:5px; padding:4px; background:var(--discord-rail); border-radius:10px; }
+  .lp-discord-server-menu-body .lp-discord-picture-editor { padding:12px 9px; gap:10px; }
+  .lp-discord-server-menu-body .lp-discord-picture-preview { width:44px; height:44px; border-radius:13px; }
+  .lp-discord-server-menu-body .lp-discord-picture-editor strong { font-size:13px; }
+  .lp-discord-menu-people { display:block; width:100%; border:0; border-radius:7px; background:transparent; color:var(--social-text); font:650 12px/1.4 system-ui,sans-serif; text-align:left; padding:11px 12px; cursor:pointer; }
+  .lp-discord-menu-people:hover { background:var(--discord-input); }
+  .lp-social-page-discord .lp-discord-member-manager { padding:0; min-width:0; background:var(--discord-panel); color:var(--social-text); }
+  .lp-discord-picture-editor { display:flex; align-items:center; gap:14px; padding:20px 16px; min-width:0; }
+  .lp-discord-picture-preview { display:grid; place-items:center; width:64px; height:64px; flex:none; border-radius:20px; background:#5865f2; color:#fff; overflow:hidden; }
+  .lp-discord-picture-preview img { width:100%; height:100%; object-fit:cover; }
+  .lp-discord-picture-preview > .lp-social-glyph { width:26px; height:26px; }
+  .lp-discord-picture-editor > div:last-child { display:grid; justify-items:start; gap:7px; min-width:0; }
+  .lp-discord-picture-editor strong { font-size:17px; overflow-wrap:anywhere; }
+  .lp-discord-picture-progress { font-size:11px; color:var(--social-muted); }
+  .lp-social-page-discord .lp-discord-soft-button { appearance:none; min-height:34px; padding:8px 12px; border:0; border-radius:8px; background:var(--discord-input); color:var(--social-text); font:650 11px/1.3 system-ui,sans-serif; cursor:pointer; flex:none; }
+  .lp-social-page-discord .lp-discord-soft-button:disabled { opacity:.5; cursor:default; }
+  .lp-discord-text-button { appearance:none; border:0; padding:3px 0; background:transparent; color:var(--social-muted); font:inherit; font-size:11px; cursor:pointer; }
+  .lp-discord-member-tabs { display:flex; gap:6px; margin:0 16px; padding:4px; border-radius:11px; background:var(--discord-rail); }
+  .lp-discord-member-tab { appearance:none; flex:1; min-width:0; padding:10px 6px; min-height:40px; border:0; border-radius:8px; background:transparent; color:var(--social-muted); font:650 12px/1.3 system-ui,sans-serif; cursor:pointer; }
+  .lp-discord-member-tab[aria-pressed="true"] { background:var(--discord-input); color:var(--social-text); }
+  .lp-discord-member-body { padding:20px 16px 28px; min-width:0; }
+  .lp-discord-member-body h2 { font-size:16px; margin:0; }
+  .lp-discord-members-heading { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; }
+  .lp-discord-picker-hint,.lp-discord-member-empty { color:var(--social-muted); font-size:12px; line-height:1.5; margin:9px 0 18px; }
+  .lp-discord-member-manager .lp-discord-people-list { gap:8px; margin:16px 0 0; }
+  .lp-discord-member-manager .lp-discord-people-list > li { display:block; }
+  .lp-discord-member-card { width:100%; border-radius:11px; background:var(--social-bg); overflow:hidden; }
+  .lp-discord-member-card > summary { display:flex; align-items:center; gap:11px; padding:12px; cursor:pointer; list-style:none; }
+  .lp-discord-member-card > summary::-webkit-details-marker,.lp-discord-picker-group > summary::-webkit-details-marker { display:none; }
+  .lp-discord-member-copy { display:grid; flex:1; min-width:0; gap:4px; }
+  .lp-discord-member-copy strong { font-size:13px; overflow-wrap:anywhere; }
+  .lp-discord-member-copy small { color:var(--social-muted); font-size:11px; overflow-wrap:anywhere; }
+  .lp-discord-member-chevron { margin-left:auto; color:var(--social-muted); font-size:22px; transform:rotate(0); }
+  .lp-discord-member-card[open] .lp-discord-member-chevron { transform:rotate(90deg); }
+  .lp-discord-member-card > div { padding:0 12px 13px 58px; }
+  .lp-discord-member-card p { color:var(--social-muted); font-size:12px; line-height:1.6; margin:0; }
+  .lp-discord-member-card .lp-social-avatar,.lp-discord-picker-row .lp-social-avatar { width:34px; height:34px; flex:none; }
+  .lp-discord-picker-group { border-radius:12px; background:var(--discord-rail); margin-top:12px; overflow:hidden; }
+  .lp-discord-picker-group > summary { display:flex; gap:10px; align-items:center; min-height:52px; padding:13px; list-style:none; cursor:pointer; font-size:12px; }
+  .lp-discord-group-count { margin-left:auto; border-radius:6px; background:var(--discord-input); color:var(--social-muted); padding:3px 6px; font-size:10px; }
+  .lp-discord-picker-group > summary::after { content:'›'; color:var(--social-muted); font-size:20px; }
+  .lp-discord-picker-group[open] > summary::after { transform:rotate(90deg); }
+  .lp-discord-picker-body { padding:0 10px 10px; }
+  .lp-discord-picker-body > .lp-discord-picker-hint { margin:0; padding:0 4px 8px; }
+  .lp-discord-picker-row { display:flex; align-items:center; gap:9px; padding:11px 2px; border-top:1px solid #ffffff09; min-width:0; }
+  .lp-discord-cast-card { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:13px 10px; border-radius:10px; background:var(--social-bg); margin-bottom:8px; min-width:0; }
+  .lp-discord-cast-card:last-child { margin-bottom:0; }
+  .lp-discord-cast-avatars { display:flex; padding-left:5px; }
+  .lp-discord-cast-avatars .lp-social-avatar { width:25px; height:25px; margin-left:-5px; border:2px solid var(--social-bg); }
+  .lp-discord-cast-copy { flex:1; min-width:85px; display:grid; gap:4px; }
+  .lp-discord-cast-copy strong { font-size:12px; overflow-wrap:anywhere; }
+  .lp-discord-cast-copy small { font-size:10px; color:var(--social-muted); }
+  .lp-discord-cast-card .lp-discord-soft-button:not(:disabled) { background:#5865f2; color:#fff; }
+  .lp-discord-member-manager .lp-discord-person-form { background:var(--social-bg); border-radius:10px; padding:12px; }
+  .lp-discord-member-manager .lp-discord-person-form .lp-input { background:var(--discord-rail); color:var(--social-text); border:1px solid #ffffff0a; border-radius:8px; padding:10px; min-height:40px; width:100%; }
+  .lp-discord-member-manager .lp-discord-person-form textarea { min-height:80px; resize:vertical; }
+  .lp-discord-member-manager .lp-discord-person-form button { justify-self:end; background:#5865f2; }
+  .lp-discord-server > img { width:100%; height:100%; object-fit:cover; border-radius:inherit; }
+`;
+
+// src/frontend/components/social-styles.ts
+var SOCIAL_STYLES = `
+  .lumiphone-shell .lp-social-page { --social-bg:#000; --social-surface:#000; --social-text:#e7e9ea; --social-muted:#8b98a5; --social-border:#2f3336; --social-accent:#1d9bf0; --lp-bg:var(--social-bg); --lp-surface:var(--social-surface); --lp-text:var(--social-text); --lp-muted:var(--social-muted); --lp-border:var(--social-border); display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden; background:var(--social-bg); color:var(--social-text); }
+  .lumiphone-shell[data-theme="porcelain"] .lp-social-page,.lumiphone-shell[data-theme="pink"] .lp-social-page { --social-bg:#fff; --social-surface:#fff; --social-text:#0f1419; --social-muted:#536471; --social-border:#e5e9ed; }
+  .lumiphone-shell .lp-social-page .lp-social-app-header { position:relative; flex:none; display:grid; grid-template-columns:44px minmax(0,1fr) 44px; min-height:52px; height:52px; padding:3px 10px; border-bottom:1px solid var(--social-border); gap:4px; background:var(--social-bg); color:var(--social-text); backdrop-filter:none; }
+  .lumiphone-shell .lp-social-page .lp-nav-title { min-width:0; overflow:visible; line-height:1; }
+  .lp-social-back { display:grid; place-items:center; color:var(--social-text); }
+  .lp-social-wordmark { font-size:22px; font-weight:800; letter-spacing:-.04em; }
+  .lp-social-wordmark > .lp-social-glyph { width:27px; height:27px; color:#1d9bf0; margin:auto; }
+  .lp-social-toolbar { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; }
+  .lumiphone-shell .lp-content.lp-social { flex:1; min-height:0; display:block; padding:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; background:var(--social-bg); }
+  .lp-social-button,.lp-social-primary { appearance:none; border:0; background:transparent; color:inherit; font:inherit; font-size:12px; padding:8px 12px; min-height:40px; cursor:pointer; }
+  .lp-social-glyph { display:inline-grid; place-items:center; width:21px; height:21px; flex:none; vertical-align:middle; }
+  .lp-social-glyph svg { display:block; width:100%; height:100%; }
+  .lp-social-icon-button { display:inline-flex; justify-content:center; align-items:center; gap:5px; padding:7px; width:40px; height:40px; }
+  .lp-social-refresh { color:var(--social-text); }
+  .lp-social-page button:disabled { opacity:.4; cursor:default; }
+  .lp-social-page :is(button,input,textarea,select,summary):focus-visible { outline:2px solid var(--social-accent); outline-offset:-2px; }
+  .lp-social-page [hidden] { display:none !important; }
+  .lp-social-status { position:sticky; top:0; z-index:7; margin:0; padding:6px 12px; text-align:center; background:color-mix(in srgb,var(--social-accent) 15%,var(--social-bg)); color:var(--social-text); font-size:10px; line-height:1.5; }
+  .lp-social-status:empty { display:none; }
+  .lp-social-error { margin:8px 12px; border-left:3px solid #f36b7f; padding:10px 12px; background:#8d294022; font-size:12px; }
+  .lp-social-stop { background:#e5484d; color:#fff; min-height:28px; padding:4px 14px; float:right; position:relative; z-index:10; }
+  .lp-social-filters { display:flex; position:sticky; top:0; z-index:4; background:var(--social-bg); border-bottom:1px solid var(--social-border); }
+  .lp-social-filters .lp-social-button { flex:1; position:relative; border:0; border-radius:0; height:48px; min-width:0; color:var(--social-muted); font-weight:650; }
+  .lp-social-filters [aria-pressed="true"] { color:var(--social-text); }
+  .lp-social-filters [aria-pressed="true"]::after { content:''; position:absolute; left:24%; right:24%; bottom:0; height:4px; border-radius:4px; background:var(--social-accent); }
+  .lp-social-bottomnav { flex:none; display:flex; height:53px; align-items:center; justify-content:space-around; background:var(--social-bg); border-top:1px solid var(--social-border); color:var(--social-text); padding:2px 16px; }
+  .lp-social-bottomnav .lp-social-icon-button { min-width:50px; }
+  .lp-social-bottomnav [aria-pressed="true"] .lp-social-glyph { color:var(--social-accent); }
+  .lp-social-bottomnav .lp-social-create { border-radius:50%; background:var(--social-accent); color:#fff; width:39px; min-width:39px; height:39px; }
+  .lp-social-profile { display:block; min-width:0; border-bottom:1px solid var(--social-border); }
+  .lp-social-compose-disclosure > summary { display:flex; align-items:center; gap:12px; list-style:none; padding:15px 16px; border-bottom:1px solid var(--social-border); cursor:pointer; font-size:14px; color:var(--social-muted); }
+  .lp-social-compose-disclosure > summary::-webkit-details-marker { display:none; }
+  .lp-social-compose-disclosure > summary .lp-social-glyph { color:var(--social-accent); }
+  .lp-social-compose { display:grid; gap:10px; padding:15px 16px; background:var(--social-surface); border-bottom:1px solid var(--social-border); min-width:0; }
+  .lp-social-compose-title { color:var(--social-muted); font-size:11px; }
+  .lp-social-field { display:grid; gap:5px; min-width:0; font-size:11px; color:var(--social-muted); }
+  .lumiphone-shell .lp-social-page .lp-social-field :is(input,textarea,select) { width:100%; min-width:0; min-height:38px; padding:9px 10px; border-radius:6px; font-size:13px; border:1px solid var(--social-border); background:var(--social-bg); color:var(--social-text); }
+  .lp-social-field textarea { resize:vertical; min-height:70px; line-height:1.5; }
+  .lp-social-compose-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .lp-social-count { font-size:10px; color:var(--social-muted); }
+  .lp-social-primary { min-width:66px; min-height:35px; border-radius:20px; background:var(--social-accent); color:#fff; font-weight:700; }
+  .lp-social-media summary,.lp-social-server-create summary { cursor:pointer; font-size:12px; padding:9px 0; color:var(--social-muted); }
+  .lp-social-media[open] > :not(summary) { margin-top:8px; }
+  .lp-social-photo-picker { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .lp-social-photo-picker button { padding:2px; height:auto; border:2px solid transparent; border-radius:6px; }
+  .lp-social-photo-picker [aria-pressed="true"] { border-color:var(--social-accent); }
+  .lp-social-photo-picker img { width:100%; aspect-ratio:1; object-fit:cover; display:block; border-radius:3px; }
+  .lp-social-feed { min-width:0; }
+  .lp-social-post { min-width:0; padding:13px 14px 8px; background:var(--social-surface); border-bottom:1px solid var(--social-border); overflow:hidden; }
+  .lp-social-post-heading { display:flex; align-items:center; gap:10px; min-width:0; }
+  .lp-social-avatar { width:36px; height:36px; flex:none; border-radius:50%; display:grid; place-items:center; background:linear-gradient(145deg,#6b8d9c,#354a58); color:#fff; font-size:16px; font-weight:600; }
+  .lp-social-avatar { position:relative; overflow:hidden; }
+  .lp-social-avatar > img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .lp-social-post-identity { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 6px; flex:1; min-width:0; }
+  .lp-social-post-identity strong { font-size:12px; font-weight:700; overflow-wrap:anywhere; }
+  .lp-social-post-identity span,.lp-social-post-heading time { font-size:10px; color:var(--social-muted); overflow-wrap:anywhere; }
+  .lp-social-post-heading time { flex:none; font-size:9px; }
+  .lp-social-post-text { margin:5px 0 8px; font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .lp-social-post-body { min-width:0; }
+  .lp-social-twitter .lp-social-post-body { margin-left:46px; margin-top:-12px; padding-top:0; }
+  .lp-social-twitter .lp-social-post-heading { align-items:flex-start; }
+  .lp-social-twitter .lp-social-post-identity { padding-top:1px; }
+  .lp-social-twitter .lp-social-post-text { margin-top:0; font-size:15px; line-height:1.5; }
+  .lp-social-twitter .lp-social-post-identity strong { font-size:14px; }
+  .lp-social-twitter .lp-social-post-identity span,.lp-social-twitter .lp-social-post-heading time { font-size:11px; }
+  .lp-social-post-actions { display:flex; align-items:center; justify-content:space-between; gap:3px; margin-top:6px; color:var(--social-muted); }
+  .lp-social-post-actions .lp-social-icon-button { width:auto; min-width:30px; min-height:31px; height:31px; padding:5px; }
+  .lp-social-post-actions .lp-social-glyph { width:18px; height:18px; }
+  .lp-social-action-count { font-size:10px; }
+  .lp-social-like[aria-pressed="true"] { color:#f91880; }
+  .lp-social-like[aria-pressed="true"] svg { fill:currentColor; }
+  .lp-social-quote { margin:8px 0; padding:10px 12px; border:1px solid var(--social-border); border-radius:12px; overflow-wrap:anywhere; font-size:11px; }
+  .lp-social-quote p { white-space:pre-wrap; margin:5px 0 0; line-height:1.5; }
+  .lp-social-reblog-label { display:block; margin-top:6px; font-size:10px; color:var(--social-muted); }
+  .lp-social-photo { display:block; width:100%; max-height:420px; object-fit:contain; border-radius:12px; margin:9px 0; background:var(--social-bg); }
+  .lp-social-photo-description { margin:10px 0; display:grid; align-content:center; justify-items:center; gap:10px; min-height:150px; padding:24px; border:1px solid var(--social-border); border-radius:8px; background:color-mix(in srgb,var(--social-text) 5%,var(--social-bg)); text-align:center; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+  .lp-social-photo-description > .lp-social-glyph { width:28px; height:28px; opacity:.5; }
+  .lp-social-photo-description > span:not(.lp-social-glyph) { font-size:8px; letter-spacing:.14em; color:var(--social-muted); }
+  .lp-social-tags { font-size:11px; color:var(--social-muted); line-height:1.6; margin:8px 0; overflow-wrap:anywhere; }
+  .lp-social-empty { padding:48px 26px; text-align:center; }
+  .lp-social-empty strong { font-size:22px; font-weight:800; letter-spacing:-.04em; } .lp-social-empty p { margin:12px auto 0; max-width:250px; font-size:13px; line-height:1.6; color:var(--social-muted); }
+
+  /* Instagram: black/white chrome, large unframed media, actions before caption. */
+  .lumiphone-shell .lp-social-page-instagram { --social-accent:#0095f6; }
+  .lp-social-page-instagram .lp-social-wordmark { font:700 26px/1 'Segoe Script','Brush Script MT',cursive; letter-spacing:-1.4px; }
+  .lp-social-instagram .lp-social-filters { display:none; }
+  .lp-social-instagram .lp-social-compose-disclosure > summary { font-size:12px; padding:12px 15px; }
+  .lp-social-instagram .lp-social-post { padding:0; border:0; margin-bottom:18px; }
+  .lp-social-instagram .lp-social-post-heading { padding:12px 14px; }
+  .lp-social-instagram .lp-social-avatar { width:29px; height:29px; outline:2px solid #d65087; outline-offset:2px; border:2px solid var(--social-bg); }
+  .lp-social-instagram .lp-social-post-identity span { display:none; }
+  .lp-social-instagram .lp-social-post-identity strong { font-size:13px; }
+  .lp-social-instagram .lp-social-caption strong { font-size:13px; }
+  .lp-social-instagram .lp-social-post-heading time { font-size:9px; }
+  .lp-social-instagram .lp-social-post-body { display:flex; flex-direction:column; }
+  .lp-social-instagram .lp-social-photo,.lp-social-instagram .lp-social-photo-description { order:0; width:100%; margin:0; border-radius:0; border:0; aspect-ratio:1; min-height:0; max-height:none; object-fit:cover; }
+  .lp-social-instagram .lp-social-photo-description { padding:32px; background:linear-gradient(145deg,color-mix(in srgb,var(--social-text) 7%,var(--social-bg)),var(--social-bg)); }
+  .lp-social-instagram .lp-social-post-actions { order:1; justify-content:flex-start; padding:8px 10px 0; margin:0; gap:5px; color:var(--social-text); }
+  .lp-social-instagram .lp-social-post-actions .lp-social-glyph { width:23px; height:23px; }
+  .lp-social-instagram .lp-social-post-actions [aria-label^="Delete"] { margin-left:auto; }
+  .lp-social-instagram .lp-social-caption { order:2; margin:0; padding:7px 14px 0; font-size:14px; }
+  .lp-social-instagram .lp-social-tags { order:3; padding:0 14px; color:#86b9df; margin:5px 0 0; }
+  .lp-social-instagram .lp-social-quote { order:0; margin:0 12px 10px; }
+  .lp-social-page-instagram .lp-social-bottomnav .lp-social-create { background:transparent; color:var(--social-text); border:2px solid currentColor; border-radius:7px; width:25px; min-width:25px; height:25px; padding:2px; }
+  .lp-social-page-instagram .lp-social-bottomnav [aria-pressed="true"] .lp-social-glyph { color:var(--social-text); fill:currentColor; }
+
+  /* Tumblr: a navy dashboard holding white paper posts and visible reblog trails. */
+  .lumiphone-shell .lp-social-page-tumblr,.lumiphone-shell[data-theme="porcelain"] .lp-social-page-tumblr,.lumiphone-shell[data-theme="pink"] .lp-social-page-tumblr { --social-bg:#001935; --social-surface:#001935; --social-text:#fff; --social-muted:#a7b6c6; --social-border:#ffffff22; --social-accent:#00b8ff; }
+  .lp-social-page-tumblr .lp-social-wordmark { font:bold 30px/.9 Georgia,serif; letter-spacing:-1.7px; }
+  .lp-social-page-tumblr .lp-social-filters .lp-social-button { height:44px; }
+  .lp-social-page-tumblr .lp-social-filters [aria-pressed="true"]::after { height:2px; left:14%; right:14%; }
+  .lp-social-tumblr .lp-social-compose-disclosure { margin:12px 12px 16px; }
+  .lp-social-tumblr .lp-social-compose-disclosure > summary { padding:14px; background:#fff; color:#516171; border-radius:3px; font-size:13px; }
+  .lp-social-tumblr .lp-social-feed { padding:0 12px 12px; }
+  .lp-social-tumblr .lp-social-post { border:0; border-radius:3px; background:#fff; color:#24323e; margin-bottom:18px; padding:0; --social-muted:#687681; --social-border:#dfe4e8; --social-bg:#fff; --social-text:#24323e; }
+  .lp-social-tumblr .lp-social-post-heading { padding:12px 14px; border-bottom:1px solid #e6e9ec; }
+  .lp-social-tumblr .lp-social-avatar { border-radius:3px; width:31px; height:31px; }
+  .lp-social-tumblr .lp-social-post-identity { display:block; } .lp-social-tumblr .lp-social-post-identity span { display:none; }
+  .lp-social-tumblr .lp-social-post-body { padding:10px 16px 6px; }
+  .lp-social-tumblr .lp-social-post-title { font:700 22px/1.3 system-ui,sans-serif; margin:10px 0; overflow-wrap:anywhere; }
+  .lp-social-tumblr .lp-social-post-text { font:14px/1.6 system-ui,sans-serif; margin:10px 0 14px; }
+  .lp-social-tumblr .lp-social-quote { border:0; border-left:3px solid #d6dce2; border-radius:0; margin:12px 0; padding:2px 0 2px 12px; }
+  .lp-social-tumblr .lp-social-reblog-label { color:#687681; font-size:10px; margin:0 0 10px; }
+  .lp-social-tumblr .lp-social-post-actions { justify-content:flex-end; border-top:1px solid #eceff1; padding-top:6px; color:#667580; }
+  .lp-tumblr-notes { margin-right:auto; color:#687681; font-size:11px; font-weight:650; }
+  .lp-social-tumblr .lp-social-compose { --social-bg:#fff; --social-surface:#fff; --social-text:#24323e; --social-muted:#687681; --social-border:#dfe4e8; background:#fff; color:#24323e; border-radius:0 0 3px 3px; }
+  .lp-social-page-tumblr .lp-social-bottomnav { background:#001935; border-color:#ffffff22; }
+  .lp-social-page-tumblr .lp-social-bottomnav .lp-social-create { border-radius:5px; background:#00b8ff; color:#001935; }
+
+  /* Discord: independent server rail, channel drawer, compact chat, pinned input. */
+  .lumiphone-shell .lp-social-page-discord { --social-bg:#313338; --social-surface:#313338; --social-text:#dbdee1; --social-muted:#b5bac1; --social-border:#24262b; --social-accent:#949cf7; --discord-rail:#1e1f22; --discord-panel:#2b2d31; --discord-input:#383a40; }
+  .lumiphone-shell[data-theme="porcelain"] .lp-social-page-discord,.lumiphone-shell[data-theme="pink"] .lp-social-page-discord { --social-bg:#fff; --social-surface:#fff; --social-text:#313338; --social-muted:#5c6068; --social-border:#e3e5e8; --discord-rail:#e3e5e8; --discord-panel:#f2f3f5; --discord-input:#ebedef; }
+  .lp-social-page-discord .lp-social-wordmark { font-size:18px; font-weight:800; letter-spacing:-.04em; }
+  .lumiphone-shell .lp-content.lp-social-discord { display:grid; grid-template-columns:54px minmax(0,1fr); gap:0; overflow:hidden; }
+  .lp-discord-server-rail { display:flex; flex-direction:column; align-items:center; gap:9px; padding:12px 5px; background:var(--discord-rail); min-width:0; overflow-y:auto; }
+  .lp-discord-server { position:relative; width:40px; height:40px; min-height:40px; padding:0; border:0; border-radius:14px; color:var(--social-text); background:var(--discord-input); font-size:12px; font-weight:700; cursor:pointer; flex:none; }
+  .lp-discord-server[aria-pressed="true"] { background:#5865f2; color:#fff; border-radius:12px; }
+  .lp-discord-server[aria-pressed="true"]::before { content:''; position:absolute; left:-5px; top:8px; height:24px; width:3px; border-radius:2px; background:#fff; }
+  .lp-discord-add-server { color:#3ba55d; border-radius:50%; }
+  .lp-discord-main { min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; position:relative; }
+  .lp-discord-channel-heading { min-height:46px; flex:none; display:flex; align-items:center; gap:6px; padding:0 8px; border-bottom:1px solid var(--social-border); box-shadow:0 1px 3px #0002; }
+  .lp-discord-channel-heading strong { font-size:13px; font-weight:700; overflow-wrap:anywhere; }
+  .lp-discord-channel-heading .lp-social-icon-button { width:32px; height:36px; color:var(--social-muted); }
+  .lp-discord-channel-panel { position:absolute; inset:46px 0 0; z-index:11; padding:14px; background:var(--discord-panel); overflow:auto; }
+  .lp-discord-server-name { margin:0 0 18px; font-size:17px; letter-spacing:-.03em; }
+  .lp-discord-channel-panel > .lp-social-field { margin-bottom:16px; }
+  .lp-discord-channel-label { display:block; font-size:9px; letter-spacing:.06em; font-weight:750; color:var(--social-muted); margin:12px 0 6px; }
+  .lp-discord-channel-panel .lp-social-channels { display:grid; gap:3px; }
+  .lp-discord-channel-panel .lp-social-channels .lp-social-button { text-align:left; font-size:13px; border-radius:5px; padding:8px 10px; }
+  .lp-discord-channel-panel .lp-social-channels [aria-pressed="true"] { color:var(--social-text); background:color-mix(in srgb,var(--social-text) 9%,transparent); }
+  .lp-discord-channel-panel .lp-social-server-create { margin-top:18px; border-top:1px solid var(--social-border); }
+  .lp-discord-channel-panel .lp-social-compose { padding:5px 0; border:0; }
+  .lp-discord-messages { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+  .lp-social-discord .lp-social-post { padding:12px 11px 4px; border:0; background:transparent; overflow:visible; }
+  .lp-social-discord .lp-social-post-heading { align-items:flex-start; gap:8px; }
+  .lp-social-discord .lp-social-avatar { width:30px; height:30px; background:#5865f2; font-size:13px; }
+  .lp-social-discord .lp-social-post-identity span { display:none; }
+  .lp-social-discord .lp-social-post-identity strong { color:#aab0ff; font-size:13px; }
+  .lp-social-discord .lp-social-post-heading time { font-size:8px; padding-top:3px; }
+  .lp-social-discord .lp-social-post-body { margin-left:38px; margin-top:-11px; }
+  .lp-social-discord .lp-social-post-text { margin:0; font-size:14px; line-height:1.5; }
+  .lp-social-discord .lp-social-post-actions { justify-content:flex-start; gap:4px; margin-top:1px; opacity:.65; }
+  .lp-social-discord .lp-social-post-actions .lp-social-icon-button { height:26px; min-height:26px; padding:3px; }
+  .lp-social-discord .lp-social-post-actions .lp-social-glyph { width:14px; height:14px; }
+  .lp-discord-main > .lp-social-compose { flex:none; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0; padding:8px; border:0; background:var(--social-bg); }
+  .lp-discord-main > .lp-social-compose .lp-social-compose-title { grid-column:1/-1; padding:0 5px 4px; font-size:9px; }
+  .lp-discord-main > .lp-social-compose .lp-social-field > span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+  .lumiphone-shell .lp-social-page-discord .lp-discord-main > .lp-social-compose textarea { min-height:44px; height:44px; max-height:100px; border:0; resize:none; border-radius:7px 0 0 7px; background:var(--discord-input); }
+  .lp-discord-main > .lp-social-compose .lp-social-compose-footer { background:var(--discord-input); border-radius:0 7px 7px 0; padding-right:5px; }
+  .lp-discord-main > .lp-social-compose .lp-social-count { display:none; }
+  .lp-discord-main > .lp-social-compose .lp-social-primary { min-width:44px; min-height:32px; padding:5px 8px; border-radius:4px; font-size:11px; background:#5865f2; }
+  .lp-social-discord .lp-social-empty { padding:35px 18px; } .lp-social-discord .lp-social-empty strong { font-size:23px; }
+  .lumiphone-shell .lp-icon-twitter { background:linear-gradient(140deg,#64c7f5,#3183c9); }
+  .lumiphone-shell .lp-icon-discord { background:linear-gradient(140deg,#a49df7,#6654c7); }
+  .lumiphone-shell .lp-icon-instagram { background:linear-gradient(140deg,#eeb66e,#d771a0 55%,#9e71c8); }
+  .lumiphone-shell .lp-icon-tumblr { background:linear-gradient(140deg,#637d9c,#30425d); }
+  .lp-social-avatar > svg { width:100%; height:100%; display:block; }
+  .lp-social-post { position:relative; }
+  .lp-social-open-discussion { position:absolute; z-index:1; inset:0; width:100%; height:100%; border:0; border-radius:inherit; background:transparent; padding:0; cursor:pointer; }
+  .lp-social-post-actions,.lp-social-follow { position:relative; z-index:2; }
+  .lp-social-open-discussion:focus-visible { outline:2px solid var(--social-accent); outline-offset:-3px; }
+  .lp-social-follow { flex:none; align-self:center; min-height:28px; padding:4px 9px; border:1px solid var(--social-border); border-radius:16px; color:var(--social-text); background:var(--social-bg); font:inherit; font-size:10px; font-weight:600; line-height:1.2; cursor:pointer; }
+  .lp-social-follow[aria-pressed="true"] { color:var(--social-muted); }
+  .lp-social-profile > .lp-social-bio { grid-column:1/-1; font-size:13px; line-height:1.5; white-space:pre-wrap; margin:6px 0; }
+  .lp-social-edit-profile { border:1px solid var(--social-border); border-radius:9px; font-weight:650; }
+  .lp-social-bio-form { grid-column:1/-1; display:grid; gap:8px; }
+  .lp-social-bio-form .lp-social-primary { justify-self:end; }
+  .lp-social-username-hint { font-size:11px; line-height:1.5; color:var(--social-muted); margin:0; }
+  .lp-social-profile-handle { overflow-wrap:anywhere; }
+  .lp-discord-profile-launch { margin-top:auto; display:grid; place-items:center; border-radius:50%; }
+  .lp-discord-profile-launch .lp-social-avatar { width:32px; height:32px; }
+  .lp-discord-main > .lp-discord-profile { padding:22px 16px; overflow:auto; min-height:0; flex:1; }
+  .lp-discord-profile .lp-social-profile-head { flex-direction:column; align-items:flex-start; margin-bottom:20px; }
+  .lp-discord-profile .lp-social-avatar { width:64px; height:64px; }
+  .lp-discord-profile > .lp-social-edit-profile { margin:12px 8px 0 0; }
+  .lp-discord-profile .lp-social-bio-form { margin-top:16px; }
+  .lp-social-preview-notice { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 13px; border-bottom:1px solid var(--social-border); color:var(--social-muted); font-size:9px; line-height:1.4; }
+  .lp-social-preview-notice .lp-social-button { font-size:9px; min-height:28px; padding:4px 8px; }
+  .lp-social-preview-label { display:block; color:var(--social-muted); font-size:9px; line-height:1.45; }
+  .lp-social-post[data-social-preview="true"] .lp-social-post-actions { min-height:23px; }
+  .lp-instagram-stories { display:flex; gap:17px; overflow-x:auto; padding:14px 16px; border-bottom:1px solid var(--social-border); scrollbar-width:none; }
+  .lp-instagram-story { display:grid; justify-items:center; gap:8px; flex:none; border:0; padding:3px; background:transparent; color:var(--social-text); font:inherit; font-size:10px; line-height:1.2; cursor:pointer; }
+  .lp-instagram-story .lp-social-avatar { width:51px; height:51px; border:2px solid var(--social-bg); outline:2px solid #e06c8e; outline-offset:2px; }
+  .lp-social-story-viewer { display:grid; gap:12px; min-width:0; text-align:center; }
+  .lp-social-story-viewer > img { display:block; width:100%; max-height:55dvh; aspect-ratio:4/5; object-fit:cover; border-radius:12px; }
+  .lp-social-story-viewer > p { margin:0; font-size:13px; line-height:1.5; }
+  .lp-social-story-viewer > .lp-social-preview-label { font-size:10px; }
+  .lp-social-photo-tools { display:flex; flex-wrap:wrap; gap:6px; }
+  .lp-social-photo-tools .lp-social-button { border:1px solid var(--social-border); border-radius:6px; font-size:11px; }
+  .lp-social-image-progress { margin:4px 0; font-size:11px; color:var(--social-muted); }
+  .lp-social-attachment-preview { max-width:100%; max-height:180px; border-radius:8px; object-fit:contain; }
+  .lp-discord-server-create { flex:1; min-height:0; overflow:auto; padding:16px; background:var(--discord-panel); }
+  .lp-discord-server-create > h2 { font-size:21px; margin:14px 0 8px; }
+  .lp-discord-server-create > p { line-height:1.6; }
+  .lp-discord-server-create > .lp-social-compose { padding:12px 0; border:0; background:transparent; }
+  .lp-discord-server-create .lp-social-compose > .lp-social-button { justify-self:start; background:#5865f2; color:#fff; border-radius:5px; }
+  .lp-tumblr-palettes { margin:0 12px 9px; color:var(--social-text); font-size:11px; }
+  .lp-tumblr-palettes > summary { cursor:pointer; padding:10px 2px; }
+  .lp-tumblr-palette-options { display:flex; flex-wrap:wrap; gap:6px; padding-bottom:4px; }
+  .lp-tumblr-palette-options .lp-social-button { border:2px solid transparent; border-radius:5px; min-height:34px; padding:6px 9px; font-size:10px; }
+  .lp-tumblr-palette-options [data-palette="true-blue"] { background:#fff; color:#001935; }
+  .lp-tumblr-palette-options [data-palette="goth-rave"] { background:#20102f; color:#d5a9ff; }
+  .lp-tumblr-palette-options [data-palette="dark-mode"] { background:#080808; color:#fff; }
+  .lp-tumblr-palette-options [data-palette="pride"] { background:linear-gradient(110deg,#f5b8d2 0 25%,#fff 25% 50%,#ffe66b 50% 75%,#74baf4 75%); color:#20263a; }
+  .lp-tumblr-palette-options [aria-pressed="true"] { border-color:var(--social-accent); }
+  .lumiphone-shell .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] { --social-bg:#000; --social-surface:#000; --social-text:#f5f4f8; --social-muted:#a6a0af; --social-border:#362347; --social-accent:#ad7aff; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-post,.lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-compose { --social-bg:#0a0a0d; --social-surface:#0a0a0d; --social-text:#f5f4f8; --social-muted:#a6a0af; --social-border:#362347; background:#0a0a0d; color:#f5f4f8; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] :is(.lp-social-post-heading,.lp-social-post-actions) { border-color:#522d82; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-compose-disclosure > summary { background:#0a0a0d; color:#c4a0f5; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-bottomnav { background:#000; }
+  .lumiphone-shell .lp-social-page-tumblr[data-tumblr-theme="dark-mode"] { --social-bg:#000; --social-surface:#000; --social-text:#fff; --social-muted:#a7a7a7; --social-border:#333; --social-accent:#00b8ff; }
+  .lp-social-page-tumblr[data-tumblr-theme="dark-mode"] .lp-social-post,.lp-social-page-tumblr[data-tumblr-theme="dark-mode"] .lp-social-compose { --social-bg:#171717; --social-surface:#171717; --social-text:#fff; --social-muted:#aaa; --social-border:#333; background:#171717; color:#fff; }
+  .lp-social-page-tumblr[data-tumblr-theme="dark-mode"] :is(.lp-social-post-heading,.lp-social-post-actions) { border-color:#333; }
+  .lp-social-page-tumblr[data-tumblr-theme="dark-mode"] .lp-social-compose-disclosure > summary { background:#171717; color:#eee; }
+  .lp-social-page-tumblr[data-tumblr-theme="dark-mode"] .lp-social-bottomnav { background:#000; }
+  .lumiphone-shell .lp-social-page-tumblr[data-tumblr-theme="pride"] { --social-bg:#f3b6d0; --social-surface:#f3b6d0; --social-text:#3c3157; --social-muted:#6e5170; --social-border:#d89db9; --social-accent:#168ee6; }
+  .lp-social-page-tumblr[data-tumblr-theme="pride"] .lp-social-app-header,.lp-social-page-tumblr[data-tumblr-theme="pride"] .lp-social-bottomnav { background:#fff; color:#3c3157; }
+  .lp-social-page-tumblr[data-tumblr-theme="pride"] .lp-social-bottomnav .lp-social-create { background:#ffe36b; color:#225d94; }
+  .lp-social-page-tumblr[data-tumblr-theme="pride"] .lp-social-filters { background:#f3b6d0; }
+  .lp-social-page-tumblr:is([data-tumblr-theme="goth-rave"],[data-tumblr-theme="dark-mode"]) :is(.lp-social-post-actions,.lp-social-reblog-label,.lp-tumblr-notes) { color:var(--social-muted); }
+  .lp-social-operation { flex:none; display:grid; grid-template-columns:minmax(0,1fr) 48px; align-items:center; gap:6px; height:28px; min-height:28px; padding:0 10px; background:var(--social-bg); border-bottom:1px solid var(--social-border); }
+  .lp-social-operation .lp-social-status { position:static; min-width:0; margin:0; padding:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; font-size:10px; line-height:1.4; background:transparent; }
+  .lp-social-operation .lp-social-stop { float:none; position:static; margin:0; min-height:22px; height:22px; width:48px; padding:2px 6px; font-size:10px; border-radius:4px; }
+  .lp-social-settings { padding:18px 16px 26px; background:var(--social-bg); color:var(--social-text); }
+  .lp-social-settings > h2 { font-size:22px; letter-spacing:-.03em; margin:12px 0 20px; }
+  .lp-social-settings > .lp-copy { font-size:11px; line-height:1.6; margin:16px 0; }
+  .lp-social-settings > .lp-social-settings-refresh { border:1px solid var(--social-border); border-radius:7px; background:color-mix(in srgb,var(--social-text) 6%,var(--social-bg)); color:var(--social-text); min-height:40px; width:100%; text-align:left; padding:10px 12px; }
+  .lp-social-settings-toggle { display:flex; align-items:center; gap:12px; padding:17px 0; border-bottom:1px solid var(--social-border); font-size:13px; line-height:1.5; cursor:pointer; }
+  .lp-social-settings-toggle input { width:18px; height:18px; flex:none; accent-color:var(--social-accent); }
+  .lp-discord-main > .lp-social-settings { flex:1; min-height:0; overflow:auto; }
+  .lp-social-compose-context { margin:0; padding:12px; border:1px solid var(--social-border); border-radius:10px; background:color-mix(in srgb,var(--social-text) 4%,var(--social-bg)); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+  .lp-social-compose-context > p { margin:6px 0 0; white-space:pre-wrap; }
+  .lp-social-page-twitter[data-social-compose-mode="quote"] .lp-social-filters { display:none; }
+  .lp-social-page-twitter[data-social-compose-mode="quote"] .lp-social-compose { border-bottom:0; }
+  .lp-discord-people { flex:1; min-height:0; overflow:auto; padding:16px; background:var(--discord-panel); }
+  .lp-discord-people > h2 { font-size:20px; margin:14px 0 10px; overflow-wrap:anywhere; }
+  .lp-discord-people > h3 { font-size:14px; margin:22px 0 12px; }
+  .lp-discord-people > .lp-copy { font-size:12px; line-height:1.6; }
+  .lp-discord-people > .lp-social-button { border:1px solid var(--social-border); border-radius:5px; }
+  .lp-discord-people-list { padding:0; margin:18px 0; list-style:none; display:grid; gap:16px; }
+  .lp-discord-people-list > li { display:flex; gap:10px; min-width:0; }
+  .lp-discord-people-list > li > div { min-width:0; display:grid; gap:3px; font-size:12px; }
+  .lp-discord-people-list strong { font-size:13px; } .lp-discord-people-list span { color:var(--social-muted); font-size:10px; }
+  .lp-discord-people-list p { margin:4px 0 0; line-height:1.5; overflow-wrap:anywhere; }
+  .lp-discord-person-form { display:grid; gap:10px; }
+  .lp-discord-person-form .lp-social-primary { justify-self:end; border-radius:5px; background:#5865f2; }
+  .lp-social-friend-picker { margin:18px 0; font-size:12px; }
+  .lp-social-friend-picker > summary { cursor:pointer; padding:10px 0; font-weight:650; }
+  .lp-social-friend-picker > .lp-social-settings-toggle { padding:12px 0; }
+  .lp-social-settings-toggle small { margin-left:auto; font-size:10px; color:var(--social-muted); max-width:40%; }
+  .lp-social-friend-picker > .lp-social-button { display:block; text-align:left; border-bottom:1px solid var(--social-border); width:100%; }
+  .lp-tumblr-discussion-title { font-size:20px; margin:16px 14px 8px; }
+  .lp-tumblr-notes-tabs { display:flex; gap:8px; border-bottom:1px solid var(--social-border); padding:0 12px; margin-bottom:14px; }
+  .lp-tumblr-notes-tabs .lp-social-button { position:relative; flex:1; border-radius:0; font-size:12px; color:var(--social-muted); }
+  .lp-tumblr-notes-tabs [aria-pressed="true"] { color:var(--social-text); border-bottom:3px solid var(--social-accent); }
+  .lumiphone-shell .lp-social-page-instagram .lp-social-app-header { grid-template-columns:36px minmax(0,1fr) 36px 36px; gap:2px; }
+  .lp-instagram-dms { padding:14px; min-height:100%; background:var(--social-bg); color:var(--social-text); }
+  .lp-instagram-dms > h2 { font-size:22px; margin:12px 0 18px; }
+  .lp-instagram-dms > .lp-copy { font-size:11px; line-height:1.6; }
+  .lp-instagram-inbox-list { display:grid; gap:3px; }
+  .lp-instagram-inbox-account { display:flex; align-items:center; gap:13px; padding:13px 0; border:0; background:transparent; color:var(--social-text); width:100%; text-align:left; cursor:pointer; }
+  .lp-instagram-inbox-account > .lp-social-avatar { width:49px; height:49px; }
+  .lp-instagram-inbox-account > span:not(.lp-social-avatar) { min-width:0; display:grid; gap:5px; }
+  .lp-instagram-inbox-account strong { font-size:13px; }
+  .lp-instagram-inbox-account span span { font-size:11px; color:var(--social-muted); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:240px; }
+  .lp-instagram-dm-log { display:flex; flex-direction:column; align-items:flex-start; gap:9px; padding:12px 0 20px; min-height:130px; }
+  .lp-instagram-dm-bubble { margin:0; max-width:85%; padding:11px 14px; border-radius:18px; font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .lp-instagram-dm-account { background:color-mix(in srgb,var(--social-text) 9%,var(--social-bg)); color:var(--social-text); border-bottom-left-radius:5px; }
+  .lp-instagram-dm-owner { align-self:flex-end; background:#6757dc; color:#fff; border-bottom-right-radius:5px; }
+  .lp-instagram-dm-compose { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px; padding-top:12px; border-top:1px solid var(--social-border); }
+  .lp-instagram-dm-compose .lp-social-primary { min-height:38px; border-radius:8px; font-size:11px; }
+  .lp-instagram-message-account { position:relative; z-index:2; }
+  @media (pointer:coarse) { .lp-social-page .lp-social-icon-button { min-width:40px; min-height:40px; } .lp-social-page .lp-social-primary { min-height:40px; } .lp-social-page summary { min-height:40px; } }
+
+  /* App chrome is one compact row; the left control navigates within an app. */
+  .lumiphone-shell .lp-social-page .lp-social-app-header,.lumiphone-shell .lp-social-page-instagram .lp-social-app-header { grid-template-columns:36px minmax(0,1fr) auto; height:52px; min-height:52px; padding:2px 8px; gap:4px; }
+  .lp-social-header-actions { display:flex; align-items:center; gap:0; }
+  .lp-social-header-actions > .lp-social-icon-button { width:34px; height:40px; padding:7px; min-width:34px; }
+  .lp-social-header-actions .lp-social-glyph { width:19px; height:19px; }
+  .lp-social-back { width:34px; height:40px; padding:7px; }
+  .lp-social-back .lp-social-glyph { width:20px; height:20px; }
+  .lp-social-page .lp-nav-title { text-align:left; }
+  .lp-social-page-twitter .lp-nav-title { text-align:center; }
+  .lp-social-page-twitter .lp-social-wordmark > .lp-social-glyph { margin:0 auto; }
+  .lp-social-page-twitter .lp-social-wordmark,.lp-social-page-tumblr .lp-social-wordmark { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+  .lp-social-page-instagram .lp-social-wordmark { font-size:24px; }
+  .lp-social-page-tumblr .lp-social-wordmark { font-size:27px; }
+  .lp-social-page-discord .lp-social-wordmark { font-size:17px; }
+  .lp-social-discussion-heading { font-size:15px; line-height:1.3; margin:0; padding:14px; font-weight:700; border-bottom:1px solid var(--social-border); }
+  .lp-social-setting-field { margin:20px 0; gap:9px; font-size:12px; }
+  .lp-social-setting-field :is(select,input) { background:var(--social-surface); color:var(--social-text); border:1px solid var(--social-border); padding:10px 12px; border-radius:9px; width:100%; min-height:42px; font:inherit; }
+  .lp-social-settings .lp-tumblr-palettes { margin:24px 0; padding-top:4px; border-top:1px solid var(--social-border); }
+  .lp-social-settings .lp-tumblr-palettes > summary { font-size:13px; padding:16px 0; font-weight:650; }
+  .lp-social-settings .lp-tumblr-palette-options { gap:8px; }
+  .lp-social-settings .lp-tumblr-palette-options .lp-social-button { flex:1 1 42%; border-radius:9px; min-height:45px; padding:9px; font-size:11px; }
+  .lp-social-page-twitter .lp-social-follow { border:0; padding:0 0 0 5px; min-height:24px; height:24px; border-radius:0; color:var(--social-accent); background:transparent; font-size:12px; font-weight:700; white-space:nowrap; }
+  .lp-social-page-twitter .lp-social-follow[aria-pressed="true"] { color:var(--social-muted); font-weight:500; }
+  .lp-social-page-twitter .lp-social-post-heading { gap:7px; }
+  .lp-social-page-twitter .lp-social-post-identity { padding-right:2px; }
+  .lp-social-visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+  .lp-social-avatar > svg { display:block; width:100%; height:100%; }
+
+  /* Discussions preserve a complete original post and render responses as responses. */
+  .lp-social-comment { display:flex; align-items:flex-start; gap:10px; padding:13px 14px; min-width:0; border-bottom:1px solid var(--social-border); background:var(--social-surface); color:var(--social-text); }
+  .lp-social-comment > .lp-social-avatar { width:32px; height:32px; }
+  .lp-social-comment-body { flex:1; min-width:0; }
+  .lp-social-comment-heading { display:flex; align-items:baseline; gap:6px; min-width:0; flex-wrap:wrap; }
+  .lp-social-comment-heading strong { font-size:12px; overflow-wrap:anywhere; }
+  .lp-social-comment-heading > :is(span,time) { font-size:10px; color:var(--social-muted); }
+  .lp-social-comment-heading time { margin-left:auto; }
+  .lp-social-comment-text { font:13px/1.5 system-ui,sans-serif; margin:4px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .lp-social-comment-actions { display:flex; align-items:center; gap:13px; color:var(--social-muted); }
+  .lp-social-comment-actions > button { appearance:none; border:0; background:transparent; color:inherit; font:inherit; padding:2px 0; min-height:26px; height:26px; width:auto; min-width:26px; font-size:10px; cursor:pointer; }
+  .lp-social-comment-actions .lp-social-glyph { width:14px; height:14px; }
+  .lp-social-reply-target { display:block; font-size:11px; color:var(--social-muted); margin-top:5px; }
+  .lp-social-comment-prompt { appearance:none; border:0; font:inherit; cursor:pointer; display:block; width:100%; text-align:left; min-height:50px; padding:14px 18px; color:var(--social-muted); font-size:13px; border-top:1px solid var(--social-border); background:var(--social-surface); }
+  .lp-social-reply-compose { position:relative; display:grid; grid-template-columns:32px minmax(0,1fr); gap:8px 10px; margin:0; }
+  .lp-social-reply-compose > .lp-social-avatar { grid-column:1; grid-row:1 / 4; width:32px; height:32px; }
+  .lp-social-reply-compose > :not(.lp-social-avatar) { grid-column:2; min-width:0; }
+  .lp-social-reply-compose .lp-social-compose-title { display:flex; align-items:center; justify-content:space-between; font-size:10px; }
+  .lp-social-reply-cancel { border:0; padding:0; min-height:24px; font-size:10px; color:var(--social-muted); background:transparent; cursor:pointer; }
+  .lp-social-reply-compose .lp-social-field > span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  .lp-social-page-twitter[data-social-discussion] .lp-social-post { border-bottom:1px solid var(--social-border); }
+  .lp-twitter-comment { position:relative; border-bottom:0; padding-top:12px; padding-bottom:15px; }
+  .lp-twitter-comment::before { content:''; position:absolute; left:29px; top:47px; bottom:-10px; width:2px; background:var(--social-border); }
+  .lp-twitter-comment:last-of-type::before { display:none; }
+  .lp-twitter-comment .lp-social-comment-text { font-size:14px; }
+  .lp-twitter-comment .lp-social-comment-heading strong { font-size:13px; }
+  .lp-twitter-reply-compose { border-bottom:1px solid var(--social-border); padding:15px 14px; }
+  .lumiphone-shell .lp-twitter-reply-compose .lp-social-field textarea { border:0; border-radius:0; padding:4px 0; background:transparent; font-size:15px; min-height:55px; resize:none; }
+  .lp-twitter-reply-compose .lp-social-compose-footer { justify-content:flex-end; gap:14px; }
+  .lp-instagram-comment { border:0; padding:11px 16px; background:var(--social-bg); }
+  .lp-instagram-comment > .lp-social-avatar { width:29px; height:29px; outline:0; border:0; }
+  .lp-instagram-comment .lp-social-comment-heading { display:inline; }
+  .lp-instagram-comment .lp-social-comment-heading time { margin-left:8px; }
+  .lp-instagram-comment .lp-social-comment-text { margin:3px 0 4px; font-size:12px; }
+  .lp-instagram-comment .lp-social-comment-actions { gap:16px; }
+  .lp-instagram-comment .lp-social-comment-actions > .lp-social-like { margin-left:auto; }
+  .lp-instagram-comment-prompt { border:1px solid var(--social-border); border-radius:24px; width:calc(100% - 28px); margin:14px; min-height:42px; padding:10px 15px; background:var(--social-bg); }
+  .lp-instagram-reply-compose { padding:13px 14px; border-top:1px solid var(--social-border); border-bottom:0; background:var(--social-bg); }
+  .lp-instagram-reply-compose .lp-social-compose-footer { justify-content:flex-end; }
+  .lp-instagram-reply-compose .lp-social-count { display:none; }
+  .lumiphone-shell .lp-instagram-reply-compose .lp-social-field textarea { border-radius:20px; padding:10px 13px; min-height:40px; resize:none; font-size:12px; }
+  .lp-instagram-reply-compose .lp-social-primary { color:#fff; background:linear-gradient(120deg,#8c3cce,#ce3a7c); padding:7px 15px; min-width:54px; border-radius:18px; }
+  .lp-instagram-reply-compose { --social-accent:#b04cba; }
+  .lp-tumblr-comment { margin:0; border:0; background:var(--social-surface); }
+  .lp-tumblr-comment > .lp-social-avatar { border-radius:4px; }
+  .lp-tumblr-comment .lp-social-comment-text { font-family:system-ui,sans-serif; font-size:13px; line-height:1.5; }
+  .lp-social-tumblr .lp-tumblr-comment .lp-social-tags { padding:0; }
+  .lp-tumblr-reply-compose { margin:10px 0 0; border:0; border-radius:8px; padding:14px; }
+  .lp-tumblr-reply-compose .lp-social-count { display:none; }
+  .lumiphone-shell .lp-tumblr-reply-compose .lp-social-field textarea { min-height:46px; border-radius:7px; font-size:13px; resize:none; }
+  .lp-tumblr-reply-compose .lp-social-primary { border-radius:6px; color:#001935; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-glyph { color:#fff; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-bottomnav .lp-social-create { background:#ad7aff; color:#fff; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-comment { background:#000; color:#f5f4f8; }
+  .lp-social-page-tumblr[data-tumblr-theme="goth-rave"] .lp-social-reply-compose { --social-bg:#0a0a0d; --social-surface:#0a0a0d; --social-text:#f5f4f8; --social-muted:#a6a0af; --social-border:#362347; background:#0a0a0d; color:#f5f4f8; }
+  .lp-social-page-tumblr[data-tumblr-theme="dark-mode"] .lp-social-comment { background:#000; color:#fff; }
+  .lp-social-page-tumblr[data-tumblr-theme="true-blue"] .lp-social-comment,.lp-social-page-tumblr[data-tumblr-theme="pride"] .lp-social-comment { --social-text:#24323e; --social-muted:#687681; --social-border:#dfe4e8; background:#fff; color:#24323e; }
+  .lp-social-page-tumblr[data-tumblr-theme="true-blue"] .lp-social-comment-prompt,.lp-social-page-tumblr[data-tumblr-theme="pride"] .lp-social-comment-prompt { color:#687681; background:#fff; }
+
+  /* Instagram messages occupy the phone, with a scrollable conversation and pinned input. */
+  .lp-social-page-instagram .lp-instagram-message-title { font:700 17px/1.2 system-ui,sans-serif; letter-spacing:0; }
+  .lp-instagram-recipient { display:flex; align-items:center; gap:9px; min-width:0; }
+  .lp-instagram-recipient > .lp-social-avatar { width:31px; height:31px; }
+  .lp-instagram-recipient > span:not(.lp-social-avatar) { display:grid; gap:2px; min-width:0; }
+  .lp-instagram-recipient strong { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-instagram-recipient small { font-size:10px; color:var(--social-muted); font-weight:400; }
+  .lp-social-page-instagram[data-instagram-view="thread"] > .lp-content { display:flex; flex-direction:column; overflow:hidden; }
+  .lp-instagram-dms { padding:0; min-height:0; background:var(--social-bg); }
+  [data-instagram-view="thread"] .lp-instagram-dms { display:flex; flex:1; flex-direction:column; overflow:hidden; }
+  .lp-instagram-inbox-heading { font-size:14px; margin:18px 16px 8px; }
+  .lp-instagram-inbox-list { padding:0 16px 18px; }
+  .lp-instagram-inbox-account { min-height:76px; gap:14px; }
+  .lp-instagram-inbox-account > .lp-social-avatar { width:51px; height:51px; }
+  .lp-instagram-inbox-account strong { font-size:14px; }
+  .lp-instagram-inbox-account span span { font-size:12px; max-width:100%; }
+  .lp-instagram-dm-log { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; align-items:stretch; gap:14px; padding:20px 14px; overscroll-behavior:contain; }
+  .lp-instagram-dm-intro { display:flex; flex-direction:column; align-items:center; gap:8px; padding:20px 15px 30px; text-align:center; }
+  .lp-instagram-dm-intro > .lp-social-avatar { width:76px; height:76px; margin-bottom:6px; }
+  .lp-instagram-dm-intro strong { font-size:20px; }
+  .lp-instagram-dm-intro > span:not(.lp-social-avatar),.lp-instagram-dm-intro p { font-size:12px; color:var(--social-muted); }
+  .lp-instagram-dm-row { display:flex; align-items:flex-end; gap:7px; width:100%; }
+  .lp-instagram-dms .lp-social-avatar { outline:0; border:0; }
+  .lp-instagram-dm-row > .lp-social-avatar { width:23px; height:23px; margin-bottom:15px; }
+  .lp-instagram-dm-row-owner { justify-content:flex-end; }
+  .lp-instagram-dm-message { min-width:0; max-width:80%; }
+  .lp-instagram-dm-bubble { font-size:13px; line-height:1.45; max-width:none; padding:11px 14px; border-radius:19px; }
+  .lp-instagram-dm-owner { background:linear-gradient(135deg,#6264e9,#9149de); color:#fff; border-bottom-right-radius:5px; }
+  .lp-instagram-dm-account { background:color-mix(in srgb,var(--social-text) 10%,var(--social-bg)); border-bottom-left-radius:5px; }
+  .lp-instagram-dm-time { display:block; font-size:9px; margin:4px 6px 0; color:var(--social-muted); }
+  .lp-instagram-dm-row-owner .lp-instagram-dm-time { text-align:right; }
+  .lp-instagram-typing { padding-left:31px; font-size:11px; color:var(--social-muted); margin:0; }
+  .lp-instagram-dm-compose { flex:none; display:flex; align-items:flex-end; gap:10px; padding:10px 13px 14px; border-top:0; background:var(--social-bg); }
+  .lp-instagram-dm-compose > label { flex:1; min-width:0; }
+  .lumiphone-shell .lp-instagram-dm-compose .lp-social-field textarea { min-height:42px; max-height:120px; border:1px solid var(--social-border); border-radius:23px; padding:11px 15px; font-size:13px; resize:none; line-height:1.4; }
+  .lp-instagram-dm-compose .lp-social-primary { flex:none; min-width:38px; min-height:42px; padding:6px 0; border:0; border-radius:0; background:transparent; color:#8e75f0; font-size:13px; }
+
+  .lp-social-new-post { width:100%; padding:16px; text-align:left; border:0; border-bottom:1px solid var(--social-border); background:transparent; color:var(--social-accent); font:inherit; cursor:pointer; }
+  .lp-social-editor-title { font-size:20px; margin:18px 16px; }
+
+  .lp-social-settings .lp-section { margin:18px 0; border-bottom:1px solid var(--social-border); padding-bottom:18px; }
+  .lp-social-settings .lp-section-label { font-size:14px; font-weight:750; }
+  .lp-social-settings .lp-section-help { color:var(--social-muted); font-size:11px; margin:5px 0 12px; }
+  .lp-social-settings .lp-section-body { display:grid; gap:10px; }
+  .lp-social-settings .lp-control-row { background:var(--lp-surface); border:1px solid var(--social-border); border-radius:12px; padding:14px; justify-content:space-between; }
+  .lp-social-settings .lp-field { display:grid; gap:7px; }
+  .lp-social-friends-screen { display:block; }
+  .lp-social-friends-screen .lp-social-friend-picker { margin:18px 0 0; }
+  .lp-social-friends-heading { margin:20px 0 8px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--social-muted); }
+  .lp-social-friends-screen .lp-social-friend-row { display:flex; justify-content:space-between; gap:14px; padding:12px; margin:0 0 8px; min-height:48px; box-sizing:border-box; }
+  .lp-social-friend-identity { display:grid; gap:4px; min-width:0; text-align:left; }
+  .lp-social-friends-screen .lp-social-friend-row small { margin:0; max-width:none; font-size:11px; line-height:1.4; }
+  .lp-social-friends-screen .lp-social-friend-picker > .lp-button { display:block; width:100%; text-align:left; padding:12px; margin:0 0 8px; border:1px solid var(--social-border); border-radius:12px; background:var(--lp-surface); color:var(--social-text); }
+  .lp-social-settings .lp-control-row input[type="checkbox"] { width:20px; height:20px; accent-color:var(--social-accent); margin-left:auto; }
+  /* Profile anatomy belongs to each app; no implicit shared grid columns. */
+  .lp-social-profile-head { display:flex; align-items:center; gap:14px; min-width:0; }
+  .lp-social-profile-identity { display:grid; gap:5px; min-width:0; }
+  .lp-social-profile-identity > strong { font-size:21px; overflow-wrap:anywhere; }
+  .lp-social-profile-handle,.lp-social-profile-count { font-size:12px; color:var(--social-muted); }
+  .lp-social-profile-banner { height:132px; background:var(--lp-wallpaper); background-size:var(--lp-home-wallpaper-size,cover); background-position:var(--lp-home-wallpaper-position,center); }
+  .lp-social-profile .lp-social-bio-form { margin:16px 0 0; width:100%; }
+  .lp-twitter-profile { padding:0 0 18px; }
+  .lp-twitter-profile .lp-social-profile-head { padding:0 16px; margin-top:-25px; position:relative; }
+  .lp-twitter-profile .lp-social-avatar { width:74px; height:74px; border:4px solid var(--social-bg); }
+  .lp-twitter-profile .lp-social-profile-identity { padding-top:30px; }
+  .lp-twitter-profile > .lp-social-bio,.lp-twitter-profile > .lp-social-edit-profile,.lp-twitter-profile > .lp-social-bio-form { margin:14px 16px 0; }
+  .lp-twitter-profile > .lp-social-bio-form { width:calc(100% - 32px); }
+  .lp-tumblr-profile { text-align:center; padding-bottom:22px; }
+  .lp-tumblr-profile .lp-social-profile-banner { height:145px; }
+  .lp-tumblr-profile .lp-social-profile-head { flex-direction:column; gap:10px; margin-top:-37px; position:relative; padding:0 20px; }
+  .lp-tumblr-profile .lp-social-avatar { width:78px; height:78px; border:4px solid var(--social-bg); border-radius:12px; }
+  .lp-tumblr-profile .lp-social-profile-identity > strong { font-size:24px; }
+  .lp-tumblr-profile .lp-tumblr-blog-title { font-size:15px; margin:18px 20px 8px; }
+  .lp-tumblr-profile > .lp-social-bio { margin:10px 20px 16px; }
+  .lp-tumblr-profile > .lp-social-bio-form { width:calc(100% - 40px); margin:16px 20px 0; text-align:left; }
+  .lp-instagram-profile { padding:22px 16px 18px; border:0; }
+  .lp-instagram-profile .lp-social-profile-head { display:grid; grid-template-columns:78px minmax(0,1fr); gap:10px 18px; }
+  .lp-instagram-profile .lp-social-avatar { width:76px; height:76px; grid-row:1 / 3; }
+  .lp-instagram-profile .lp-social-profile-identity { grid-column:2; }
+  .lp-instagram-profile .lp-social-profile-identity > strong { font-size:18px; }
+  .lp-instagram-profile-stats { grid-column:2; display:flex; gap:28px; }
+  .lp-instagram-profile-stats > div { display:grid; gap:3px; font-size:12px; }
+  .lp-instagram-profile-stats strong { font-size:16px; }
+  .lp-instagram-profile-stats span { color:var(--social-muted); }
+  .lp-instagram-profile > .lp-social-bio { margin:18px 0 12px; }
+  .lp-instagram-profile > .lp-social-edit-profile { display:block; width:100%; background:color-mix(in srgb,var(--social-text) 8%,var(--social-bg)); }
+  .lp-instagram-profile > .lp-social-edit-profile ~ .lp-social-edit-profile { margin-top:8px; }
+  .lp-instagram-profile-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:2px; border-top:1px solid var(--social-border); }
+  .lp-instagram-profile-tile { aspect-ratio:1; overflow:hidden; margin:0; border:0; position:relative; }
+  .lp-instagram-profile-tile .lp-social-post-heading,.lp-instagram-profile-tile .lp-social-post-text,.lp-instagram-profile-tile .lp-social-post-actions,.lp-instagram-profile-tile .lp-social-tags { display:none; }
+  .lp-instagram-profile-tile .lp-social-post-body { padding:0; } .lp-instagram-profile-tile .lp-social-photo { width:100%; height:100%; aspect-ratio:1; object-fit:cover; }
+
+  /* Standalone editors use flowing content, not viewport-sized grid tracks. */
+  .lp-social-page[data-social-view="compose"] .lp-social-compose { display:flex; flex-direction:column; gap:16px; min-height:0; border:0; padding:0 16px 24px; }
+  .lp-social-editor-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--social-border); }
+  .lp-social-editor-bar .lp-social-editor-title { margin:0; font-size:16px; letter-spacing:-.02em; }
+  .lp-social-editor-bar .lp-social-primary { min-width:72px; min-height:34px; padding:6px 16px; }
+  .lp-social-page[data-social-view="compose"] .lp-social-compose-title { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--social-text); }
+  .lp-social-page[data-social-view="compose"] .lp-social-field { align-content:start; gap:7px; flex:none; }
+  .lp-social-page[data-social-view="compose"] .lp-social-post-text-field > span,
+  .lp-social-page[data-social-view="compose"] .lp-social-post-title-field > span,
+  .lp-social-page[data-social-view="compose"] .lp-social-post-tags-field > span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+  .lumiphone-shell .lp-social-page[data-social-view="compose"] .lp-social-post-text-field textarea { border:0; border-radius:0; padding:4px 0; font-size:18px; line-height:1.6; min-height:150px; resize:vertical; background:transparent; color:var(--social-text); }
+  .lp-social-page[data-social-view="compose"] .lp-social-compose-footer { min-height:18px; justify-content:flex-end; }
+  .lp-social-page[data-social-view="compose"] .lp-social-post-text-field textarea:focus-visible { outline:none; box-shadow:0 2px 0 -1px var(--social-accent); }
+  .lp-social-page[data-social-view="compose"] .lp-tumblr-new-compose { min-height:100%; box-sizing:border-box; border-radius:0; }
+  .lp-social-page[data-social-view="compose"] .lp-social-media { border-top:1px solid var(--social-border); padding-top:4px; }
+  .lp-social-page[data-social-view="compose"] .lp-social-media > summary { color:var(--social-accent); font-weight:650; min-height:38px; display:list-item; align-content:center; }
+  .lp-social-page[data-social-view="compose"] .lp-social-photo-tools { display:flex; flex-wrap:wrap; gap:6px; }
+  .lp-social-page[data-social-view="compose"] .lp-social-photo-tools button { border:1px solid var(--social-border); border-radius:8px; }
+  .lp-social-page-instagram[data-social-view="compose"] { --social-accent:#7385ff; }
+  .lumiphone-shell[data-theme="porcelain"] .lp-social-page-instagram[data-social-view="compose"],.lumiphone-shell[data-theme="pink"] .lp-social-page-instagram[data-social-view="compose"] { --social-accent:#4a5df9; }
+  .lp-instagram-new-compose .lp-social-editor-bar .lp-social-primary { border-radius:8px; background:#4a5df9; color:#fff; }
+  .lp-social-photo-hint { margin:0; color:var(--social-muted); font-size:12px; line-height:1.5; }
+  .lp-social-page[data-social-view="compose"] .lp-instagram-new-compose .lp-social-media { order:0; border:1px solid var(--social-border); border-radius:12px; padding:12px; }
+  .lp-instagram-new-compose .lp-social-media:not([open]) > summary { min-height:112px; display:grid; place-items:center; list-style:none; color:var(--social-text); }
+  .lp-instagram-new-compose .lp-social-media:not([open]) > summary::before { content:'+'; display:grid; place-items:center; width:38px; height:38px; border:1px solid var(--social-muted); border-radius:12px; font-size:28px; font-weight:400; }
+  .lumiphone-shell .lp-social-page[data-social-view="compose"] .lp-instagram-new-compose .lp-social-post-text-field textarea { font-size:14px; min-height:86px; }
+  .lp-instagram-new-compose .lp-social-media > summary { color:var(--social-text); }
+  .lp-instagram-new-compose .lp-social-photo-tools button { color:var(--social-text); }
+  .lp-instagram-new-compose .lp-social-compose-title { order:0; }
+  .lumiphone-shell .lp-social-page[data-social-view="compose"] .lp-tumblr-new-compose .lp-social-post-title-field input { border:0; padding:0; background:transparent; font-size:24px; font-weight:750; }
+  .lumiphone-shell .lp-social-page[data-social-view="compose"] .lp-tumblr-new-compose .lp-social-post-text-field textarea { min-height:190px; font-size:17px; }
+  .lp-tumblr-new-compose .lp-social-compose-footer { display:none; }
+  .lp-tumblr-new-compose .lp-social-post-tags-field input { border:0; border-radius:20px; background:color-mix(in srgb,var(--social-accent) 9%,var(--social-bg)); color:var(--social-accent); }
+  .lp-tumblr-new-compose .lp-social-post-tags-field { order:2; }
+  .lp-tumblr-new-compose .lp-social-media { order:3; }
+  .lp-tumblr-new-compose .lp-social-editor-bar { border:0; }
+  .lp-social-friends-group { border-top:1px solid var(--social-border); margin-top:12px; }
+  .lp-social-friends-group > summary { display:flex; align-items:center; gap:10px; min-height:48px; cursor:pointer; font-weight:700; list-style:none; }
+  .lp-social-friends-group > summary::before { content:'›'; font-size:20px; transition:transform .15s; }
+  .lp-social-friends-group[open] > summary::before { transform:rotate(90deg); }
+  .lp-social-group-count { margin-left:auto; color:var(--social-muted); font-size:11px; font-weight:400; }
+  .lp-social-friends-group-body { display:grid; gap:8px; padding-bottom:8px; }
+  .lp-social-friends-screen .lp-social-friend-row { display:flex; align-items:center; margin:0; border:1px solid var(--social-border); border-radius:12px; background:var(--social-surface); font-size:12px; }
+  .lp-social-friend-row > .lp-social-avatar { width:32px; height:32px; }
+  .lp-social-friend-row > input { flex:none; width:20px; height:20px; margin-left:auto; accent-color:var(--social-accent); }
+  .lp-social-friend-row .lp-social-friend-identity { flex:1; }
+  .lp-social-cast-choice { padding:14px; min-height:48px; text-align:left; background:var(--social-surface); border:1px solid var(--social-border); border-radius:12px; color:var(--social-text); font:inherit; font-size:12px; cursor:pointer; }
+  ${TUMBLR_STYLES}
+${DISCORD_PEOPLE_STYLES}
+${DISCORD_CHAT_STYLES}
+`;
+
 // src/styles.ts
 var PHONE_STYLES = `
   .lumiphone-widget-root, .lumiphone-widget-root *, .lumiphone-drawer, .lumiphone-drawer * { box-sizing: border-box; }
@@ -11505,7 +18016,7 @@ var PHONE_STYLES = `
     width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: var(--pocket-device-ratio); overflow: hidden; position: relative; isolation: isolate;
     border: 8px solid var(--lp-bezel); border-radius: 45px; background: var(--lp-bg); color: var(--lp-text);
     box-shadow: 0 36px 90px var(--lp-shadow), 0 0 0 1px rgba(255,255,255,.09) inset;
-    display: grid; grid-template-rows: 34px minmax(0,1fr) 24px;
+    display: grid; grid-template-columns:minmax(0,1fr); grid-template-rows: 34px minmax(0,1fr) 24px;
   }
   .lumiphone-shell[hidden], .lumiphone-launcher[hidden] { display: none !important; }
   .lumiphone-shell[data-theme="pink"] { --lp-surface-2:#f4d4e6; --lp-muted:#754b63; --lp-border:rgba(56,18,44,.18); --lp-shadow:rgba(80,20,55,.24); }
@@ -11632,6 +18143,13 @@ var PHONE_STYLES = `
   .lp-thread .lp-nav { position:relative; }
   .lumiphone-app-view.lp-thread { overflow:hidden; }
   .lp-thread .lp-bubbles { overscroll-behavior:contain; }
+  .lp-bubbles > .lp-handoff-activity { flex-shrink:0; }
+  .lp-thread .lp-bubbles { min-width:0; overflow-x:hidden; scrollbar-gutter:stable; }
+  .lp-thread .lp-bubbles > .lp-bubble[data-sender="persona"] { align-self:flex-end; margin-inline-start:auto; margin-inline-end:0; width:fit-content; max-width:82%; }
+  .lumiphone-shell .lp-event-invite.lp-event-update { padding:12px; border-radius:12px; box-shadow:none; }
+  .lp-event-update .lp-event-invite-icon { width:28px; height:28px; }
+  .lp-event-update h3 { font-size:12px; }
+  .lp-event-update .lp-event-invite-when { margin:8px 0; }
   .lp-conversation-menu { position:relative; justify-self:end; }
   .lp-conversation-menu > summary { display:grid; place-items:center; min-width:30px; cursor:pointer; list-style:none; font-size:18px; line-height:1; }
   .lp-conversation-menu > summary::-webkit-details-marker { display:none; }
@@ -11999,6 +18517,8 @@ ${INLINE_BASE_STYLES}
   .lumiphone-shell .lp-compose { padding:calc(8px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); gap:calc(6px * var(--pocket-ui-scale)); grid-template-columns:auto minmax(0,1fr) auto; }
   .lumiphone-shell .lp-compose .lp-textarea { min-height:calc(34px * var(--pocket-ui-scale)); max-height:calc(112px * var(--pocket-ui-scale)); border-radius:calc(17px * var(--pocket-ui-scale)); }
   .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-call-history { align-self:stretch; max-width:none; flex:none; display:flex; align-items:baseline; justify-content:center; flex-wrap:wrap; gap:4px 9px; line-height:1.5; }
+  .lp-call-history-time { font-size:.85em; opacity:.75; white-space:nowrap; }
   .lp-arrival-status { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
   .lp-arrival-status .lp-handoff-action { min-height:24px; padding:4px 7px; }
   .lp-handoff-activity { align-self:stretch; margin:7px 0; border:1px solid color-mix(in srgb,var(--lp-accent) 28%,var(--lp-border)); border-radius:14px; background:color-mix(in srgb,var(--lp-surface) 92%,transparent); box-shadow:0 6px 20px rgba(0,0,0,.10); overflow:hidden; }
@@ -12041,13 +18561,20 @@ ${INLINE_BASE_STYLES}
   .lp-swarm-diagnostics summary { padding:8px 0; }
   .lp-settings-section { min-width:0; }
   .lp-settings-section > .lp-copy { overflow-wrap:anywhere; }
-  .lp-event-strip { min-width:0; border-bottom:1px solid var(--lp-border); background:var(--lp-surface); }
-  .lp-event-strip-summary { padding:10px 14px; color:var(--lp-accent); font-size:var(--pocket-font-sm); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .lp-event-strip-list { max-height: min(280px,35vh); overflow-y:auto; padding:0 10px 8px; }
-  .lumiphone-shell .lp-event-strip .lp-event-invite { margin:0; padding:12px 4px; border:0; border-radius:0; background:transparent; box-shadow:none; }
-  .lp-event-strip .lp-event-invite-icon { width:30px; height:30px; border-radius:8px; }
-  .lp-event-strip .lp-event-invite-heading h3 { font-size:var(--pocket-font-sm); }
-  .lp-event-strip .lp-event-invite-when { margin-top:8px; }
+  .lp-event-strip { min-width:0; flex:none; border-bottom:1px solid var(--lp-border); background:var(--lp-surface); }
+  .lp-event-strip-list { max-height:min(150px,22vh); overflow:auto; overscroll-behavior:contain; padding:0 10px; }
+  .lp-plan-stripe { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 0; }
+  .lp-plan-stripe + .lp-plan-stripe { border-top:1px solid var(--lp-border); }
+  .lp-plan-stripe-icon { display:grid; place-items:center; flex:none; width:26px; height:28px; border-radius:8px; color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 10%,transparent); font-size:18px; }
+  .lp-plan-stripe-icon svg { width:17px; height:17px; }
+  .lp-plan-stripe-text { flex:1; min-width:0; display:grid; gap:2px; }
+  .lp-plan-stripe-text strong { display:block; font-size:var(--pocket-font-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-plan-stripe-text span { display:block; font-size:var(--pocket-font-xs); opacity:.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-plan-stripe-open { width:100%; min-width:0; padding:0; border:0; background:transparent; color:var(--lp-text); text-align:left; cursor:pointer; font:inherit; }
+  .lp-plan-stripe-actions { display:flex; align-items:center; gap:4px; flex:none; }
+  .lp-plan-stripe-action,.lp-plan-stripe-dismiss { border:0; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; min-height:32px; border-radius:9px; background:color-mix(in srgb,var(--lp-accent) 12%,var(--lp-surface)); color:var(--lp-text); padding:5px 9px; }
+  .lp-plan-stripe-dismiss { width:30px; padding:0; font-size:18px; background:transparent; opacity:.7; }
+  .lp-plan-stripe :is(button):focus-visible { outline:2px solid var(--lp-accent); outline-offset:1px; }
   .lumiphone-shell .lp-compose { grid-template-columns:auto minmax(0,1fr); align-items:end; }
   .lumiphone-shell .lp-compose > .lp-button-icon { width:calc(40px * var(--pocket-ui-scale)); height:calc(40px * var(--pocket-ui-scale)); min-height:calc(40px * var(--pocket-ui-scale)); padding:0; border-radius:50%; }
   .lumiphone-shell .lp-compose > .lp-button-icon:not(.lp-reply-stop) { color:var(--lp-accent); border-color:color-mix(in srgb,var(--lp-accent) 22%,var(--lp-border)); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
@@ -12676,6 +19203,34 @@ ${INLINE_FINISH_STYLES}
   .lp-wallpaper-library-art { display:block; width:100%; aspect-ratio:3/4; border-radius:9px; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px #ffffff16; }
   .lp-wallpaper-library-card[hidden] { display:none; }
 ${VOICE_MESSAGE_STYLES}
+${LAUNCHER_STYLES}
+${APP_STORE_STYLES}
+${SOCIAL_STYLES}
+${CONTACTS_MEDIA_STYLES}
+
+  .lumiphone-shell .lp-bubble:not([data-sender="system"]) { padding:calc(6px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)); border-radius:calc(19px * var(--pocket-ui-scale)); box-shadow:none; line-height:1.55; min-height:0; flex-shrink:0; }
+  .lumiphone-shell .lp-bubble-time { margin-top:2px; min-height:calc(14px * var(--pocket-ui-scale)); line-height:calc(14px * var(--pocket-ui-scale)); padding-right:24px; }
+  .lumiphone-shell .lp-bubble[data-sender="persona"] { border-bottom-right-radius:calc(6px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-bubble[data-sender="contact"] { border-bottom-left-radius:calc(6px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-message-more { width:24px; height:24px; bottom:1px; right:2px; font-size:18px; padding:0; line-height:1; }
+  .lp-portrait-variants { display:flex; gap:8px; overflow:auto; padding:10px 0; }
+  .lp-portrait-choice { flex:0 0 64px; width:64px; height:72px; padding:2px; border:2px solid transparent; border-radius:10px; background:var(--lp-surface); }
+  .lp-portrait-choice[aria-pressed="true"] { border-color:var(--lp-accent); }
+  .lp-portrait-choice img { width:100%; height:100%; object-fit:cover; border-radius:7px; }
+  .lp-image-profile { padding:12px; font-weight:650; border-left:3px solid var(--lp-accent); }
+  .lp-bank-organized .lp-content,.lp-contact-create .lp-content { padding:18px; display:flex; flex-direction:column; gap:18px; }
+  .lp-bank-organized .lp-section-body { display:grid; gap:12px; }
+  .lp-bank-profile,.lp-contact-group { padding:16px; border-radius:16px; display:grid; gap:14px; }
+  .lp-bank-profile .lp-actions,.lp-contact-group .lp-actions { display:flex; flex-wrap:wrap; gap:8px; }
+  .lp-bank-organized input[type="search"] { flex:none; border-radius:14px; min-height:42px; }
+  .lp-contact-create .lp-section { border:1px solid var(--lp-border); border-radius:16px; padding:16px; background:var(--lp-surface); }
+  .lp-contact-create .lp-section-body { display:grid; gap:12px; }
+  .lp-contact-source-group > summary { display:list-item; cursor:pointer; padding:4px 0; min-height:32px; align-content:center; }
+  .lp-contact-source-group[open] > summary { margin-bottom:10px; }
+  .lp-contact-source-group > summary:focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; border-radius:5px; }
+  .lp-contact-create .lp-textarea { min-height:72px; resize:vertical; }
+  .lp-npc-resume { padding:16px; display:grid; gap:12px; border-left:3px solid var(--lp-accent); }
+${POCKET_PORTAL_STYLES}
 `;
 
 // src/frontend.ts

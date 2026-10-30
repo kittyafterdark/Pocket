@@ -1,6 +1,12 @@
 import { INLINE_BASE_STYLES, INLINE_FINISH_STYLES } from './frontend/components/inline-styles.js'
 import { POCKET_DESIGN_SYSTEM } from './frontend/components/design-system.js'
 import { VOICE_MESSAGE_STYLES } from './frontend/components/voice-message-styles.js'
+import { LAUNCHER_STYLES } from './frontend/components/launcher-styles.js'
+import { APP_STORE_STYLES } from './frontend/components/app-store-styles.js'
+import { CONTACTS_MEDIA_STYLES } from './frontend/components/contacts-media-styles.js'
+import { SOCIAL_STYLES } from './frontend/components/social-styles.js'
+import { POCKET_PORTAL_STYLES } from './frontend/components/pocket-portal.js'
+
 export const PHONE_STYLES = `
   .lumiphone-widget-root, .lumiphone-widget-root *, .lumiphone-drawer, .lumiphone-drawer * { box-sizing: border-box; }
   .lumiphone-widget-root {
@@ -102,7 +108,7 @@ export const PHONE_STYLES = `
     width: 100%; height: 100%; min-width: 0; min-height: 0; aspect-ratio: var(--pocket-device-ratio); overflow: hidden; position: relative; isolation: isolate;
     border: 8px solid var(--lp-bezel); border-radius: 45px; background: var(--lp-bg); color: var(--lp-text);
     box-shadow: 0 36px 90px var(--lp-shadow), 0 0 0 1px rgba(255,255,255,.09) inset;
-    display: grid; grid-template-rows: 34px minmax(0,1fr) 24px;
+    display: grid; grid-template-columns:minmax(0,1fr); grid-template-rows: 34px minmax(0,1fr) 24px;
   }
   .lumiphone-shell[hidden], .lumiphone-launcher[hidden] { display: none !important; }
   .lumiphone-shell[data-theme="pink"] { --lp-surface-2:#f4d4e6; --lp-muted:#754b63; --lp-border:rgba(56,18,44,.18); --lp-shadow:rgba(80,20,55,.24); }
@@ -229,6 +235,13 @@ export const PHONE_STYLES = `
   .lp-thread .lp-nav { position:relative; }
   .lumiphone-app-view.lp-thread { overflow:hidden; }
   .lp-thread .lp-bubbles { overscroll-behavior:contain; }
+  .lp-bubbles > .lp-handoff-activity { flex-shrink:0; }
+  .lp-thread .lp-bubbles { min-width:0; overflow-x:hidden; scrollbar-gutter:stable; }
+  .lp-thread .lp-bubbles > .lp-bubble[data-sender="persona"] { align-self:flex-end; margin-inline-start:auto; margin-inline-end:0; width:fit-content; max-width:82%; }
+  .lumiphone-shell .lp-event-invite.lp-event-update { padding:12px; border-radius:12px; box-shadow:none; }
+  .lp-event-update .lp-event-invite-icon { width:28px; height:28px; }
+  .lp-event-update h3 { font-size:12px; }
+  .lp-event-update .lp-event-invite-when { margin:8px 0; }
   .lp-conversation-menu { position:relative; justify-self:end; }
   .lp-conversation-menu > summary { display:grid; place-items:center; min-width:30px; cursor:pointer; list-style:none; font-size:18px; line-height:1; }
   .lp-conversation-menu > summary::-webkit-details-marker { display:none; }
@@ -596,6 +609,8 @@ ${INLINE_BASE_STYLES}
   .lumiphone-shell .lp-compose { padding:calc(8px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)) calc(10px * var(--pocket-ui-scale)); gap:calc(6px * var(--pocket-ui-scale)); grid-template-columns:auto minmax(0,1fr) auto; }
   .lumiphone-shell .lp-compose .lp-textarea { min-height:calc(34px * var(--pocket-ui-scale)); max-height:calc(112px * var(--pocket-ui-scale)); border-radius:calc(17px * var(--pocket-ui-scale)); }
   .lp-conversation-status { align-self:center; max-width:92%; margin:5px 0; padding:6px 11px; border-top:1px solid var(--lp-border); border-bottom:1px solid var(--lp-border); color:var(--lp-muted); font-size:var(--pocket-font-sm); text-align:center; }
+  .lp-call-history { align-self:stretch; max-width:none; flex:none; display:flex; align-items:baseline; justify-content:center; flex-wrap:wrap; gap:4px 9px; line-height:1.5; }
+  .lp-call-history-time { font-size:.85em; opacity:.75; white-space:nowrap; }
   .lp-arrival-status { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
   .lp-arrival-status .lp-handoff-action { min-height:24px; padding:4px 7px; }
   .lp-handoff-activity { align-self:stretch; margin:7px 0; border:1px solid color-mix(in srgb,var(--lp-accent) 28%,var(--lp-border)); border-radius:14px; background:color-mix(in srgb,var(--lp-surface) 92%,transparent); box-shadow:0 6px 20px rgba(0,0,0,.10); overflow:hidden; }
@@ -638,13 +653,20 @@ ${INLINE_BASE_STYLES}
   .lp-swarm-diagnostics summary { padding:8px 0; }
   .lp-settings-section { min-width:0; }
   .lp-settings-section > .lp-copy { overflow-wrap:anywhere; }
-  .lp-event-strip { min-width:0; border-bottom:1px solid var(--lp-border); background:var(--lp-surface); }
-  .lp-event-strip-summary { padding:10px 14px; color:var(--lp-accent); font-size:var(--pocket-font-sm); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .lp-event-strip-list { max-height: min(280px,35vh); overflow-y:auto; padding:0 10px 8px; }
-  .lumiphone-shell .lp-event-strip .lp-event-invite { margin:0; padding:12px 4px; border:0; border-radius:0; background:transparent; box-shadow:none; }
-  .lp-event-strip .lp-event-invite-icon { width:30px; height:30px; border-radius:8px; }
-  .lp-event-strip .lp-event-invite-heading h3 { font-size:var(--pocket-font-sm); }
-  .lp-event-strip .lp-event-invite-when { margin-top:8px; }
+  .lp-event-strip { min-width:0; flex:none; border-bottom:1px solid var(--lp-border); background:var(--lp-surface); }
+  .lp-event-strip-list { max-height:min(150px,22vh); overflow:auto; overscroll-behavior:contain; padding:0 10px; }
+  .lp-plan-stripe { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 0; }
+  .lp-plan-stripe + .lp-plan-stripe { border-top:1px solid var(--lp-border); }
+  .lp-plan-stripe-icon { display:grid; place-items:center; flex:none; width:26px; height:28px; border-radius:8px; color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 10%,transparent); font-size:18px; }
+  .lp-plan-stripe-icon svg { width:17px; height:17px; }
+  .lp-plan-stripe-text { flex:1; min-width:0; display:grid; gap:2px; }
+  .lp-plan-stripe-text strong { display:block; font-size:var(--pocket-font-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-plan-stripe-text span { display:block; font-size:var(--pocket-font-xs); opacity:.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-plan-stripe-open { width:100%; min-width:0; padding:0; border:0; background:transparent; color:var(--lp-text); text-align:left; cursor:pointer; font:inherit; }
+  .lp-plan-stripe-actions { display:flex; align-items:center; gap:4px; flex:none; }
+  .lp-plan-stripe-action,.lp-plan-stripe-dismiss { border:0; font:inherit; font-size:var(--pocket-font-xs); cursor:pointer; min-height:32px; border-radius:9px; background:color-mix(in srgb,var(--lp-accent) 12%,var(--lp-surface)); color:var(--lp-text); padding:5px 9px; }
+  .lp-plan-stripe-dismiss { width:30px; padding:0; font-size:18px; background:transparent; opacity:.7; }
+  .lp-plan-stripe :is(button):focus-visible { outline:2px solid var(--lp-accent); outline-offset:1px; }
   .lumiphone-shell .lp-compose { grid-template-columns:auto minmax(0,1fr); align-items:end; }
   .lumiphone-shell .lp-compose > .lp-button-icon { width:calc(40px * var(--pocket-ui-scale)); height:calc(40px * var(--pocket-ui-scale)); min-height:calc(40px * var(--pocket-ui-scale)); padding:0; border-radius:50%; }
   .lumiphone-shell .lp-compose > .lp-button-icon:not(.lp-reply-stop) { color:var(--lp-accent); border-color:color-mix(in srgb,var(--lp-accent) 22%,var(--lp-border)); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
@@ -1273,4 +1295,32 @@ ${INLINE_FINISH_STYLES}
   .lp-wallpaper-library-art { display:block; width:100%; aspect-ratio:3/4; border-radius:9px; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px #ffffff16; }
   .lp-wallpaper-library-card[hidden] { display:none; }
 ${VOICE_MESSAGE_STYLES}
+${LAUNCHER_STYLES}
+${APP_STORE_STYLES}
+${SOCIAL_STYLES}
+${CONTACTS_MEDIA_STYLES}
+
+  .lumiphone-shell .lp-bubble:not([data-sender="system"]) { padding:calc(6px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)); border-radius:calc(19px * var(--pocket-ui-scale)); box-shadow:none; line-height:1.55; min-height:0; flex-shrink:0; }
+  .lumiphone-shell .lp-bubble-time { margin-top:2px; min-height:calc(14px * var(--pocket-ui-scale)); line-height:calc(14px * var(--pocket-ui-scale)); padding-right:24px; }
+  .lumiphone-shell .lp-bubble[data-sender="persona"] { border-bottom-right-radius:calc(6px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-bubble[data-sender="contact"] { border-bottom-left-radius:calc(6px * var(--pocket-ui-scale)); }
+  .lumiphone-shell .lp-message-more { width:24px; height:24px; bottom:1px; right:2px; font-size:18px; padding:0; line-height:1; }
+  .lp-portrait-variants { display:flex; gap:8px; overflow:auto; padding:10px 0; }
+  .lp-portrait-choice { flex:0 0 64px; width:64px; height:72px; padding:2px; border:2px solid transparent; border-radius:10px; background:var(--lp-surface); }
+  .lp-portrait-choice[aria-pressed="true"] { border-color:var(--lp-accent); }
+  .lp-portrait-choice img { width:100%; height:100%; object-fit:cover; border-radius:7px; }
+  .lp-image-profile { padding:12px; font-weight:650; border-left:3px solid var(--lp-accent); }
+  .lp-bank-organized .lp-content,.lp-contact-create .lp-content { padding:18px; display:flex; flex-direction:column; gap:18px; }
+  .lp-bank-organized .lp-section-body { display:grid; gap:12px; }
+  .lp-bank-profile,.lp-contact-group { padding:16px; border-radius:16px; display:grid; gap:14px; }
+  .lp-bank-profile .lp-actions,.lp-contact-group .lp-actions { display:flex; flex-wrap:wrap; gap:8px; }
+  .lp-bank-organized input[type="search"] { flex:none; border-radius:14px; min-height:42px; }
+  .lp-contact-create .lp-section { border:1px solid var(--lp-border); border-radius:16px; padding:16px; background:var(--lp-surface); }
+  .lp-contact-create .lp-section-body { display:grid; gap:12px; }
+  .lp-contact-source-group > summary { display:list-item; cursor:pointer; padding:4px 0; min-height:32px; align-content:center; }
+  .lp-contact-source-group[open] > summary { margin-bottom:10px; }
+  .lp-contact-source-group > summary:focus-visible { outline:2px solid var(--lp-accent); outline-offset:3px; border-radius:5px; }
+  .lp-contact-create .lp-textarea { min-height:72px; resize:vertical; }
+  .lp-npc-resume { padding:16px; display:grid; gap:12px; border-left:3px solid var(--lp-accent); }
+${POCKET_PORTAL_STYLES}
 `

@@ -10,6 +10,8 @@ export type PhoneApp =
   | 'trackers'
   | 'notifications'
   | 'settings'
+  | 'appstore'
+  | 'twitter' | 'discord' | 'instagram' | 'tumblr'
 
 export type PhoneTheme = 'midnight' | 'porcelain' | 'rose' | 'forest' | 'pink' | 'custom'
 export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
@@ -26,6 +28,8 @@ export type PocketRoute =
   | { app: 'weather' }
   | { app: 'notifications' }
   | { app: 'settings'; section?: string }
+  | { app: 'appstore' }
+  | { app: import('./domain/social.js').SocialApp }
 
 export interface PhonePalette {
   accent: string
@@ -104,6 +108,8 @@ export interface PocketDeviceIdentity {
 }
 
 export interface PersonaAppearanceOverride {
+  homeWallpaperEnabled?: boolean
+  chatWallpaperEnabled?: boolean
   enabled: boolean
   theme: PhoneTheme
   colors: PhonePalette
@@ -114,7 +120,7 @@ export interface PersonaAppearanceOverride {
 
 export interface PocketGenerationRun {
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge'
+  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge' | 'social-feed'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -270,6 +276,10 @@ export interface PhoneEventSuggestion {
   /** Names are valid even when no Contact/profile exists yet. */
   participantNames: string[]
   scheduledEventId?: string
+  /** Existing conversation plan reference supplied by generation. */
+  planId?: string
+  /** Proposed revision; the Timeline event changes only after confirmation. */
+  updateEventId?: string
 }
 export type PocketMessageDirection = 'outbound' | 'inbound' | 'external'
 
@@ -324,6 +334,8 @@ export interface PhoneMessage {
   senderAccent: string
   text: string
   createdAt: string
+  /** Story-clock precision captured when this message was written; never inferred from the current clock. */
+  storyClock?: PocketRoleplayClockSnapshot
   read: boolean
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
   imageId?: string
@@ -609,6 +621,9 @@ export interface CalendarEvent {
   lane: string
   completed: boolean
   createdBy: 'user' | 'character' | 'model'
+  startedAt?: string
+  /** Phone messages handed into this scene; IDs keep the boundary independent of the story clock. */
+  phoneHistoryBoundary?: { conversationId: string; messageIds: string[] }
   kind?: 'event' | 'phone-handoff'
   actorContactIds?: string[]
   /** Generic actor membership. May include discovered/name-only actors and the Pocket Persona. */
@@ -935,6 +950,10 @@ export interface PhoneState {
     worldSeededAt?: string
     authorship?: 'roleplay' | 'impersonation'
   }
+  /** Launcher layouts keyed by phone-owner actor within this chat + character state. */
+  launcherLayouts?: Record<string, import('./domain/launcher.js').LauncherLayout>
+  /** Fictional social world, scoped to this chat and character. */
+  social?: import('./domain/social.js').PocketSocialState
   /** Linked source keys explicitly deleted by the user and therefore not auto-recreated. */
   suppressedContactSourceKeys: string[]
   contacts: PocketContact[]

@@ -11,12 +11,17 @@ import { resolvePocketTouchScrollMode } from '../touch-scroll.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
 import type { PocketImageTarget } from '../components/image-picker.js'
+import type { FreeformSession } from '../../domain/freeform.js'
 import { ttsSettings } from '../components/tts-settings.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
 type ActivePersona = { id: string; name: string } | null
 
 export interface SettingsViewHost {
+  freeformSession?: FreeformSession | null
+  renameFreeform?(name: string): void
+  chooseFreeform?(): void
+  copyFreeformToChat?(): void
   identityProfiles?: IdentityProfile[]
   draft: DevicePreferences
   jevKeyConfigured?: boolean
@@ -125,6 +130,7 @@ function categories(host: SettingsViewHost): HTMLDivElement {
   const { page, content } = host.page('Settings', 'Device-wide preferences')
   content.classList.add('lp-settings-list')
   const entries = [
+    ...(host.freeformSession ? [['freeform', 'Freeform session', 'Name, switch sessions, or start a separate roleplay chat']] : []),
     ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
     ['generation', 'Pocket Generation', 'Model source and connection diagnostics'],
@@ -233,6 +239,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   for (const [value, label] of [['lumiverse', 'Follow Lumiverse Persona'], ['manual', 'Use Pocket profile']] as const) {
     const option = el('option', '', label); option.value = value; option.selected = profile.source === value || (profile.source === 'generated' && value === 'manual'); source.appendChild(option)
   }
+  if (host.freeformSession) { source.value = 'manual'; source.disabled = true }
   const name = el('input', 'lp-input'); name.placeholder = 'Display name'; name.value = profile.displayName
   const pronouns = el('input', 'lp-input'); pronouns.placeholder = 'Pronouns'; pronouns.value = profile.pronouns
   const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = profile.role
@@ -331,10 +338,10 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const personaWallpapers = el('section', 'lp-settings-section')
   personaWallpapers.append(
     wallpaperImageControl(`${active.name} home`, 'persona-home', current.homeWallpaper, host.resolvedWallpapers.personaHome, {
-      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.homeWallpaper = wallpaper }),
+      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.homeWallpaper = wallpaper; item.homeWallpaperEnabled = Boolean(wallpaper.source) }),
     }),
     wallpaperImageControl(`${active.name} chat`, 'persona-chat', current.chatWallpaper, host.resolvedWallpapers.personaChat, {
-      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.chatWallpaper = wallpaper }),
+      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.chatWallpaper = wallpaper; item.chatWallpaperEnabled = Boolean(wallpaper.source) }),
     }),
   )
   const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
@@ -540,7 +547,23 @@ function data(host: SettingsViewHost): HTMLDivElement {
   card.append(exportButton, importButton, file, resetCurrent, resetAll, resetPrefs); content.appendChild(card); return page
 }
 
+function freeformSettings(host: SettingsViewHost): HTMLDivElement {
+  const session = host.freeformSession!
+  const { page, content } = host.page('Freeform session', session.personaName)
+  const card = el('section', 'lp-card lp-settings-section')
+  const name = el('input', 'lp-input'); name.value = session.name; name.maxLength = 80
+  const rename = button('Save session name', 'lp-button')
+  rename.onclick = () => { if (!name.value.trim()) { host.showError('Enter a session name.'); return }; host.renameFreeform?.(name.value.trim()) }
+  const change = button('Lock & switch session', 'lp-button lp-button-quiet'); change.onclick = () => host.chooseFreeform?.()
+  card.append(fieldBlock('Session name', name), rename, change)
+  const start = el('section', 'lp-card lp-settings-section')
+  start.append(el('h3', 'lp-title', 'Take it into the story'), el('p', 'lp-copy', 'Create or open a chat in Lumiverse, then copy this Pocket into that chat. Your Freeform session and the chat keep separate histories from here on. You will choose whether to keep or replace that chat’s base Pocket.'))
+  const copy = button('Start a chat from this session', 'lp-button'); copy.onclick = () => host.copyFreeformToChat?.(); start.append(copy)
+  content.append(card, start); return page
+}
+
 export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
+  if (host.section === 'freeform' && host.freeformSession) return freeformSettings(host)
   if (!host.section) return categories(host)
   if (host.section === 'personalization') {
     const { page, content } = host.page('Personalization', 'Make Pocket yours')

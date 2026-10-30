@@ -1,0 +1,45 @@
+import { button, el } from '../shared.js'
+
+export type PocketPortalView = 'home' | 'devices' | 'freeform'
+
+/** Sidebar navigation only. Both modes open the same Pocket handset and apps. */
+export function renderPocketPortal(view: PocketPortalView, navigate: (view: PocketPortalView) => void, content: HTMLElement): HTMLElement {
+  const root = el('section', 'pocket-portal lumiphone-device-drawer')
+  root.setAttribute('aria-label', 'Pocket')
+  const nav = el('nav', 'pocket-portal-nav'); nav.setAttribute('aria-label', 'Pocket navigation')
+  const home = button('pocket', 'pocket-portal-wordmark'); home.setAttribute('aria-label', 'Pocket home'); home.onclick = () => navigate('home')
+  nav.append(home, el('span', 'pocket-portal-mode', view === 'home' ? 'A WORLD WITHIN REACH' : view === 'devices' ? 'ROLEPLAY' : 'FREEFORM'))
+  root.append(nav)
+  const body = el('div', 'pocket-portal-body')
+  if (view === 'home') {
+    const title = el('h2', '', 'A little closer.'); title.tabIndex = -1
+    body.append(el('p', 'pocket-portal-eyebrow', 'WELCOME TO YOUR POCKET'), title, el('p', 'pocket-portal-intro', 'Pick up where you are. Or go somewhere new.'))
+    const cards = el('div', 'pocket-portal-destinations')
+    for (const [id, eyebrow, name, copy, art] of [
+      ['devices', 'IN THE STORY', 'Roleplay', 'The phones, people, and moments in your current chat.', '<rect x="35" y="9" width="42" height="68" rx="9"/><path d="M49 17h14M51 68h10M45 32h22M45 40h15"/><circle cx="87" cy="27" r="4"/><path d="M18 48h10m-5-5v10"/>'],
+      ['freeform', 'ON YOUR OWN TERMS', 'Freeform', 'Choose a persona. Log in to a world of your own.', '<rect x="15" y="18" width="65" height="45" rx="8"/><path d="M27 32h35M27 41h24M32 63l-9 11V63"/><rect x="64" y="46" width="32" height="28" rx="6"/><path d="M73 56h14M73 63h9"/>'],
+    ] as const) {
+      const card = button('', 'pocket-portal-destination'); card.setAttribute('aria-label', `Open ${name}`)
+      const artwork = el('span', 'pocket-portal-art'); artwork.setAttribute('aria-hidden', 'true')
+      artwork.innerHTML = `<svg viewBox="0 0 112 88" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${art}</svg>`
+      const arrow = el('span', 'pocket-portal-arrow', '↗'); arrow.setAttribute('aria-hidden', 'true')
+      card.append(el('small', '', eyebrow), el('strong', '', name), artwork, el('span', 'pocket-portal-card-copy', copy), arrow)
+      card.onclick = () => navigate(id); cards.append(card)
+    }
+    body.append(cards, el('p', 'pocket-portal-footnote', 'Same Pocket. A different place to begin.'))
+  } else {
+    const back = button('All spaces', 'pocket-portal-text-action')
+    const chevron = el('span', '', '‹ '); chevron.setAttribute('aria-hidden', 'true'); back.prepend(chevron)
+    back.onclick = () => navigate('home'); body.append(back, content)
+  }
+  root.append(body)
+  return root
+}
+
+export const POCKET_PORTAL_STYLES = `
+.pocket-portal{--pocket-text:var(--lumiverse-text,#eceaf1);--pocket-muted:var(--lumiverse-text-muted,#a7a3b2);--pocket-accent:var(--lumiverse-primary,#b5a5f5);--pocket-border:var(--lumiverse-border,#ffffff16);--pocket-surface:var(--lumiverse-fill-subtle,#ffffff06);--pocket-hover:var(--lumiverse-fill,#ffffff0c);box-sizing:border-box;width:100%;min-width:0;min-height:100%;padding:24px 20px 32px;color:var(--pocket-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--pocket-accent) 9%,transparent),transparent 55%)}
+.pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-device-access{flex:1;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
+@media(max-width:420px){.pocket-portal{padding:18px 16px 28px}.pocket-portal-nav{padding-bottom:24px}.pocket-portal h2{font-size:28px}.pocket-portal-destination{padding:20px 16px 26px}}
+.pocket-freeform-confirm{--lp-accent:var(--lumiverse-primary,#b6a5ee);font:400 13px/1.6 Inter,ui-sans-serif,system-ui,sans-serif}.pocket-freeform-confirm *{box-sizing:border-box}.pocket-freeform-confirm .lp-settings-section{gap:14px}.pocket-freeform-confirm .lp-copy{font:inherit;margin:0 0 6px;color:var(--lp-muted,#b9b5c5)}.pocket-freeform-confirm .lp-button{min-height:44px;padding:12px 14px;font:600 13px/1.4 Inter,ui-sans-serif,system-ui,sans-serif;white-space:normal;border:1px solid var(--lp-border,#ffffff22);border-radius:10px}.pocket-freeform-confirm .lp-button[data-primary=true]{background:var(--lp-accent);color:#17151e}.pocket-freeform-confirm button:focus-visible{outline:2px solid var(--lp-accent);outline-offset:3px}
+@media(prefers-reduced-motion:reduce){.pocket-portal-destination{transition:none}}
+`

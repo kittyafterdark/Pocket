@@ -5,7 +5,7 @@ import { resolveLauncherPosition } from '../src/frontend/surface.js'
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 25))
 
-async function fixture(width = 1100, hostClampsToScale = false) {
+async function fixture(width = 1100, hostClampsToScale = false, nativeGeometry = false) {
   const dom = new JSDOM('<body></body>', { url: 'http://localhost/', pretendToBeVisual: true })
   const win = dom.window
   Object.defineProperty(win, 'innerWidth', { configurable: true, value: width })
@@ -46,6 +46,10 @@ async function fixture(width = 1100, hostClampsToScale = false) {
   const events = new Map<string, () => void>()
   const ctx: any = {
     ui: {
+      ...(nativeGeometry ? { geometry: { layoutViewportSize: () => {
+        const scale = Number.parseFloat(win.getComputedStyle(win.document.documentElement).getPropertyValue('--lumiverse-ui-scale')) || 1
+        return { width: win.innerWidth / scale, height: win.innerHeight / scale }
+      } } } : {}),
       registerDrawerTab: () => ({ root: drawer, setBadge() {}, activate() {}, onActivate: () => () => {}, destroy() {} }),
       registerInputBarAction: () => ({ onClick: () => () => {}, destroy() {}, setLabel() {}, setSubtitle() {}, setEnabled() {} }),
       createFloatWidget(options: any) { position = hostPosition({ ...options.initialPosition }); return widget },
@@ -89,7 +93,10 @@ for (const width of [1100, 390]) test(`confirmation scroll lock settles without 
     // Root style changes also reach the same observer, including UI-scale changes.
     f.win.document.documentElement.style.setProperty('--lumiverse-ui-scale', '1.25')
     await settle()
-    expect(f.moves).toHaveLength(0)
+    expect(f.moves).toHaveLength(1)
+    expect(f.position()).toEqual(resolveLauncherPosition(null, { width: width / 1.25, height: f.win.innerHeight / 1.25 }))
+    f.modal(false); f.modal(true); await settle()
+    expect(f.moves).toHaveLength(1)
   } finally { f.close() }
 })
 
@@ -107,7 +114,7 @@ test('scroll locks cannot loop when UI scale makes the host clamp requested coor
     await settle()
     expect(f.cutoff()).toBe(false)
     expect(f.moves).toHaveLength(1)
-    expect(f.position().x).toBeCloseTo(1100 / 1.5 - 58)
+    expect(f.position()).toEqual(resolveLauncherPosition(null, { width: 1100 / 1.5, height: f.win.innerHeight / 1.5 }))
   } finally { f.close() }
 })
 
@@ -150,5 +157,23 @@ test('drag persistence survives and a saved offscreen position still reclamps', 
     f.resize(1100); await settle()
     expect(f.position()).toEqual({ x: 900, y: 100 })
     expect(f.moves).toHaveLength(2)
+  } finally { f.close() }
+})
+
+
+for (const native of [false, true]) test(`reduced host UI scale preserves edge drag coordinates with ${native ? 'native geometry' : 'legacy fallback'}`, async () => {
+  const f = await fixture(1100, true, native)
+  try {
+    f.win.document.documentElement.style.setProperty('--lumiverse-ui-scale', '.7'); await settle()
+    const right = { x: 1100 / .7 - 70, y: 120 }
+    f.drag(right); await new Promise(resolve => setTimeout(resolve, 300))
+    const saved = f.sends.findLast(message => message.type === 'lumiphone:save_preferences')
+    expect(saved.preferences.launcherPosition).toEqual(right)
+    const before = f.moves.length
+    f.resize(1100); await settle()
+    expect(f.position()).toEqual(right); expect(f.moves).toHaveLength(before)
+    f.win.document.documentElement.style.setProperty('--lumiverse-ui-scale', '1.3'); await settle()
+    expect(f.position()).toEqual(resolveLauncherPosition(right, { width: 1100 / 1.3, height: f.win.innerHeight / 1.3 }))
+    f.modal(true); await settle(); expect(f.cutoff()).toBe(false)
   } finally { f.close() }
 })

@@ -1,5 +1,6 @@
 import type { DevicePreferences, PhoneState, PocketContact, PocketContextDiagnostics, PocketConversation } from '../types.js'
 import { sanitizeNarrativeContent } from './narrative-content.js'
+import { conversationContinuityContext, messageHistoryContextLabel } from '../domain/message-continuity.js'
 
 export type HostMessage = { id?: unknown; index_in_chat?: unknown; revision?: unknown; role?: unknown; content?: unknown }
 
@@ -88,11 +89,12 @@ function currentChannelLines(state: PhoneState, contact: PocketContact, conversa
 function threadLine(state: PhoneState, conversation: PocketConversation, message: PocketConversation['messages'][number]): string {
   const persona = state.pocketPersona.displayName || 'You'
   const sender = message.sender === 'persona' ? persona : message.senderName || 'Pocket'
-  if (conversation.kind !== 'group' || message.sender !== 'contact') return `${sender}: ${clean(message.text, 520)}`
+  const stamp = `[${messageHistoryContextLabel(state, message, conversation)}]`
+  if (conversation.kind !== 'group' || message.sender !== 'contact') return `${stamp} ${sender}: ${clean(message.text, 520)}`
   const currentIds = new Set([...participantActorIds(conversation), ...conversation.participantContactIds])
   const senderId = message.senderActorId || message.senderContactId || ''
   const former = Boolean(senderId && !currentIds.has(senderId))
-  return `${sender}${former ? ' [former participant; historical only]' : ''}: ${clean(message.text, 520)}`
+  return `${stamp} ${sender}${former ? ' [former participant; historical only]' : ''}: ${clean(message.text, 520)}`
 }
 function trimBlock(lines: string[], budget: number): string { return lines.filter(Boolean).join('\n').slice(0, budget) }
 
@@ -116,6 +118,7 @@ export async function assemblePocketContext(options: {
   } : { id: '', index: -1, excerpt: '' }
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
+  const continuity = conversationContinuityContext(state, conversation, [contact.id])
   // Structured Pocket state remains usable even when raw host narrative is isolated.
   const scene = trimBlock(sceneLines(state), BUDGETS.scene)
   const includePhoneThread = options.includePhoneThread !== false
@@ -142,13 +145,14 @@ export async function assemblePocketContext(options: {
   const story = trimBlock(storySource, BUDGETS.story)
   const parts = [
     actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '',
+    continuity,
     scene ? `SCENE SNAPSHOT${state.sceneSnapshot?.stale ? ' (STALE)' : ''}\n${scene}` : '',
     recent ? `RECENT ROLEPLAY BACKGROUND — NOT PHONE CHANNEL\n${recent}` : '',
     story ? `STORY CONTEXT\n${story}` : '',
     thread ? `PHONE THREAD\n${thread}` : '',
   ].filter(Boolean)
   const bodyText = mode === 'off'
-    ? [actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
+    ? [actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', continuity, thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
     : parts.join('\n\n')
   const finalLock = channel ? `FINAL CHANNEL LOCK\n${channel}` : ''
   const bodyBudget = Math.max(0, BUDGETS.total - finalLock.length - (finalLock ? 2 : 0))

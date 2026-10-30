@@ -1,0 +1,122 @@
+import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import { mkdir, readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { createServer } from 'node:http'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
+
+const root = fileURLToPath(new URL('../', import.meta.url)), output = resolve(root, 'tmp/contacts-media')
+await mkdir(output, { recursive: true })
+const build = spawnSync('bun', ['build', 'tests/fixtures/launcher-browser.ts', '--target=browser', '--format=iife', `--outfile=${output}/preview.js`], { cwd: root, encoding: 'utf8' })
+if (build.status !== 0) throw build.error || new Error(build.stderr)
+const require = createRequire(import.meta.url), paths = [process.env.POCKET_PLAYWRIGHT_ROOT, resolve(root, '../../LumiTest/Lumiverse/scripts/e2e-diagnostics'), process.env.NODE_PATH].filter(Boolean)
+const { chromium } = require(require.resolve('playwright', { paths })), script = await readFile(resolve(output, 'preview.js'))
+const server = createServer((request, response) => {
+  if (request.url.startsWith('/preview.js')) { response.setHeader('Content-Type', 'text/javascript'); response.end(script) }
+  else if (request.url.startsWith('/photo.svg')) { response.setHeader('Content-Type', 'image/svg+xml'); response.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#c8a4cc"/><circle cx="280" cy="140" r="65" fill="#ffe5a5"/><path d="M0 240 150 160 400 280V400H0Z" fill="#627ca4"/><path d="M0 300 200 260 400 330V400H0Z" fill="#314b73"/></svg>') }
+  else response.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="/preview.js" defer></script>')
+})
+await new Promise(done => server.listen(0, '127.0.0.1', done))
+
+let browser,activePage
+try {
+  browser=await chromium.launch({headless:true,executablePath:process.env.POCKET_CHROMIUM_EXECUTABLE||undefined})
+  for(const width of [390,900]){
+    const page=await browser.newPage({viewport:{width,height:844},isMobile:width===390,hasTouch:width===390});activePage=page;page.setDefaultTimeout(10000)
+    const errors=[];page.on('pageerror',error=>errors.push(error.message))
+    await page.goto(`http://127.0.0.1:${server.address().port}/?contactsMedia&wallpaperFail`)
+    await page.getByRole('button',{name:'Open Pocket',exact:true}).waitFor()
+    await page.evaluate(()=>{window.deliverSocialOperationFixture({type:'lumiphone:capabilities',capabilities:{panels:true,generation:true,images:true,imageGen:true,sceneSync:true}});window.seedContactsMediaFixture()})
+    const press=async name=>page.getByRole('button',{name,exact:true}).click()
+    const openApp=async name=>{await press('Home or dismiss phone');await press('Open app drawer');await press(name)}
+    const shot=async label=>page.screenshot({path:resolve(output,label+'-'+width+'.png')})
+    const safe=async()=>{
+      const nav=await page.locator('.lp-directory > .lp-nav').boundingBox()
+      if(nav&&width===390)assert.ok(nav.y>=46,'Header respects host safe top')
+      assert.equal(await page.locator('.lp-directory').evaluate(node=>node.scrollWidth>node.clientWidth+1),false,'Contact browser stays within phone')
+    }
+    await press('Open Pocket');await press('Open app drawer');await press('Contacts');await safe();await shot('contacts')
+    await press('Recent');assert.equal(await page.locator('.lp-directory-list .lp-directory-row').count(),1)
+    await press('All');await press('Groups');await page.getByRole('combobox',{name:'Contact group'}).selectOption('media-group')
+    assert.equal(await page.locator('.lp-directory-list .lp-directory-row').count(),4)
+    await press('All')
+    const listScroll=page.locator('.lp-directory .lp-content');await listScroll.evaluate(node=>{node.scrollTop=400});assert.ok(await listScroll.evaluate(node=>node.scrollTop)>300,'Contact content owns scrolling')
+    await page.waitForTimeout(30)
+    await page.locator('.lp-directory-list .lp-directory-row').nth(12).click();await press('‹ Back')
+    await page.waitForFunction(()=>document.querySelector('.lp-directory .lp-content').scrollTop>250)
+    await press('NPC Bank');await page.getByRole('searchbox',{name:'Search NPC Bank'}).fill('flowers');await shot('bank')
+    await page.locator('.lp-directory-list .lp-directory-row').first().click();await shot('bank-profile')
+    await press('Back to NPC Bank');assert.equal(await page.getByRole('searchbox',{name:'Search NPC Bank'}).inputValue(),'flowers')
+    await page.getByRole('tab',{name:'Casts',exact:true}).focus();await page.keyboard.press('Enter')
+    await page.getByRole('searchbox',{name:'Search NPC Bank'}).fill('');await page.locator('.lp-directory-list .lp-directory-row').first().click();await press('Add cast')
+    await press('Select all');assert.equal(await page.getByRole('checkbox').count(),4);assert.equal(await page.locator('input:checked').count(),4)
+    await openApp('Contacts');await press('Add');await safe();await shot('add-contact')
+    await press('Characters');assert.equal(await page.locator('.lp-directory-list .lp-directory-row').count(),36)
+    await page.getByRole('searchbox',{name:'Search characters'}).fill('astronomer')
+    assert.equal(await page.locator('.lp-directory-list .lp-directory-row').count(),1)
+    assert.ok(await page.getByRole('button',{name:'Add Character 420',exact:true}).isVisible())
+    await page.getByRole('searchbox',{name:'Search characters'}).focus()
+    await page.evaluate(()=>window.refreshLauncherFixture());await page.waitForTimeout(50)
+    assert.equal(await page.getByRole('searchbox',{name:'Search characters'}).inputValue(),'astronomer')
+    assert.equal(await page.getByRole('searchbox',{name:'Search characters'}).evaluate(node=>document.activeElement===node),true)
+    await page.keyboard.press('Escape');await page.getByRole('textbox',{name:'NPC description',exact:true}).fill('A warm florist');await press('Generate NPC')
+    await page.getByRole('button',{name:'Save Fern Vale',exact:true}).waitFor();await shot('npc-ready')
+    await openApp('Contacts');await page.getByRole('button',{name:'Continue Fern Vale profile',exact:true}).click();assert.ok(await page.getByRole('img',{name:'Fern Vale portrait'}).isVisible())
+    await press('Retake portrait');await press('Camera options')
+    const options=page.getByRole('dialog',{name:'Camera options',exact:true});await shot('camera-options')
+    assert.ok(await options.getByText('Swarm Studio · connected',{exact:true}).isVisible())
+    assert.equal(await options.locator('input[aria-label="Checkpoint override"]').isVisible(),false)
+    assert.ok(await options.getByText(/Image settings inherited from Alice/).isVisible())
+    await options.locator('summary').click();assert.ok(await options.getByRole('textbox',{name:'Checkpoint override',exact:true}).isVisible());await page.keyboard.press('Escape')
+    assert.equal(await page.getByRole('button',{name:'Camera options',exact:true}).evaluate(node=>document.activeElement===node),true)
+    await openApp('Settings');await page.getByRole('button',{name:/^Personalization/}).click();await page.getByRole('button',{name:/^Persona & phone identity/}).click()
+    await page.locator('[data-image-target="persona-home"]').getByRole('button',{name:'Gallery',exact:true}).click()
+    await page.evaluate(()=>window.switchMediaPersona('other-persona'))
+    await page.locator('.lp-gallery-item').first().click()
+    const use=page.getByRole('button',{name:'Set Till Park’s home wallpaper',exact:true})
+    await use.click();await page.getByText('Fixture wallpaper save failed. Try again.',{exact:true}).first().waitFor()
+    assert.ok(await use.isEnabled(),'Failed wallpaper keeps selection available for retry')
+    await use.click();await page.waitForFunction(()=>window.mediaSnapshot().preferences.personaAppearance['media-persona']?.homeWallpaperEnabled===true)
+    await page.waitForTimeout(120);assert.equal(await page.locator('.lp-media-viewer').count(),0,'Successful contextual save closes the viewer')
+    assert.ok(await page.locator('[data-image-target="persona-home"]').isVisible(),'Returns to originating Persona settings')
+    const snapshot=await page.evaluate(()=>window.mediaSnapshot())
+    assert.equal(snapshot.preferences.personaAppearance['media-persona'].enabled,false)
+    assert.equal(snapshot.preferences.personaAppearance['other-persona'],undefined)
+    await page.locator('[data-image-target="persona-home"]').getByRole('button',{name:'Upload',exact:true}).click()
+    await page.waitForFunction(()=>window.mediaSnapshot().preferences.personaAppearance['other-persona']?.homeWallpaper.source?.kind==='asset')
+    await page.waitForTimeout(100)
+    assert.equal(await page.locator('[data-image-target="persona-home"] .lp-wallpaper-preview').evaluate(node=>node.dataset.empty),'false','Upload updates the editor preview immediately')
+    await page.locator('[data-image-target="persona-chat"]').getByRole('button',{name:'Image URL',exact:true}).click()
+    const urlDialog=page.getByRole('dialog',{name:'Use image URL',exact:true})
+    await urlDialog.getByRole('textbox',{name:'HTTPS image URL',exact:true}).fill('https://example.test/wallpaper.png')
+    await urlDialog.getByRole('button',{name:'Set Other Persona’s chat wallpaper',exact:true}).click()
+    await page.waitForFunction(()=>window.mediaSnapshot().preferences.personaAppearance['other-persona']?.chatWallpaper.source?.kind==='url')
+    await page.waitForTimeout(100);assert.equal(await urlDialog.count(),0)
+    await openApp('Gallery');await page.locator('.lp-gallery-item').first().click();await press('Use as…')
+    const chooser=page.getByRole('dialog',{name:'Use photo as',exact:true})
+    await chooser.getByRole('radio',{name:'Other Persona only',exact:true}).waitFor()
+    assert.ok(await chooser.getByRole('radio',{name:'Other Persona only',exact:true}).isChecked())
+    const box=await chooser.boundingBox();assert.ok(Math.abs(box.x+box.width/2-width/2)<3,'Detached chooser is centered');await shot('wallpaper-chooser')
+    await page.keyboard.press('Escape');assert.equal(await page.getByRole('button',{name:'Use as…',exact:true}).evaluate(node=>document.activeElement===node),true)
+    await press('Use as…');await page.getByRole('dialog',{name:'Use photo as',exact:true}).getByRole('button',{name:'Set wallpaper',exact:true}).click()
+    await page.waitForFunction(()=>window.mediaSnapshot().preferences.personaAppearance['other-persona']?.homeWallpaperEnabled===true)
+    await page.waitForTimeout(100)
+    await page.locator('.lp-gallery-item').first().click();await press('Use as…')
+    await page.getByRole('dialog',{name:'Use photo as',exact:true}).getByRole('radio',{name:'All phones · default',exact:true}).check()
+    await page.getByRole('dialog',{name:'Use photo as',exact:true}).getByRole('button',{name:'Set wallpaper',exact:true}).click()
+    await page.waitForFunction(()=>window.mediaSnapshot().preferences.homeWallpaper.source?.kind==='gallery')
+    await page.waitForTimeout(100)
+    await openApp('Contacts')
+    for(const scale of [0.8,1.3]){
+      await page.locator('.lumiphone-shell').evaluate((node,scale)=>node.style.setProperty('--pocket-ui-scale',String(scale)),scale)
+      await page.waitForTimeout(100);await safe();await shot('contacts-scale-'+scale)
+    }
+    await page.evaluate(()=>window.remountContactsMediaFixture())
+    await page.getByRole('button',{name:'Open Pocket',exact:true}).waitFor();await press('Open Pocket');await press('Open app drawer');await press('Contacts');await safe()
+    assert.equal(errors.length,0,errors.join('\n'))
+    console.log('Contacts / bank / creator / camera / persona wallpaper interactions passed at '+width+'px')
+    await page.close()
+  }
+} catch(error){if(activePage&&!activePage.isClosed()){await activePage.screenshot({path:resolve(output,'failure.png')});console.error((await activePage.locator('body').innerText()).slice(0,4000))}throw error}
+finally{await browser?.close();await new Promise(done=>server.close(done))}

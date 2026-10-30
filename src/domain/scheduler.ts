@@ -49,6 +49,8 @@ export function normalizeEventSuggestion(
     end: Number.isFinite(Date.parse(end)) ? end : undefined,
     participantNames: names(value.participantNames ?? value.participants),
     scheduledEventId: clean(value.scheduledEventId, 180) || undefined,
+    planId: clean(value.planId, 180) || undefined,
+    updateEventId: clean(value.updateEventId, 180) || undefined,
   }
 }
 export function generatedEventSuggestion(
@@ -59,5 +61,14 @@ export function generatedEventSuggestion(
   if (!suggestion) return undefined
   suggestion.status = 'pending'
   suggestion.scheduledEventId = undefined
+  suggestion.updateEventId = undefined
   return suggestion
+}
+
+
+/** Keep vague discussion in the thread until there is a useful story-time commitment. */
+export function eventSuggestionReady(suggestion: PhoneEventSuggestion): boolean {
+  if (suggestion.whenKind === 'unscheduled') return false
+  if (suggestion.whenKind === 'exact') return Boolean(suggestion.start && Number.isFinite(Date.parse(suggestion.start)))
+  return Boolean(suggestion.whenText.trim()) && !/\b(?:soon|sometime|some time|one day|someday|eventually|tbd|no (?:set |fixed )?(?:day|time)|not (?:set|decided))\b/i.test(suggestion.whenText)
 }

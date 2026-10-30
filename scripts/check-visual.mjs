@@ -34,7 +34,7 @@ if (clocks.status !== 0) throw clocks.error || new Error(clocks.stderr + clocks.
 const weather = spawnSync('bun', ['scripts/preview-weather.ts', join(fixtures, 'weather-widgets.html')], { cwd: root, encoding: 'utf8' })
 if (weather.status !== 0) throw weather.error || new Error(weather.stderr + weather.stdout)
 const files = (await readdir(fixtures)).filter(name => name.endsWith('.html')).sort()
-assert.equal(files.length, 37, 'A visual fixture failed to export; do not compare stale captures.')
+assert.equal(files.length, 38, 'A visual fixture failed to export; do not compare stale captures.')
 for (const name of updateCases) assert.ok(files.includes(name + '.html'), 'Unknown baseline case')
 for (const name of selectedCases) assert.ok(files.includes(name + '.html'), 'Unknown visual case')
 const captureFiles = selectedCases.length ? files.filter(file => selectedCases.includes(file.replace('.html', ''))) : files
@@ -95,26 +95,16 @@ try {
         assert.equal(await page.locator('.lp-npc-portrait-actions button').count(), 3)
         assert.ok(await page.locator('.lp-npc-portrait-actions').evaluate(node => { const row = node.getBoundingClientRect(); const screen = node.closest('.lumiphone-screen').getBoundingClientRect(); return row.width <= screen.width && row.top >= screen.top && row.bottom <= screen.bottom }), 'NPC portrait row must fit and remain reachable in the handset')
       }
-      if (file === 'chat-invite-pending.html') {
-        assert.equal(await page.locator('.lp-event-strip').count(), 0, 'Pending invitations stay in the conversation')
-        assert.equal(await page.locator('.lp-bubbles > .lp-event-invite[data-status="pending"]').count(), 1)
-        assert.ok(await page.getByRole('button', { name: 'Schedule event: Movie night', exact: true }).isVisible())
-        assert.ok(await page.getByRole('button', { name: 'Decline invitation: Movie night', exact: true }).isVisible())
-      }
-      if (file === 'chat-invite.html') {
-        const strip = page.locator('.lp-event-strip')
-        assert.equal(await strip.getAttribute('open'), null, 'Event strip starts collapsed')
-        await strip.locator('summary').focus()
-        await page.keyboard.press('Enter')
-        assert.ok(await page.getByRole('button', { name: 'Quickstart event: Movie night', exact: true }).isVisible())
-        assert.ok(await page.locator('.lp-event-invite-actions').evaluate(node => {
-          const buttons = [...node.querySelectorAll('button')]
-          const [open, start] = buttons.map(button => button.getBoundingClientRect())
-          return Math.abs(open.width - start.width) < 1 && Math.abs(open.height - start.height) < 1
-            && getComputedStyle(buttons[0]).backgroundColor === getComputedStyle(buttons[1]).backgroundColor
-            && start.right <= node.getBoundingClientRect().right + 1
-        }), 'Event actions must have matching weight and fit the row')
-        await page.evaluate(() => window.scrollTo(0, 0))
+      if (file === 'chat-invite-pending.html' || file === 'chat-invite.html') {
+        const strip=page.getByRole('region',{name:'Conversation plans',exact:true})
+        assert.ok(await strip.isVisible(),'plans are pinned without opening a dropdown')
+        assert.equal(await strip.locator('summary').count(),0)
+        const row=strip.locator('.lp-plan-stripe')
+        assert.ok(await row.evaluate(node=>node.getBoundingClientRect().height<85),'event stripe stays slim')
+        const name=file==='chat-invite.html'?'Quickstart event: Movie night':'Schedule event: Movie night'
+        await page.getByRole('button',{name,exact:true}).focus()
+        assert.ok(await page.getByRole('button',{name,exact:true}).isVisible())
+        await page.evaluate(()=>window.scrollTo(0,0))
       }
       if (file.startsWith('chat')) {
         assert.ok(await page.getByRole('textbox', { name: 'Message', exact: true }).isVisible())

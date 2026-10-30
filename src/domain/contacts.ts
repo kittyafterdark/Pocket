@@ -2,6 +2,7 @@ import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, Po
 import { normalizeEventSuggestion } from './scheduler.js'
 import { normalizeImageSource } from './preferences.js'
 import { normalizeCallMarker } from './phone-events.js'
+import { normalizeMessageStoryClock } from './message-continuity.js'
 
 export function normalizeAvatarFocus(value: unknown): { x: number; y: number } {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -181,6 +182,7 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     text: messageText,
     format: value.format === 'voice' ? 'voice' : undefined,
     createdAt: timestamp(value.createdAt, now),
+    storyClock: normalizeMessageStoryClock(value.storyClock),
     read,
     status,
     imageId: clean(value.imageId, 160) || undefined,

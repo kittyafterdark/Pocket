@@ -1,3 +1,5 @@
+import { socialGif, type SocialGif } from '../domain/social-extras.js'
+import {personaWallpaperActive} from '../domain/wallpaper-scope.js'
 import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
 import { VoiceMessagePlayer } from './components/voice-message.js'
 import type {
@@ -27,7 +29,7 @@ import type {
   PhoneTracker,
   SwarmVisualProfile,
 } from '../types.js'
-import { clockLabel } from '../domain/clock-label.js'
+import { LAUNCHER_APPS, normalizeLauncherLayout, pocketAppInstalled, pocketInstalledApps } from '../domain/launcher.js'
 import { defaultPreferences, normalizePreferences, wallpaperCss } from '../domain/preferences.js'
 import { normalizePocketRoute } from '../domain/navigation.js'
 import { conversationActorIds, listPocketActors, normalizeActorName, resolvePocketActor } from '../domain/actors.js'
@@ -38,6 +40,7 @@ import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
 import { renderContactsView } from './apps/contacts.js'
+import type { ContactBrowserSession } from './apps/contacts-browser.js'
 import type { IdentityProfile } from '../domain/identity-profiles.js'
 import { identityProfileControls, refreshIdentityProfileControls } from './components/identity-profiles.js'
 import { weatherConditionKind, weatherGlyph, weatherOutlook } from './components/weather-outlook.js'
@@ -45,16 +48,29 @@ import type { ContactView } from './apps/contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
 import { activityReceipt, type ActivityRenderOptions } from './activity.js'
+import { installEventQuickstartCards } from './components/event-quickstart.js'
 import { refreshPhoneSequences, type PhoneSequenceEntry } from './components/phone-sequence.js'
+import { wallpaperChoice, wallpaperDestinationLabel, type WallpaperDestination } from './components/wallpaper-choice.js'
 import type { PocketImageTarget } from './components/image-picker.js'
 import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './components/ui.js'
 import { cropAvatarPhoto } from './components/avatar-crop.js'
 import { activityClock } from '../domain/activity-clock.js'
 import { refreshActivityConnectors } from './components/activity-connectors.js'
 import { renderAppReviewControl } from './components/app-review-control.js'
+import { isFreeformChat } from '../domain/freeform.js'
+import type { FreeformDirectory, FreeformSession } from '../domain/freeform.js'
+import { renderFreeformLock } from './components/freeform-lock.js'
+import { renderPocketPortal } from './components/pocket-portal.js'
+import type { PocketPortalView } from './components/pocket-portal.js'
 import { renderDevicePicker } from './components/device-picker.js'
 import { button, dateTimeLocal, el, formatDate, formatTime, inputValue, requestId } from './shared.js'
 import type { PageAction } from './shared.js'
+import { renderLauncher, type LauncherSession } from './apps/launcher.js'
+import { launcherIcon } from './components/launcher-icons.js'
+import { renderAppStore as renderAppStoreView, updateAppStore as updateAppStoreView, type AppStoreSession } from './apps/app-store.js'
+import { isSocialApp } from '../domain/social.js'
+import type { SocialApp } from '../domain/social.js'
+import { renderSocial as renderSocialView, type SocialSession } from './apps/social.js'
 import type {
   SpindleDrawerTabHandle,
   SpindleDockPanelHandle,
@@ -96,17 +112,7 @@ const ICONS: Record<string, string> = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>',
 }
 
-const APP_META: Array<{ app: PhoneApp; label: string; icon: string; dock?: boolean }> = [
-  { app: 'messages', label: 'Messages', icon: 'messages', dock: true },
-  { app: 'camera', label: 'Camera', icon: 'camera', dock: true },
-  { app: 'gallery', label: 'Gallery', icon: 'gallery', dock: true },
-  { app: 'notes', label: 'Notes', icon: 'notes', dock: true },
-  { app: 'weather', label: 'Weather', icon: 'weather' },
-  { app: 'contacts', label: 'Contacts', icon: 'contacts' },
-  { app: 'calendar', label: 'Timeline', icon: 'calendar' },
-  { app: 'trackers', label: 'Trackers', icon: 'trackers' },
-  { app: 'settings', label: 'Settings', icon: 'settings' },
-]
+const APP_META = LAUNCHER_APPS
 
 function icon(name: string): HTMLSpanElement {
   const node = el('span')
@@ -143,6 +149,25 @@ class PocketController {
   private clock: HTMLSpanElement
   private expanded = false
   private currentApp: PhoneApp = 'home'
+  private launcherSessions = new Map<string, LauncherSession>()
+  private launcherSaves = new Map<string, string>()
+  private storeSessions = new Map<string, AppStoreSession>()
+  private storeSaves = new Map<string, string>()
+  private socialSessions = new Map<string, SocialSession>()
+  private socialGifRequests = new Map<string, { resolve:(gifs:SocialGif[])=>void; reject:(error:Error)=>void; timer:ReturnType<typeof setTimeout> }>()
+  private socialRequests = new Map<string, string>()
+  private socialRequestModes = new Map<string, 'refresh' | 'reply'>()
+  private settledSocialRequests = new Set<string>()
+  private socialDmRequests = new Map<string, { key: string; accountId: string }>()
+  private socialImages = new Map<string, { key: string; app: SocialApp; context: { chatId: string | null; characterId: string | null }; owner: string; targetServer?: string; previousId?: string; previousPreview?: string }>()
+  private portalView: PocketPortalView = 'home'
+  private freeformDirectory: FreeformDirectory | null = null
+  private freeformSession: FreeformSession | null = null
+  private freeformDraft = { personaId: '', sessionId: '', name: '' }
+  private freeformRequest = ''
+  private freeformListRequest = ''
+  private freeformCopyRequest = ''
+  private freeformError = ''
   private state: PhoneState | null = null
   private preferences: DevicePreferences = defaultPreferences()
   private settingsDraft: DevicePreferences | null = null
@@ -163,7 +188,8 @@ class PocketController {
   private galleryScope = 'chat'
   private galleryRequestId = ''
   private galleryLoading = false
-  private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string }>()
+  private galleryActionButtons = new Map<string, { button: HTMLButtonElement; idle: string; feedback?: HTMLElement; complete?: () => void }>()
+  private pendingWallpaperSelection: (WallpaperDestination & { route: PocketRoute; contextKey: string }) | null = null
   private pendingWallpaperTarget: PocketImageTarget | null = null
   private pendingContactPhotoId = ''
   private pendingContactPhotoDraft: PocketContactDraft | null = null
@@ -175,6 +201,7 @@ class PocketController {
   private collectionRequest = ''
   private collectionRequestKey = ''
   private npcBriefs = new Map<string, string>()
+  private contactBrowsers = new Map<string, ContactBrowserSession>()
   private contactFormDrafts = new Map<string, Array<{ value: string; checked: boolean }>>()
   private npcDraft: PocketContactDraft | null = null
   private previousNpcDraft: PocketContactDraft | null = null
@@ -195,6 +222,7 @@ class PocketController {
   private trackerSaveDraftKey = ''
   private cameraDraft = { scene: '', enhance: undefined as boolean | undefined }
   private selectedMessageId = ''
+  private pendingMessageScrollId = ''
   private selectedNoteId = ''
   private selectedEventId = ''
   private pendingEventSuggestion: { conversationId: string; messageId: string; suggestion: PhoneEventSuggestion } | null = null
@@ -202,6 +230,7 @@ class PocketController {
   private selectedGalleryImageId = ''
   private selectedSettingsSection = ''
   private selectedTrackerView: 'detail' | 'config' = 'detail'
+  private cameraVariants: Array<{ id: string; url: string }> = []
   private cameraPreview = ''
   private cameraContactId = ''
   private cameraReady = false
@@ -323,7 +352,7 @@ class PocketController {
     })
     homeButton.addEventListener('click', () => {
       if (this.currentApp !== 'home') this.home()
-      else this.close()
+      else if (!this.leaveLauncher()) this.close()
     })
     this.installSwipeDismiss(status)
     this.installNotificationPull(status)
@@ -334,9 +363,11 @@ class PocketController {
   }
 
   destroy(): void {
+    for(const job of this.socialGifRequests.values()){clearTimeout(job.timer);job.reject(new Error('Pocket was closed.'))};this.socialGifRequests.clear()
     this.voicePlayer.stop()
     this.setupModalDismiss?.()
     this.destroyed = true
+    for (const id of [...this.socialImages.keys()]) this.cancelSocialImage(id)
     window.clearTimeout(this.collapseTimer)
     window.clearTimeout(this.alertTimer)
     window.clearInterval(this.receiptSweepTimer)
@@ -359,6 +390,7 @@ class PocketController {
   }
 
   private installHostIntegrations(): void {
+    this.cleanups.push(installEventQuickstartCards(this.ctx))
     this.cleanups.push(this.drawer.onActivate(() => this.renderDrawerLanding()))
     const action = this.ctx.ui.registerInputBarAction({
       id: 'open-lumiphone',
@@ -407,6 +439,7 @@ class PocketController {
     this.installInlineArtifactObserver()
     this.cleanups.push(this.ctx.onBackendMessage((payload) => this.onBackend(payload as BackendPayload)))
     this.cleanups.push(this.ctx.events.on('CHAT_SWITCHED', () => {
+      if (this.freeformSession) { if (this.currentApp === 'settings') this.render(false); return }
       this.setupModalDismiss?.()
       this.settledOperationRequests.clear()
       this.operations.clear()
@@ -447,11 +480,17 @@ class PocketController {
     this.cleanups.push(() => window.visualViewport?.removeEventListener('scroll', resize))
     const focusin = (event: FocusEvent) => {
       if (!this.expanded || this.handsetHost.dataset.fullscreen !== 'true') return
-      this.resizeExpanded()
       const target = event.target instanceof HTMLElement ? event.target : null
+      const opensKeyboard = target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable
+        || (target instanceof HTMLInputElement && !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'hidden', 'image'].includes(target.type))
+      if (!target || !opensKeyboard) return
+      this.resizeExpanded()
       window.setTimeout(() => {
+        if (!this.expanded || !target.isConnected || document.activeElement !== target) return
         this.resizeExpanded()
-        target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        // Pinned message inputs are already placed above the keyboard by resizeExpanded.
+        // Native scrolling here can move the phone or its host page after a reply rerender.
+        if (!target.closest('.lp-compose-stack,.lp-instagram-dm-compose')) target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       }, 60)
     }
     this.shell.addEventListener('focusin', focusin)
@@ -460,7 +499,7 @@ class PocketController {
       if (!this.expanded) return
       if (event.key === 'Escape') {
         if (this.currentApp !== 'home') this.back()
-        else this.close()
+        else if (!this.leaveLauncher()) this.close()
         return
       }
       if (event.key !== 'Tab') return
@@ -484,7 +523,7 @@ class PocketController {
       const granted = await this.ctx.permissions.getGranted()
       if (!granted.includes('ui_panels')) return
       if (this.destroyed) return
-      const initialPosition = resolveLauncherPosition(this.preferences.launcherPosition)
+      const initialPosition = resolveLauncherPosition(this.preferences.launcherPosition, this.launcherViewport())
       this.widget = this.ctx.ui.createFloatWidget({
         width: LAUNCHER_SIZE,
         height: LAUNCHER_SIZE,
@@ -512,12 +551,20 @@ class PocketController {
     }
   }
 
+  /** Float-widget handles report layout coordinates inside Lumiverse's zoom layer. */
+  private launcherViewport(): { width: number; height: number } {
+    if (this.ctx.ui.geometry?.layoutViewportSize) return this.ctx.ui.geometry.layoutViewportSize()
+    const rawScale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--lumiverse-ui-scale'))
+    const scale = Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1
+    return { width: window.innerWidth / scale, height: window.innerHeight / scale }
+  }
+
   private persistLauncherPosition(): void {
     if (!this.widget) return
     try {
       const position = this.widget.getPosition?.()
       if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return
-      const clamped = clampLauncherPosition(position.x, position.y)
+      const clamped = clampLauncherPosition(position.x, position.y, this.launcherViewport())
       const previous = this.preferences.launcherPosition
       if (previous && previous.x === clamped.x && previous.y === clamped.y) return
       this.updatePreferences({ ...this.preferences, launcherPosition: clamped })
@@ -527,7 +574,7 @@ class PocketController {
   private applyLauncherPosition(): void {
     if (!this.widget || this.expanded) return
     try {
-      const next = resolveLauncherPosition(this.preferences.launcherPosition)
+      const next = resolveLauncherPosition(this.preferences.launcherPosition, this.launcherViewport())
       const current = this.widget.getPosition?.()
       // Host moveTo publishes widget state even for identical coordinates.
       // Avoid feeding modal scroll-lock style changes back into host renders.
@@ -548,9 +595,82 @@ class PocketController {
     this.applyLauncherPosition()
   }
 
+  private navigatePortal(view: PocketPortalView): void {
+    this.portalView = view
+    if (view !== 'freeform') this.freeformRequest = ''
+    if (view === 'devices' && this.freeformSession) {
+      this.resetPocketSession()
+      this.freeformSession = null
+      this.refresh()
+    }
+    if (view === 'freeform') this.loadFreeformDirectory()
+    this.renderDrawerLanding()
+    this.drawer.root.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true })
+  }
+
+  private loadFreeformDirectory(): void {
+    this.freeformError = ''
+    this.freeformListRequest = this.send('lumiphone:freeform_list')
+  }
+
+  private resetPocketSession(): void {
+    if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
+    this.setupModalDismiss?.()
+    this.clearActivitySurfaces(true, true)
+    this.hideComposerReferencePill()
+    this.state = null; this.deviceOwnerActorId = ''; this.selectedConversationId = ''; this.selectedMessageId = ''
+    this.currentApp = 'home'; this.router.reset({ app: 'home' }); this.settingsDraft = null
+    this.contextPreview = null; this.personaPreview = null
+    this.operations.clear(); this.messageRequests.clear(); this.selectedSettingsSection = ''
+    this.cameraBusy = false; this.cameraRequestId = ''; this.cameraPreview = ''; this.cameraReady = false
+    this.npcDraft = null; this.previousNpcDraft = null
+    this.galleryRequestId = ''; this.galleryLoading = false; this.gallery = { data: [], total: 0 }
+    this.pendingRoute = null; this.pendingEventSuggestion = null
+    this.cameraDraft = { scene: '', enhance: undefined }; this.cameraImageId = ''; this.cameraContactId = ''; this.cameraNpcDraft = null
+    this.trackerMutationRequest = ''; this.trackerJevRequest = ''; this.jevWorking = false
+    this.collectionRequest = ''; this.groupSaveRequest = ''; this.trackerSaveRequest = ''
+    this.voicePlayer.stop()
+    window.clearTimeout(this.notificationTimer); this.shell.querySelector('.lp-floating-notification')?.remove()
+    this.render(false)
+  }
+
+  private openFreeform(sessionId?: string, personaId?: string, name?: string): void {
+    this.freeformError = ''
+    this.freeformRequest = this.send(sessionId ? 'lumiphone:freeform_open' : 'lumiphone:freeform_create', { sessionId, personaId, name })
+    this.renderDrawerLanding()
+  }
+
+  private confirmFreeformCopy(): void {
+    const target = this.ctx.getActiveChat()
+    if (!target.chatId || !target.characterId) { this.showError('Create or open a roleplay chat in Lumiverse first.'); return }
+    const modal = this.ctx.ui.showModal({ title: 'Start a chat from Freeform', width: 460, maxHeight: 440 })
+    modal.root.classList.add('lp-media-viewer', 'pocket-freeform-confirm')
+    const body = el('div', 'lp-settings-section')
+    body.append(el('p', 'lp-copy', `Copy “${this.freeformSession?.name || 'this session'}” into the Pocket for your currently open roleplay chat? Your Freeform session stays separate. Existing Pocket data in that chat will be backed up before replacement.`))
+    const keep = button('Keep base Pocket', 'lp-button lp-button-quiet'); keep.onclick = () => modal.dismiss()
+    const override = button('Override with this Freeform session', 'lp-button')
+    override.dataset.primary = 'true'
+    override.onclick = () => { this.freeformCopyRequest = this.send('lumiphone:freeform_copy_to_chat', { targetChatId: target.chatId, override: true }); modal.dismiss() }
+    body.append(keep, override); modal.root.append(body); keep.focus()
+  }
+
   private renderDrawerLanding(): void {
+    const activeField = this.drawer.root.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.freeformField : undefined
+    const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null
     this.drawer.root.replaceChildren()
-    const outer = el('div', 'lumiphone-drawer lumiphone-device-drawer')
+    if (this.portalView === 'freeform') {
+      const lock = renderFreeformLock(this.freeformDirectory, this.freeformDraft, Boolean(this.freeformRequest), this.freeformError, {
+        login: session => this.openFreeform(session.id), create: (personaId, name) => this.openFreeform(undefined, personaId, name),
+        refresh: () => { this.loadFreeformDirectory(); this.renderDrawerLanding() },
+      })
+      this.drawer.root.append(renderPocketPortal('freeform', view => this.navigatePortal(view), lock))
+      if (activeField) {
+        const field = this.drawer.root.querySelector<HTMLInputElement>(`[data-freeform-field="${activeField}"]`)
+        field?.focus({ preventScroll: true })
+        if (field instanceof HTMLInputElement && selection?.[0] != null && selection[1] != null) field.setSelectionRange(selection[0], selection[1])
+      }
+      return
+    }
     const card = el('div', 'lumiphone-device-switcher')
     const logo = el('div', 'lumiphone-device-mark')
     logo.innerHTML = PHONE_ICON
@@ -602,8 +722,7 @@ class PocketController {
       actions.append(resume)
     }
     card.appendChild(actions)
-    outer.appendChild(card)
-    this.drawer.root.appendChild(outer)
+    this.drawer.root.appendChild(renderPocketPortal(this.portalView, view => this.navigatePortal(view), card))
   }
 
   private ensureDockPanel(): SpindleDockPanelHandle | null {
@@ -773,6 +892,7 @@ class PocketController {
   }
 
   private activeContext(): { chatId: string | null; characterId: string | null } {
+    if (this.freeformSession) return { chatId: this.freeformSession.id, characterId: '_none' }
     const active = this.ctx.getActiveChat()
     return {
       chatId: active.chatId || this.state?.chatId || null,
@@ -1020,10 +1140,81 @@ class PocketController {
     this.lastComposerReferenceId = reference.id
   }
 
+  private settleSocialRequest(requestId: string): { key: string; ui?: SocialSession } | null {
+    const key = this.socialRequests.get(requestId)
+    if (!key) return null
+    this.socialRequests.delete(requestId); this.socialRequestModes.delete(requestId)
+    this.settledSocialRequests.add(requestId)
+    if (this.settledSocialRequests.size > 100) this.settledSocialRequests.delete(this.settledSocialRequests.values().next().value!)
+    const ui = this.socialSessions.get(key)
+    const next = [...this.socialRequests].reverse().find(([, pendingKey]) => pendingKey === key)?.[0]
+    if (ui && ui.pending !== next) {
+      ui.pending = next; ui.refreshing = Boolean(next && this.socialRequestModes.has(next))
+      if (next) ui.status = this.socialRequestModes.get(next) === 'reply' ? 'Waiting for a reply…' : ui.refreshing ? 'Finding new posts in your world…' : 'Saving…'
+    }
+    return { key, ui }
+  }
+
   private onBackend(payload: BackendPayload): void {
+    if (this.handleSocialImage(payload)) return
+    const dmRequest = this.socialDmRequests.get(payload.requestId)
+    if (dmRequest && ['lumiphone:social_dm_sent', 'lumiphone:social_dm_done', 'lumiphone:social_dm_error', 'lumiphone:error'].includes(payload.type)) {
+      const ui = this.socialSessions.get(dmRequest.key)
+      if (ui) {
+        const selected = ui.dmOpen && ui.dmAccountId === dmRequest.accountId
+        if (payload.type === 'lumiphone:social_dm_sent') { if (ui.dmDrafts) delete ui.dmDrafts[dmRequest.accountId]; if (selected) { if (payload.threadId) ui.dmThreadId = payload.threadId; ui.dmDraft = ''; ui.dmError = undefined } }
+        else { ui.dmBusy = false; if (selected) ui.dmError = payload.error || undefined; this.socialDmRequests.delete(payload.requestId) }
+      }
+      this.refreshSocialImageView(dmRequest.key); return
+    }
+    if (payload.type === 'lumiphone:social_gifs' || (payload.type === 'lumiphone:error' && this.socialGifRequests.has(payload.requestId))) {
+      const job = this.socialGifRequests.get(payload.requestId); if (!job) return; clearTimeout(job.timer); this.socialGifRequests.delete(payload.requestId)
+      if (payload.error) job.reject(new Error(payload.error)); else job.resolve((Array.isArray(payload.gifs) ? payload.gifs : []).map(socialGif).filter((gif:SocialGif|undefined):gif is SocialGif => Boolean(gif)))
+      return
+    }
+    if (payload.type === 'lumiphone:social_started' && isSocialApp(payload.app)) {
+      if (!this.state || payload.chatId !== this.state.chatId || payload.characterId !== this.state.characterId) return
+      const key = `${pocketDeviceKey(payload.chatId, payload.characterId, payload.owner)}:${payload.app}`
+      const ui = this.socialSessions.get(key) || {}; this.socialSessions.set(key, ui)
+      ui.pending = payload.requestId; ui.refreshing = true; ui.status = payload.mode === 'reply' ? 'Waiting for a reply…' : 'Finding new posts in your world…'; ui.error = undefined
+      this.socialRequests.set(payload.requestId, key); this.socialRequestModes.set(payload.requestId, payload.mode === 'reply' ? 'reply' : 'refresh'); this.refreshSocialImageView(key); return
+    }
+    if (payload.type === 'lumiphone:social_reply_error' || payload.type === 'lumiphone:social_error') {
+      const settled = this.settleSocialRequest(payload.requestId)
+      if (!settled) return
+      const { key, ui } = settled
+      if (ui && !ui.pending) ui.error = payload.error || 'The reply did not arrive. Your comment is saved.'
+      this.refreshSocialImageView(key); return
+    }
     if (!payload || typeof payload !== 'object' || typeof payload.type !== 'string') return
+    if (payload.type === 'lumiphone:freeform_directory' && payload.requestId === this.freeformListRequest) {
+      this.freeformListRequest = ''; this.freeformDirectory = payload.directory; this.freeformError = ''
+      this.renderDrawerLanding(); return
+    }
+    if (payload.type === 'lumiphone:freeform_opened' && payload.requestId === this.freeformRequest) {
+      this.resetPocketSession()
+      this.freeformSession = payload.session
+      this.freeformDraft.sessionId = payload.session.id; this.freeformDraft.personaId = payload.session.personaId
+      this.freeformRequest = ''; this.freeformDraft.name = ''
+      this.loadFreeformDirectory()
+      return
+    }
+    if (payload.type === 'lumiphone:freeform_copied' && payload.requestId === this.freeformCopyRequest) {
+      this.freeformCopyRequest = ''
+      if (this.ctx.getActiveChat().chatId === payload.chatId) {
+        this.resetPocketSession()
+        this.freeformSession = null
+        this.freeformRequest = ''; this.freeformListRequest = ''
+        this.portalView = 'devices'
+        this.renderDrawerLanding()
+        this.refresh()
+      }
+      this.showFeedback(payload.backupPath ? 'Copied into the current chat. Its previous Pocket was backed up. Freeform stays separate.' : 'Copied into the current chat. Freeform stays separate.')
+      return
+    }
     if (payload.type === 'lumiphone:state' && payload.state) {
-      const active = this.ctx.getActiveChat()
+      const active = this.freeformSession ? { chatId: this.freeformSession.id, characterId: '_none' } : this.ctx.getActiveChat()
+      if (!this.freeformSession && isFreeformChat(payload.state.chatId)) return
       if (active.chatId && payload.state.chatId !== active.chatId) return
       if (active.characterId && payload.state.characterId !== active.characterId) return
       const previousUnread = this.unreadCount()
@@ -1037,6 +1228,7 @@ class PocketController {
         this.npcDraft = null; this.previousNpcDraft = null
       }
       this.state = payload.state as PhoneState
+      if (payload.freeformSession) this.freeformSession = payload.freeformSession
       const personaDeviceId = pocketPersonaActorId(this.state)
       const availableDeviceIds = new Set([personaDeviceId, ...this.state.conversations.flatMap((conversation) => conversationDeviceActorIds(this.state!, conversation))])
       if (!this.deviceOwnerActorId || !availableDeviceIds.has(this.deviceOwnerActorId)) this.deviceOwnerActorId = personaDeviceId
@@ -1091,6 +1283,47 @@ class PocketController {
       ], { duration: 420, easing: 'ease-out' })
       return
     }
+    if (payload.type === 'lumiphone:social_done') {
+      const settled = this.settleSocialRequest(payload.requestId)
+      if (!settled) return
+      const { key, ui } = settled
+      if (ui) {
+        if (payload.app === 'discord' && (payload.action === 'post' || payload.action === 'reply')) ui.discordBottom = true
+        if (!ui.pending) { ui.refreshing = false; ui.error = undefined; ui.status = payload.action === 'cancel' ? 'Stopped. Your saved feed is unchanged.' : payload.action === 'refresh' ? `${payload.count || 0} new posts. All caught up for now.` : payload.action === 'reply' ? 'New reply.' : 'Saved.' }
+        if (payload.action === 'post' || payload.action === 'reblog') { ui.draft = ''; ui.title = ''; ui.photo = ''; ui.tags = ''; ui.gif = undefined; ui.imageId = undefined; ui.imagePreview = undefined; ui.photoPrompt = ''; ui.imageProgress = undefined; ui.replyTo = undefined; ui.reblogOf = undefined; ui.photosOpen = false; ui.mediaOpen = false; ui.composing = false; ui.focusComposer = payload.app === 'discord'; ui.focusStart = payload.app !== 'discord' }
+        if (payload.action === 'participant' && payload.participantSource === 'manual' && payload.serverId && ui.personDrafts) delete ui.personDrafts[payload.serverId]
+        if (payload.action === 'profile') { if (ui.usernameEdit) ui.usernameFocus = 'button'; ui.profileEdit = false; ui.bioDraft = undefined; ui.usernameEdit = false; ui.usernameDraft = undefined }
+        if (payload.action === 'server' && !payload.serverId) { ui.serverImage = undefined; ui.serverName = ''; ui.serverTopic = ''; ui.serverChannels = ''; ui.serverOpen = false; ui.peopleOpen = false; ui.serverId = this.state?.social?.servers.filter(server => server.memberActorIds.includes(this.currentDeviceOwnerActorId())).at(-1)?.id; ui.channelId = undefined }
+      }
+      if (isSocialApp(this.currentApp) && key === `${this.deviceIdentity().key}:${this.currentApp}` && this.expanded) this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:app_install_done') {
+      const key = this.storeSaves.get(payload.requestId)
+      if (!key) return
+      this.storeSaves.delete(payload.requestId)
+      const ui = this.storeSessions.get(key)
+      if (ui) { ui.pending = false; ui.error = undefined }
+      const home = this.launcherSessions.get(key)
+      if (home?.draft) home.draft.installedApps = pocketInstalledApps(normalizeLauncherLayout(payload.layout))
+      if (key === this.deviceIdentity().key && this.expanded) {
+        this.render(false)
+        this.focusStoreApp(ui?.focusApp)
+      }
+      return
+    }
+    if (payload.type === 'lumiphone:launcher_saved') {
+      const key = this.launcherSaves.get(payload.requestId)
+      if (!key) return
+      this.launcherSaves.delete(payload.requestId)
+      const ui = this.launcherSessions.get(key)
+      if (ui) { ui.pending = false; ui.draft = undefined; ui.selected = undefined; ui.selectedItem = undefined; ui.placingSlot = undefined; ui.folderId = undefined; ui.widgetPicker = false; ui.drawer = false; ui.error = undefined }
+      if (key === this.deviceIdentity().key && this.currentApp === 'home' && this.expanded) {
+        this.render(false)
+        this.screen.querySelector<HTMLElement>('[aria-label="Edit home screen"]')?.focus({ preventScroll: true })
+      }
+      return
+    }
     if (payload.type === 'lumiphone:jev_status') {
       const context = this.activeContext()
       if (payload.chatId !== context.chatId || payload.characterId !== context.characterId) return
@@ -1101,6 +1334,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:reconciliation_status') {
+      if (this.freeformSession) return
       if (!this.preferences.showReconciliationStatus) return
       window.clearTimeout(this.syncIndicatorTimer)
       const status = String(payload.status || '')
@@ -1167,6 +1401,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:notification' && payload.notification) {
+      if (this.freeformSession && !this.state?.notifications.some(n => n.id === payload.notification.id)) return
       this.showIncomingNotification(payload.notification as PhoneNotification)
       return
     }
@@ -1257,7 +1492,7 @@ class PocketController {
       if (payload.requestId && payload.requestId !== this.galleryRequestId) return
       this.galleryLoading = false
       this.gallery = { data: payload.data || [], total: Number(payload.total) || 0, offset: Number(payload.offset) || 0, limit: Number(payload.limit) || GALLERY_PAGE_SIZE }
-      if (this.currentApp === 'gallery') this.render(false)
+      if (this.currentApp === 'gallery' || isSocialApp(this.currentApp)) this.render(false)
       return
     }
     if (payload.type === 'lumiphone:gallery_action_done' && payload.requestId) {
@@ -1267,6 +1502,8 @@ class PocketController {
         pending.button.textContent = '✓ Done'
         window.setTimeout(() => { pending.button.textContent = pending.idle }, 1_400)
         this.galleryActionButtons.delete(payload.requestId)
+        if (pending.feedback) pending.feedback.textContent = payload.message || 'Saved.'
+        pending.complete?.()
       }
       if (payload.action === 'delete' && payload.imageId === this.selectedGalleryImageId) this.selectedGalleryImageId = ''
       this.showFeedback(payload.message || 'Gallery action complete.')
@@ -1279,6 +1516,10 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:contact_draft' && payload.draft) {
+      if (this.state && ((payload.chatId && payload.chatId !== this.state.chatId) || (payload.characterId && payload.characterId !== this.state.characterId))) return
+      this.operations.delete(payload.requestId)
+      this.settledOperationRequests.add(payload.requestId)
+      if (this.settledOperationRequests.size > 100) this.settledOperationRequests.delete(this.settledOperationRequests.values().next().value!)
       if (this.npcDraft) this.previousNpcDraft = structuredClone(this.npcDraft)
       this.npcDraft = structuredClone(payload.draft as PocketContactDraft)
       if (this.currentApp === 'contacts') {
@@ -1300,10 +1541,12 @@ class PocketController {
     }
     if ((payload.type === 'lumiphone:contact_created' || payload.type === 'lumiphone:contact_saved') && payload.contactId) {
       for (const key of this.contactFormDrafts.keys()) if (key.startsWith(`${this.state?.chatId}:${this.state?.characterId}:`)) this.contactFormDrafts.delete(key)
+      if (payload.requestId === this.collectionRequest) this.collectionRequest = ''
       this.contactSourcesRequested = false
+      const finishedDraft = Boolean(this.npcDraft) && ['quick-gen', 'draft', 'new'].includes(this.selectedContactView)
       this.npcDraft = null
       this.previousNpcDraft = null
-      const settled = this.router.settle({ app: 'contacts', contactId: payload.contactId, view: 'detail' })
+      const settled = this.router.settle({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, finishedDraft ? route => route.app === 'contacts' && ['quick-gen', 'draft', 'new'].includes(route.view || '') : undefined)
       this.openPocket(settled, false)
       return
     }
@@ -1361,6 +1604,7 @@ class PocketController {
       this.cameraPreview = payload.imageUrl || this.cameraPreview
       this.cameraReady = Boolean(payload.imageUrl)
       this.cameraImageId = payload.imageId || ''
+      if (payload.imageId && payload.imageUrl && !this.cameraVariants.some(item => item.id === payload.imageId)) this.cameraVariants = [...this.cameraVariants, { id: payload.imageId, url: payload.imageUrl }].slice(-12)
       if (payload.profile) this.swarmProfile = payload.profile
       if (this.currentApp === 'camera') this.render(false)
       return
@@ -1390,6 +1634,35 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      if (payload.requestId === this.freeformRequest || payload.requestId === this.freeformListRequest) {
+        this.freeformRequest = ''; this.freeformListRequest = ''; this.freeformError = payload.error || 'Could not open Freeform. Try again.'
+        this.renderDrawerLanding(); return
+      }
+      if (payload.requestId === this.freeformCopyRequest) this.freeformCopyRequest = ''
+      const social = this.settleSocialRequest(payload.requestId)
+      if (social) {
+        const { key: socialKey, ui } = social
+        if (ui && !ui.pending) ui.error = payload.error || 'Could not update this feed. Try again.'
+        if (isSocialApp(this.currentApp) && socialKey === `${this.deviceIdentity().key}:${this.currentApp}` && this.expanded) this.render(false)
+        return
+      }
+      if (this.settledSocialRequests.has(payload.requestId)) return
+      const storeKey = this.storeSaves.get(payload.requestId)
+      if (storeKey) {
+        this.storeSaves.delete(payload.requestId)
+        const ui = this.storeSessions.get(storeKey)
+        if (ui) { ui.pending = false; ui.error = payload.error || 'Could not update this app. Try again.' }
+        if (storeKey === this.deviceIdentity().key && this.currentApp === 'appstore' && this.expanded) { this.render(false); this.focusStoreApp(ui?.focusApp) }
+        return
+      }
+      const launcherKey = this.launcherSaves.get(payload.requestId)
+      if (launcherKey) {
+        this.launcherSaves.delete(payload.requestId)
+        const ui = this.launcherSessions.get(launcherKey)
+        if (ui) { ui.pending = false; ui.error = payload.error || 'Could not save the layout. Try again.' }
+        if (launcherKey === this.deviceIdentity().key && this.currentApp === 'home' && this.expanded) this.render(false)
+        return
+      }
       if (payload.requestId === this.galleryRequestId) this.galleryLoading = false
       if (payload.requestId === this.trackerMutationRequest) this.trackerMutationRequest = ''
       if (payload.requestId === this.trackerJevRequest) { this.trackerJevRequest = ''; this.jevWorking = false }
@@ -1402,7 +1675,7 @@ class PocketController {
       const operation = this.operations.get(payload.requestId)
       if (operation) this.recordOperationProgress({ ...operation, phase: 'error', message: payload.error || 'Operation failed' })
       const galleryAction = this.galleryActionButtons.get(payload.requestId)
-      if (galleryAction) { galleryAction.button.disabled = false; galleryAction.button.textContent = galleryAction.idle; this.galleryActionButtons.delete(payload.requestId) }
+      if (galleryAction) { galleryAction.button.disabled = false; galleryAction.button.textContent = galleryAction.idle; if (galleryAction.feedback) { galleryAction.feedback.setAttribute('role', 'alert'); galleryAction.feedback.textContent = payload.error || 'Could not save. Try again.' }; this.galleryActionButtons.delete(payload.requestId) }
       const identitySaveError = this.screen.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]') || this.setupModalBody?.querySelector('[data-identity-request="' + CSS.escape(payload.requestId) + '"]')
       if (identitySaveError) {
         refreshIdentityProfileControls(this.screen, this.identityProfiles, true)
@@ -1441,7 +1714,7 @@ class PocketController {
     }
     this.operations.set(operation.requestId, operation)
     const updated = this.updateOperationProgress(operation)
-    if (this.currentApp === 'contacts' && !updated) this.render(false)
+    if (this.currentApp === 'contacts' && (terminal || !updated)) this.render(false)
     if (terminal) window.setTimeout(() => {
       if (this.operations.get(operation.requestId) !== operation) return
       this.operations.delete(operation.requestId)
@@ -1544,6 +1817,7 @@ class PocketController {
   }
 
   private showIncomingNotification(notification: PhoneNotification): void {
+    if (this.expanded && notification.app === 'messages' && this.currentApp === 'messages' && notification.route?.app === 'messages' && notification.route.conversationId === this.selectedConversationId) return
     if (this.state && !notificationBelongsToDevice(this.state, this.currentDeviceOwnerActorId(), notification.deviceOwnerActorId)) return
     if (!this.expanded) {
       this.launcher.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.12)' }, { transform: 'scale(1)' }], { duration: 360 })
@@ -1584,10 +1858,10 @@ class PocketController {
     this.shell.style.setProperty('--lp-text', appearance.colors.text)
     const homeWallpaper = wallpaperCss(appearance.colors.wallpaperPrimary, appearance.colors.wallpaperSecondary)
     const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
-    const homeSetting = persona?.enabled && persona.homeWallpaper.source ? persona.homeWallpaper : settings.homeWallpaper
-    const chatSetting = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : settings.chatWallpaper
-    const homeImage = (persona?.enabled && persona.homeWallpaper.source ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url
-    const chatImage = (persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url
+    const homeSetting = personaWallpaperActive(persona, 'home') ? persona!.homeWallpaper : settings.homeWallpaper
+    const chatSetting = personaWallpaperActive(persona, 'chat') ? persona!.chatWallpaper : settings.chatWallpaper
+    const homeImage = (personaWallpaperActive(persona, 'home') ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url
+    const chatImage = (personaWallpaperActive(persona, 'chat') ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url
     const imageLayer = (url: string, setting: typeof homeSetting, gradient: string) => url
       ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}`
       : gradient
@@ -1634,6 +1908,10 @@ class PocketController {
 
   private close(): void {
     this.voicePlayer.stop()
+    for (const ui of this.launcherSessions.values()) {
+      ui.placingSlot = undefined; ui.drawer = false; ui.query = ''
+      if (!ui.pending) { ui.draft = undefined; ui.selected = undefined; ui.selectedItem = undefined; ui.placingSlot = undefined; ui.folderId = undefined; ui.widgetPicker = false; ui.error = undefined }
+    }
     if (!this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
     this.shell.hidden = true
@@ -1668,8 +1946,8 @@ class PocketController {
     const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId())
     const persona = owner === pocketPersonaActorId(this.state) && this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null
     const appearance = persona?.enabled ? persona : this.preferences
-    const image = persona?.enabled && persona.chatWallpaper.source ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat
-    const wallpaper = persona?.enabled && persona.chatWallpaper.source ? persona.chatWallpaper : this.preferences.chatWallpaper
+    const image = personaWallpaperActive(persona, 'chat') ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat
+    const wallpaper = personaWallpaperActive(persona, 'chat') ? persona!.chatWallpaper : this.preferences.chatWallpaper
     const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
     const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
     return { appearance: this.preferences.inlineAppearance || 'cards', reducedMotion: this.preferences.reducedMotion || this.preferences.animation === 'none', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
@@ -1694,16 +1972,35 @@ class PocketController {
     this.openPocket(activity.route)
   }
 
+  private leaveLauncher(): boolean {
+    const ui = this.launcherSessions.get(this.deviceIdentity().key)
+    if (!ui || (!ui.drawer && !ui.draft && !ui.folderId && !ui.widgetPicker)) return false
+    if (ui.pending) return true
+    if (ui.folderId || ui.widgetPicker) { ui.folderId = undefined; ui.widgetPicker = false; this.render(false); this.screen.querySelector<HTMLElement>('[aria-label="Open app drawer"]')?.focus({ preventScroll: true }); return true }
+    const focus = ui.draft ? 'Edit home screen' : 'Open app drawer'
+    ui.placingSlot = undefined; ui.drawer = false; ui.query = ''; ui.draft = undefined; ui.selected = undefined; ui.selectedItem = undefined; ui.error = undefined
+    this.render(false)
+    this.screen.querySelector<HTMLElement>(`[aria-label="${focus}"]`)?.focus({ preventScroll: true })
+    return true
+  }
+
   private back(): void {
     this.openPocket(this.router.back(), false)
   }
 
   private home(): void {
+    const ui = this.launcherSessions.get(this.deviceIdentity().key)
+    if (ui) { ui.drawer = false; ui.query = ''; ui.placingSlot = undefined; ui.folderId = undefined; ui.widgetPicker = false }
     this.openPocket(this.router.home(), false)
   }
 
   private openPocket(routeInput: PocketRoute, pushHistory = true): void {
-    const normalized = normalizePocketRoute(routeInput)
+    let normalized = normalizePocketRoute(routeInput)
+    if (this.state && LAUNCHER_APPS.some(entry => entry.app === normalized.app) && !pocketAppInstalled(normalizeLauncherLayout(this.state.launcherLayouts?.[this.currentDeviceOwnerActorId()]), normalized.app)) {
+      const key = this.deviceIdentity().key, ui = this.storeSessions.get(key) || {}
+      ui.focusApp = normalized.app as typeof LAUNCHER_APPS[number]['app']; ui.query = ''; ui.filter = 'all'; this.storeSessions.set(key, ui)
+      normalized = { app: 'appstore' }
+    }
     const route = this.router.navigate(normalized, !pushHistory)
     if (!this.state) {
       this.pendingRoute = route
@@ -1713,6 +2010,7 @@ class PocketController {
     }
     if (!this.expanded) this.open()
     if (this.currentApp === 'settings' && route.app !== 'settings') this.settingsDraft = null
+    if (this.currentApp === 'calendar' && route.app !== 'calendar') this.pendingEventSuggestion = null
     this.currentApp = route.app
     if (route.app === 'messages') {
       const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state)
@@ -1721,6 +2019,7 @@ class PocketController {
       this.selectedConversationId = conversation?.id || ''
       this.selectedConversationView = route.view || 'thread'
       this.selectedMessageId = conversation && route.messageId && conversation.messages.some((entry) => entry.id === route.messageId) ? route.messageId : ''
+      this.pendingMessageScrollId = this.selectedMessageId
       this.send('lumiphone:mark_read', conversation ? { app: 'messages', conversationId: conversation.id } : { app: 'messages' })
     } else if (route.app === 'contacts') {
       const contact = route.contactId ? this.state.contacts.find((entry) => entry.id === route.contactId) : null
@@ -1746,6 +2045,7 @@ class PocketController {
         this.cameraPreview = ''; this.cameraReady = false; this.cameraRequestId = ''; this.cameraBusy = false; this.cameraProgress = ''
         const contact = this.state.contacts.find(entry => entry.id === contactId)
         this.cameraNpcDraft = route.draft ? this.npcDraft : null
+        this.cameraVariants = []
         const subject = contact || this.cameraNpcDraft
         this.cameraDraft = { scene: subject ? [`Portrait of ${subject.name}`, subject.phoneProfile?.appearance || subject.identityBrief, 'Head and shoulders, one subject, looking at the camera, clean background'].filter(Boolean).map(part => part.trim().replace(/[.!]+$/, '')).join('. ') + '.' : '', enhance: false }
         this.cameraOptions = { purpose: route.draft ? 'draft' : contactId ? 'contact' : 'scene', aspect: contactId ? '1:1' : '', connectionId: '', model: '' }
@@ -1811,6 +2111,7 @@ class PocketController {
   }
 
   private mountInlineArtifacts(): void {
+    if (this.freeformSession) return
     const active = this.activeContext()
     const entries: PhoneSequenceEntry[] = []
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
@@ -1891,6 +2192,7 @@ class PocketController {
   }
 
   private queueActivityReceipt(activity: PocketActivity): void {
+    if (this.freeformSession) return
     const active = this.activeContext()
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) return
     if (this.tryRenderInlineArtifact(activity)) return
@@ -1926,14 +2228,26 @@ class PocketController {
   }
 
   private render(transition = false): void {
+    if (!transition && this.state && this.currentApp === 'appstore') {
+      const mounted = this.screen.querySelector<HTMLDivElement>('.lumiphone-app-view[data-store-device]')
+      if (mounted?.dataset.storeDevice === this.deviceIdentity().key && updateAppStoreView(mounted, normalizeLauncherLayout(this.state.launcherLayouts?.[this.currentDeviceOwnerActorId()]))) {
+        this.applyAppearance(); return
+      }
+    }
     const oldView = this.screen.querySelector<HTMLElement>('.lumiphone-app-view')
     const oldViewScroll = oldView?.scrollTop || 0
     const oldThread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
-    const oldEventStripOpen = this.screen.querySelector<HTMLDetailsElement>('.lp-event-strip')?.open
-    const oldScheduledInvites = new Set([...this.screen.querySelectorAll<HTMLElement>('.lp-event-strip [data-suggestion-id]')].map(card => card.dataset.suggestionId))
+    const pendingMessageScroll = this.currentApp === 'messages' ? this.pendingMessageScrollId : ''
+    const focusedReplyControl = this.screen.contains(document.activeElement) && Boolean(document.activeElement?.matches('.lp-compose > button'))
     const oldThreadScroll = oldThread?.scrollTop
+    const oldMessageComposerHeight = oldThread?.parentElement?.querySelector<HTMLTextAreaElement>('[data-pocket-composer]')?.style.height
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false
     const focusedDockSide = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
+    const focusedContact = this.currentApp === 'contacts' && this.screen.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.contactFocus : ''
+    const focusedSocial = this.screen.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.socialFocus : ''
+    const socialSelection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : undefined
+    const focusedLauncher = this.screen.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.launcherFocus : ''
+    const focusedLauncherSelection = document.activeElement instanceof HTMLInputElement && focusedLauncher ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : ''
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
     for (const cleanup of this.viewCleanups.splice(0)) cleanup()
@@ -1952,6 +2266,8 @@ class PocketController {
       : this.currentApp === 'calendar' ? this.renderCalendar()
       : this.currentApp === 'trackers' ? this.renderTrackers()
       : this.currentApp === 'notifications' ? this.renderNotifications()
+      : this.currentApp === 'appstore' ? this.renderStore()
+      : isSocialApp(this.currentApp) ? this.renderSocial(this.currentApp)
       : this.renderSettings()
     view.classList.add('lumiphone-app-view')
     if (this.currentApp === 'contacts' && ['config', 'new', 'draft'].includes(this.selectedContactView)) {
@@ -1969,16 +2285,47 @@ class PocketController {
       view.addEventListener('animationend', () => view.removeAttribute('data-animate'), { once: true })
     }
     this.screen.replaceChildren(view)
-    if (!transition && oldEventStripOpen) {
-      const strip = view.querySelector<HTMLDetailsElement>('.lp-event-strip')
-      if (strip && [...strip.querySelectorAll<HTMLElement>('[data-suggestion-id]')].every(card => oldScheduledInvites.has(card.dataset.suggestionId))) strip.open = true
+    const replacementThread = view.querySelector<HTMLElement>('[data-pocket-thread]')
+    if (view.matches('.lp-thread')) view.scrollTop = 0
+    // Restore the logical anchor before another synchronous state/completion update can read it.
+    if (replacementThread && oldThreadScroll !== undefined && replacementThread.dataset.pocketThread === oldThread?.dataset.pocketThread && !pendingMessageScroll) {
+      if (oldMessageComposerHeight) {
+        const composer = view.querySelector<HTMLTextAreaElement>('[data-pocket-composer]')
+        if (composer) composer.style.height = oldMessageComposerHeight
+      }
+      replacementThread.scrollTop = oldThreadNearBottom ? replacementThread.scrollHeight : oldThreadScroll
     }
+    // A reply can deliver state and completion back-to-back before the next frame.
+    // Keep focus in its replacement controls now so the next render can preserve it too.
+    if (!transition && this.currentApp === 'discord' && focusedSocial === 'Channels' && !view.contains(document.activeElement)) {
+      const target = [...view.querySelectorAll<HTMLElement>('[data-social-focus]')].find(node => node.dataset.socialFocus === focusedSocial && !node.closest('[hidden],details:not([open])'))
+      target?.focus({ preventScroll: true })
+      if (target instanceof HTMLTextAreaElement && socialSelection) target.setSelectionRange(...socialSelection)
+    }
+    if (!transition && focusedReplyControl && !view.contains(document.activeElement)) view.querySelector<HTMLButtonElement>('.lp-compose > button')?.focus({ preventScroll: true })
+    if (!transition && focusedComposer && !view.contains(document.activeElement)) {
+      const composer = view.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`)
+      composer?.focus({ preventScroll: true })
+      if (composer && selection) composer.setSelectionRange(selection[0], selection[1])
+    }
+    if (pendingMessageScroll) requestAnimationFrame(() => {
+      if (view.isConnected && this.screen.contains(view) && this.pendingMessageScrollId === pendingMessageScroll) this.pendingMessageScrollId = ''
+    })
     if (!transition) requestAnimationFrame(() => {
-      view.scrollTop = oldViewScroll
+      if (this.destroyed || !view.isConnected || !this.screen.contains(view)) return
+      if (!view.dataset.storeDevice && !view.matches('.lp-thread')) view.scrollTop = oldViewScroll
+      if (focusedContact && !view.contains(document.activeElement)) [...view.querySelectorAll<HTMLElement>('[data-contact-focus]')].find(node => node.dataset.contactFocus === focusedContact)?.focus({ preventScroll: true })
+      if (focusedSocial && !view.contains(document.activeElement)) view.querySelectorAll<HTMLElement>('[data-social-focus]').forEach(node => { if (node.dataset.socialFocus === focusedSocial && !node.closest('[hidden],details:not([open])')) { node.focus({ preventScroll: true }); if (node instanceof HTMLTextAreaElement && socialSelection) node.setSelectionRange(...socialSelection) } })
+      if (focusedLauncher) view.querySelectorAll<HTMLElement>('[data-launcher-focus]').forEach(node => {
+        if (node.dataset.launcherFocus !== focusedLauncher) return
+        node.focus({ preventScroll: true })
+        if (node instanceof HTMLInputElement && node.type !== 'search' && focusedLauncherSelection) node.setSelectionRange(...focusedLauncherSelection)
+      })
       const thread = this.screen.querySelector<HTMLElement>('[data-pocket-thread]')
-      if (thread && oldThreadScroll !== undefined) thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll
+      if (thread && oldThreadScroll !== undefined && thread.dataset.pocketThread === oldThread?.dataset.pocketThread && !pendingMessageScroll) thread.scrollTop = oldThreadNearBottom ? thread.scrollHeight : oldThreadScroll
+      if (focusedReplyControl && !view.contains(document.activeElement)) view.querySelector<HTMLButtonElement>('.lp-compose > button')?.focus({ preventScroll: true })
       if (focusedDockSide) this.screen.querySelector<HTMLSelectElement>('select[aria-label="Desktop phone side"]')?.focus({ preventScroll: true })
-      if (focusedComposer) {
+      if (focusedComposer && !view.contains(document.activeElement)) {
         const composer = this.screen.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`)
         composer?.focus({ preventScroll: true })
         if (composer && selection) composer.setSelectionRange(selection[0], selection[1])
@@ -2011,22 +2358,144 @@ class PocketController {
     return { page, content }
   }
 
+  private focusStoreApp(app?: string): void {
+    const preferred = this.storeSessions.get(this.deviceIdentity().key)?.actionFocus || `app:${app}`
+    const focus = [...this.screen.querySelectorAll<HTMLElement>('[data-store-focus]')].find(node => node.dataset.storeFocus === preferred && !node.closest('[hidden]'))
+    const target = focus || this.screen.querySelector<HTMLElement>('.lp-store-filter[aria-pressed="true"]') || this.screen.querySelector<HTMLElement>('[data-store-focus="search"]')
+    target?.focus({ preventScroll: true })
+  }
+
+  private refreshSocialImageView(key: string): void {
+    if (!this.destroyed && isSocialApp(this.currentApp) && key === `${this.deviceIdentity().key}:${this.currentApp}` && this.expanded) this.render(false)
+  }
+
+  private beginSocialImage(key: string, app: SocialApp, progress: string, targetServer?: string): string {
+    const ui = this.socialSessions.get(key)!, id = requestId('social_photo')
+    this.socialImages.set(id, { key, app, context: this.activeContext(), owner: this.currentDeviceOwnerActorId(), targetServer, previousId: ui.imageId, previousPreview: ui.imagePreview })
+    ui.imageRequestId = id; ui.imageBusy = true; ui.imageProgress = progress; ui.error = undefined
+    this.refreshSocialImageView(key)
+    return id
+  }
+
+  private cancelSocialImage(id: string): void {
+    const job = this.socialImages.get(id)
+    if (!job) return
+    this.socialImages.delete(id)
+    const ui = this.socialSessions.get(job.key)
+    if (ui?.imageRequestId === id) { ui.imageRequestId = undefined; ui.imageBusy = false; ui.imageProgress = 'Photo operation stopped.'; ui.imageId = job.previousId; ui.imagePreview = job.previousPreview }
+    this.send('lumiphone:social_photo_cancel', { ...job.context, deviceOwnerActorId: job.owner, requestId: id, app: job.app })
+    this.refreshSocialImageView(job.key)
+  }
+
+  private handleSocialImage(payload: BackendPayload): boolean {
+    const job = this.socialImages.get(payload.requestId)
+    if (!job || !['lumiphone:camera_progress', 'lumiphone:camera_done', 'lumiphone:camera_cancelled', 'lumiphone:social_photo_uploaded', 'lumiphone:error'].includes(payload.type)) return false
+    const ui = this.socialSessions.get(job.key)
+    if (!ui || ui.imageRequestId !== payload.requestId) { this.socialImages.delete(payload.requestId); return true }
+    if (payload.type === 'lumiphone:camera_progress') {
+      ui.imageProgress = payload.message || (payload.phase === 'preview' ? 'Your photo is developing…' : 'Making your photo…')
+      if (payload.imageDataUrl) ui.imagePreview = payload.imageDataUrl
+    } else {
+      this.socialImages.delete(payload.requestId); ui.imageRequestId = undefined; ui.imageBusy = false
+      if (payload.type === 'lumiphone:error' || payload.type === 'lumiphone:camera_cancelled' || !payload.imageId) {
+        ui.imageId = job.previousId; ui.imagePreview = job.previousPreview
+        ui.imageProgress = payload.type === 'lumiphone:camera_cancelled' ? 'Photo operation stopped.' : undefined
+        if (payload.type !== 'lumiphone:camera_cancelled') ui.error = payload.error || 'No photo came back. Your draft is still here; try again.'
+      } else if (job.targetServer !== undefined) {
+        ui.imageProgress = undefined
+        if (job.targetServer) {
+          const id = this.send('lumiphone:social_mutate', { ...job.context, deviceOwnerActorId: job.owner, app: 'discord', action: 'server', serverId: job.targetServer, imageId: payload.imageId })
+          ui.pending = id; this.socialRequests.set(id, job.key)
+        } else ui.serverImage = { id: payload.imageId, url: payload.imageUrl || '' }
+      } else {
+        ui.imageId = payload.imageId; ui.imagePreview = payload.imageUrl || ''; ui.imageProgress = 'Photo attached. Ready when you are.'; ui.mediaOpen = true; ui.composing = true
+      }
+    }
+    this.refreshSocialImageView(job.key)
+    return true
+  }
+
+  private async uploadSocialImage(key: string, app: SocialApp, targetServer?: string): Promise<void> {
+    const ui = this.socialSessions.get(key)
+    if (!ui || ui.imageBusy || ui.pending) return
+    const deviceKey = this.deviceIdentity().key, id = this.beginSocialImage(key, app, 'Choose a photo…', targetServer), job = this.socialImages.get(id)!
+    try {
+      const files = await this.ctx.uploads.pickFile({ accept: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], multiple: false, maxSizeBytes: 8 * 1024 * 1024 })
+      const file = files[0]
+      if (!this.socialImages.has(id) || this.destroyed) return
+      if (!file || this.deviceIdentity().key !== deviceKey) { this.cancelSocialImage(id); return }
+      if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.mimeType) || file.bytes.length > 8 * 1024 * 1024) throw new Error('Choose a PNG, JPEG, WebP, or GIF photo up to 8 MB.')
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || '')); reader.onerror = () => reject(reader.error || new Error('Could not read this photo.'))
+        reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }))
+      })
+      if (!this.socialImages.has(id) || this.destroyed || this.deviceIdentity().key !== deviceKey) { this.cancelSocialImage(id); return }
+      ui.imageProgress = 'Uploading your photo…'; this.refreshSocialImageView(key)
+      this.send('lumiphone:social_photo_upload', { ...job.context, deviceOwnerActorId: job.owner, requestId: id, app, ...(job.targetServer !== undefined ? { targetServer: job.targetServer } : {}), dataUrl, filename: file.name })
+    } catch (error) { this.handleSocialImage({ type: 'lumiphone:error', requestId: id, error: error instanceof Error ? error.message : 'Could not upload this photo.' }) }
+  }
+
+  private renderSocial(app: SocialApp): HTMLDivElement {
+    const key = `${this.deviceIdentity().key}:${app}`, owner = this.currentDeviceOwnerActorId()
+    let ui = this.socialSessions.get(key)
+    if (!ui) { ui = {}; this.socialSessions.set(key, ui) }
+    return renderSocialView({ state: this.state!, owner, app, ui, gallery: this.gallery, npcBank: this.npcBank,
+      bankGroups: this.npcBankGroups, page: (title, subtitle) => this.page(title, subtitle), render: () => this.render(false), home: () => this.home(),
+      photos: () => { this.requestGallery('chat'); this.render(false) },
+      generateParticipants: serverId => {
+        if (ui!.pending) return
+        ui!.error = undefined; ui!.status = 'Finding people for this server…'
+        const id = this.send('lumiphone:social_participants_generate', { serverId }); ui!.pending = id; this.socialRequests.set(id, key); this.render(false)
+      },
+      dmSend: (accountId, text, threadId) => {
+        if (ui!.dmBusy || !text.trim()) return
+        ui!.dmBusy = true; ui!.dmError = undefined
+        const id = this.send('lumiphone:social_dm_send', { app, accountId, text, threadId }); this.socialDmRequests.set(id, { key, accountId }); this.render(false)
+      },
+      generatePhoto: prompt => {
+        if (!prompt.trim() || ui!.imageBusy || ui!.pending) return
+        const id = this.beginSocialImage(key, app, 'Making your photo…')
+        this.send('lumiphone:social_photo_generate', { requestId: id, app, scene: prompt.trim(), aspect: app === 'instagram' ? '1:1' : '4:3' })
+      },
+      uploadPhoto: () => { void this.uploadSocialImage(key, app) },
+      uploadServerPicture: serverId => { void this.uploadSocialImage(key, 'discord', serverId || '') },
+      searchGifs: query => new Promise<SocialGif[]>((resolve,reject) => {
+        const id = this.send('lumiphone:social_gif_search', { app, query })
+        const timer = setTimeout(() => { this.socialGifRequests.delete(id); reject(new Error('Tenor took too long. Try again.')) }, 15000)
+        this.socialGifRequests.set(id, { resolve,reject,timer })
+      }),
+      cancelPhoto: () => { if (ui!.imageRequestId) this.cancelSocialImage(ui!.imageRequestId) },
+      cancel: () => { if (ui!.pending) this.send('lumiphone:social_cancel', { app, operationRequestId: ui!.pending }) },
+      request: input => {
+        if (ui!.pending) return
+        ui!.error = undefined; ui!.status = input.action === 'refresh' ? 'Refreshing…' : 'Saving…'; ui!.refreshing = input.action === 'refresh'
+        const id = this.send(input.action === 'refresh' ? 'lumiphone:social_refresh' : 'lumiphone:social_mutate', { ...input })
+        ui!.pending = id; this.socialRequests.set(id, key); if (input.action === 'refresh') this.socialRequestModes.set(id, 'refresh'); this.render(false)
+      },
+    })
+  }
+
+  private renderStore(): HTMLDivElement {
+    const key = this.deviceIdentity().key, owner = this.currentDeviceOwnerActorId()
+    let ui = this.storeSessions.get(key)
+    if (!ui) { ui = {}; this.storeSessions.set(key, ui) }
+    const view = renderAppStoreView({
+      layout: normalizeLauncherLayout(this.state!.launcherLayouts?.[owner]), ui,
+      page: () => this.page('App Store', 'Pocket apps'), open: app => this.openApp(app),
+      onCleanup: cleanup => this.viewCleanups.push(cleanup),
+      install: (app, installed, focusKey) => {
+        ui!.pending = true; ui!.error = undefined; ui!.focusApp = app; ui!.actionFocus = focusKey || `app:${app}`
+        const id = this.send('lumiphone:app_install', { appId: app, installed }); this.storeSaves.set(id, key); this.render(false)
+      },
+    })
+    view.dataset.storeDevice = key
+    return view
+  }
+
   private renderHome(): HTMLDivElement {
     const state = this.state!
-    const home = el('div', 'lp-home')
-    const head = el('div', 'lp-home-head')
-    const left = el('div')
-    const roleplayClockText = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact'
-      ? clockLabel(state.roleplayClockLabel) || 'Story time'
-      : formatTime(state.roleplayNow)
-    left.append(el('div', 'lp-home-date', formatDate(state.roleplayNow, false)), el('div', 'lp-home-clock', roleplayClockText))
-    const weather = el('button', 'lp-home-weather')
-    weather.type = 'button'
-    weather.append(icon('weather'), el('span', '', `${state.weather.temperature}°${state.weather.unit} · ${state.weather.condition}`))
-    weather.addEventListener('click', () => this.openApp('weather'))
-    head.append(left, weather)
-    const grid = el('div', 'lp-app-grid')
-    for (const meta of APP_META.filter((entry) => !entry.dock)) grid.appendChild(this.appIcon(meta))
+    const extras: HTMLElement[] = []
     const activity = el('div', 'lp-home-activity')
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(state)
     const recentNotifications = state.notifications.filter((entry) => !entry.dismissedAt && !entry.read && notificationBelongsToDevice(state, owner, entry.deviceOwnerActorId)).slice(0, 3)
@@ -2045,9 +2514,6 @@ class PocketController {
       all.addEventListener('click', () => this.openPocket({ app: 'notifications' }))
       activity.appendChild(all)
     }
-    const dock = el('div', 'lp-home-dock')
-    for (const meta of APP_META.filter((entry) => entry.dock)) dock.appendChild(this.appIcon(meta))
-    home.append(head)
     if (!state.setup.initialized && !state.setup.dismissed && owner === pocketPersonaActorId(state)) {
       const prompt = el('section', 'lp-home-setup')
       prompt.setAttribute('aria-label', 'Set up Pocket')
@@ -2057,27 +2523,35 @@ class PocketController {
       run.addEventListener('click', () => this.showFirstChatSetup(true))
       const skip = button('Skip', 'lp-button lp-button-quiet')
       skip.addEventListener('click', () => { this.send('lumiphone:dismiss_setup'); prompt.remove() })
-      actions.append(run, skip); prompt.append(actions); home.append(prompt)
+      actions.append(run, skip); prompt.append(actions); extras.push(prompt)
     }
-    home.append(grid)
-    if (activity.childElementCount) home.appendChild(activity)
-    home.appendChild(dock)
-    return home
+    if (activity.childElementCount) extras.push(activity)
+    const key = this.deviceIdentity().key
+    let ui = this.launcherSessions.get(key)
+    if (!ui) { ui = {}; this.launcherSessions.set(key, ui) }
+    return renderLauncher({
+      state, layout: normalizeLauncherLayout(state.launcherLayouts?.[owner]), ui,
+      openTracker: id => this.openPocket({ app: 'trackers', trackerId: id, view: 'detail' }),
+      onCleanup: cleanup => this.viewCleanups.push(cleanup),
+      appIcon: (meta, activate) => this.appIcon(meta, activate),
+      open: app => this.openApp(app),
+      save: layout => { const id = this.send('lumiphone:save_launcher', { layout }); this.launcherSaves.set(id, key) },
+    }, extras)
   }
 
-  private appIcon(meta: typeof APP_META[number]): HTMLButtonElement {
+  private appIcon(meta: typeof APP_META[number], activate?: () => void): HTMLButtonElement {
     const node = el('button', 'lp-app-icon')
     node.type = 'button'
     node.setAttribute('aria-label', meta.label)
     const box = el('span', `lp-app-icon-box lp-icon-${meta.icon}`)
-    box.appendChild(icon(meta.icon))
+    box.appendChild(launcherIcon(meta.app))
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     const unread = meta.app === 'messages'
       ? this.state!.conversations.reduce((sum, conversation) => sum + conversationUnreadForDevice(this.state!, conversation, owner), 0)
       : this.state!.notifications.filter((item) => !item.read && !item.dismissedAt && item.app === meta.app && notificationBelongsToDevice(this.state!, owner, item.deviceOwnerActorId)).length
     if (unread) box.appendChild(el('span', 'lp-app-dot', unread > 99 ? '99+' : String(unread)))
     node.append(box, el('span', 'lp-app-label', meta.label))
-    node.addEventListener('click', () => this.openApp(meta.app))
+    node.addEventListener('click', activate || (() => this.openApp(meta.app)))
     return node
   }
 
@@ -2088,7 +2562,8 @@ class PocketController {
       state: this.state!, selectedConversationId: this.selectedConversationId,
       renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
       deviceOwnerActorId: owner, readOnlyDevice: owner !== pocketPersonaActorId(this.state!),
-      selectedMessageId: this.selectedMessageId,
+      selectedMessageId: this.selectedMessageId, scrollToMessageId: this.pendingMessageScrollId,
+      preserveThreadScroll: !this.pendingMessageScrollId && this.screen.querySelector<HTMLElement>('[data-pocket-thread]')?.dataset.pocketThread === this.selectedConversationId,
       selectedView: this.selectedConversationView,
       groupDraft: this.groupDrafts.get(`${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId || 'new'}`),
       updateGroupDraft: draft => { this.groupDrafts.set(`${this.state!.chatId}:${this.state!.characterId}:${this.selectedConversationId || 'new'}`, draft) },
@@ -2132,7 +2607,7 @@ class PocketController {
       continueArrival: (conversationId) => { this.send('lumiphone:continue_arrival', { conversationId }) },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
-      quickstartEvent: (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
+      quickstartEvent: isFreeformChat(this.state?.chatId) ? undefined : (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
       declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
@@ -2181,7 +2656,7 @@ class PocketController {
     const suggestion = message?.eventSuggestion
     if (!conversation || !message || !suggestion || suggestion.status !== 'pending') return
     this.pendingEventSuggestion = { conversationId, messageId, suggestion: structuredClone(suggestion) }
-    this.openPocket({ app: 'calendar', eventId: '__new__' })
+    this.openPocket({ app: 'calendar', eventId: suggestion.updateEventId || '__new__' })
   }
 
   private declineEventSuggestion(conversationId: string, messageId: string): void {
@@ -2196,7 +2671,7 @@ class PocketController {
     })
     requestAnimationFrame(() => {
       const composer = this.screen.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(conversationId)}"]`)
-      composer?.focus({ preventScroll: false })
+      composer?.focus({ preventScroll: true })
       composer?.classList.add('lp-scheduler-composer-focus')
       window.setTimeout(() => composer?.classList.remove('lp-scheduler-composer-focus'), 900)
     })
@@ -2430,7 +2905,10 @@ class PocketController {
 
   private renderContacts(): HTMLDivElement {
     const collectionKey = `${this.state!.chatId}:${this.state!.characterId}:${this.selectedContactView}:${this.selectedContactGroupId}:${this.selectedContactId}`
+    const browserKey = `${this.state!.chatId}:${this.state!.characterId}:${this.deviceOwnerActorId}`
+    if (!this.contactBrowsers.has(browserKey)) this.contactBrowsers.set(browserKey, {})
     return renderContactsView({
+      browser: this.contactBrowsers.get(browserKey),
       state: this.state!, selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
       generationBrief: this.npcBriefs.get(`${this.state!.chatId}:${this.state!.characterId}`) || '',
       updateGenerationBrief: brief => { this.npcBriefs.set(`${this.state!.chatId}:${this.state!.characterId}`, brief) },
@@ -2502,6 +2980,7 @@ class PocketController {
 
   private chooseContactPhoto(contactId = '__draft__'): void {
     if (contactId === '__draft__' && !this.npcDraft) return
+    this.pendingWallpaperSelection = null
     this.pendingContactPhotoDraft = contactId === '__draft__' ? this.npcDraft : null
     this.pendingWallpaperTarget = 'contact-avatar'
     this.pendingContactPhotoId = contactId
@@ -2565,106 +3044,81 @@ class PocketController {
   }
 
   private inspectImage(item: GalleryResult['data'][number]): void {
-    const modal = this.ctx.ui.showModal({ title: item.filename || 'Pocket photo', width: 760, maxHeight: 820 })
-    const image = el('img')
-    image.src = item.fullUrl || item.url
-    image.alt = item.filename || 'Pocket photo'
-    image.style.cssText = 'display:block;width:100%;max-height:76vh;object-fit:contain;border-radius:12px;background:#080808'
-    const actions = el('div', 'lp-gallery-actions')
-    if (item.canDelete) {
-      const remove = button('Delete photo', 'lp-button lp-button-quiet')
-      remove.addEventListener('click', () => {
-        const confirmation = el('div', 'lp-camera-sheet-fields')
-        confirmation.append(el('p', 'lp-copy', 'Permanently delete this Pocket photo from Lumiverse Gallery? Chats, avatars and wallpapers using it may lose their image. This cannot be undone.'))
-        const cancel = button('Keep photo', 'lp-button')
-        const confirm = button('Permanently delete', 'lp-button')
-        const sheet = showPocketSheet(remove, 'Delete photo?', confirmation)
-        cancel.addEventListener('click', () => sheet?.dismiss())
-        confirm.addEventListener('click', () => { this.runGalleryAction(confirm, 'Deleting…', 'lumiphone:gallery_delete', { imageId: item.id, scope: this.galleryScope, offset: this.gallery.offset || 0, confirmed: true }); sheet?.dismiss(); modal.dismiss() })
-        confirmation.append(cancel, confirm)
-      })
-      actions.append(remove)
-    }
-    if (this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId) {
-      const contactId = this.pendingContactPhotoId
-      const targetContact = this.state?.contacts.find((entry) => entry.id === contactId)
-      const draft = contactId === '__draft__' ? this.pendingContactPhotoDraft : null
-      const use = button(`Use for ${draft?.name || targetContact?.name || 'contact'}`, 'lp-button lp-button-primary')
-      use.addEventListener('click', () => {
-        if (draft) {
-          if (draft !== this.npcDraft) { this.showFeedback('That NPC preview has changed. Choose its portrait again.'); return }
-          draft.avatarUrl = item.fullUrl || item.url; draft.avatarSource = { kind: 'gallery', imageId: item.id }; draft.avatarFocus = { x: 50, y: 50 }
-          modal.dismiss(); this.openPocket({ app: 'contacts', view: 'quick-gen' })
-        } else this.runGalleryAction(use, 'Applying…', 'lumiphone:set_contact_photo', { contactId, imageId: item.id, imageUrl: item.fullUrl || item.url })
-        this.pendingContactPhotoDraft = null
-        this.pendingWallpaperTarget = null
-        this.pendingContactPhotoId = ''
-      })
-      actions.appendChild(use)
-    } else if (this.pendingWallpaperTarget) {
-      const target = this.pendingWallpaperTarget
-      const use = button('Use this image', 'lp-button')
-      use.addEventListener('click', () => {
-        const personaTarget = target.startsWith('persona-')
-        this.runGalleryAction(use, 'Applying…', 'lumiphone:gallery_set_wallpaper', {
-          imageId: item.id, target: target.endsWith('chat') ? 'chat' : 'home', personaId: personaTarget ? this.activePersona?.id : undefined,
-        })
-        this.pendingWallpaperTarget = null
-      })
-      actions.appendChild(use)
-    }
-    const open = button('Open image', 'lp-button')
-    open.addEventListener('click', () => window.open(item.fullUrl || item.url, '_blank', 'noopener,noreferrer'))
-    const attach = button('Add to current RP chat', 'lp-button')
-    attach.disabled = !this.caps?.sceneSync
-    attach.addEventListener('click', () => this.runGalleryAction(attach, 'Adding…', 'lumiphone:gallery_add_to_chat', { imageId: item.id, imageUrl: item.fullUrl || item.url, filename: item.filename }))
-    const homeWallpaper = button('Set as home wallpaper', 'lp-button lp-button-quiet')
-    homeWallpaper.addEventListener('click', () => this.runGalleryAction(homeWallpaper, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'home' }))
-    const chatWallpaper = button('Set as chat wallpaper', 'lp-button lp-button-quiet')
-    chatWallpaper.addEventListener('click', () => this.runGalleryAction(chatWallpaper, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'chat' }))
-    const contact = el('select', 'lp-select')
-    const choose = el('option', '', 'Choose a contact photo…'); choose.value = ''; contact.appendChild(choose)
-    for (const entry of this.state?.contacts || []) {
-      const option = el('option', '', entry.name); option.value = entry.id; contact.appendChild(option)
-    }
-    const setPhoto = button('Set contact photo', 'lp-button lp-button-quiet')
-    setPhoto.addEventListener('click', () => {
-      if (!contact.value) { this.showError('Choose a contact first.'); return }
-      this.runGalleryAction(setPhoto, 'Applying…', 'lumiphone:set_contact_photo', { contactId: contact.value, imageId: item.id, imageUrl: item.fullUrl || item.url })
-    })
-    const uses = el('div', 'lp-sheet-actions')
-    const useAs = button('Use as…', 'lp-button')
-    useAs.addEventListener('click', () => showPocketSheet(useAs, 'Use photo as', uses))
-    actions.append(attach, useAs, open)
-    uses.append(homeWallpaper, chatWallpaper)
-    const personaAppearance = this.activePersona ? this.preferences.personaAppearance[this.activePersona.id] : null
-    if (this.activePersona && personaAppearance?.enabled) {
-      const personaHome = button(`Set ${this.activePersona.name} home wallpaper`, 'lp-button lp-button-quiet')
-      personaHome.addEventListener('click', () => this.runGalleryAction(personaHome, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'home', personaId: this.activePersona!.id }))
-      const personaChat = button(`Set ${this.activePersona.name} chat wallpaper`, 'lp-button lp-button-quiet')
-      personaChat.addEventListener('click', () => this.runGalleryAction(personaChat, 'Applying…', 'lumiphone:gallery_set_wallpaper', { imageId: item.id, imageUrl: item.fullUrl || item.url, target: 'chat', personaId: this.activePersona!.id }))
-      uses.append(personaHome, personaChat)
-    }
-    if (!(this.pendingWallpaperTarget === 'contact-avatar' && this.pendingContactPhotoId)) uses.append(fieldBlock('Contact photo', contact), setPhoto)
+    const modal=this.ctx.ui.showModal({title:item.filename||'Pocket photo',width:760,maxHeight:820})
     modal.root.classList.add('lp-media-viewer')
-    modal.root.append(image, actions)
+    const image=el('img');image.src=item.fullUrl||item.url;image.alt=item.filename||'Pocket photo'
+    image.style.cssText='display:block;width:100%;max-height:65vh;object-fit:contain;border-radius:12px;background:#080808'
+    const actions=el('div','lp-gallery-actions'),feedback=el('p','lp-wallpaper-result');feedback.setAttribute('role','status')
+    const originatingSelection=this.pendingWallpaperSelection
+    const finish=(selection:typeof this.pendingWallpaperSelection)=>{
+      if(selection && this.pendingWallpaperSelection===selection){this.pendingWallpaperSelection=null;this.pendingWallpaperTarget=null}
+      if (!modal.root.isConnected) return
+      modal.dismiss()
+      if(selection && this.currentApp==='gallery' && selection.contextKey===this.activeContext().chatId+':'+this.activeContext().characterId)this.openPocket(this.router.settle(selection.route),false)
+    }
+    if(this.pendingWallpaperTarget==='contact-avatar' && this.pendingContactPhotoId){
+      const contactId=this.pendingContactPhotoId,draft=contactId==='__draft__'?this.pendingContactPhotoDraft:null
+      const use=button(`Use for ${draft?.name||this.state?.contacts.find(entry=>entry.id===contactId)?.name||'contact'}`,'lp-button lp-button-primary')
+      use.onclick=()=>{
+        const done=()=>{this.pendingWallpaperTarget=null;this.pendingContactPhotoId='';this.pendingContactPhotoDraft=null;modal.dismiss()}
+        if(draft){if(draft!==this.npcDraft){feedback.textContent='That NPC preview changed. Choose its portrait again.';return}
+          draft.avatarUrl=item.fullUrl||item.url;draft.avatarSource={kind:'gallery',imageId:item.id};draft.avatarFocus={x:50,y:50};done();this.openPocket({app:'contacts',view:'quick-gen'})
+        }else this.runGalleryAction(use,'Saving…','lumiphone:set_contact_photo',{contactId,imageId:item.id,imageUrl:item.fullUrl||item.url},{feedback,complete:done})
+      };actions.append(use)
+    }else if(this.pendingWallpaperSelection){
+      const selection=this.pendingWallpaperSelection,use=button('Set '+wallpaperDestinationLabel(selection),'lp-button lp-button-primary')
+      use.onclick=()=>this.runGalleryAction(use,'Saving…','lumiphone:gallery_set_wallpaper',{imageId:item.id,...selection},{feedback,complete:()=>finish(selection)})
+      actions.append(use)
+    }
+    const open=button('Open image','lp-button');open.onclick=()=>window.open(item.fullUrl||item.url,'_blank','noopener,noreferrer')
+    const attach=button('Add to current RP chat','lp-button');attach.disabled=!this.caps?.sceneSync
+    attach.onclick=()=>this.runGalleryAction(attach,'Adding…','lumiphone:gallery_add_to_chat',{imageId:item.id,imageUrl:item.fullUrl||item.url,filename:item.filename},{feedback})
+    const useAs=button('Use as…','lp-button')
+    useAs.onclick=()=>{
+      const persona=this.activePersona?{id:this.activePersona.id,name:this.activePersona.name}:null
+      let sheet:ReturnType<typeof showPocketSheet>
+      const choices=wallpaperChoice(persona,(control,destination)=>this.runGalleryAction(control,'Saving…','lumiphone:gallery_set_wallpaper',{imageId:item.id,...destination},{feedback:result,complete:()=>{sheet?.dismiss();finish(originatingSelection)}}))
+      const result=el('p','lp-wallpaper-result');result.setAttribute('role','status');choices.append(result)
+      const contact=el('select','lp-select');contact.append(new Option('Choose a contact…',''))
+      for(const entry of this.state?.contacts||[])contact.append(new Option(entry.name,entry.id))
+      const save=button('Set contact photo','lp-button lp-button-quiet');save.disabled=true
+      contact.onchange=()=>{save.disabled=!contact.value}
+      save.onclick=()=>this.runGalleryAction(save,'Saving…','lumiphone:set_contact_photo',{contactId:contact.value,imageId:item.id,imageUrl:item.fullUrl||item.url},{feedback:result,complete:()=>{sheet?.dismiss();modal.dismiss()}})
+      choices.append(disclosure('Contact photo',fieldBlock('Contact',contact),save))
+      sheet=showPocketSheet(useAs,'Use photo as',choices)
+    }
+    actions.append(useAs,attach,open)
+    if(item.canDelete){
+      const remove=button('Delete photo','lp-button lp-button-quiet')
+      remove.onclick=()=>{
+        const confirmation=el('div','lp-camera-sheet-fields');confirmation.append(el('p','lp-copy','Permanently delete this Pocket photo? Chats, avatars and wallpapers using it may lose their image.'))
+        const keep=button('Keep photo','lp-button'),confirm=button('Permanently delete','lp-button lp-button-danger'),result=el('p','lp-wallpaper-result');result.setAttribute('role','status')
+        const sheet=showPocketSheet(remove,'Delete photo?',confirmation);keep.onclick=()=>sheet?.dismiss()
+        confirm.onclick=()=>this.runGalleryAction(confirm,'Deleting…','lumiphone:gallery_delete',{imageId:item.id,scope:this.galleryScope,offset:this.gallery.offset||0,confirmed:true},{feedback:result,complete:()=>{sheet?.dismiss();modal.dismiss()}})
+        confirmation.append(keep,confirm,result)
+      };actions.append(remove)
+    }
+    modal.root.append(image,actions,feedback)
   }
 
-  private runGalleryAction(buttonNode: HTMLButtonElement, progress: string, type: string, payload: Record<string, unknown>): void {
+  private runGalleryAction(buttonNode: HTMLButtonElement, progress: string, type: string, payload: Record<string, unknown>, options: { feedback?: HTMLElement; complete?: () => void } = {}): void {
     const idle = buttonNode.textContent || 'Action'
     const actionRequestId = requestId('gallery')
     buttonNode.disabled = true
     buttonNode.textContent = progress
-    this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle })
+    if (options.feedback) { options.feedback.setAttribute('role', 'status'); options.feedback.textContent = progress }
+    this.galleryActionButtons.set(actionRequestId, { button: buttonNode, idle, ...options })
     this.send(type, { ...payload, requestId: actionRequestId })
   }
 
-  private wallpaperTargetPayload(target: PocketImageTarget): Record<string, unknown> {
-    return { target, personaId: target.startsWith('persona-') ? this.activePersona?.id : undefined }
-  }
-
   private async chooseImage(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): Promise<void> {
+    if (target === 'contact-avatar') return
+    if (target.startsWith('persona-') && !this.activePersona?.id) { this.showError('Choose a Persona for this wallpaper.'); return }
+    const context = this.activeContext()
+    const selection = { target, ...(target.startsWith('persona-') ? { personaId: this.activePersona!.id, personaName: this.activePersona!.name } : {}), route: structuredClone(this.router.current), contextKey: context.chatId + ':' + context.characterId }
+    const refreshOrigin = () => { const active = this.activeContext(); if (this.currentApp === 'settings' && active.chatId === context.chatId && active.characterId === context.characterId) this.render(false) }
     if (mode === 'gallery') {
+      this.pendingWallpaperSelection = selection
       this.pendingWallpaperTarget = target
       this.requestGallery('all')
       this.openPocket({ app: 'gallery' })
@@ -2681,24 +3135,27 @@ class PocketController {
           reader.addEventListener('error', () => reject(reader.error || new Error('Could not read the image.')), { once: true })
           reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }))
         })
-        this.send('lumiphone:upload_wallpaper_asset', { ...this.wallpaperTargetPayload(target), dataUrl, filename: file.name })
+        const pending = button('Upload wallpaper')
+        this.showFeedback('Saving ' + wallpaperDestinationLabel(selection) + '…')
+        this.runGalleryAction(pending, 'Saving…', 'lumiphone:upload_wallpaper_asset', { ...selection, dataUrl, filename: file.name }, { complete: refreshOrigin })
       } catch (error) {
         this.showError(error instanceof Error ? error.message : String(error))
       }
       return
     }
     const modal = this.ctx.ui.showModal({ title: 'Use image URL', width: 460, maxHeight: 320 })
+    modal.root.classList.add('lp-media-viewer')
     const content = el('div', 'lp-settings-section')
     content.appendChild(el('p', 'lp-copy', 'Use a durable HTTPS image URL. Pocket stores the URL, never a downloaded base64 copy.'))
     const input = el('input', 'lp-input'); input.type = 'url'; input.placeholder = 'https://example.com/wallpaper.jpg'
-    const apply = button('Use image', 'lp-button')
+    const result = el('p', 'lp-wallpaper-result'); result.setAttribute('role', 'status')
+    const apply = button('Set ' + wallpaperDestinationLabel(selection), 'lp-button')
     apply.addEventListener('click', () => {
       const url = input.value.trim()
       if (!/^https:\/\//i.test(url)) { this.showError('Enter an HTTPS image URL.'); return }
-      this.send('lumiphone:set_wallpaper', { ...this.wallpaperTargetPayload(target), source: { kind: 'url', url } })
-      modal.dismiss()
+      this.runGalleryAction(apply, 'Saving…', 'lumiphone:set_wallpaper', { ...selection, source: { kind: 'url', url } }, { feedback: result, complete: () => { modal.dismiss(); refreshOrigin() } })
     })
-    content.append(input, apply); modal.root.appendChild(content); input.focus()
+    content.append(fieldBlock('HTTPS image URL', input), apply, result); modal.root.appendChild(content); input.focus()
   }
 
   private renderCamera(): HTMLDivElement {
@@ -2744,14 +3201,16 @@ class PocketController {
     floating.hidden = this.cameraReady && !this.cameraBusy
     viewfinder.append(floating)
     const footer = el('div', 'lp-camera-bottom-strip')
-    const optionRow = el('div', 'lp-row-between')
-    const enhanceLabel = el('label', 'lp-row')
+    const optionRow = el('div', 'lp-camera-option-basics')
+    const enhanceLabel = el('label', 'lp-camera-enhance')
     const enhance = el('input')
     enhance.type = 'checkbox'
     enhance.checked = this.cameraDraft.enhance ?? this.preferences.sceneEnhancer
     enhance.addEventListener('change', () => { this.cameraDraft.enhance = enhance.checked })
     enhanceLabel.append(enhance, el('span', 'lp-copy', 'Enhance scene description'))
-    const source = el('span', 'lp-copy', this.swarmProfile?.source === 'swarm_studio' ? 'Swarm Studio' : 'Manual profile')
+    const source = el('div', 'lp-camera-profile-status')
+    source.append(el('strong', '', this.swarmProfile?.source === 'swarm_studio' ? `Swarm Studio · ${this.swarmProfile.status}` : 'Lumiverse image settings'))
+    source.append(el('small', '', subject ? `Portrait subject: ${subject.name}. ${this.swarmProfile?.source === 'swarm_studio' ? `Image settings inherited from ${this.state!.characterName}; portrait identity stays ${subject.name}.` : 'Uses the portrait description below.'}` : 'Uses your active image profile.'))
     optionRow.append(enhanceLabel, source)
     const makeChoice = (label: string, values: Array<[string, string]>, value: string, update: (value: string) => void) => {
       const select = el('select', 'lp-select')
@@ -2791,7 +3250,11 @@ class PocketController {
     progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite')
     const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
     const optionFields = el('div', 'lp-camera-sheet-fields')
-    optionFields.append(pipelineCopy, nativeSettings, purpose, aspect, connection, (() => { const row = el('div', 'lp-field'); row.append(el('div', 'lp-label', 'Checkpoint override'), model); return row })(), optionRow)
+    const modelRow = el('div', 'lp-field'); modelRow.append(el('div', 'lp-label', 'Checkpoint override'), model)
+    const profileDetail = el('p', 'lp-copy lp-camera-profile-detail', this.swarmProfile?.checkpoint ? `Profile checkpoint: ${this.swarmProfile.checkpoint}` : 'The active Lumiverse workflow chooses the checkpoint.')
+    const advanced = disclosure('Advanced image settings', connection, modelRow, profileDetail, pipelineCopy, nativeSettings)
+    advanced.classList.add('lp-camera-advanced')
+    optionFields.append(purpose, aspect, optionRow, advanced)
     optionsDrawer.addEventListener('click', () => { showPocketSheet(optionsDrawer, 'Camera options', optionFields); mountModel() })
     footer.append(el('p', 'lp-camera-caption', this.cameraContactId ? 'PORTRAIT' : 'PHOTO'), shutterRow, progress, optionsDrawer)
     if (this.cameraContactId && this.cameraReady && !this.cameraBusy) {
@@ -2827,6 +3290,14 @@ class PocketController {
       const review = el('div', 'lp-camera-review-actions')
       review.append(el('span', 'lp-copy', 'Ready for ' + (subject?.name || 'this contact')), frame, use)
       footer.append(review)
+    }
+    if (subject && !this.cameraReady && !('avatarUrl' in subject && subject.avatarUrl)) {
+      const skip = button(this.cameraBusy ? 'Skip portrait generation' : 'Continue without a new photo', 'lp-button lp-button-quiet'); skip.onclick = () => { if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId }); this.cameraBusy = false; this.cameraRequestId = ''; this.back() }; footer.prepend(skip)
+    }
+    if (this.cameraVariants.length) {
+      const variants = el('div', 'lp-portrait-variants'); variants.setAttribute('role', 'group'); variants.setAttribute('aria-label', 'Generated portrait choices')
+      for (const [index, item] of this.cameraVariants.entries()) { const choose = button('', 'lp-portrait-choice'); choose.disabled = this.cameraBusy; choose.setAttribute('aria-label', `Choose generated image ${index + 1}`); choose.setAttribute('aria-pressed', String(item.id === this.cameraImageId)); const image = el('img'); image.src = item.url; image.alt = ''; choose.append(image); choose.onclick = () => { this.cameraImageId = item.id; this.cameraPreview = item.url; this.cameraReady = true; this.render(false) }; variants.append(choose) }
+      footer.prepend(variants)
     }
     controls.append(mode, viewfinder, footer)
     shutter.setAttribute('aria-label', this.cameraBusy ? 'Stop generating photo' : this.cameraReady ? 'Retake photo' : 'Take photo')
@@ -2974,9 +3445,10 @@ class PocketController {
     const { page, content } = this.page('Timeline', formatDate(state.roleplayNow, true), { label: 'Add', callback: () => this.openPocket({ app: 'calendar', eventId: '__new__' }) })
     const nowCard = el('div', 'lp-card')
     const nowField = el('input', 'lp-input')
+    nowField.setAttribute('aria-label', isFreeformChat(state.chatId) ? 'Session time' : 'Roleplay time')
     nowField.type = 'datetime-local'
     nowField.value = dateTimeLocal(state.roleplayNow)
-    const setNow = button('Set roleplay now', 'lp-button')
+    const setNow = button(isFreeformChat(state.chatId) ? 'Set session time' : 'Set roleplay now', 'lp-button')
     setNow.addEventListener('click', () => {
       const parsed = new Date(nowField.value)
       if (!Number.isNaN(parsed.getTime())) this.send('lumiphone:save_roleplay_time', { roleplayNow: parsed.toISOString(), timezoneOffsetMinutes: new Date().getTimezoneOffset() })
@@ -2987,20 +3459,21 @@ class PocketController {
     const clockPrecision = state.roleplayClockPrecision && state.roleplayClockPrecision !== 'unknown' ? ` · ${state.roleplayClockPrecision}` : ''
     const clockLabel = state.roleplayClockLabel ? ` · ${state.roleplayClockLabel}` : ''
     nowCard.append(
-      el('div', 'lp-eyebrow', 'Roleplay clock'),
+      el('div', 'lp-eyebrow', isFreeformChat(state.chatId) ? 'Session clock' : 'Roleplay clock'),
       nowField,
       el('p', 'lp-copy', `${clockSource}${clockPrecision}${clockLabel}`),
       setNow,
     )
-    content.appendChild(disclosure('Story clock · ' + formatTime(state.roleplayNow), nowCard))
+    content.appendChild(disclosure((isFreeformChat(state.chatId) ? 'Session clock ' : 'Story clock ') + '· ' + formatTime(state.roleplayNow), nowCard))
     const overview = el('div', 'lp-timeline-overview')
     overview.append(el('strong', '', String(state.events.filter(event => !event.completed).length)), el('span', 'lp-copy', 'open beats'), el('strong', '', String(state.events.filter(event => event.completed).length)), el('span', 'lp-copy', 'resolved'))
-    content.append(overview, this.appReviewControl('timeline-review', 'Review recent story', 'lumiphone:timeline_review'))
+    content.append(overview)
+    if (!isFreeformChat(state.chatId)) content.append(this.appReviewControl('timeline-review', 'Review recent story', 'lumiphone:timeline_review'))
     const timeline = el('div', 'lp-timeline')
     const events = [...state.events].sort((a, b) => Number(a.completed) - Number(b.completed) || (a.completed ? Date.parse(b.start) - Date.parse(a.start) : Date.parse(a.start) - Date.parse(b.start)))
     let section = ''
     for (const event of events) {
-      const nextSection = event.completed ? 'Resolved' : 'In the story'
+      const nextSection = event.completed ? 'Resolved' : isFreeformChat(state.chatId) ? 'In this session' : 'In the story'
       if (section !== nextSection) { section = nextSection; timeline.append(el('h3', 'lp-timeline-section', section)) }
       const row = el('div', 'lp-event')
       row.dataset.completed = String(event.completed)
@@ -3021,23 +3494,23 @@ class PocketController {
   }
 
   private renderEventEditor(event: CalendarEvent | null): HTMLDivElement {
-    const { page, content } = this.page(event ? 'Edit Event' : 'New Event', 'Roleplay timeline', { label: 'Save', callback: () => save() })
-    const schedulerSeed = !event ? this.pendingEventSuggestion : null
+    const { page, content } = this.page(event ? 'Edit Event' : 'New Event', isFreeformChat(this.state?.chatId) ? 'Session timeline' : 'Roleplay timeline', { label: 'Save', callback: () => save() })
+    const schedulerSeed = !event || this.pendingEventSuggestion?.suggestion.updateEventId === event.id ? this.pendingEventSuggestion : null
     const suggestion = schedulerSeed?.suggestion || null
-    const title = this.field('Title', event?.title || suggestion?.title || '')
+    const title = this.field('Title', suggestion?.title || event?.title || '')
     const lane = this.field('Timeline lane', event?.lane || (suggestion ? 'Plans' : 'Main timeline'))
     const whenKindLabel = el('label', 'lp-label', 'Time precision')
     const whenKind = el('select', 'lp-select')
     for (const [value, label] of [['exact', 'Exact date/time'], ['approximate', 'Approximate'], ['relative', 'Relative to story'], ['unscheduled', 'Unscheduled']] as const) {
       const option = el('option', '', label)
       option.value = value
-      option.selected = (event?.whenKind || suggestion?.whenKind || 'exact') === value
+      option.selected = (suggestion?.whenKind || event?.whenKind || 'exact') === value
       whenKind.appendChild(option)
     }
     whenKindLabel.appendChild(whenKind)
-    const whenText = this.field('Timeline label', event?.whenText || suggestion?.whenText || (event ? formatDate(event.start, true) : ''))
-    const start = this.field('Start', event ? dateTimeLocal(event.start) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
-    const end = this.field('End', event ? dateTimeLocal(event.end) : suggestion?.end ? dateTimeLocal(suggestion.end) : suggestion?.start ? dateTimeLocal(suggestion.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
+    const whenText = this.field('Timeline label', suggestion?.whenText || event?.whenText || (event ? formatDate(event.start, true) : ''))
+    const start = this.field('Start', suggestion?.start ? dateTimeLocal(suggestion.start) : event ? dateTimeLocal(event.start) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
+    const end = this.field('End', suggestion?.end ? dateTimeLocal(suggestion.end) : suggestion?.start ? dateTimeLocal(suggestion.start) : event ? dateTimeLocal(event.end) : dateTimeLocal(this.state!.roleplayNow), 'datetime-local')
     const exactTiming = el('div', 'lp-settings-section')
     exactTiming.style.minWidth = '0'
     exactTiming.style.width = '100%'
@@ -3052,8 +3525,8 @@ class PocketController {
     syncTimingPrecision()
     const description = el('textarea', 'lp-textarea')
     description.placeholder = 'What happens?'
-    description.value = event?.description || suggestion?.description || ''
-    const selectedParticipantNames = new Set<string>(event?.participantNames || suggestion?.participantNames || [])
+    description.value = suggestion?.description || event?.description || ''
+    const selectedParticipantNames = new Set<string>(suggestion?.participantNames || event?.participantNames || [])
     const participants = el('section', 'lp-card lp-settings-section')
     participants.appendChild(el('div', 'lp-eyebrow', 'Participants'))
     const picker = el('div', 'lp-contact-checklist lp-participant-picker')
@@ -3106,9 +3579,9 @@ class PocketController {
           : event?.end || event?.start || this.state!.roleplayNow,
         whenKind: whenKind.value, whenText: inputValue(whenText.input), completed: completed.checked,
         participants: [...selectedParticipantNames],
-        sourceConversationId: event?.source?.conversationId || schedulerSeed?.conversationId,
-        sourceMessageId: event?.source?.messageId || schedulerSeed?.messageId,
-        sourceSuggestionId: event?.source?.suggestionId || schedulerSeed?.suggestion.id,
+        sourceConversationId: schedulerSeed?.conversationId || event?.source?.conversationId,
+        sourceMessageId: schedulerSeed?.messageId || event?.source?.messageId,
+        sourceSuggestionId: schedulerSeed?.suggestion.id || event?.source?.suggestionId,
       } })
       this.pendingEventSuggestion = null
       this.back()
@@ -3157,6 +3630,10 @@ class PocketController {
   private renderSettings(): HTMLDivElement {
     this.settingsDraft ||= structuredClone(this.preferences)
     return renderSettingsView({
+      freeformSession: this.freeformSession,
+      renameFreeform: name => { this.send('lumiphone:freeform_rename', { name }) },
+      chooseFreeform: () => { this.close(); this.navigatePortal('freeform'); this.drawer.activate() },
+      copyFreeformToChat: () => this.confirmFreeformCopy(),
       identityProfiles: this.identityProfiles,
       draft: this.settingsDraft,
       jevKeyConfigured: this.jevKeyConfigured,

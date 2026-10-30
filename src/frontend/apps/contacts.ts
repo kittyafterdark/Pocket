@@ -1,17 +1,18 @@
 import type { PhoneCapabilities, PhoneState, PocketContact, PocketContactDraft, PocketContactSourceOption, PocketNpcBankEntry, PocketOperationProgress, PocketRoute, PocketContactGroup } from '../../types.js'
 import { renderContactGroups } from './contact-groups.js'
+import { renderContactDirectory, renderContactImport, type ContactBrowserSession } from './contacts-browser.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
 import { identityProfileControls } from '../components/identity-profiles.js'
 import { contactAccent, contactAvatar } from '../../domain/contacts.js'
-import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el, formatDate } from '../shared.js'
 import type { PageAction } from '../shared.js'
-import { actionGroup, controlRow, disclosure, fieldBlock, identityBlock, sectionBlock, statusBadge } from '../components/ui.js'
+import { actionGroup, controlRow, disclosure, fieldBlock, identityBlock, sectionBlock } from '../components/ui.js'
 
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
 export type ContactView = NonNullable<Extract<PocketRoute, { app: 'contacts' }>['view']>
 
 export interface ContactsViewHost {
+  browser?: ContactBrowserSession
   identityProfiles?: IdentityProfile[]
   state: PhoneState
   selectedContactId: string
@@ -70,6 +71,7 @@ function draftPayload(draft: PocketContactDraft): Record<string, unknown> {
 function contactEditor(host: ContactsViewHost, contact: PocketContact | null, draft: PocketContactDraft | null = null): HTMLDivElement {
   let saveContact = () => {}
   const { page, content } = host.page(contact ? 'Contact Settings' : draft ? 'Edit Draft' : 'New Contact', contact?.source.kind || (draft ? 'Generated preview · unsaved' : 'Pocket NPC'), { label: 'Save', callback: () => saveContact() })
+  page.classList.add('lp-contact-create')
   const name = el('input', 'lp-input'); name.placeholder = 'Name'; name.value = contact?.name || draft?.name || ''
   const role = el('input', 'lp-input'); role.placeholder = 'Role'; role.value = contact?.role || draft?.role || ''
   const description = el('textarea', 'lp-textarea'); description.placeholder = 'Compact profile — stable identity, role, relationship'; description.maxLength = 500; description.value = contact?.identityBrief || contact?.description || draft?.identityBrief || ''
@@ -185,203 +187,43 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
 }
 
 function importView(host: ContactsViewHost): HTMLDivElement {
-  const { page, content } = host.page('Add Contact', 'Character, Council, or Pocket NPC')
-  const search = el('input', 'lp-input')
-  search.type = 'search'
-  search.placeholder = 'Search saved or importable contacts'
-  search.setAttribute('aria-label', 'Search contacts to add')
-  const searchableRows: Array<{ node: HTMLElement; name: string; terms: string }> = []
-  const searchableSections: Array<{ section: HTMLElement; rows: HTMLElement[] }> = []
-  const noMatches = el('p', 'lp-copy', 'No matching saved or importable contacts.')
-  noMatches.dataset.contactSearchEmpty = 'true'
-  noMatches.hidden = true
-  content.appendChild(search)
-
-  const { section: manual, body: manualBody } = sectionBlock(
-    'Pocket NPC',
-    'Generate a compact NPC seed or create one manually.',
-    'lp-card lp-contact-import',
-  )
-  const description = el('textarea', 'lp-textarea'); description.placeholder = 'Describe someone; Pocket will generate one compact contact profile.'; description.maxLength = 2_000
-  description.value = host.generationBrief
-  description.addEventListener('input', () => host.updateGenerationBrief(description.value))
-  const npcOperation = [...host.operations.values()].find((entry) => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
-  const generate = button(npcOperation ? 'Generating…' : 'Generate NPC')
-  generate.disabled = !host.capabilities?.generation || Boolean(npcOperation)
-  generate.addEventListener('click', () => {
-    host.select('', 'quick-gen')
-  })
-  const primitive = button('Create manually', 'lp-button lp-button-quiet')
-  primitive.addEventListener('click', () => host.select('', 'new'))
-  manualBody.append(description, generate, primitive)
-  if (host.npcDraft) {
-    const draft = host.npcDraft
-    const preview = el('section', 'lp-card lp-npc-draft')
-    const previewHead = el('div', 'lp-row-between')
-    previewHead.append(el('span', 'lp-eyebrow', 'Unsaved preview'), statusBadge(`${draft.messagingStyle.talkativeness}% talkative · ${draft.messagingStyle.fragmentation}% bursty`))
-    preview.append(previewHead, identityBlock({ name: draft.name, meta: draft.role, description: draft.identityBrief }))
-    const actions = actionGroup('lp-draft-actions')
-    const retry = button('Retry', 'lp-button lp-button-quiet')
-    retry.disabled = Boolean(npcOperation)
-    retry.addEventListener('click', () => host.send('lumiphone:generate_contact', { description: draft.sourceDescription }))
-    const edit = button('Edit', 'lp-button lp-button-quiet'); edit.addEventListener('click', () => host.select('', 'draft'))
-    const use = button('Use', 'lp-button lp-button-primary'); use.addEventListener('click', () => host.send('lumiphone:save_contact', { contact: draftPayload(draft) }))
-    actions.append(retry, edit, use)
-    if (host.previousNpcDraft) {
-      const previous = button('Undo reroll', 'lp-button lp-button-quiet')
-      previous.addEventListener('click', () => host.restorePreviousNpcDraft())
-      actions.prepend(previous)
-    }
-    preview.appendChild(actions)
-    manualBody.appendChild(preview)
-  }
-  if (npcOperation) {
-    const progress = el('div', 'lp-operation-progress')
-    progress.dataset.operationRequest = npcOperation.requestId
-    progress.dataset.phase = npcOperation.phase
-    progress.setAttribute('role', 'status')
-    const message = el('strong', '', npcOperation.message || 'Generating contact…'); message.dataset.operationMessage = 'true'
-    progress.append(el('span', 'lp-indeterminate'), message)
-    manualBody.appendChild(progress)
-  }
-  content.appendChild(manual)
-
-  const { section: bank, body: bankBody } = sectionBlock(
-    'NPC Bank',
-    'Reusable identity seeds across roleplays. Scene state, relationships, and message history always stay local to each RP.',
-    'lp-contact-source-section',
-  )
-  const bankRows: HTMLElement[] = []
-  if (!host.npcBank.length) {
-    bankBody.appendChild(el('div', 'lp-card lp-copy', 'No saved NPCs yet. Open any Pocket NPC contact and choose “Save to NPC Bank”.'))
-  } else {
-    for (const entry of [...host.npcBank].sort((a, b) => a.name.localeCompare(b.name))) {
-      const row = el('div', 'lp-card')
-      row.style.display = 'grid'
-      row.style.gap = '10px'
-      row.style.minWidth = '0'
-      const identity = identityBlock({ name: entry.name, meta: entry.role || 'Pocket NPC' })
-      const linked = host.state.contacts.find((contact) => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
-      const actions = actionGroup()
-      actions.style.display = 'grid'
-      actions.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))'
-      actions.style.width = '100%'
-      actions.style.minWidth = '0'
-
-      const edit = button('Edit', 'lp-button lp-button-quiet')
-      edit.addEventListener('click', () => {
-        host.select(entry.id, 'bank-entry')
-      })
-
-      const add = button(linked ? 'Added' : 'Add', 'lp-button lp-button-quiet')
-      add.disabled = Boolean(linked)
-      add.addEventListener('click', () => {
-        if (!linked) host.send('lumiphone:npc_bank_add', { bankId: entry.id })
-      })
-
-      const forget = button('Forget', 'lp-button lp-button-danger')
-      forget.addEventListener('click', () => {
-        if (window.confirm(`Forget ${entry.name} from NPC Bank? Existing contacts and messages in roleplays will not be deleted.`)) {
-          host.send('lumiphone:npc_bank_delete', { bankId: entry.id })
-        }
-      })
-
-      for (const action of [edit, add, forget]) {
-        action.style.width = '100%'
-        action.style.minWidth = '0'
-      }
-      actions.append(edit, add, forget)
-      row.append(identity, actions)
-      bankBody.appendChild(row)
-      bankRows.push(row)
-      searchableRows.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role || 'Pocket NPC'} ${entry.aliases.join(' ')} ${entry.tags.join(' ')} npc bank`.toLocaleLowerCase() })
-    }
-  }
-  content.appendChild(bank)
-  searchableSections.push({ section: bank, rows: bankRows })
-
-  const grouped = new Map<string, PocketContactSourceOption[]>()
-  for (const option of host.sources) grouped.set(option.kind, [...(grouped.get(option.kind) || []), option])
-  for (const [kind, sources] of grouped) {
-    const { section, body } = sectionBlock(kind === 'character' ? 'Lumiverse Characters' : 'Active Council', '', 'lp-contact-source-section')
-    const sourceRows: HTMLElement[] = []
-    for (const source of sources) {
-      const row = el('div', 'lp-card lp-list-row')
-      const identity = identityBlock({ name: source.name, meta: source.role })
-      let trailing: HTMLElement
-      if (source.importedContactId) trailing = statusBadge('Imported')
-      else {
-        const add = button('Add', 'lp-button lp-button-quiet')
-        add.addEventListener('click', () => host.send('lumiphone:import_contact', { kind: source.kind, sourceId: source.sourceId, itemId: source.itemId }))
-        trailing = add
-      }
-      row.append(identity, trailing)
-      body.appendChild(row)
-      sourceRows.push(row)
-      searchableRows.push({ node: row, name: source.name, terms: `${source.name} ${source.role} ${kind}`.toLocaleLowerCase() })
-    }
-    content.appendChild(section)
-    searchableSections.push({ section, rows: sourceRows })
-  }
-  if (!host.sources.length) content.appendChild(el('p', 'lp-copy', 'No importable Characters or active Council members were returned. Manual NPC contacts remain available.'))
-
-  const applySearch = () => {
-    const query = search.value.trim().toLocaleLowerCase()
-    const visible = applyRankedSearch(searchableRows, query)
-    for (const entry of searchableSections) {
-      entry.section.dataset.pocketSearchResult = 'true'
-      entry.section.hidden = Boolean(query && !entry.rows.some((row) => !row.hidden))
-    }
-    noMatches.hidden = !query || visible > 0
-  }
-  search.addEventListener('input', applySearch)
-  content.appendChild(noMatches)
-  return page
+  return renderContactImport(host)
 }
 
 function quickGenerateView(host: ContactsViewHost): HTMLDivElement {
-  const active = [...host.operations.values()].find(entry => entry.task === 'npc-contact' && entry.phase !== 'complete' && entry.phase !== 'error')
-  const { page, content } = host.page('Quick Generate', 'NPC profiles')
-  page.classList.add('lp-npc-camera')
-  const finder = el('div', 'lp-npc-viewfinder')
-  const mode = el('div', 'lp-camera-mode', 'ϟ AUTO'); mode.append(el('span', '', 'POCKET'), el('span', '', 'PROFILE'))
-  const focus = el('div', 'lp-focus-frame')
-  const draft = host.npcDraft
-  const mark = el('div', 'lp-npc-camera-mark', draft ? draft.name.slice(0, 1).toUpperCase() : '+')
-  focus.append(mark)
-  const copy = el('div', 'lp-npc-camera-copy')
-  copy.append(el('strong', '', active ? 'Developing profile…' : draft?.name || 'Frame a new character'), el('p', '', active?.message || draft?.identityBrief || 'Describe an NPC, then tap the shutter.'))
-  const subject = el('div', 'lp-camera-subject'); subject.append(focus, copy)
-  finder.append(subject)
-  const brief = el('textarea', 'lp-textarea'); brief.placeholder = 'A sleepy florist with a sharp wit and a soft spot for stray cats…'; brief.maxLength = 2000; brief.rows = 3; brief.value = host.generationBrief
-  brief.addEventListener('input', () => host.updateGenerationBrief(brief.value))
-  const floating = fieldBlock('Character brief', brief)
-  floating.classList.add('lp-camera-floating-brief')
-  finder.append(floating)
-  const footer = el('div', 'lp-camera-bottom-strip')
-  const caption = el('p', 'lp-camera-caption', draft ? 'PREVIEW · UNSAVED' : 'PROFILE')
-  const controls = el('div', 'lp-quick-controls')
-  const manual = button('Manual', 'lp-nav-action'); manual.addEventListener('click', () => host.select('', 'new'))
-  const shutter = button('', 'lp-shutter'); shutter.setAttribute('aria-label', draft ? 'Generate another NPC' : 'Generate NPC'); shutter.disabled = Boolean(active) || !host.capabilities?.generation
-  shutter.addEventListener('click', () => { if (!brief.value.trim()) { brief.focus(); host.showError('Describe someone first.'); return }; shutter.disabled = true; host.send('lumiphone:generate_contact', { description: brief.value.trim() }) })
-  const edit = button('Edit', 'lp-nav-action'); edit.disabled = !draft || Boolean(active); edit.addEventListener('click', () => host.select('', 'draft'))
-  controls.append(manual, shutter, edit)
-  footer.append(caption, controls)
-  content.append(mode, finder, footer)
-  if (draft) {
-    const actions = actionGroup('lp-draft-actions')
-    const use = button(`Use ${draft.name}`, 'lp-button lp-button-primary'); use.disabled = Boolean(active); use.addEventListener('click', () => { use.disabled = true; host.send('lumiphone:save_contact', { contact: draftPayload(draft) }) })
-    actions.append(use)
-    const portraits = el('div', 'lp-npc-portrait-actions'); portraits.setAttribute('role', 'group'); portraits.setAttribute('aria-label', 'NPC portrait source')
-    const gallery = button('Gallery', 'lp-button lp-button-quiet'); gallery.disabled = !host.capabilities?.images; gallery.addEventListener('click', () => host.choosePhoto())
-    const upload = button('Upload avatar', 'lp-button lp-button-quiet'); upload.disabled = !host.capabilities?.images; upload.addEventListener('click', () => host.uploadPhoto())
-    const photo = button(draft.avatarUrl ? 'Retake portrait' : 'Generate portrait', 'lp-button lp-button-quiet'); photo.disabled = !host.capabilities?.imageGen; photo.addEventListener('click', () => host.generateDraftPhoto())
-    portraits.append(gallery, upload, photo); footer.append(portraits)
-    if (draft.avatarUrl) { const image = el('img', 'lp-draft-portrait'); image.src = draft.avatarUrl; image.alt = `${draft.name} portrait`; finder.prepend(image) }
-    if (host.previousNpcDraft) { const undo = button('Previous', 'lp-button lp-button-quiet'); undo.addEventListener('click', () => host.restorePreviousNpcDraft()); actions.append(undo) }
-    footer.append(actions)
+  const active=[...host.operations.values()].find(entry=>entry.task==='npc-contact'&&!['complete','error'].includes(entry.phase))
+  const draft=host.npcDraft
+  const {page,content}=host.page(draft?'Review contact':'Quick Generate',active?'Writing profile…':draft?'Unsaved profile':'Make someone for this story')
+  page.classList.add('lp-npc-review')
+  if(draft){
+    if(draft.avatarUrl){const image=el('img','lp-npc-review-photo');image.src=draft.avatarUrl;image.alt=`${draft.name} portrait`;image.style.objectPosition=`${draft.avatarFocus?.x??50}% ${draft.avatarFocus?.y??50}%`;content.append(image)}
+    else {const placeholder=el('div','lp-npc-review-placeholder',draft.name.slice(0,1));placeholder.setAttribute('aria-hidden','true');content.append(placeholder)}
+    const heading=el('div','lp-npc-review-heading');heading.append(el('h2','',draft.name),el('p','lp-copy',draft.role))
+    const details=disclosure('Profile details',el('p','lp-copy',draft.identityBrief))
+    if(draft.phoneProfile?.personality)details.append(el('p','lp-copy',draft.phoneProfile.personality))
+    const save=button(draft.avatarUrl?`Save ${draft.name}`:'Save without photo','lp-button lp-button-primary')
+    save.disabled=Boolean(active)||Boolean(host.collectionSaving)
+    if(host.collectionSaving)save.textContent='Saving contact…'
+    save.onclick=()=>{save.disabled=true;save.textContent='Saving contact…';host.saveCollection('lumiphone:save_contact',{contact:draftPayload(draft)})}
+    const portraits=el('div','lp-npc-review-tools');portraits.setAttribute('role','group');portraits.setAttribute('aria-label','Contact portrait')
+    const gallery=button('Gallery','lp-button lp-button-quiet');gallery.disabled=!host.capabilities?.images;gallery.onclick=()=>host.choosePhoto()
+    const upload=button('Upload','lp-button lp-button-quiet');upload.disabled=!host.capabilities?.images;upload.onclick=()=>host.uploadPhoto()
+    const generate=button(draft.avatarUrl?'Retake portrait':'Generate portrait','lp-button lp-button-quiet');generate.disabled=!host.capabilities?.imageGen||Boolean(active);generate.onclick=()=>host.generateDraftPhoto()
+    portraits.append(gallery,upload,generate)
+    const secondary=el('div','lp-npc-review-tools'),edit=button('Edit profile','lp-directory-link'),retry=button('Regenerate profile','lp-directory-link')
+    edit.onclick=()=>host.select('','draft');retry.disabled=Boolean(active)||!host.capabilities?.generation
+    retry.onclick=()=>host.send('lumiphone:generate_contact',{description:draft.sourceDescription})
+    secondary.append(edit,retry)
+    if(host.previousNpcDraft){const previous=button('Previous version','lp-directory-link');previous.onclick=()=>host.restorePreviousNpcDraft();secondary.append(previous)}
+    content.append(heading,save,portraits,details,secondary)
+  }else{
+    const brief=el('textarea','lp-textarea');brief.value=host.generationBrief;brief.rows=4;brief.maxLength=2000;brief.placeholder='A sleepy florist with a sharp wit…';brief.oninput=()=>host.updateGenerationBrief(brief.value)
+    const generate=button(active?'Generating…':'Generate NPC','lp-button lp-button-primary');generate.disabled=Boolean(active)||!host.capabilities?.generation
+    generate.onclick=()=>{if(!brief.value.trim()){brief.focus();return}generate.disabled=true;host.send('lumiphone:generate_contact',{description:brief.value.trim()})}
+    content.append(fieldBlock('Character brief',brief),generate)
+    const manual=button('Create manually','lp-directory-link');manual.onclick=()=>host.select('','new');content.append(manual)
   }
-  if (!host.capabilities?.generation) footer.append(el('p', 'lp-warning', 'Enable text generation in Settings to generate an NPC.'))
+  if(active){const progress=el('div','lp-operation-progress');progress.dataset.operationRequest=active.requestId;progress.dataset.phase=active.phase;progress.setAttribute('role','status');const message=el('strong','',active.message||'Writing profile…');message.dataset.operationMessage='true';progress.append(el('span','lp-indeterminate'),message);content.append(progress)}
   return page
 }
 
@@ -457,70 +299,5 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     return page
   }
 
-  const { page, content } = host.page('Contacts', `${host.state.contacts.length} people`, { label: 'Add', callback: () => host.select('', 'import') })
-  const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = 'Search contacts'
-  const toolbar = el('div', 'lp-contact-toolbar')
-  const filters = el('div', 'lp-chipbar lp-contact-filters')
-  filters.setAttribute('aria-label', 'Filter contacts')
-  const library = el('div', 'lp-contact-library')
-  library.setAttribute('role', 'group'); library.setAttribute('aria-label', 'Contact library')
-  library.append(el('span', 'lp-contact-library-label', 'Library'))
-  const all = button('All', 'lp-chip'); const here = button('Here', 'lp-chip'); const recent = button('Recent', 'lp-chip')
-  all.setAttribute('aria-pressed', 'true'); filters.append(all, here, recent)
-  const groups = button('Groups', 'lp-contact-library-action');
-  groups.title = 'Contact groups for this roleplay'; groups.setAttribute('aria-description', groups.title); groups.addEventListener('click', () => host.selectGroup('', 'groups'))
-  const bank = button('NPC Bank', 'lp-contact-library-action')
-  bank.title = 'Reusable NPC profiles and casts across chats'; bank.setAttribute('aria-description', bank.title)
-  const bankIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  bankIcon.setAttribute('viewBox', '0 0 24 24'); bankIcon.setAttribute('width', '12'); bankIcon.setAttribute('height', '12'); bankIcon.setAttribute('aria-hidden', 'true'); bankIcon.setAttribute('focusable', 'false')
-
-  const bankPath = document.createElementNS(bankIcon.namespaceURI, 'path')
-  bankPath.setAttribute('d', 'M4 8h16v12H4zM3 4h18v4H3zM9 12h6'); bankPath.setAttribute('fill', 'none'); bankPath.setAttribute('stroke', 'currentColor'); bankPath.setAttribute('stroke-width', '1.5'); bankPath.setAttribute('stroke-linejoin', 'round')
-  bankIcon.append(bankPath); bank.prepend(bankIcon)
-  bank.addEventListener('click', () => host.selectGroup('', 'bank')); library.append(groups, bank); toolbar.append(filters, library)
-  const sync = button('Sync current scene', 'lp-button lp-button-quiet')
-  const sceneOperation = [...host.operations.values()].find((entry) => entry.task === 'scene-sync' && entry.phase !== 'complete' && entry.phase !== 'error')
-  sync.disabled = !host.capabilities?.generation || !host.capabilities?.sceneSync || Boolean(sceneOperation)
-  sync.addEventListener('click', () => host.send('lumiphone:sync_scene_contacts'))
-  const snapshot = host.state.sceneSnapshot
-  const snapshotStatus = el('p', snapshot?.stale ? 'lp-warning' : 'lp-copy', !snapshot
-    ? 'Refresh to see who is in the scene.'
-    : `${snapshot.stale ? 'Scene snapshot is stale' : 'Scene snapshot is current'} · ${snapshot.actors.length} actor${snapshot.actors.length === 1 ? '' : 's'} · source turn ${snapshot.sourceMessageIndex}`)
-  const list = el('div', 'lp-contact-list')
-  const renderList = (filter: 'all' | 'here' | 'recent' = 'all') => {
-    list.replaceChildren()
-    const query = search.value.trim().toLocaleLowerCase()
-    const contacts = host.state.contacts.filter((entry) => {
-      if (query && !`${entry.name} ${entry.role}`.toLocaleLowerCase().includes(query)) return false
-      if (filter === 'here') return entry.presence.inScene
-      if (filter === 'recent') return Boolean(entry.presence.lastSceneAt)
-      return true
-    }).sort((a, b) => Number(b.presence.inScene) - Number(a.presence.inScene) || Date.parse(b.presence.lastSceneAt || '0') - Date.parse(a.presence.lastSceneAt || '0'))
-    for (const entry of contacts) {
-      const row = button('', 'lp-card lp-contact-row')
-      const identity = identityBlock({ name: entry.name, meta: entry.role, className: 'lp-grow' })
-      const status = el('span', entry.presence.inScene ? 'lp-contact-presence-label' : 'lp-contact-presence-label lp-contact-presence-away', entry.presence.inScene ? 'Here' : 'Away')
-      row.append(avatar(entry), identity, status)
-      row.addEventListener('click', () => host.select(entry.id, 'detail'))
-      list.appendChild(row)
-    }
-    if (!contacts.length) list.appendChild(host.empty('No matching contacts', 'Try another search or sync the current scene.'))
-  }
-  let active: 'all' | 'here' | 'recent' = 'all'
-  const useFilter = (next: typeof active) => { active = next; for (const chip of [all, here, recent]) chip.setAttribute('aria-pressed', String(chip === ({ all, here, recent }[next]))); renderList(active) }
-  all.addEventListener('click', () => useFilter('all')); here.addEventListener('click', () => useFilter('here')); recent.addEventListener('click', () => useFilter('recent'))
-  search.addEventListener('input', () => renderList(active))
-  renderList()
-  content.append(search, toolbar, sync, snapshotStatus)
-  if (sceneOperation) {
-    const progress = el('div', 'lp-operation-progress')
-    progress.dataset.operationRequest = sceneOperation.requestId
-    progress.dataset.phase = sceneOperation.phase
-    progress.setAttribute('role', 'status')
-    const message = el('strong', '', sceneOperation.message || 'Syncing scene…'); message.dataset.operationMessage = 'true'
-    progress.append(el('span', 'lp-indeterminate'), message)
-    content.appendChild(progress)
-  }
-  content.appendChild(list)
-  return page
+  return renderContactDirectory(host)
 }

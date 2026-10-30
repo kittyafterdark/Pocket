@@ -24,8 +24,9 @@ export class PocketRouteHistory {
    * Example:
    * Contacts -> Detail -> Edit -> settle(Detail) -> Back returns to Contacts.
    */
-  settle(routeInput: PocketRoute): PocketRoute {
+  settle(routeInput: PocketRoute, discard?: (entry: PocketRoute) => boolean): PocketRoute {
     const route = normalizePocketRoute(routeInput)
+    while (discard && this.entries.length && discard(this.entries.at(-1)!)) this.entries.pop()
     if (sameRoute(route, this.current)) return this.current
     const parent = this.entries.at(-1)
     if (parent && sameRoute(parent, route)) this.entries.pop()

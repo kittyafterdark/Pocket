@@ -30,9 +30,11 @@ export function wallpaperImageControl(
 ): HTMLElement {
   const card = el('section', 'lp-wallpaper-control')
   card.dataset.imageTarget = target
+  card.setAttribute('aria-label', `${label} wallpaper`)
   const heading = el('div', 'lp-row-between')
   const copy = el('span'); copy.append(el('strong', '', label), el('span', 'lp-copy', resolved.status === 'error' ? `${resolved.sourceLabel} · unavailable` : resolved.sourceLabel))
-  const clear = button('Clear', 'lp-button lp-button-quiet')
+  const clear = button(target.startsWith('persona-') ? 'Use default' : 'Clear', 'lp-button lp-button-quiet')
+  clear.setAttribute('aria-label', target.startsWith('persona-') ? `Use default wallpaper for ${label}` : `Clear ${label} wallpaper`)
   clear.disabled = !wallpaper.source
   clear.addEventListener('click', () => host.change({ ...wallpaper, source: null }))
   heading.append(copy, clear)

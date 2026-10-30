@@ -4,6 +4,7 @@ const DROP_PART_TYPE = /(?:reason(?:ing)?|think(?:ing)?|analysis|tool[_-]?(?:use
 const WRAPPED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[^>]*>[\s\S]*?<\/\1\s*>/gi
 const OPEN_ENDED_BLOCK = /<(think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[^>]*>[\s\S]*$/gi
 const FENCED_BLOCK = /```(?:think|thinking|reasoning|analysis|tool_call|tool_result|function_call|function_result)\b[\s\S]*?```/gi
+const POCKET_EVENT_START_BLOCK = /<pocket-event-start\b[^>]*>([\s\S]*?)<\/pocket-event-start\s*>/gi
 const POCKET_ACTION_BLOCK = /<lumi-phone\b[^>]*>[\s\S]*?<\/lumi-phone\s*>/gi
 const POCKET_ACTION_SINGLE = /<lumi-phone\b[^>]*\/\s*>/gi
 const POCKET_ARTIFACT_BLOCK = /<pocket-artifact\b[^>]*>[\s\S]*?<\/pocket-artifact\s*>/gi
@@ -38,6 +39,7 @@ function stripMachineWrappers(value: string): string {
     const next = text
       .replace(FENCED_BLOCK, '')
       .replace(WRAPPED_BLOCK, '')
+      .replace(POCKET_EVENT_START_BLOCK, '')
       .replace(POCKET_ACTION_BLOCK, '')
       .replace(POCKET_ACTION_SINGLE, '')
       .replace(POCKET_ARTIFACT_BLOCK, '')
@@ -80,7 +82,19 @@ export function narrativeExcerpt(value: unknown, max: number): string {
  * classifying or truncating the surrounding narrative. */
 export function stripPocketPresentationMarkup(value: string): string {
   return value
+    .replace(POCKET_EVENT_START_BLOCK, '$1')
     .replace(POCKET_ARTIFACT_BLOCK, '')
     .replace(POCKET_ARTIFACT_SINGLE, '')
     .replace(POCKET_INLINE_ANCHOR_BLOCK, '')
 }
+
+/** Remove only echoed transport/time labels, not ordinary dialogue. */
+export function cleanPhoneMessageText(value: string): string {
+  return value
+    .replace(/^\s*\[DM TURN:[^\r\n\]]*\][ \t]*(?:\r?\n)?/gm, '')
+    .replace(/^[ \t]*Saved story timestamp:[^\r\n]*(?:\r?\n[ \t]*precision not recorded\))?[ \t]*(?:\r?\n)?/gm, '')
+    .replace(/^[ \t]*Story time: (?:[0-9]{4}-[0-9]{2}-[0-9]{2}[^\r\n]*|Story time not recorded[^\r\n]*|[^\r\n]*\((?:approximate|relative|unknown)\))(?:\r?\n)?/gm, '').trim()
+}
+
+/** Shared style guidance for ordinary private texts; voice transcripts may be longer. */
+export const PHONE_TEXT_STYLE = "For ordinary typed messages, write like someone texting, not a polished roleplay monologue. Default to one short paragraph with 1-2 brief sentences and one conversational beat. Do not answer every clause of the incoming text, stack separate reactions into several paragraphs, or append a rehearsed punchline or teaser to every reply. Preserve established warmth, flirtation, and rapport even in brief replies; brevity is not emotional withdrawal. Do not invent those dynamics when unsupported. Avoid theatrical leading ellipses and literary setup/payoff phrasing unless firmly established in this person's texting style. Match their established voice without forcing slang, typos, or lowercase. Longer texts are appropriate when explicitly asked for or when the situation genuinely needs an explanation; voice transcripts can be longer. Low fragmentation means one compact bubble, not an essay."

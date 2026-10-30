@@ -1,4 +1,5 @@
 import type { ContactsViewHost } from './contacts.js'
+import { renderNpcBank } from './contacts-browser.js'
 import { applyRankedSearch } from '../components/ranked-search.js'
 import { button, el } from '../shared.js'
 import { actionGroup, fieldBlock, identityBlock, sectionBlock } from '../components/ui.js'
@@ -75,57 +76,25 @@ export function renderContactGroups(host: ContactsViewHost) {
   if (host.selectedView === 'cast-config') return groupEditor(host, true)
   if (host.selectedView === 'cast-import') return groupEditor(host, true, true)
   if (host.selectedView === 'bank-entry') return bankEditor(host)
-  const bank = host.selectedView === 'bank'
-  const { page, content } = host.page(bank ? 'NPC Bank' : 'Contact Groups', bank ? `${host.npcBank.length} reusable profiles` : 'Collections for this roleplay', { label: 'New', callback: () => host.selectGroup('', bank ? 'cast-config' : 'group-config') })
-  const groups = bank ? host.bankGroups : host.state.contactGroups || []
-  const search = el('input', 'lp-input'); search.type = 'search'; search.placeholder = bank ? 'Search casts and saved NPCs' : 'Search contact groups'
-  search.setAttribute('aria-label', bank ? 'Search NPC Bank' : 'Search contact groups')
-  const noMatches = el('p', 'lp-copy', 'No matching profiles or casts.'); noMatches.hidden = true
-  const cards: Array<{ node: HTMLElement; name: string; terms: string }> = []
-  content.append(search)
-  if (!bank) { const portable = button('NPC Bank & portable casts', 'lp-button lp-button-quiet'); portable.addEventListener('click', () => host.selectGroup('', 'bank')); content.append(portable) }
-  const casts = bank ? sectionBlock('Portable casts', 'Groups you can bring into another chat.', 'lp-bank-casts') : null
-  const profiles = bank ? sectionBlock('Individual NPCs', 'Saved identities, ready to reuse.', 'lp-bank-individuals') : null
-  if (casts) content.append(casts.section)
-  for (const group of groups) {
-    const people = group.memberIds.map(id => members(host, bank).find(entry => entry.id === id)).filter(entry => Boolean(entry))
-    const { section, body } = sectionBlock(group.name, `${people.length} members${bank ? ' · portable cast' : ''}`, 'lp-card lp-contact-group')
-    body.append(el('p', 'lp-copy', people.map(entry => entry!.name).join(' · ') || 'No members left. Edit this group to add people.'))
-    const actions = actionGroup()
-    const edit = button('Edit', 'lp-button lp-button-quiet'); edit.addEventListener('click', () => host.selectGroup(group.id, bank ? 'cast-config' : 'group-config')); actions.append(edit)
-    if (bank) {
-      const importCast = button('Import…'); importCast.disabled = !people.length; importCast.addEventListener('click', () => host.selectGroup(group.id, 'cast-import')); actions.append(importCast)
-    } else {
-      const chat = button('Start group chat'); chat.disabled = group.memberIds.length < 2; chat.addEventListener('click', () => host.startGroup(group.name, group.memberIds)); actions.append(chat)
-      const save = button(group.bankGroupId ? 'Update saved cast' : 'Save as portable cast', 'lp-button lp-button-quiet'); save.disabled = !people.length || people.some(entry => !entry || !('source' in entry) || entry.source.kind !== 'npc') || host.collectionSaving
-      save.addEventListener('click', () => host.saveCollection('lumiphone:contact_group_bank', { groupId: group.id })); actions.append(save)
-      if (save.disabled && people.length) body.append(el('p', 'lp-copy', 'Portable casts contain Pocket NPCs. Linked Characters stay local.'))
-    }
-    const remove = button('Remove group', 'lp-button lp-button-danger'); remove.disabled = host.collectionSaving
-    remove.addEventListener('click', () => host.saveCollection(bank ? 'lumiphone:npc_cast_delete' : 'lumiphone:contact_group_delete', { groupId: group.id }))
-    actions.append(remove); body.append(actions); (casts?.body || content).append(section); cards.push({ node: section, name: group.name, terms: `${group.name} ${people.map(entry => entry!.name).join(' ')}`.toLowerCase() })
+  if (host.selectedView === 'bank') return renderNpcBank(host)
+  const {page,content}=host.page('Contact Groups','Collections for this roleplay',{label:'New',callback:()=>host.selectGroup('','group-config')})
+  page.classList.add('lp-bank-organized')
+  const groups=host.state.contactGroups||[],search=el('input','lp-input');search.type='search';search.placeholder='Search contact groups';search.setAttribute('aria-label','Search contact groups')
+  const cards:Array<{node:HTMLElement;name:string;terms:string}>=[]
+  const bank=button('NPC Bank & portable casts','lp-button lp-button-quiet');bank.onclick=()=>host.selectGroup('','bank');content.append(search,bank)
+  for(const group of groups){
+    const people=group.memberIds.map(id=>host.state.contacts.find(entry=>entry.id===id)).filter(entry=>Boolean(entry))
+    const {section,body}=sectionBlock(group.name,`${people.length} members`,'lp-card lp-contact-group')
+    body.append(el('p','lp-copy',people.map(entry=>entry!.name).join(' · ')||'No members left. Edit this group to add people.'))
+    const actions=actionGroup(),edit=button('Edit','lp-button lp-button-quiet'),chat=button('Start group chat'),save=button(group.bankGroupId?'Update saved cast':'Save as portable cast','lp-button lp-button-quiet'),remove=button('Remove group','lp-button lp-button-danger')
+    edit.onclick=()=>host.selectGroup(group.id,'group-config');chat.disabled=group.memberIds.length<2;chat.onclick=()=>host.startGroup(group.name,group.memberIds)
+    save.disabled=!people.length||people.some(entry=>entry!.source.kind!=='npc')||host.collectionSaving;save.onclick=()=>host.saveCollection('lumiphone:contact_group_bank',{groupId:group.id})
+    if(save.disabled&&people.length)body.append(el('p','lp-copy','Portable casts contain Pocket NPCs. Linked Characters stay local.'))
+    remove.disabled=host.collectionSaving;remove.onclick=()=>host.saveCollection('lumiphone:contact_group_delete',{groupId:group.id})
+    actions.append(edit,chat,save,remove);body.append(actions);content.append(section);cards.push({node:section,name:group.name,terms:group.name+' '+people.map(entry=>entry!.name).join(' ')})
   }
-  if (!groups.length) (casts?.body || content).append(el('p', 'lp-copy', bank ? 'Save a cast to reuse the same NPCs in other chats.' : 'Organize a cast, family, team, or faction here.'))
-  if (profiles) content.append(profiles.section)
-  if (bank && !host.npcBank.length) profiles!.body.append(el('p', 'lp-copy', 'Save an NPC contact to reuse their profile in other chats.'))
-  if (bank) for (const entry of host.npcBank) {
-    const row = el('div', 'lp-card lp-bank-profile')
-    row.append(identityBlock({ name: entry.name, meta: entry.role, description: entry.identityBrief }))
-    const actions = actionGroup()
-    const edit = button('Edit saved profile', 'lp-button lp-button-quiet'); edit.addEventListener('click', () => host.select(entry.id, 'bank-entry')); actions.append(edit)
-    const linked = host.state.contacts.find(contact => contact.source.kind === 'npc' && contact.source.bankId === entry.id)
-    const add = button(linked ? 'Open local contact' : 'Add to this chat'); add.addEventListener('click', () => linked ? host.select(linked.id, 'detail') : host.send('lumiphone:npc_bank_add', { bankId: entry.id })); actions.append(add)
-    row.append(actions); profiles!.body.append(row); cards.push({ node: row, name: entry.name, terms: `${entry.name} ${entry.role} ${entry.aliases.join(' ')} ${entry.tags.join(' ')}`.toLowerCase() })
-  }
-  content.append(noMatches)
-  search.addEventListener('input', () => {
-    const query = search.value.trim().toLowerCase()
-    const visible = applyRankedSearch(cards, query)
-    noMatches.hidden = !query || visible > 0
-    for (const group of [casts, profiles]) if (group) {
-      group.section.dataset.pocketSearchResult = 'true'
-      group.section.hidden = Boolean(query && !cards.some(card => group.body.contains(card.node) && !card.node.hidden))
-    }
-  })
+  if(!groups.length)content.append(el('p','lp-copy','Organize a cast, family, team, or faction here.'))
+  const empty=el('p','lp-copy','No matching groups.');empty.hidden=true;content.append(empty)
+  search.oninput=()=>{empty.hidden=applyRankedSearch(cards,search.value)>0||!search.value.trim()}
   return page
 }

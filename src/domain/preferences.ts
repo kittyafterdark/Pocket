@@ -186,7 +186,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const item = record(entry)
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
-    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge'])
+    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge', 'social-feed'])
     if (!requestId || !tasks.has(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{
@@ -210,6 +210,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const overridePreset = themePalette(overrideTheme)
     personaAppearance[personaId] = {
       enabled: bool(item.enabled, false),
+      ...(typeof item.homeWallpaperEnabled === 'boolean' ? {homeWallpaperEnabled:item.homeWallpaperEnabled} : {}),
+      ...(typeof item.chatWallpaperEnabled === 'boolean' ? {chatWallpaperEnabled:item.chatWallpaperEnabled} : {}),
       theme: overrideTheme,
       colors: {
         accent: safeColor(overrideColors.accent, overridePreset.accent),
