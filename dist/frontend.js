@@ -556,6 +556,7 @@ function normalizeLauncherPosition(value) {
 function defaultPreferences() {
   return {
     version: PREFERENCES_VERSION,
+    characterPictures: false,
     voiceMessages: true,
     ttsVoiceURI: "",
     ttsConnectionId: "",
@@ -567,6 +568,14 @@ function defaultPreferences() {
     handsetScale: 1,
     desktopDockSide: "left",
     uiScale: 1,
+    independentUiScale: false,
+    mobileUiScale: 1,
+    desktopUiScale: 1,
+    bubbleRadius: 19,
+    bubblePadding: 8,
+    iconPack: "classic",
+    iconBackground: "#524478",
+    iconForeground: "#ffffff",
     launcherPosition: null,
     animation: "spring",
     animationDurationMs: 280,
@@ -586,6 +595,8 @@ function defaultPreferences() {
     autoReplyAfterSend: false,
     replyCadence: "natural",
     ambientMessaging: "off",
+    preferFullProfiles: false,
+    enableLorebooks: false,
     roleplayContextMode: "smart",
     showReconciliationStatus: true,
     recentRoleplayMessages: 8,
@@ -659,6 +670,9 @@ function normalizePreferences(value) {
     const overridePreset = themePalette(overrideTheme);
     personaAppearance[personaId] = {
       enabled: bool(item.enabled, false),
+      ...["classic", "paper", "midnight", "pastel", "custom"].includes(String(item.iconPack)) ? { iconPack: item.iconPack } : {},
+      ...typeof item.iconBackground === "string" ? { iconBackground: safeColor(item.iconBackground, "#524478") } : {},
+      ...typeof item.iconForeground === "string" ? { iconForeground: safeColor(item.iconForeground, "#ffffff") } : {},
       ...typeof item.homeWallpaperEnabled === "boolean" ? { homeWallpaperEnabled: item.homeWallpaperEnabled } : {},
       ...typeof item.chatWallpaperEnabled === "boolean" ? { chatWallpaperEnabled: item.chatWallpaperEnabled } : {},
       theme: overrideTheme,
@@ -682,6 +696,7 @@ function normalizePreferences(value) {
   return {
     version: PREFERENCES_VERSION,
     theme,
+    characterPictures: bool(raw.characterPictures, false),
     voiceMessages: bool(raw.voiceMessages, true),
     ttsVoiceURI: text(raw.ttsVoiceURI, "", 500),
     ttsConnectionId: text(raw.ttsConnectionId, "", 180),
@@ -692,6 +707,14 @@ function normalizePreferences(value) {
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     desktopDockSide: raw.desktopDockSide === "right" ? "right" : "left",
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
+    independentUiScale: bool(raw.independentUiScale, false),
+    mobileUiScale: numberIn(raw.mobileUiScale, numberIn(raw.uiScale, 1, 0.7, 1.3), 0.7, 1.3),
+    desktopUiScale: numberIn(raw.desktopUiScale, numberIn(raw.uiScale, 1, 0.7, 1.3), 0.7, 1.3),
+    bubbleRadius: numberIn(raw.bubbleRadius, 19, 0, 32),
+    bubblePadding: numberIn(raw.bubblePadding, 8, 4, 20),
+    iconPack: ["classic", "paper", "midnight", "pastel", "custom"].includes(String(raw.iconPack)) ? raw.iconPack : "classic",
+    iconBackground: safeColor(raw.iconBackground, "#524478"),
+    iconForeground: safeColor(raw.iconForeground, "#ffffff"),
     launcherPosition: normalizeLauncherPosition(raw.launcherPosition),
     animation: allowedAnimations.has(String(raw.animation)) ? raw.animation : fallback.animation,
     animationDurationMs: Math.round(numberIn(raw.animationDurationMs, fallback.animationDurationMs, 0, 700)),
@@ -711,6 +734,8 @@ function normalizePreferences(value) {
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     replyCadence: raw.replyCadence === "instant" || raw.replyCadence === "quick" || raw.replyCadence === "relaxed" ? raw.replyCadence : "natural",
     ambientMessaging: raw.ambientMessaging === "sparse" || raw.ambientMessaging === "normal" ? raw.ambientMessaging : "off",
+    preferFullProfiles: bool(raw.preferFullProfiles, false),
+    enableLorebooks: bool(raw.enableLorebooks, false),
     roleplayContextMode: contextMode,
     showReconciliationStatus: bool(raw.showReconciliationStatus, fallback.showReconciliationStatus),
     recentRoleplayMessages: Math.round(numberIn(raw.recentRoleplayMessages, fallback.recentRoleplayMessages, 0, 20)),
@@ -1130,6 +1155,13 @@ function normalizePocketRoute(value, fallback = { app: "home" }) {
   if (app === "weather" || app === "notifications" || app === "home" || app === "appstore")
     return { app };
   return fallback;
+}
+
+// src/domain/timeskip.ts
+function timeskipMinutes(value) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 525600)
+    throw new Error("Choose a timeskip from 1 minute to 365 days.");
+  return value;
 }
 
 // src/domain/scheduler.ts
@@ -2100,6 +2132,7 @@ function categories(host) {
     ...host.freeformSession ? [["freeform", "Freeform session", "Name, switch sessions, or start a separate roleplay chat"]] : [],
     ["personalization", "Personalization", "Theme, wallpapers, and your Persona"],
     ["messages", "Messages", "Replies, ambient texts, roleplay context"],
+    ["context", "Context", "Character profiles, lorebooks, and this session’s scenario"],
     ["generation", "Pocket Generation", "Model source and connection diagnostics"],
     ["jev", "Tracker judge", "LLM or TypeSafe Jev decisions"],
     ["camera", "Camera & Swarm Studio", "Visual profile and macro diagnostics"],
@@ -2185,6 +2218,13 @@ function appearance(host) {
       next.chatWallpaper = wallpaper;
     })
   }));
+  const independent = toggle("Independent mobile and desktop scale", settings.independentUiScale, (value) => {
+    commit((next) => {
+      next.independentUiScale = value;
+    });
+    host.rerender();
+  }, "Use separate interface sizes on mobile and desktop. Turning off restores the shared size.");
+  independent.querySelector("button").dataset.appearanceFocus = "platform-scale";
   const scaleCard = el("section", "lp-card lp-settings-section");
   scaleCard.append(el("div", "lp-eyebrow", "Sizing"));
   const presets = el("div", "lp-row");
@@ -2196,9 +2236,13 @@ function appearance(host) {
     }));
     presets.appendChild(preset);
   }
-  scaleCard.append(presets, slider("Interface size", settings.uiScale, 0.7, 1.3, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+  scaleCard.append(...settings.independentUiScale ? [] : [presets], independent, ...settings.independentUiScale ? [slider("Mobile interface size", settings.mobileUiScale, 0.7, 1.3, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+    next.mobileUiScale = value;
+  })), slider("Desktop interface size", settings.desktopUiScale, 0.7, 1.3, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+    next.desktopUiScale = value;
+  }))] : [], ...settings.independentUiScale ? [] : [slider("Interface size", settings.uiScale, 0.7, 1.3, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
     next.uiScale = value;
-  }), "Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport."), slider("Desktop phone size", settings.handsetScale, 0.8, 1.25, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+  }), "Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.")], slider("Desktop phone size", settings.handsetScale, 0.8, 1.25, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
     next.handsetScale = value;
   }, { resize: true }), "Controls only the physical 9:18.4 handset on desktop."));
   const motion = el("section", "lp-card lp-settings-section");
@@ -2266,7 +2310,10 @@ function appearance(host) {
       choice.setAttribute("aria-pressed", String(choice.dataset.theme === settings.theme));
     themeRow.querySelector('button[title="custom"]')?.style.setProperty("--theme-color", settings.colors.accent);
   };
-  content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, scrolling, disclosure("Custom CSS", custom));
+  const iconPacks = button("Icon packs", "lp-button");
+  iconPacks.dataset.iconPackLauncher = "true";
+  iconPacks.onclick = () => host.chooseIconPack?.();
+  content.append(preview, themes, paletteControls.accent, paletteControls.advanced, iconPacks, wallpapers, scaleCard, motion, scrolling, disclosure("Custom CSS", custom));
   return page;
 }
 function persona(host) {
@@ -2394,6 +2441,21 @@ function persona(host) {
   if (!host.activePersona)
     return page;
   const active = host.activePersona;
+  if (host.freeformSession) {
+    const session = host.freeformSession, base = el("select", "lp-select");
+    for (const persona of host.appearanceBases || [])
+      base.append(new Option(persona.name, persona.id));
+    const baseId = session.appearanceBasePersonaId || session.personaId;
+    if (!Array.from(base.options).some((o) => o.value === baseId))
+      base.append(new Option(session.personaName, baseId));
+    base.value = baseId;
+    base.dataset.appearanceScope = "base";
+    base.onchange = () => host.send("lumiphone:freeform_appearance", { basePersonaId: base.value, independent: session.independentStyling === true });
+    content.append(fieldBlock("Base Persona styling", base, "Shared styling follows this Persona ID. Editing it updates every phone following the same base."));
+    const independent = toggle("Independent session styling", session.independentStyling === true, (value) => host.send("lumiphone:freeform_appearance", { basePersonaId: base.value, independent: value }), "Decouple this session’s theme, wallpapers, and CSS from the base Persona. Turn off to follow the base again.");
+    independent.querySelector("button").dataset.appearanceScope = "independent";
+    content.append(independent);
+  }
   const current = host.draft.personaAppearance[active.id] || {
     enabled: false,
     theme: host.draft.theme,
@@ -2411,7 +2473,7 @@ function persona(host) {
     paletteControls.sync(value.colors);
   };
   const card = el("section", "lp-card lp-settings-section");
-  card.append(el("div", "lp-eyebrow", "Persona appearance"), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => {
+  card.append(el("div", "lp-eyebrow", host.freeformSession ? "Session appearance" : "Persona appearance"), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => {
     item.enabled = value;
   }), "Appearance only; connections and notifications remain device-wide."));
   const theme = el("select", "lp-select");
@@ -2445,16 +2507,19 @@ function persona(host) {
     })
   }));
   const css = el("textarea", "lp-textarea lp-code-input");
-  css.placeholder = "Persona-scoped Pocket CSS";
+  css.placeholder = host.freeformSession ? "Session-scoped Pocket CSS" : "Persona-scoped Pocket CSS";
   css.value = current.customCss;
   css.addEventListener("input", () => commit((item) => {
     item.customCss = css.value;
   }, false));
-  const apply = button("Apply persona CSS", "lp-button");
+  const apply = button(host.freeformSession ? "Apply session CSS" : "Apply persona CSS", "lp-button");
   apply.addEventListener("click", () => commit((item) => {
     item.customCss = css.value;
   }));
-  card.append(fieldBlock("Theme", theme), paletteControls.accent, paletteControls.advanced, personaWallpapers, disclosure("Persona custom CSS", css, apply));
+  const iconPacks = button("Icon packs", "lp-button");
+  iconPacks.dataset.iconPackLauncher = "true";
+  iconPacks.onclick = () => host.chooseIconPack?.("persona");
+  card.append(fieldBlock("Theme", theme), paletteControls.accent, paletteControls.advanced, iconPacks, personaWallpapers, disclosure(host.freeformSession ? "Session custom CSS" : "Persona custom CSS", css, apply));
   content.appendChild(card);
   return page;
 }
@@ -2471,6 +2536,9 @@ function messages(host) {
   voice.append(el("div", "lp-eyebrow", "Voice messages"), toggle("Allow character voice messages", settings.voiceMessages !== false, (value) => commit((next) => {
     next.voiceMessages = value;
   }), "Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS."));
+  voice.append(toggle("Allow character picture generation", settings.characterPictures === true, (value) => commit((next) => {
+    next.characterPictures = value;
+  }), "Characters may generate and send photos in direct and group chats. Uses your Camera image generation connection."));
   voice.append(ttsSettings(() => settings, commit, host.onCleanup));
   content.append(voice);
   const replies = el("section", "lp-card lp-settings-section");
@@ -3006,7 +3074,57 @@ function freeformSettings(host) {
   content.append(card, start);
   return page;
 }
+function contextSettings(host) {
+  const { page, content } = host.page("Context", "Used in Roleplay and Freeform");
+  let settings = clone(host.draft);
+  const commit = (key, value) => {
+    settings = { ...settings, [key]: value };
+    host.update(settings);
+  };
+  content.append(toggle("Prefer full character profiles", settings.preferFullProfiles, (value) => commit("preferFullProfiles", value), "Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default."));
+  content.append(toggle("Enable lorebooks", settings.enableLorebooks, (value) => commit("enableLorebooks", value), "Requires World Books access. Roleplay uses host-activated lore. Freeform scans constant and literal-keyword entries from global books and books attached to its Persona and participants; host regex/vector and timed activation are unavailable there."));
+  const access = button("Manage lorebook access", "lp-button lp-button-quiet");
+  access.onclick = () => host.requestPermissions();
+  content.append(access);
+  const logs = button("Lorebook retrieval log", "lp-button");
+  logs.onclick = () => host.navigate("lore-log");
+  content.append(logs);
+  const scenario = el("textarea", "lp-textarea");
+  scenario.value = host.state.contextScenario || "";
+  scenario.maxLength = 12000;
+  const save = button("Save scenario", "lp-button");
+  save.onclick = () => host.send("lumiphone:save_context_scenario", { scenario: scenario.value });
+  content.append(fieldBlock("Custom scenario", scenario, "Saved only for this Pocket session or chat. Leave blank to clear it."), save);
+  return page;
+}
 function renderSettingsView(host) {
+  if (host.section === "lore-log") {
+    const { page, content } = host.page("Lorebook retrieval log", "Recent retrievals for this Pocket");
+    const refresh = button("Refresh retrieval log", "lp-button");
+    refresh.onclick = () => host.loadLoreLogs?.();
+    content.append(refresh);
+    if (host.loreLogs == null)
+      content.append(el("p", "lp-copy", "Loading retrieval log…"));
+    else if (!host.loreLogs.length)
+      content.append(el("p", "lp-copy", "No retrievals yet. Generate a phone reply or preview its context to record one."));
+    for (const log of host.loreLogs || []) {
+      const detail = el("details", "lp-card");
+      detail.append(el("summary", "", `${log.createdAt} · ${log.mode} · ${log.status} · ${log.includedChars} chars`));
+      detail.append(el("p", "lp-copy", `Conversation: ${host.state.conversations.find((c) => c.id === log.conversationId)?.title || log.conversationId}`), el("p", "lp-copy", `${log.bookIds.length} books · ${log.entries.filter((e) => e.chars > 0).length} included entries`));
+      if (log.error)
+        detail.append(el("p", "lp-warning", log.error));
+      if (log.status === "disabled")
+        detail.append(el("p", "lp-copy", "Lorebooks were disabled for this request."));
+      const list = el("ul", "lp-copy");
+      for (const entry of log.entries)
+        list.append(el("li", "", `${entry.title} · ${entry.reason} · ${entry.chars} chars${entry.bookId ? " · " + entry.bookId : ""}`));
+      detail.append(list);
+      content.append(detail);
+    }
+    return page;
+  }
+  if (host.section === "context")
+    return contextSettings(host);
   if (host.section === "freeform" && host.freeformSession)
     return freeformSettings(host);
   if (!host.section)
@@ -4224,6 +4342,7 @@ function renderMessagesView(host) {
   const menu = el("details", "lp-conversation-menu");
   const menuToggle = el("summary", "lp-nav-action", "⋯");
   menuToggle.setAttribute("aria-label", "Conversation menu");
+  menuToggle.dataset.appearanceFocus = "chat-menu";
   const menuSheet = el("div", "lp-conversation-menu-sheet");
   const menuAction = (label, callback) => {
     const action = button(label, "lp-conversation-menu-action");
@@ -4242,6 +4361,13 @@ function renderMessagesView(host) {
   const referenceAction = menuAction("Reference in roleplay", () => host.showReferenceSheet(conversation.id));
   referenceAction.disabled = host.readOnlyDevice || !conversation.messages.some((message) => message.sender !== "system");
   menuSheet.appendChild(referenceAction);
+  if (host.timeskip) {
+    const skip = menuAction("Timeskip", () => host.timeskip(conversation.id));
+    skip.disabled = host.readOnlyDevice;
+    menuSheet.append(skip);
+  }
+  if (host.chatTheme)
+    menuSheet.append(menuAction("Chat theme", () => host.chatTheme(conversation.id)));
   menuSheet.appendChild(menuAction("View Timeline", () => host.openTimeline("")));
   menuSheet.appendChild(menuAction("Generation info", () => host.showConversationGenerationInfo(conversation.id)));
   menuSheet.appendChild(menuAction("Outgoing prompt", () => host.showOutgoingPrompt(conversation.id)));
@@ -4285,6 +4411,18 @@ function renderMessagesView(host) {
     return separator;
   };
   for (const message of conversation.messages) {
+    if (message.timeskip) {
+      const separator = el("div", "lp-conversation-status lp-story-day", message.text);
+      separator.dataset.messageId = message.id;
+      separator.dataset.timeskip = String(message.timeskip.minutes);
+      separator.setAttribute("role", "separator");
+      separator.setAttribute("aria-label", message.text);
+      bubbles.append(separator);
+      previousMessage = message;
+      priorBurstKey = "";
+      priorGroupSpeakerId = "";
+      continue;
+    }
     const boundary = previousMessage ? messageContinuityBoundary(host.state, previousMessage, message) : undefined;
     if (boundary) {
       bubbles.append(daySeparator(boundary));
@@ -4325,6 +4463,29 @@ function renderMessagesView(host) {
       bubble.append(el("span", "", message.text), time);
     } else
       bubble.append(message.format === "voice" && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.sender === "contact" ? cleanPhoneMessageText(message.text) : message.text), el("span", "lp-bubble-time", `${formatTime(message.createdAt)} · ${message.status}`));
+    if (message.imageUrl) {
+      const photo = button("", "lp-message-photo");
+      photo.type = "button";
+      photo.setAttribute("aria-label", `Open photo from ${message.senderName}`);
+      const image = el("img");
+      image.src = message.imageUrl;
+      image.alt = message.text === "Photo" ? "Photo attachment" : message.text;
+      image.loading = "lazy";
+      photo.append(image);
+      photo.onclick = () => host.openPhoto?.(message);
+      bubble.prepend(photo);
+    }
+    if (message.photo && message.photo.status !== "ready") {
+      const status = el("div", "lp-message-photo-status", message.photo.status === "pending" ? "Making a photo…" : message.photo.error || "Photo stopped.");
+      if (!host.readOnlyDevice) {
+        const action = message.photo.status === "pending" ? "stop" : "retry", control = button(action === "stop" ? "Stop photo" : "Retry photo", "lp-bubble-action");
+        control.type = "button";
+        control.setAttribute("aria-label", `${action === "stop" ? "Stop" : "Retry"} photo from ${message.senderName}`);
+        control.onclick = () => host.send("lumiphone:message_photo_control", { conversationId: conversation.id, messageId: message.id, action });
+        status.append(control);
+      }
+      bubble.append(status);
+    }
     if (!message.call && (message.generation || message.origin || !host.readOnlyDevice)) {
       const tools = el("div", "lp-bubble-tools");
       let dismissActions;
@@ -4547,6 +4708,15 @@ function renderMessagesView(host) {
   });
   textarea.setAttribute("aria-label", "Message");
   const inputShell = el("div", "lp-compose-input");
+  if (host.attach) {
+    const attach = button("", "lp-compose-attach");
+    attach.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+    attach.type = "button";
+    attach.setAttribute("aria-label", "Attach to message");
+    attach.title = "Photos and events";
+    attach.onclick = () => host.attach(conversation.id);
+    inputShell.append(attach);
+  }
   inputShell.append(textarea, submit);
   compose.append(sparkle, inputShell);
   compose.addEventListener("submit", (event) => {
@@ -5425,7 +5595,7 @@ function contactEditor(host, contact, draft = null) {
       colorMode: colorMode.value,
       relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || "" },
-      contextPolicy: { pinned: pinned.checked },
+      contextPolicy: { pinned: pinned.checked, profileMode: contact?.contextPolicy.profileMode || "default" },
       generationPolicy: { relevant: relevant.checked },
       messagingPolicy: {
         remoteEligible: remote.checked,
@@ -5586,6 +5756,15 @@ function renderContactsView(host) {
     }
     const source = contact.source.kind === "character" ? "Linked Character" : contact.source.kind === "council" ? "Linked Council member" : `Pocket NPC · ${contact.source.origin}`;
     hero.append(el("span", "lp-eyebrow", `${source} · ${contact.relationship === "close" ? "Close connection" : "Background actor"}`));
+    const profileMode = el("select", "lp-select");
+    for (const [value, label] of [["default", "Use Context setting"], ["compact", "Compact profile"], ["full", "Full profile"]]) {
+      const option = el("option", "", label);
+      option.value = value;
+      profileMode.append(option);
+    }
+    profileMode.value = contact.contextPolicy.profileMode || "default";
+    profileMode.onchange = () => host.send("lumiphone:set_contact_profile_mode", { contactId: contact.id, mode: profileMode.value });
+    content.append(fieldBlock("Profile used for replies", profileMode));
     const presence = el("div", "lp-card");
     presence.append(el("div", "lp-title", contact.presence.inScene ? "Here now" : "Not in current scene"), el("p", "lp-copy", `${contact.contextPolicy.pinned ? "Pinned to model context" : "Included only while in scene"}${contact.presence.lastSceneAt ? ` · last scene ${formatDate(contact.presence.lastSceneAt)}` : ""}`), el("p", "lp-copy", `${contact.generationPolicy.relevant ? "Generation-relevant" : "Excluded from Pocket generation"} · ${contact.messagingPolicy.remoteEligible ? "Remote-message eligible" : "No remote messages"}${contact.messagingPolicy.allowAmbientInScene ? " · ambient override while here" : ""}`));
     const presenceControls = el("div", "lp-row");
@@ -7806,6 +7985,8 @@ function sequence(group, open) {
 // src/frontend/components/wallpaper-choice.ts
 var serial = 0;
 function wallpaperDestinationLabel(value) {
+  if (value.target === "conversation-chat")
+    return "this conversation’s wallpaper";
   return value.target.startsWith("persona-") ? `${value.personaName || "Persona"}’s ${value.target.endsWith("chat") ? "chat" : "home"} wallpaper` : `default ${value.target.endsWith("chat") ? "chat" : "home"} wallpaper`;
 }
 function wallpaperChoice(persona, apply) {
@@ -7906,6 +8087,101 @@ function renderAppReviewControl(host, task, label, type) {
 // src/domain/freeform.ts
 var isFreeformChat = (chatId) => Boolean(chatId?.startsWith("_freeform_"));
 
+// src/frontend/components/persona-picker.ts
+function personaPicker(personas, selected, query, choose, search, all = false) {
+  const root = el("div", "pocket-lock-field"), find = el("input"), select = el("select");
+  find.type = "search";
+  find.value = query;
+  find.placeholder = "Find a persona";
+  find.dataset.freeformField = all ? "manager-persona-search" : "lock-persona-search";
+  select.dataset.freeformField = all ? "manager-persona" : "persona";
+  const update = () => {
+    select.replaceChildren(new Option(all ? "All personas" : "Choose a persona", ""));
+    const matching = personas.filter((p) => p.name.toLocaleLowerCase().includes(find.value.trim().toLocaleLowerCase()));
+    const current = personas.find((p) => p.id === selected);
+    if (current && !matching.some((p) => p.id === selected))
+      select.append(new Option(current.name + " · selected", current.id));
+    for (const persona of matching)
+      select.append(new Option(persona.name, persona.id));
+    select.value = selected;
+  };
+  find.oninput = () => {
+    search(find.value);
+    update();
+  };
+  select.onchange = () => {
+    selected = select.value;
+    choose(selected);
+  };
+  const searchLabel = el("label", "pocket-lock-field", all ? "Search session personas" : "Search personas"), selectLabel = el("label", "pocket-lock-field", all ? "Filter sessions by persona" : "Choose persona");
+  searchLabel.append(find);
+  selectLabel.append(select);
+  root.append(searchLabel, selectLabel);
+  update();
+  return { root, select };
+}
+
+// src/frontend/components/session-manager.ts
+function renderSessionManager(directory, drafts, busy, error, actions, filter = { personaId: "", query: "" }) {
+  const root = el("section", "pocket-session-manager");
+  const title = el("h2", "", "Manage sessions");
+  title.tabIndex = -1;
+  root.append(title, el("p", "pocket-portal-intro", "Rename your worlds or remove sessions you no longer need. Copied roleplay chats stay separate."));
+  const refresh = button("Refresh sessions", "pocket-portal-action");
+  refresh.disabled = busy;
+  refresh.onclick = actions.refresh;
+  root.append(refresh);
+  const list = el("div", "pocket-session-manager");
+  root.append(list);
+  const picker = personaPicker(directory?.personas || [], filter.personaId, filter.query, (id) => {
+    filter.personaId = id;
+    render();
+  }, (query) => {
+    filter.query = query;
+  }, true);
+  root.insertBefore(picker.root, list);
+  const render = () => {
+    list.replaceChildren();
+    if (!directory)
+      list.append(el("p", "", "Loading sessions…"));
+    else if (!directory.sessions.length)
+      list.append(el("p", "", "No Freeform sessions yet."));
+    const visible = (directory?.sessions || []).filter((s) => !filter.personaId || s.personaId === filter.personaId);
+    if (directory?.sessions.length && !visible.length)
+      list.append(el("p", "", "No sessions for this Persona."));
+    for (const session of visible) {
+      const card = el("section", "pocket-session-card"), heading = el("h3", "", session.name);
+      const label = el("label", "pocket-lock-field", `Name for ${session.name}`), name = el("input");
+      name.value = drafts.get(session.id) ?? session.name;
+      name.maxLength = 80;
+      name.disabled = busy;
+      name.dataset.sessionName = session.id;
+      name.oninput = () => drafts.set(session.id, name.value);
+      label.append(name);
+      const save = button("Save name", "pocket-portal-action");
+      save.setAttribute("aria-label", `Save name for ${session.name}`);
+      save.disabled = busy;
+      save.onclick = () => actions.rename(session.id, name.value);
+      const remove = button("Delete session", "pocket-portal-action");
+      remove.setAttribute("aria-label", `Delete session ${session.name}`);
+      remove.disabled = busy;
+      remove.onclick = () => actions.remove(session.id);
+      const controls = el("div", "pocket-session-actions");
+      controls.append(save, remove);
+      card.append(heading, el("p", "pocket-portal-intro", session.personaName), label, controls);
+      list.append(card);
+    }
+  };
+  render();
+  const status = el("p", "pocket-lock-status", error);
+  status.setAttribute("role", error ? "alert" : "status");
+  root.append(status);
+  return root;
+}
+var SESSION_MANAGER_STYLES = `
+.pocket-session-manager{display:grid;gap:16px;padding-top:20px}.pocket-session-card{display:grid;gap:12px;padding:18px;border:1px solid var(--pocket-border);border-radius:14px;background:var(--pocket-surface);min-width:0}.pocket-session-card h3{margin:0;font-size:16px;overflow-wrap:anywhere}.pocket-session-card .pocket-portal-intro{margin:0}.pocket-session-actions{display:flex;flex-wrap:wrap;gap:8px}.pocket-session-actions button{flex:1 1 120px}
+`;
+
 // src/frontend/components/freeform-lock.ts
 function renderFreeformLock(directory, draft, busy, error, actions) {
   const root = el("section", "pocket-freeform-lock");
@@ -7925,12 +8201,15 @@ function renderFreeformLock(directory, draft, busy, error, actions) {
     }
     return root;
   }
-  const persona = el("select");
-  persona.setAttribute("aria-label", "Choose persona");
+  const picker = personaPicker(directory.personas, draft.personaId, draft.personaSearch || "", (id) => {
+    draft.personaId = id;
+    draft.sessionId = "";
+    update();
+  }, (query) => {
+    draft.personaSearch = query;
+  });
+  const persona = picker.select;
   persona.dataset.freeformField = "persona";
-  persona.append(new Option("Choose a persona", ""));
-  for (const entry of directory.personas)
-    persona.append(new Option(entry.name, entry.id));
   const sessions = el("select");
   sessions.setAttribute("aria-label", "Log in to session");
   sessions.dataset.freeformField = "session";
@@ -7972,11 +8251,6 @@ function renderFreeformLock(directory, draft, busy, error, actions) {
     login.disabled = busy || !draft.sessionId;
     create.disabled = busy || !selected || !draft.name.trim();
   };
-  persona.onchange = () => {
-    draft.personaId = persona.value;
-    draft.sessionId = "";
-    update();
-  };
   sessions.onchange = () => {
     draft.sessionId = sessions.value;
     login.disabled = busy || !sessions.value;
@@ -7991,7 +8265,7 @@ function renderFreeformLock(directory, draft, busy, error, actions) {
       actions.login(session);
   };
   create.onclick = () => actions.create(draft.personaId, draft.name);
-  root.append(avatar, label("Persona", persona), label("Log in to session", sessions), login, el("p", "pocket-lock-divider", "OR START SOMETHING NEW"), label("Session name", name), create);
+  root.append(avatar, picker.root, label("Log in to session", sessions), login, el("p", "pocket-lock-divider", "OR START SOMETHING NEW"), label("Session name", name), create);
   const status = el("p", "pocket-lock-status", busy ? "Opening your Pocket…" : error);
   status.setAttribute("role", error ? "alert" : "status");
   root.append(status);
@@ -8038,7 +8312,9 @@ function renderPocketPortal(view, navigate, content) {
       card.onclick = () => navigate(id);
       cards.append(card);
     }
-    body.append(cards, el("p", "pocket-portal-footnote", "Same Pocket. A different place to begin."));
+    const manage = button("Manage sessions", "pocket-portal-text-action");
+    manage.onclick = () => navigate("sessions");
+    body.append(cards, manage, el("p", "pocket-portal-footnote", "Same Pocket. A different place to begin."));
   } else {
     const back = button("All spaces", "pocket-portal-text-action");
     const chevron = el("span", "", "‹ ");
@@ -8051,6 +8327,7 @@ function renderPocketPortal(view, navigate, content) {
   return root;
 }
 var POCKET_PORTAL_STYLES = `
+${SESSION_MANAGER_STYLES}
 .pocket-portal{--pocket-text:var(--lumiverse-text,#eceaf1);--pocket-muted:var(--lumiverse-text-muted,#a7a3b2);--pocket-accent:var(--lumiverse-primary,#b5a5f5);--pocket-border:var(--lumiverse-border,#ffffff16);--pocket-surface:var(--lumiverse-fill-subtle,#ffffff06);--pocket-hover:var(--lumiverse-fill,#ffffff0c);box-sizing:border-box;width:100%;min-width:0;min-height:100%;padding:24px 20px 32px;color:var(--pocket-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--pocket-accent) 9%,transparent),transparent 55%)}
 .pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-device-access{flex:1;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
 @media(max-width:420px){.pocket-portal{padding:18px 16px 28px}.pocket-portal-nav{padding-bottom:24px}.pocket-portal h2{font-size:28px}.pocket-portal-destination{padding:20px 16px 26px}}
@@ -8842,6 +9119,65 @@ function launcherIcon(app) {
   node.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${paths[app]}</svg>`;
   return node;
 }
+
+// src/frontend/components/appearance-controls.ts
+var ICON_PACKS = { classic: { label: "Classic", background: "#329e6b", glyph: "#ffffff" }, paper: { label: "Paper", background: "#f3ead6", glyph: "#40382f" }, midnight: { label: "Midnight", background: "#302442", glyph: "#e6d6ff" }, pastel: { label: "Pastel", background: "#edcbd5", glyph: "#593450" }, custom: { label: "Custom", background: "#524478", glyph: "#ffffff" } };
+function iconPackPicker(preferences, save) {
+  const root = el("div", "lp-icon-pack-picker"), group = el("div", "lp-icon-pack-grid");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "Icon packs");
+  let draft = structuredClone(preferences);
+  const choices = [];
+  for (const [id, pack] of Object.entries(ICON_PACKS)) {
+    const choose = button("", "lp-icon-pack-choice"), sample = el("span", "lp-app-icon-box lp-icon-messages");
+    choose.setAttribute("aria-label", `${pack.label} icon pack`);
+    choose.setAttribute("aria-pressed", String(draft.iconPack === id));
+    sample.style.background = id === "custom" ? draft.iconBackground : pack.background;
+    sample.style.color = id === "custom" ? draft.iconForeground : pack.glyph;
+    sample.style.setProperty("--preview-icon-bg", id === "custom" ? draft.iconBackground : pack.background);
+    sample.append(launcherIcon("messages"));
+    choose.append(sample, el("span", "", pack.label));
+    choose.onclick = () => {
+      draft.iconPack = id;
+      for (const node of choices)
+        node.setAttribute("aria-pressed", String(node === choose));
+      save(structuredClone(draft));
+    };
+    choices.push(choose);
+    group.append(choose);
+  }
+  const colors = el("div", "lp-icon-pack-colors");
+  root.append(group, colors);
+  for (const [key, title] of [["iconBackground", "Custom icon background"], ["iconForeground", "Custom icon color"]]) {
+    const label = el("label", "lp-field", title), input = el("input", "lp-color-input");
+    input.type = "color";
+    input.value = draft[key];
+    input.oninput = () => {
+      draft[key] = input.value;
+      draft.iconPack = "custom";
+      for (const node of choices)
+        node.setAttribute("aria-pressed", String(node === choices.at(-1)));
+      const sample = choices.at(-1).querySelector(".lp-app-icon-box");
+      sample.style.background = draft.iconBackground;
+      sample.style.color = draft.iconForeground;
+      sample.style.setProperty("--preview-icon-bg", draft.iconBackground);
+      save(structuredClone(draft));
+    };
+    label.append(input);
+    colors.append(label);
+  }
+  return root;
+}
+var APPEARANCE_CONTROL_STYLES = `
+.lumiphone-shell .lp-empty-app-icon{display:grid;place-items:center;width:58px;height:58px;border-radius:16px;color:#fff;margin-bottom:12px}.lumiphone-shell .lp-empty-app-icon svg{width:34px;height:34px;margin:0;color:inherit;opacity:1}
+.lumiphone-shell .lp-bubble:not([data-sender=system]){padding:calc(var(--lp-bubble-padding,8px)*var(--pocket-ui-scale)) calc(10px*var(--pocket-ui-scale));border-radius:calc(var(--lp-bubble-radius,19px)*var(--pocket-ui-scale))}
+.lumiphone-shell .lp-bubble[data-sender=persona]{border-bottom-right-radius:calc(min(6px,var(--lp-bubble-radius,19px))*var(--pocket-ui-scale))}.lumiphone-shell .lp-bubble[data-sender=contact]{border-bottom-left-radius:calc(min(6px,var(--lp-bubble-radius,19px))*var(--pocket-ui-scale))}
+.lumiphone-shell[data-icon-pack]:not([data-icon-pack=classic]) :is(.lp-app-icon-box,.lp-store-app-icon){background:var(--lp-icon-bg);color:var(--lp-icon-fg)}
+.lumiphone-shell[data-icon-pack]:not([data-icon-pack=classic]) :is(.lp-app-icon-box,.lp-store-app-icon) svg [stroke^="#"]{stroke:var(--lp-icon-bg)}
+.lumiphone-shell[data-icon-pack]:not([data-icon-pack=classic]) :is(.lp-app-icon-box,.lp-store-app-icon) svg [fill^="#"]{fill:var(--lp-icon-bg)}
+.lp-icon-pack-choice svg [stroke^="#"]{stroke:var(--preview-icon-bg)}.lp-icon-pack-choice svg [fill^="#"]{fill:var(--preview-icon-bg)}
+.lp-icon-pack-picker{display:grid;gap:20px;padding:4px}.lp-icon-pack-colors{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.lp-icon-pack-colors .lp-field{display:flex;flex-direction:column-reverse;align-items:center;gap:9px;padding:14px 8px;border:1px solid var(--lp-border,#ffffff22);border-radius:12px;font-size:12px;text-align:center}.lp-icon-pack-colors input:focus-visible{outline:2px solid var(--lp-accent,#b6a5ee);outline-offset:3px}.lp-icon-pack-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px}.lp-icon-pack-choice{display:grid;justify-items:center;gap:10px;min-height:100px;border:1px solid #ffffff22;border-radius:12px;background:transparent;color:inherit;font:inherit;cursor:pointer}.lp-icon-pack-choice[aria-pressed=true]{outline:2px solid var(--lp-accent,#b6a5ee)}.lp-icon-pack-choice:focus-visible{outline:2px solid var(--lp-accent,#b6a5ee);outline-offset:3px}.lp-icon-pack-choice .lp-app-icon-box{display:grid;place-items:center;width:48px;height:48px;border-radius:14px}.lp-icon-pack-choice svg{width:28px;height:28px}.lp-chat-theme-controls label{display:grid;gap:8px}.lp-chat-theme-controls input:not([type=range]){min-height:44px}
+`;
 
 // src/frontend/components/store-banners.ts
 var STORE_BANNER_SCENES = {
@@ -11928,7 +12264,14 @@ class PocketController {
   freeformRequest = "";
   freeformListRequest = "";
   freeformCopyRequest = "";
+  sessionManageRequest = "";
+  sessionManageError = "";
+  sessionManageFocus = false;
+  sessionManagerFilter = { personaId: "", query: "" };
+  sessionNameDrafts = new Map;
   freeformError = "";
+  loreLogs = null;
+  loreLogRequest = "";
   state = null;
   preferences = defaultPreferences();
   settingsDraft = null;
@@ -11937,6 +12280,7 @@ class PocketController {
   caps = null;
   swarmProfile = null;
   generation = null;
+  conversationWallpapers = {};
   resolvedWallpapers = {
     deviceHome: { ...EMPTY_RESOLVED_IMAGE },
     deviceChat: { ...EMPTY_RESOLVED_IMAGE },
@@ -11987,6 +12331,9 @@ class PocketController {
   selectedMessageId = "";
   pendingMessageScrollId = "";
   selectedNoteId = "";
+  manualEventConversationId = "";
+  chatPhotoSelection = null;
+  chatPhotoRequests = new Map;
   selectedEventId = "";
   pendingEventSuggestion = null;
   selectedTrackerId = "";
@@ -12398,7 +12745,7 @@ class PocketController {
       this.freeformSession = null;
       this.refresh();
     }
-    if (view === "freeform")
+    if (view === "freeform" || view === "sessions")
       this.loadFreeformDirectory();
     this.renderDrawerLanding();
     this.drawer.root.querySelector("h2")?.focus({ preventScroll: true });
@@ -12422,6 +12769,8 @@ class PocketController {
     this.settingsDraft = null;
     this.contextPreview = null;
     this.personaPreview = null;
+    this.loreLogs = null;
+    this.loreLogRequest = "";
     this.operations.clear();
     this.messageRequests.clear();
     this.selectedSettingsSection = "";
@@ -12436,6 +12785,9 @@ class PocketController {
     this.gallery = { data: [], total: 0 };
     this.pendingRoute = null;
     this.pendingEventSuggestion = null;
+    this.manualEventConversationId = "";
+    this.chatPhotoSelection = null;
+    this.chatPhotoRequests.clear();
     this.cameraDraft = { scene: "", enhance: undefined };
     this.cameraImageId = "";
     this.cameraContactId = "";
@@ -12478,10 +12830,53 @@ class PocketController {
     modal.root.append(body);
     keep.focus();
   }
+  confirmSessionDelete(sessionId) {
+    const session = this.freeformDirectory?.sessions.find((s) => s.id === sessionId);
+    if (!session)
+      return;
+    const modal = this.ctx.ui.showModal({ title: `Delete session ${session.name}`, width: 460, maxHeight: 440 });
+    modal.root.classList.add("lp-media-viewer", "pocket-freeform-confirm");
+    const content = el("div", "lp-settings-section");
+    content.append(el("p", "lp-copy", `Delete “${session.name}” and its Freeform phone history? This cannot be undone. Roleplay chats copied from it and shared Persona styling will remain available.`));
+    const keep = button("Keep session", "lp-button");
+    keep.onclick = () => modal.dismiss();
+    const remove = button("Delete session", "lp-button");
+    remove.onclick = () => {
+      this.sessionManageError = "";
+      this.sessionManageRequest = this.send("lumiphone:freeform_delete", { sessionId });
+      modal.dismiss();
+      this.renderDrawerLanding();
+    };
+    content.append(keep, remove);
+    modal.root.append(content);
+    keep.focus();
+  }
   renderDrawerLanding() {
     const activeField = this.drawer.root.contains(document.activeElement) ? document.activeElement?.dataset.freeformField : undefined;
     const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     this.drawer.root.replaceChildren();
+    if (this.portalView === "sessions") {
+      const manager = renderSessionManager(this.freeformDirectory, this.sessionNameDrafts, Boolean(this.sessionManageRequest), this.sessionManageError, {
+        rename: (sessionId, name) => {
+          this.sessionManageError = "";
+          this.sessionManageRequest = this.send("lumiphone:freeform_rename", { sessionId, name });
+          this.renderDrawerLanding();
+        },
+        remove: (sessionId) => this.confirmSessionDelete(sessionId),
+        refresh: () => {
+          this.loadFreeformDirectory();
+          this.renderDrawerLanding();
+        }
+      }, this.sessionManagerFilter);
+      this.drawer.root.append(renderPocketPortal("sessions", (view) => this.navigatePortal(view), manager));
+      if (activeField) {
+        const field = this.drawer.root.querySelector(`[data-freeform-field="${activeField}"]`);
+        field?.focus({ preventScroll: true });
+        if (field instanceof HTMLInputElement && selection?.[0] != null && selection[1] != null)
+          field.setSelectionRange(selection[0], selection[1]);
+      }
+      return;
+    }
     if (this.portalView === "freeform") {
       const lock = renderFreeformLock(this.freeformDirectory, this.freeformDraft, Boolean(this.freeformRequest), this.freeformError, {
         login: (session) => this.openFreeform(session.id),
@@ -12491,6 +12886,9 @@ class PocketController {
           this.renderDrawerLanding();
         }
       });
+      const manage = button("Manage sessions", "pocket-portal-text-action");
+      manage.onclick = () => this.navigatePortal("sessions");
+      lock.append(manage);
       this.drawer.root.append(renderPocketPortal("freeform", (view) => this.navigatePortal(view), lock));
       if (activeField) {
         const field = this.drawer.root.querySelector(`[data-freeform-field="${activeField}"]`);
@@ -12700,6 +13098,7 @@ class PocketController {
         "chat_mutation",
         "characters",
         "personas",
+        "world_books",
         "generation",
         "tools",
         "interceptor",
@@ -13003,6 +13402,16 @@ class PocketController {
     return { key, ui };
   }
   onBackend(payload) {
+    const photoRequest = this.chatPhotoRequests.get(payload.requestId);
+    if (photoRequest && payload.type === "lumiphone:camera_progress") {
+      photoRequest(payload);
+      return;
+    }
+    if (photoRequest && ["lumiphone:chat_photo_ready", "lumiphone:chat_photo_sent", "lumiphone:error", "lumiphone:camera_cancelled"].includes(payload.type)) {
+      this.chatPhotoRequests.delete(payload.requestId);
+      photoRequest(payload);
+      return;
+    }
     if (this.handleSocialImage(payload))
       return;
     const dmRequest = this.socialDmRequests.get(payload.requestId);
@@ -13068,11 +13477,43 @@ class PocketController {
     }
     if (!payload || typeof payload !== "object" || typeof payload.type !== "string")
       return;
+    if ((payload.type === "lumiphone:freeform_deleted" || payload.type === "lumiphone:freeform_renamed") && payload.requestId === this.sessionManageRequest) {
+      this.sessionManageRequest = "";
+      this.sessionNameDrafts.delete(payload.sessionId);
+      this.sessionManageError = payload.warning || "";
+      this.sessionManageFocus = true;
+      if (payload.type === "lumiphone:freeform_deleted" && this.freeformSession?.id === payload.sessionId) {
+        this.cameraBusy = false;
+        this.resetPocketSession();
+        this.freeformSession = null;
+        this.close();
+        this.portalView = payload.warning ? "sessions" : "freeform";
+        this.refresh();
+      }
+      this.freeformDirectory = null;
+      this.loadFreeformDirectory();
+      this.renderDrawerLanding();
+      return;
+    }
+    if (payload.type === "lumiphone:lore_log" && payload.requestId === this.loreLogRequest) {
+      const active = this.activeContext();
+      if (payload.chatId !== active.chatId || payload.characterId !== active.characterId)
+        return;
+      this.loreLogs = payload.entries;
+      this.loreLogRequest = "";
+      if (this.currentApp === "settings" && this.selectedSettingsSection === "lore-log")
+        this.render(false);
+      return;
+    }
     if (payload.type === "lumiphone:freeform_directory" && payload.requestId === this.freeformListRequest) {
       this.freeformListRequest = "";
       this.freeformDirectory = payload.directory;
       this.freeformError = "";
       this.renderDrawerLanding();
+      if (this.sessionManageFocus) {
+        this.sessionManageFocus = false;
+        this.drawer.root.querySelector("h2")?.focus({ preventScroll: true });
+      }
       return;
     }
     if (payload.type === "lumiphone:freeform_opened" && payload.requestId === this.freeformRequest) {
@@ -13151,13 +13592,15 @@ class PocketController {
       this.preferences = normalizePreferences(payload.preferences || this.preferences);
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode);
       this.applyLauncherPosition();
-      if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences")
+      if (payload.reason === "import" || payload.reason === "reset_preferences" || payload.reason === "preferences" || payload.reason === "appearance_scope")
         this.settingsDraft = structuredClone(this.preferences);
       if (previousDockSide !== this.preferences.desktopDockSide)
         this.resizeExpanded();
       this.caps = payload.capabilities || this.caps;
       this.swarmProfile = payload.swarmProfile || this.swarmProfile;
       this.generation = payload.generation || this.generation;
+      if (payload.conversationWallpapers)
+        this.conversationWallpapers = payload.conversationWallpapers;
       if (payload.resolvedWallpapers)
         this.resolvedWallpapers = payload.resolvedWallpapers;
       if ("activePersona" in payload)
@@ -13188,9 +13631,14 @@ class PocketController {
       this.pendingRoute = null;
       if (pending)
         this.openPocket(pending);
-      else if (this.expanded && this.currentApp === "settings")
+      else if (this.expanded && this.currentApp === "settings" && payload.reason === "appearance_scope") {
+        const focus = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.appearanceScope : undefined;
+        this.render(false);
+        if (focus)
+          this.screen.querySelector(`[data-appearance-scope="${focus}"]`)?.focus({ preventScroll: true });
+      } else if (this.expanded && this.currentApp === "settings")
         this.updateSettingsDiagnostics();
-      else if (this.expanded && payload.reason !== "identity_profile_saved")
+      else if (this.expanded && payload.reason !== "identity_profile_saved" && !this.screen.querySelector("[data-pocket-event-editor]"))
         this.render(false);
       if (this.unreadCount() > previousUnread && !this.expanded)
         this.launcher.animate([
@@ -13692,6 +14140,13 @@ class PocketController {
       return;
     }
     if (payload.type === "lumiphone:error") {
+      if (payload.requestId === this.sessionManageRequest) {
+        this.sessionManageRequest = "";
+        this.sessionManageError = payload.error || "Could not update the session.";
+        this.loadFreeformDirectory();
+        this.renderDrawerLanding();
+        return;
+      }
       if (payload.requestId === this.freeformRequest || payload.requestId === this.freeformListRequest) {
         this.freeformRequest = "";
         this.freeformListRequest = "";
@@ -13976,7 +14431,18 @@ class PocketController {
     this.shell.style.setProperty("--lp-home-wallpaper-position", `${homeSetting.focalX * 100}% ${homeSetting.focalY * 100}%`);
     this.shell.style.setProperty("--lp-chat-wallpaper-size", chatSetting.fit === "stretch" ? "100% 100%" : chatSetting.fit);
     this.shell.style.setProperty("--lp-chat-wallpaper-position", `${chatSetting.focalX * 100}% ${chatSetting.focalY * 100}%`);
-    this.shell.style.setProperty("--pocket-ui-scale", String(settings.uiScale));
+    const conversation = this.currentApp === "messages" ? this.state?.conversations.find((c) => c.id === this.selectedConversationId) : undefined;
+    const chat = conversation?.appearance;
+    this.shell.style.setProperty("--lp-bubble-radius", `${chat?.radius ?? settings.bubbleRadius}px`);
+    this.shell.style.setProperty("--lp-bubble-padding", `${chat?.padding ?? settings.bubblePadding}px`);
+    if (chat?.wallpaper?.source && this.conversationWallpapers[conversation.id])
+      this.shell.style.setProperty("--lp-chat-wallpaper", imageLayer(this.conversationWallpapers[conversation.id], chat.wallpaper, chatWallpaper));
+    const iconPack = persona?.enabled ? persona.iconPack ?? settings.iconPack : settings.iconPack;
+    const pack = ICON_PACKS[iconPack];
+    this.shell.dataset.iconPack = iconPack;
+    this.shell.style.setProperty("--lp-icon-bg", iconPack === "custom" ? persona?.enabled && persona.iconPack ? persona.iconBackground ?? settings.iconBackground : settings.iconBackground : pack.background);
+    this.shell.style.setProperty("--lp-icon-fg", iconPack === "custom" ? persona?.enabled && persona.iconPack ? persona.iconForeground ?? settings.iconForeground : settings.iconForeground : pack.glyph);
+    this.shell.style.setProperty("--pocket-ui-scale", String(settings.independentUiScale ? calculatePhoneSurface(settings.handsetScale).fullscreen ? settings.mobileUiScale : settings.desktopUiScale : settings.uiScale));
     this.shell.style.setProperty("--lp-animation-ms", `${settings.reducedMotion ? 0 : settings.animationDurationMs}ms`);
     this.shell.dataset.reducedMotion = String(settings.reducedMotion);
     const customCss = [settings.customCss, persona?.enabled ? persona.customCss : ""].filter(Boolean).join(`
@@ -14048,6 +14514,7 @@ class PocketController {
       return;
     const previousRoot = this.handsetHost.parentElement;
     this.mountInteractiveSurface();
+    this.applyAppearance();
     if (this.currentApp === "settings" && previousRoot !== this.handsetHost.parentElement)
       this.render(false);
   }
@@ -14165,8 +14632,12 @@ class PocketController {
       this.open();
     if (this.currentApp === "settings" && route.app !== "settings")
       this.settingsDraft = null;
-    if (this.currentApp === "calendar" && route.app !== "calendar")
+    if (this.currentApp === "calendar" && route.app !== "calendar") {
       this.pendingEventSuggestion = null;
+      this.manualEventConversationId = "";
+    }
+    if (this.currentApp === "gallery" && route.app !== "gallery")
+      this.chatPhotoSelection = null;
     this.currentApp = route.app;
     if (route.app === "messages") {
       const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state);
@@ -14409,6 +14880,7 @@ class PocketController {
     const oldThreadScroll = oldThread?.scrollTop;
     const oldMessageComposerHeight = oldThread?.parentElement?.querySelector("[data-pocket-composer]")?.style.height;
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false;
+    const focusedAppearance = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.appearanceFocus : undefined;
     const focusedDockSide = document.activeElement?.getAttribute("aria-label") === "Desktop phone side";
     const focusedContact = this.currentApp === "contacts" && this.screen.contains(document.activeElement) ? document.activeElement?.dataset.contactFocus : "";
     const focusedSocial = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.socialFocus : "";
@@ -14448,6 +14920,8 @@ class PocketController {
       view.addEventListener("animationend", () => view.removeAttribute("data-animate"), { once: true });
     }
     this.screen.replaceChildren(view);
+    if (!transition && focusedAppearance)
+      view.querySelector(`[data-appearance-focus="${focusedAppearance}"]`)?.focus({ preventScroll: true });
     const replacementThread = view.querySelector("[data-pocket-thread]");
     if (view.matches(".lp-thread"))
       view.scrollTop = 0;
@@ -14844,6 +15318,18 @@ class PocketController {
       state: this.state,
       selectedConversationId: this.selectedConversationId,
       renderVoiceMessage: (message) => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]),
+      chatTheme: (conversationId) => this.showChatTheme(conversationId),
+      timeskip: (conversationId) => this.showTimeskip(conversationId),
+      attach: (conversationId) => this.showChatAttachment(conversationId),
+      openPhoto: (message) => {
+        const modal = this.ctx.ui.showModal({ title: `Photo from ${message.senderName}`, width: 700, maxHeight: 800 });
+        modal.root.classList.add("lp-media-viewer");
+        const image = el("img");
+        image.src = message.imageUrl;
+        image.alt = message.text;
+        image.style.cssText = "display:block;max-width:100%;max-height:70vh;object-fit:contain";
+        modal.root.append(image);
+      },
       deviceOwnerActorId: owner,
       readOnlyDevice: owner !== pocketPersonaActorId(this.state),
       selectedMessageId: this.selectedMessageId,
@@ -15400,6 +15886,7 @@ ${body}`;
     for (const item of this.gallery.data) {
       const tile = el("button", "lp-gallery-item");
       tile.type = "button";
+      tile.setAttribute("aria-label", `Open photo: ${item.filename || "Gallery image"}`);
       tile.dataset.selected = String(item.id === this.selectedGalleryImageId);
       if (item.id === this.selectedGalleryImageId)
         tile.setAttribute("aria-current", "true");
@@ -15441,6 +15928,30 @@ ${body}`;
     image.style.cssText = "display:block;width:100%;max-height:65vh;object-fit:contain;border-radius:12px;background:#080808";
     const actions = el("div", "lp-gallery-actions"), feedback = el("p", "lp-wallpaper-result");
     feedback.setAttribute("role", "status");
+    const chatPhoto = this.chatPhotoSelection;
+    if (chatPhoto && this.activeContext().chatId === chatPhoto.context.chatId && this.activeContext().characterId === chatPhoto.context.characterId) {
+      const use = button("Send photo to conversation", "lp-button");
+      use.onclick = () => {
+        use.disabled = true;
+        const id = requestId("chat_photo");
+        this.chatPhotoRequests.set(id, (payload) => {
+          if (payload.type === "lumiphone:chat_photo_sent") {
+            this.chatPhotoSelection = null;
+            modal.dismiss();
+            if (this.activeContext().chatId === chatPhoto.context.chatId && this.activeContext().characterId === chatPhoto.context.characterId) {
+              if (this.messageDrafts.get(chatPhoto.conversationId) === chatPhoto.caption)
+                this.messageDrafts.delete(chatPhoto.conversationId);
+              this.openPocket({ app: "messages", conversationId: chatPhoto.conversationId });
+            }
+          } else {
+            feedback.textContent = payload.error || "Photo stopped.";
+            use.disabled = false;
+          }
+        });
+        this.send("lumiphone:send_chat_photo", { ...chatPhoto.context, requestId: id, conversationId: chatPhoto.conversationId, caption: chatPhoto.caption, imageId: item.id });
+      };
+      actions.append(use);
+    }
     const originatingSelection = this.pendingWallpaperSelection;
     const finish = (selection) => {
       if (selection && this.pendingWallpaperSelection === selection) {
@@ -15554,7 +16065,7 @@ ${body}`;
       return;
     }
     const context = this.activeContext();
-    const selection = { target, ...target.startsWith("persona-") ? { personaId: this.activePersona.id, personaName: this.activePersona.name } : {}, route: structuredClone(this.router.current), contextKey: context.chatId + ":" + context.characterId };
+    const selection = { target, ...target === "conversation-chat" ? { conversationId: this.selectedConversationId } : {}, ...target.startsWith("persona-") ? { personaId: this.activePersona.id, personaName: this.activePersona.name } : {}, route: structuredClone(this.router.current), contextKey: context.chatId + ":" + context.characterId };
     const refreshOrigin = () => {
       const active = this.activeContext();
       if (this.currentApp === "settings" && active.chatId === context.chatId && active.characterId === context.characterId)
@@ -16054,6 +16565,7 @@ ${body}`;
   }
   renderEventEditor(event) {
     const { page, content } = this.page(event ? "Edit Event" : "New Event", isFreeformChat(this.state?.chatId) ? "Session timeline" : "Roleplay timeline", { label: "Save", callback: () => save() });
+    page.dataset.pocketEventEditor = "true";
     const schedulerSeed = !event || this.pendingEventSuggestion?.suggestion.updateEventId === event.id ? this.pendingEventSuggestion : null;
     const suggestion = schedulerSeed?.suggestion || null;
     const title = this.field("Title", suggestion?.title || event?.title || "");
@@ -16083,7 +16595,9 @@ ${body}`;
     const description = el("textarea", "lp-textarea");
     description.placeholder = "What happens?";
     description.value = suggestion?.description || event?.description || "";
-    const selectedParticipantNames = new Set(suggestion?.participantNames || event?.participantNames || []);
+    const manualConversation = this.state.conversations.find((c) => c.id === this.manualEventConversationId);
+    const manualNames = manualConversation ? [this.state.pocketPersona.displayName, ...conversationActorIds(manualConversation).map((id) => resolvePocketActor(this.state, id)?.name || "")].filter(Boolean) : [];
+    const selectedParticipantNames = new Set(suggestion?.participantNames || event?.participantNames || manualNames);
     const participants = el("section", "lp-card lp-settings-section");
     participants.appendChild(el("div", "lp-eyebrow", "Participants"));
     const picker = el("div", "lp-contact-checklist lp-participant-picker");
@@ -16136,7 +16650,7 @@ ${body}`;
         whenText: inputValue(whenText.input),
         completed: completed.checked,
         participants: [...selectedParticipantNames],
-        sourceConversationId: schedulerSeed?.conversationId || event?.source?.conversationId,
+        sourceConversationId: schedulerSeed?.conversationId || event?.source?.conversationId || this.manualEventConversationId || undefined,
         sourceMessageId: schedulerSeed?.messageId || event?.source?.messageId,
         sourceSuggestionId: schedulerSeed?.suggestion.id || event?.source?.suggestionId
       } });
@@ -16199,10 +16713,398 @@ ${body}`;
       }
     });
   }
+  showIconPacks(scope) {
+    const personaId = scope === "persona" ? this.activePersona?.id : undefined;
+    if (scope === "persona" && !personaId)
+      return;
+    const preferences = structuredClone(this.settingsDraft || this.preferences), override = personaId ? preferences.personaAppearance[personaId] : undefined;
+    const initial = personaId ? { ...preferences, iconPack: override?.iconPack ?? preferences.iconPack, iconBackground: override?.iconBackground ?? preferences.iconBackground, iconForeground: override?.iconForeground ?? preferences.iconForeground } : preferences;
+    const modal = this.ctx.ui.showModal({ title: "Icon packs", width: 540, maxHeight: 650 });
+    modal.root.classList.add("lp-media-viewer", "pocket-freeform-confirm");
+    if (personaId)
+      modal.root.append(el("p", "lp-copy", `Icon styling for ${this.activePersona.name}. Device defaults stay unchanged.`));
+    modal.root.append(iconPackPicker(initial, (value) => {
+      if (!personaId) {
+        this.updatePreferences(value);
+        return;
+      }
+      if (this.activePersona?.id !== personaId)
+        return;
+      const next = structuredClone(this.settingsDraft || this.preferences);
+      const current = next.personaAppearance[personaId] || { enabled: false, theme: next.theme, colors: structuredClone(next.colors), customCss: "", homeWallpaper: { ...structuredClone(next.homeWallpaper), source: null }, chatWallpaper: { ...structuredClone(next.chatWallpaper), source: null } };
+      next.personaAppearance[personaId] = { ...current, enabled: true, iconPack: value.iconPack, iconBackground: value.iconBackground, iconForeground: value.iconForeground };
+      this.updatePreferences(next);
+    }));
+    if (personaId) {
+      const reset = button("Use device icon pack", "lp-button");
+      reset.onclick = () => {
+        if (this.activePersona?.id !== personaId)
+          return;
+        const next = structuredClone(this.settingsDraft || this.preferences), current = next.personaAppearance[personaId];
+        if (current) {
+          delete current.iconPack;
+          delete current.iconBackground;
+          delete current.iconForeground;
+          this.updatePreferences(next);
+        }
+        modal.dismiss();
+      };
+      modal.root.append(reset);
+    }
+    modal.onDismiss?.(() => {
+      if (!this.destroyed && this.currentApp === "settings" && ["appearance", "persona"].includes(this.selectedSettingsSection)) {
+        this.render(false);
+        this.screen.querySelector("[data-icon-pack-launcher]")?.focus({ preventScroll: true });
+      }
+    });
+  }
+  showTimeskip(conversationId) {
+    const context = this.activeContext();
+    this.screen.querySelector(".lp-conversation-menu > summary")?.focus({ preventScroll: true });
+    const modal = this.ctx.ui.showModal({ title: "Timeskip", width: 380, maxHeight: 430 });
+    modal.root.classList.add("lp-media-viewer", "pocket-freeform-confirm");
+    const form = el("form", "lp-settings-section");
+    form.append(el("p", "lp-copy", "How much time has passed? This advances the Pocket clock shared by this session’s chats and adds a separator here."));
+    const amount = el("input", "lp-input");
+    amount.type = "number";
+    amount.min = "1";
+    amount.max = "525600";
+    amount.step = "1";
+    amount.value = "1";
+    amount.required = true;
+    const unit = el("select", "lp-select");
+    for (const [value, label] of [["1", "Minutes"], ["60", "Hours"], ["1440", "Days"]])
+      unit.append(new Option(label, value));
+    unit.value = "60";
+    const status = el("p", "lp-copy");
+    status.setAttribute("role", "status");
+    const apply = button("Apply timeskip", "lp-button");
+    apply.type = "submit";
+    form.append(fieldBlock("Elapsed time", amount), fieldBlock("Time unit", unit), status, apply);
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      if (this.activeContext().chatId !== context.chatId || this.activeContext().characterId !== context.characterId) {
+        modal.dismiss();
+        return;
+      }
+      try {
+        const minutes = timeskipMinutes(Number(amount.value) * Number(unit.value));
+        apply.disabled = true;
+        this.send("lumiphone:timeskip", { conversationId, minutes });
+        modal.dismiss();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : "Choose a valid duration.";
+      }
+    };
+    modal.root.append(form);
+    amount.focus();
+    amount.select();
+  }
+  showChatAttachment(conversationId) {
+    const context = this.activeContext(), current = () => !this.destroyed && this.activeContext().chatId === context.chatId && this.activeContext().characterId === context.characterId;
+    const modal = this.ctx.ui.showModal({ title: "Add to conversation", width: 460, maxHeight: 760 });
+    modal.root.classList.add("lp-media-viewer", "lp-attachment-dialog");
+    const content = el("div", "lp-attachment"), tabs = el("div", "lp-attachment-tabs"), photos = el("div", "lp-attachment-panel"), events = el("div", "lp-attachment-panel");
+    const uid = requestId("attachment"), photoTab = button("Photo", "lp-attachment-tab"), eventTab = button("Event", "lp-attachment-tab");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Attachment type");
+    for (const [tab, panel, name] of [[photoTab, photos, "photo"], [eventTab, events, "event"]]) {
+      tab.type = "button";
+      tab.id = uid + "-" + name;
+      panel.id = uid + "-" + name + "-panel";
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", panel.id);
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", tab.id);
+      tabs.append(tab);
+    }
+    const selectTab = (selected) => {
+      for (const [tab, panel] of [[photoTab, photos], [eventTab, events]]) {
+        const active = tab === selected;
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+        panel.hidden = !active;
+      }
+    };
+    photoTab.onclick = () => selectTab(photoTab);
+    eventTab.onclick = () => selectTab(eventTab);
+    tabs.onkeydown = (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+        return;
+      event.preventDefault();
+      const selected = event.key === "Home" ? photoTab : event.key === "End" ? eventTab : document.activeElement === photoTab ? eventTab : photoTab;
+      if (!selected.disabled) {
+        selectTab(selected);
+        selected.focus();
+      }
+    };
+    const art = (path) => {
+      const node = el("span");
+      node.setAttribute("aria-hidden", "true");
+      node.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + path + "</svg>";
+      return node;
+    };
+    const caption = el("textarea", "lp-input"), prompt = el("textarea", "lp-input");
+    caption.rows = 2;
+    prompt.rows = 2;
+    caption.value = this.messageDrafts.get(conversationId) || "";
+    caption.maxLength = 8000;
+    caption.placeholder = "Add a message with your photo";
+    prompt.maxLength = 4000;
+    prompt.placeholder = "What should the photo show?";
+    const sources = el("div", "lp-attachment-sources"), gallery = button("", "lp-attachment-action"), upload = button("", "lp-attachment-action");
+    gallery.append(art('<rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/>'), el("span", "", "Gallery"));
+    upload.append(art('<path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/>'), el("span", "", "Upload photo"));
+    sources.append(gallery, upload);
+    const preview = el("div", "lp-attachment-preview"), image = el("img"), placeholder = el("div", "lp-attachment-placeholder");
+    image.alt = "Generation preview";
+    image.hidden = true;
+    placeholder.append(art('<rect x="3" y="5" width="18" height="15" rx="3"/><path d="m8 5 1-2h6l1 2"/><circle cx="12" cy="12" r="4"/>'), el("span", "", "Your photo preview will appear here"));
+    preview.append(placeholder, image);
+    const meter = el("progress", "lp-attachment-progress");
+    meter.setAttribute("aria-label", "Photo generation progress");
+    meter.hidden = true;
+    const status = el("p", "lp-attachment-status");
+    status.setAttribute("role", "status");
+    const footer = el("div", "lp-attachment-footer"), generate = button("Generate preview", "lp-attachment-action"), confirm = button("Send photo", "lp-attachment-action"), stop = button("Stop generation", "lp-attachment-action");
+    confirm.dataset.primary = "true";
+    confirm.hidden = stop.hidden = true;
+    footer.append(generate, stop, confirm);
+    let activeRequest = "", readyImage = "", generated = false, sending = false;
+    const feedback = (text) => {
+      if (status.textContent !== text)
+        status.textContent = text;
+    };
+    const busy = (value) => {
+      generate.disabled = gallery.disabled = upload.disabled = eventTab.disabled = value;
+      prompt.disabled = value;
+      confirm.disabled = value;
+    };
+    const showPreview = (url, final = false) => {
+      image.src = url;
+      image.alt = final ? "Photo ready to send" : "Generation preview";
+      image.hidden = false;
+      placeholder.hidden = true;
+    };
+    const prepare = (payload, isGeneration) => {
+      if (!current()) {
+        modal.dismiss();
+        return;
+      }
+      const id = requestId("chat_photo");
+      activeRequest = id;
+      readyImage = "";
+      generated = isGeneration;
+      confirm.hidden = true;
+      stop.hidden = true;
+      meter.hidden = !isGeneration;
+      meter.removeAttribute("value");
+      busy(true);
+      feedback(isGeneration ? "Preparing your photo…" : "Uploading your photo…");
+      image.hidden = true;
+      image.removeAttribute("src");
+      placeholder.hidden = false;
+      this.chatPhotoRequests.set(id, (response) => {
+        if (response.type === "lumiphone:camera_progress") {
+          stop.hidden = false;
+          if (response.imageDataUrl)
+            showPreview(response.imageDataUrl);
+          if (Number(response.totalSteps) > 0) {
+            meter.max = Number(response.totalSteps);
+            meter.value = Number(response.step) || 0;
+            feedback(`Making your photo · ${Number(response.step) || 0} / ${Number(response.totalSteps)} steps`);
+          } else
+            feedback(response.message || "Making your photo…");
+          return;
+        }
+        activeRequest = "";
+        stop.hidden = true;
+        meter.hidden = true;
+        busy(false);
+        if (response.type === "lumiphone:chat_photo_ready" && response.imageId) {
+          readyImage = response.imageId;
+          showPreview(response.imageUrl, true);
+          confirm.hidden = false;
+          generate.textContent = generated ? "Retry photo" : "Generate preview";
+          generate.hidden = false;
+          feedback("Ready to send. You can review the photo and edit its caption.");
+          confirm.focus();
+        } else {
+          generate.hidden = false;
+          generate.textContent = "Try again";
+          image.hidden = true;
+          placeholder.hidden = false;
+          feedback(response.error || "Generation stopped. Nothing was sent.");
+        }
+      });
+      this.send("lumiphone:prepare_chat_photo", { ...context, requestId: id, conversationId, ...payload });
+    };
+    stop.onclick = () => {
+      if (activeRequest)
+        this.send("lumiphone:camera_cancel", { ...context, requestId: activeRequest });
+    };
+    gallery.onclick = () => {
+      if (!current())
+        return;
+      this.chatPhotoSelection = { conversationId, context, caption: caption.value };
+      modal.dismiss();
+      this.openPocket({ app: "gallery" });
+    };
+    generate.onclick = () => {
+      if (!prompt.value.trim()) {
+        feedback("Describe a photo first.");
+        prompt.focus();
+        return;
+      }
+      prepare({ scene: prompt.value.trim() }, true);
+    };
+    confirm.onclick = () => {
+      if (!readyImage || !current() || activeRequest)
+        return;
+      const id = requestId("chat_photo");
+      activeRequest = id;
+      sending = true;
+      busy(true);
+      feedback("Sending your photo…");
+      const sentCaption = caption.value;
+      this.chatPhotoRequests.set(id, (response) => {
+        activeRequest = "";
+        sending = false;
+        busy(false);
+        if (response.type === "lumiphone:chat_photo_sent") {
+          const visible = modal.root.isConnected;
+          modal.dismiss();
+          if (current()) {
+            if (this.messageDrafts.get(conversationId) === sentCaption)
+              this.messageDrafts.delete(conversationId);
+            if (visible)
+              this.openPocket({ app: "messages", conversationId });
+          }
+        } else
+          feedback(response.error || "Could not send the photo. Please try again.");
+      });
+      this.send("lumiphone:send_chat_photo", { ...context, requestId: id, conversationId, caption: sentCaption, imageId: readyImage });
+    };
+    upload.onclick = () => {
+      (async () => {
+        upload.disabled = true;
+        try {
+          const files = await this.ctx.uploads.pickFile({ accept: ["image/png", "image/jpeg", "image/webp", "image/gif"], multiple: false, maxSizeBytes: 8 * 1024 * 1024 }), file = files[0];
+          if (!file || !current() || !modal.root.isConnected)
+            return;
+          if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.mimeType) || file.bytes.length > 8 * 1024 * 1024)
+            throw new Error("Choose a PNG, JPEG, WebP, or GIF up to 8 MB.");
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader;
+            reader.onload = () => resolve(String(reader.result || ""));
+            reader.onerror = () => reject(new Error("Could not read this photo."));
+            reader.readAsDataURL(new Blob([file.bytes.slice().buffer], { type: file.mimeType }));
+          });
+          if (current() && modal.root.isConnected)
+            prepare({ dataUrl, filename: file.name }, false);
+        } catch (error) {
+          feedback(error instanceof Error ? error.message : "Could not upload this photo.");
+        } finally {
+          if (!activeRequest)
+            upload.disabled = false;
+        }
+      })();
+    };
+    const eventContent = el("div", "lp-attachment-event"), eventArt = art('<rect x="3" y="5" width="18" height="16" rx="4"/><path d="M7 3v4m10-4v4M3 11h18m-9 3v4m-2-2h4"/>');
+    eventArt.className = "lp-attachment-event-art";
+    const schedule = button("Schedule event", "lp-attachment-action");
+    schedule.dataset.primary = "true";
+    schedule.onclick = () => {
+      if (!current())
+        return;
+      modal.dismiss();
+      this.pendingEventSuggestion = null;
+      this.manualEventConversationId = conversationId;
+      this.openPocket({ app: "calendar", eventId: "__new__" });
+    };
+    eventContent.append(eventArt, el("h3", "", "Make a plan"), el("p", "", "Choose when, who’s coming, and what’s happening. Your event will appear in this conversation and on the Timeline."), schedule);
+    events.append(eventContent);
+    photos.append(sources, fieldBlock("Photo description", prompt), preview, meter, fieldBlock("Photo caption", caption), status, footer);
+    content.append(tabs, photos, events);
+    modal.root.append(content);
+    selectTab(photoTab);
+    photoTab.focus();
+    modal.onDismiss?.(() => {
+      if (activeRequest && !sending) {
+        this.chatPhotoRequests.delete(activeRequest);
+        this.send("lumiphone:camera_cancel", { ...context, requestId: activeRequest });
+        activeRequest = "";
+      }
+    });
+  }
+  showChatTheme(conversationId) {
+    const conversation = this.state?.conversations.find((c) => c.id === conversationId);
+    if (!conversation)
+      return;
+    const context = this.activeContext();
+    this.screen.querySelector(".lp-conversation-menu > summary")?.focus({ preventScroll: true });
+    const modal = this.ctx.ui.showModal({ title: "Chat theme", width: 460, maxHeight: 650 });
+    modal.root.classList.add("lp-media-viewer", "pocket-freeform-confirm");
+    const content = el("div", "lp-settings-section lp-chat-theme-controls");
+    content.append(el("p", "lp-copy", "Wallpaper changes apply only to this conversation. Bubble sizing can apply here or to all chats."));
+    for (const [mode, label] of [["gallery", "Choose chat wallpaper"], ["upload", "Upload chat wallpaper"], ["url", "Use wallpaper URL"]]) {
+      const action = button(label, "lp-button");
+      action.onclick = () => {
+        modal.dismiss();
+        if (this.activeContext().chatId === context.chatId && this.activeContext().characterId === context.characterId)
+          this.chooseImage("conversation-chat", mode);
+      };
+      content.append(action);
+    }
+    const scope = el("select", "lp-select");
+    scope.append(new Option("This conversation", "conversation"), new Option("All chats · default", "all"));
+    content.append(fieldBlock("Apply bubble sizing to", scope));
+    const radius = el("input"), padding = el("input");
+    radius.type = padding.type = "range";
+    radius.min = "0";
+    radius.max = "32";
+    padding.min = "4";
+    padding.max = "20";
+    radius.value = String(conversation.appearance?.radius ?? this.preferences.bubbleRadius);
+    padding.value = String(conversation.appearance?.padding ?? this.preferences.bubblePadding);
+    content.append(fieldBlock("Bubble corner radius", radius), fieldBlock("Bubble vertical padding", padding));
+    const save = button("Save chat theme", "lp-button");
+    save.onclick = () => {
+      if (this.activeContext().chatId !== context.chatId || this.activeContext().characterId !== context.characterId) {
+        modal.dismiss();
+        return;
+      }
+      if (scope.value === "all") {
+        const prefs = structuredClone(this.preferences);
+        prefs.bubbleRadius = Number(radius.value);
+        prefs.bubblePadding = Number(padding.value);
+        this.updatePreferences(prefs);
+      } else
+        this.send("lumiphone:save_chat_appearance", { conversationId, appearance: { ...conversation.appearance, radius: Number(radius.value), padding: Number(padding.value) } });
+      modal.dismiss();
+    };
+    const reset = button("Use shared chat theme", "lp-button");
+    reset.onclick = () => {
+      if (this.activeContext().chatId !== context.chatId || this.activeContext().characterId !== context.characterId) {
+        modal.dismiss();
+        return;
+      }
+      this.send("lumiphone:save_chat_appearance", { conversationId, appearance: null });
+      modal.dismiss();
+    };
+    content.append(save, reset);
+    modal.root.append(content);
+  }
   renderSettings() {
     this.settingsDraft ||= structuredClone(this.preferences);
     return renderSettingsView({
       freeformSession: this.freeformSession,
+      chooseIconPack: (scope) => this.showIconPacks(scope),
+      appearanceBases: this.freeformDirectory?.personas,
+      loreLogs: this.loreLogs,
+      loadLoreLogs: () => {
+        this.loreLogRequest = this.send("lumiphone:get_lore_log");
+      },
       renameFreeform: (name) => {
         this.send("lumiphone:freeform_rename", { name });
       },
@@ -16228,7 +17130,13 @@ ${body}`;
       operations: this.operations,
       page: (title, subtitle, action) => this.page(title, subtitle, action),
       update: (preferences, options) => this.updatePreferences(preferences, options),
-      navigate: (section) => this.openPocket({ app: "settings", section }),
+      navigate: (section) => {
+        if (section === "lore-log") {
+          this.loreLogs = null;
+          this.loreLogRequest = this.send("lumiphone:get_lore_log");
+        }
+        this.openPocket({ app: "settings", section });
+      },
       send: (type, payload) => {
         if (type === "lumiphone:open_native_image_settings")
           this.close();
@@ -16670,7 +17578,13 @@ ${body}`;
   empty(iconName, title, copy) {
     const node = el("div", "lp-empty");
     const inner = el("div");
-    inner.append(icon2(iconName), el("h3", "lp-title", title), el("p", "lp-copy", copy));
+    let art = icon2(iconName);
+    if (iconName === "messages") {
+      art = el("span", "lp-app-icon-box lp-icon-messages lp-empty-app-icon");
+      art.setAttribute("aria-hidden", "true");
+      art.append(launcherIcon("messages"));
+    }
+    inner.append(art, el("h3", "lp-title", title), el("p", "lp-copy", copy));
     node.appendChild(inner);
     return node;
   }
@@ -16692,6 +17606,44 @@ function setupPhone(ctx) {
   ctx.ready();
   return () => controller.destroy();
 }
+
+// src/frontend/components/attachment-styles.ts
+var ATTACHMENT_STYLES = `
+  .lp-attachment-dialog { --attach-accent:var(--lumiverse-primary,#a99bff); --attach-border:var(--lumiverse-border,#ffffff20); }
+  .lp-attachment { display:grid; gap:18px; min-width:0; color:var(--lumiverse-text,#f1eef8); }
+  .lp-attachment *, .lp-attachment *::before { box-sizing:border-box; }
+  .lp-attachment [hidden] { display:none !important; }
+  .lp-attachment-tabs { display:grid; grid-template-columns:1fr 1fr; padding:4px; gap:4px; border:1px solid var(--attach-border); border-radius:14px; background:#ffffff04; }
+  .lp-attachment-tab { display:flex; align-items:center; justify-content:center; gap:8px; border:0; border-radius:10px; padding:11px; background:transparent; color:var(--lumiverse-text-muted,#aaa5b7); font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  .lp-attachment-tab[aria-selected=true] { background:color-mix(in srgb,var(--attach-accent) 18%,transparent); color:var(--lumiverse-text,#f1eef8); }
+  .lp-attachment svg { width:19px; height:19px; flex:none; }
+  .lp-attachment-panel { display:grid; gap:16px; min-width:0; }
+  .lp-attachment-sources { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .lp-attachment-action { display:flex; align-items:center; justify-content:center; gap:9px; min-height:44px; padding:11px 13px; border:1px solid var(--attach-border); border-radius:12px; background:#ffffff05; color:inherit; font:inherit; cursor:pointer; }
+  .lp-attachment-action:hover:not(:disabled) { background:#ffffff0b; border-color:var(--attach-accent); }
+  .lp-attachment-action:disabled { opacity:.45; cursor:default; }
+  .lp-attachment-action[data-primary] { background:var(--attach-accent); color:#17131f; border-color:transparent; font-weight:650; }
+  .lp-attachment .lp-field { display:grid; gap:7px; margin:0; min-width:0; }
+  .lp-attachment .lp-field-label { font-size:12px; font-weight:600; color:inherit; }
+  .lp-attachment .lp-input { display:block; width:100%; min-height:64px; resize:vertical; border:1px solid var(--attach-border); border-radius:12px; background:#ffffff04; padding:12px; color:inherit; font:inherit; line-height:1.5; }
+  .lp-attachment .lp-input::placeholder { color:var(--lumiverse-text-muted,#aaa5b7); opacity:.8; }
+  .lp-attachment-preview { display:grid; place-items:center; position:relative; aspect-ratio:16/10; min-height:120px; overflow:hidden; border:1px solid var(--attach-border); border-radius:14px; background:linear-gradient(145deg,#ffffff05,#ffffff01); }
+  .lp-attachment-preview img { width:100%; height:100%; position:absolute; inset:0; object-fit:contain; }
+  .lp-attachment-placeholder { display:grid; justify-items:center; gap:9px; padding:20px; text-align:center; color:var(--lumiverse-text-muted,#aaa5b7); font-size:12px; }
+  .lp-attachment-placeholder svg { width:30px; height:30px; opacity:.65; }
+  .lp-attachment-progress { width:100%; height:4px; accent-color:var(--attach-accent); }
+  .lp-attachment-status { margin:0; font-size:12px; color:var(--lumiverse-text-muted,#aaa5b7); }
+  .lp-attachment-footer { display:flex; flex-wrap:wrap; gap:10px; }
+  .lp-attachment-footer > button { flex:1; }
+  .lp-attachment-event { display:grid; justify-items:center; padding:28px 12px 14px; text-align:center; gap:14px; }
+  .lp-attachment-event-art { display:grid; place-items:center; width:72px; height:72px; border:1px solid color-mix(in srgb,var(--attach-accent) 25%,transparent); background:color-mix(in srgb,var(--attach-accent) 10%,transparent); border-radius:22px; color:var(--attach-accent); }
+  .lp-attachment-event-art svg { width:33px; height:33px; }
+  .lp-attachment-event h3 { margin:4px 0 0; font-size:20px; line-height:1.3; }
+  .lp-attachment-event p { margin:0 0 8px; max-width:290px; font-size:13px; line-height:1.7; color:var(--lumiverse-text-muted,#aaa5b7); }
+  .lp-attachment-event > button { width:100%; }
+  .lp-attachment :is(button,textarea):focus-visible { outline:2px solid var(--attach-accent); outline-offset:3px; }
+  .lp-attachment-dialog { max-height:calc(100dvh - var(--app-interactive-safe-top,0px) - 24px); overflow:auto; scroll-padding-block:18px; }
+`;
 
 // src/frontend/components/style-tokens.ts
 var SURFACE_TOKENS = `
@@ -16769,10 +17721,10 @@ ${SURFACE_TOKENS}
   .lumiphone-shell .lp-palette-grid .lp-setting-row { min-width:0; min-height:78px; padding:8px 3px; border:0; border-radius:12px; display:flex; flex-direction:column-reverse; justify-content:center; gap:4px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
   .lp-palette-grid .lp-setting-row strong { font-size:10px; font-weight:550; overflow-wrap:anywhere; text-align:center; }
   .lumiphone-shell .lp-palette-bezel { min-height:48px; padding:2px 0 8px; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input { flex-shrink:0; width:44px; height:44px; padding:5px; border:1px solid var(--lp-border); border-radius:50%; background:transparent; cursor:pointer; overflow:hidden; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-webkit-color-swatch-wrapper { padding:0; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-webkit-color-swatch { border:0; border-radius:50%; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-moz-color-swatch { border:0; border-radius:50%; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input { flex-shrink:0; width:44px; height:44px; padding:5px; border:1px solid var(--lp-border); border-radius:50%; background:transparent; cursor:pointer; overflow:hidden; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input::-webkit-color-swatch-wrapper { padding:0; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input::-webkit-color-swatch { border:0; border-radius:50%; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input::-moz-color-swatch { border:0; border-radius:50%; }
   .lp-theme-live { display:grid; gap:12px; border-radius:22px; padding:20px; min-height:145px; border:1px solid var(--lp-border); }
   .lp-theme-live .lp-message-surface { justify-self:end; }
   .lumiphone-shell .lp-color-grid { grid-template-columns:minmax(0,1fr); }
@@ -18579,6 +19531,12 @@ ${INLINE_BASE_STYLES}
   .lumiphone-shell .lp-compose > .lp-button-icon { width:calc(40px * var(--pocket-ui-scale)); height:calc(40px * var(--pocket-ui-scale)); min-height:calc(40px * var(--pocket-ui-scale)); padding:0; border-radius:50%; }
   .lumiphone-shell .lp-compose > .lp-button-icon:not(.lp-reply-stop) { color:var(--lp-accent); border-color:color-mix(in srgb,var(--lp-accent) 22%,var(--lp-border)); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
   .lp-compose-input { display:flex; align-items:center; min-width:0; padding:3px; border:1px solid var(--lp-border); border-radius:22px; background:var(--lp-surface); }
+  .lumiphone-shell .lp-compose-input .lp-compose-attach { display:grid; place-items:center; flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:0; padding:0; border:0; border-radius:50%; color:var(--lp-accent); background:transparent; line-height:1; cursor:pointer; }
+  .lp-compose-attach svg { display:block; width:17px; height:17px; }
+  .lp-compose-attach:focus-visible { outline:2px solid var(--lp-accent); outline-offset:1px; }
+  .lp-message-photo { display:block; width:100%; border:0; padding:0; margin:0 0 7px; border-radius:10px; overflow:hidden; background:transparent; cursor:pointer; }
+  .lp-message-photo img { display:block; width:100%; max-height:300px; object-fit:contain; }
+  .lp-message-photo-status { margin-top:7px; font-size:10px; opacity:.85; }
   .lp-compose-input:focus-within { border-color:var(--lp-accent); box-shadow:0 0 0 1px var(--lp-accent); }
   .lumiphone-shell .lp-compose-input .lp-textarea { flex:1; min-width:0; min-height:calc(32px * var(--pocket-ui-scale)); border:0; outline:0; resize:none; background:transparent; box-shadow:none; padding:7px 9px; }
   .lumiphone-shell .lp-compose-input .lp-button-icon { flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:calc(30px * var(--pocket-ui-scale)); border:0; border-radius:50%; background:var(--lp-accent); color:var(--lp-bg); }
@@ -19231,6 +20189,8 @@ ${CONTACTS_MEDIA_STYLES}
   .lp-contact-create .lp-textarea { min-height:72px; resize:vertical; }
   .lp-npc-resume { padding:16px; display:grid; gap:12px; border-left:3px solid var(--lp-accent); }
 ${POCKET_PORTAL_STYLES}
+${APPEARANCE_CONTROL_STYLES}
+${ATTACHMENT_STYLES}
 `;
 
 // src/frontend.ts

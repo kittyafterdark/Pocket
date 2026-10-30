@@ -1,7 +1,8 @@
+import {personaPicker} from './persona-picker.js'
 import { button, el } from '../shared.js'
 import type { FreeformDirectory, FreeformSession } from '../../domain/freeform.js'
 
-export interface FreeformLockDraft { personaId: string; sessionId: string; name: string }
+export interface FreeformLockDraft { personaId: string; sessionId: string; name: string; personaSearch?:string }
 
 /** A session chooser, not authentication. It never switches the host Persona. */
 export function renderFreeformLock(directory: FreeformDirectory | null, draft: FreeformLockDraft, busy: boolean, error: string, actions: {
@@ -20,10 +21,8 @@ export function renderFreeformLock(directory: FreeformDirectory | null, draft: F
     if (error) { const retry = button('Try again', 'pocket-portal-action'); retry.onclick = actions.refresh; root.append(retry) }
     return root
   }
-  const persona = el('select'); persona.setAttribute('aria-label', 'Choose persona')
-  persona.dataset.freeformField = 'persona'
-  persona.append(new Option('Choose a persona', ''))
-  for (const entry of directory.personas) persona.append(new Option(entry.name, entry.id))
+  const picker=personaPicker(directory.personas,draft.personaId,draft.personaSearch || '',id=>{draft.personaId=id;draft.sessionId='';update()},query=>{draft.personaSearch=query})
+  const persona=picker.select;persona.dataset.freeformField='persona'
   const sessions = el('select'); sessions.setAttribute('aria-label', 'Log in to session')
   sessions.dataset.freeformField = 'session'
   const name = el('input'); name.type = 'text'; name.maxLength = 80; name.placeholder = 'A name for this little world'; name.value = draft.name
@@ -47,12 +46,11 @@ export function renderFreeformLock(directory: FreeformDirectory | null, draft: F
     login.disabled = busy || !draft.sessionId
     create.disabled = busy || !selected || !draft.name.trim()
   }
-  persona.onchange = () => { draft.personaId = persona.value; draft.sessionId = ''; update() }
   sessions.onchange = () => { draft.sessionId = sessions.value; login.disabled = busy || !sessions.value }
   name.oninput = () => { draft.name = name.value; create.disabled = busy || !draft.personaId || !draft.name.trim() }
   login.onclick = () => { const session = directory.sessions.find(entry => entry.id === draft.sessionId); if (session) actions.login(session) }
   create.onclick = () => actions.create(draft.personaId, draft.name)
-  root.append(avatar, label('Persona', persona), label('Log in to session', sessions), login, el('p', 'pocket-lock-divider', 'OR START SOMETHING NEW'), label('Session name', name), create)
+  root.append(avatar, picker.root, label('Log in to session', sessions), login, el('p', 'pocket-lock-divider', 'OR START SOMETHING NEW'), label('Session name', name), create)
   const status = el('p', 'pocket-lock-status', busy ? 'Opening your Pocket…' : error)
   status.setAttribute('role', error ? 'alert' : 'status'); root.append(status)
   if (!directory.personas.length) root.append(el('p', 'pocket-portal-intro', 'Add a Persona in Lumiverse and enable Personas access, then refresh.'))

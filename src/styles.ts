@@ -1,3 +1,5 @@
+import {ATTACHMENT_STYLES} from './frontend/components/attachment-styles.js'
+import {APPEARANCE_CONTROL_STYLES} from './frontend/components/appearance-controls.js'
 import { INLINE_BASE_STYLES, INLINE_FINISH_STYLES } from './frontend/components/inline-styles.js'
 import { POCKET_DESIGN_SYSTEM } from './frontend/components/design-system.js'
 import { VOICE_MESSAGE_STYLES } from './frontend/components/voice-message-styles.js'
@@ -671,6 +673,12 @@ ${INLINE_BASE_STYLES}
   .lumiphone-shell .lp-compose > .lp-button-icon { width:calc(40px * var(--pocket-ui-scale)); height:calc(40px * var(--pocket-ui-scale)); min-height:calc(40px * var(--pocket-ui-scale)); padding:0; border-radius:50%; }
   .lumiphone-shell .lp-compose > .lp-button-icon:not(.lp-reply-stop) { color:var(--lp-accent); border-color:color-mix(in srgb,var(--lp-accent) 22%,var(--lp-border)); background:color-mix(in srgb,var(--lp-accent) 10%,var(--lp-surface)); }
   .lp-compose-input { display:flex; align-items:center; min-width:0; padding:3px; border:1px solid var(--lp-border); border-radius:22px; background:var(--lp-surface); }
+  .lumiphone-shell .lp-compose-input .lp-compose-attach { display:grid; place-items:center; flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:0; padding:0; border:0; border-radius:50%; color:var(--lp-accent); background:transparent; line-height:1; cursor:pointer; }
+  .lp-compose-attach svg { display:block; width:17px; height:17px; }
+  .lp-compose-attach:focus-visible { outline:2px solid var(--lp-accent); outline-offset:1px; }
+  .lp-message-photo { display:block; width:100%; border:0; padding:0; margin:0 0 7px; border-radius:10px; overflow:hidden; background:transparent; cursor:pointer; }
+  .lp-message-photo img { display:block; width:100%; max-height:300px; object-fit:contain; }
+  .lp-message-photo-status { margin-top:7px; font-size:10px; opacity:.85; }
   .lp-compose-input:focus-within { border-color:var(--lp-accent); box-shadow:0 0 0 1px var(--lp-accent); }
   .lumiphone-shell .lp-compose-input .lp-textarea { flex:1; min-width:0; min-height:calc(32px * var(--pocket-ui-scale)); border:0; outline:0; resize:none; background:transparent; box-shadow:none; padding:7px 9px; }
   .lumiphone-shell .lp-compose-input .lp-button-icon { flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:calc(30px * var(--pocket-ui-scale)); border:0; border-radius:50%; background:var(--lp-accent); color:var(--lp-bg); }
@@ -1323,4 +1331,6 @@ ${CONTACTS_MEDIA_STYLES}
   .lp-contact-create .lp-textarea { min-height:72px; resize:vertical; }
   .lp-npc-resume { padding:16px; display:grid; gap:12px; border-left:3px solid var(--lp-accent); }
 ${POCKET_PORTAL_STYLES}
+${APPEARANCE_CONTROL_STYLES}
+${ATTACHMENT_STYLES}
 `

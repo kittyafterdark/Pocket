@@ -148,7 +148,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
       }, sceneNote: sceneNote.value.trim(), accent: accent.value, colorMode: colorMode.value,
       relationship: relationship.value,
       presence: { inScene: inScene.checked, lastSceneAt: inScene.checked ? new Date().toISOString() : contact?.presence.lastSceneAt || '' },
-      contextPolicy: { pinned: pinned.checked },
+      contextPolicy: { pinned: pinned.checked, profileMode: contact?.contextPolicy.profileMode || 'default' },
       generationPolicy: { relevant: relevant.checked },
       messagingPolicy: {
         remoteEligible: remote.checked, allowAmbientInScene: ambientHere.checked,
@@ -251,6 +251,11 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     }
     const source = contact.source.kind === 'character' ? 'Linked Character' : contact.source.kind === 'council' ? 'Linked Council member' : `Pocket NPC · ${contact.source.origin}`
     hero.append(el('span', 'lp-eyebrow', `${source} · ${contact.relationship === 'close' ? 'Close connection' : 'Background actor'}`))
+    const profileMode = el('select', 'lp-select')
+    for (const [value, label] of [['default', 'Use Context setting'], ['compact', 'Compact profile'], ['full', 'Full profile']]) { const option = el('option', '', label); option.value = value; profileMode.append(option) }
+    profileMode.value = contact.contextPolicy.profileMode || 'default'
+    profileMode.onchange = () => host.send('lumiphone:set_contact_profile_mode', {contactId:contact.id, mode:profileMode.value})
+    content.append(fieldBlock('Profile used for replies', profileMode))
     const presence = el('div', 'lp-card')
     presence.append(
       el('div', 'lp-title', contact.presence.inScene ? 'Here now' : 'Not in current scene'),

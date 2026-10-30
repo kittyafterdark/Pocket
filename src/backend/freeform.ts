@@ -5,6 +5,7 @@ import type { FreeformSession } from '../domain/freeform.js'
 interface FreeformHost {
   read(path: string, userId?: string): Promise<unknown>
   write(path: string, value: unknown, userId?: string): Promise<void>
+  remove(path:string,userId?:string):Promise<void>
   path(chatId: string, characterId: string): string
   key(chatId: string, characterId: string): string
   fresh(chatId: string, characterId: string): PhoneState
@@ -41,7 +42,7 @@ export class FreeformSessions {
     if (!persona.linkedPersonaId || !persona.displayName) throw new Error('Choose a Persona for this session.')
     return this.host.lock(this.indexLock(userId), async () => {
       const sessions = await this.list(userId)
-      const session: FreeformSession = { id: `_freeform_${this.host.makeId()}`, name: checkedName, personaId: persona.linkedPersonaId!, personaName: persona.displayName, createdAt: this.host.now() }
+      const session: FreeformSession = { id: `_freeform_${this.host.makeId()}`, name: checkedName, personaId: persona.linkedPersonaId!, personaName: persona.displayName, appearanceBasePersonaId: persona.linkedPersonaId, independentStyling: false, createdAt: this.host.now() }
       if (!/^_freeform_[\w-]{1,140}$/.test(session.id) || await this.host.read(this.host.path(session.id, '_none'), userId) !== null) throw new Error('Could not allocate a new Freeform session. Try again.')
       const state = this.host.fresh(session.id, '_none')
       state.pocketPersona = freeformPersona(persona)
@@ -51,6 +52,27 @@ export class FreeformSessions {
       await this.host.write(FREEFORM_INDEX_PATH, { version: 1, sessions: [...sessions, session] }, userId)
       return session
     })
+  }
+
+  async setAppearance(sessionId: string, basePersonaId: string, independent: boolean, userId?: string): Promise<void> {
+    await this.host.lock(this.indexLock(userId), async () => {
+      const sessions = await this.list(userId), session = sessions.find(s => s.id === sessionId)
+      if (!session) throw new Error('That Freeform session is unavailable.')
+      session.appearanceBasePersonaId = basePersonaId; session.independentStyling = independent
+      await this.host.write(FREEFORM_INDEX_PATH, {version:1, sessions}, userId)
+    })
+  }
+
+  async delete(sessionId:string,userId?:string):Promise<{cleanupError?:string}> {
+    return this.host.lock(this.phoneLock(sessionId,'_none'),()=>this.host.lock(this.indexLock(userId),async()=>{
+      const sessions=await this.list(userId)
+      if(!sessions.some(s=>s.id===sessionId))throw new Error('That Freeform session no longer exists.')
+      // Removing the index entry also revokes further writes from late generation callbacks.
+      await this.host.write(FREEFORM_INDEX_PATH,{version:1,sessions:sessions.filter(s=>s.id!==sessionId)},userId)
+      try {await this.host.remove(this.host.path(sessionId,'_none'),userId)}
+      catch {return {cleanupError:'Session removed from the chooser, but its stored phone file could not be deleted.'}}
+      return {}
+    }))
   }
 
   async rename(sessionId: string, name: unknown, userId?: string): Promise<void> {

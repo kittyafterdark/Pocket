@@ -8,11 +8,39 @@ The extension identifier and storage namespace intentionally remain `lumiphone` 
 
 ## Roleplay and Freeform
 
-The Pocket sidebar opens two spaces. **Roleplay** uses the phones in your current Lumiverse chat. **Freeform** opens a lock screen where you choose a Persona and use **Log in to session**, or enter a **Session name** and choose **Create session**. You can keep several independent sessions for the same Persona. Choosing a Persona here does not switch your active Lumiverse Persona.
+The Pocket sidebar opens two spaces. **Roleplay** uses the phones in your current Lumiverse chat. **Freeform** opens a lock screen where you choose a Persona and use **Log in to session**, or enter a **Session name** and choose **Create session**. You can keep several independent sessions for the same Persona. Choosing a Persona here does not switch your active Lumiverse Persona. Freeform follows **Base Persona styling** by default. The selector chooses the actual Persona ID whose theme, wallpapers, and CSS are shared; editing these styles updates that base for other following sessions and Roleplay phones. Enable **Independent session styling** to copy the base into a session override. Turning it off follows the base again while preserving the session override for reuse. Existing customized sessions retain independent styling.
 
 Freeform uses the same Pocket handset and apps, preferences, NPC Bank, and saved identity profiles. Messages, app data, timelines, and phone layouts remain local to each session. Its Timeline contains session events and phone plans; it does not review a host story or start roleplay continuations. Host chat navigation and Persona changes do not change the session you are using.
 
+Use **Manage sessions** in the sidebar home or Freeform chooser to rename sessions or delete them after confirmation. Deleting the current session returns to the chooser and never deletes copied roleplay chats or shared Persona styles.
+
 In **Settings → Freeform session**, rename the session or choose **Lock & switch session**. To start a separate roleplay history, create or open a chat in Lumiverse, then choose **Start a chat from this session**. **Keep base Pocket** leaves that chat untouched. **Override with this Freeform session** copies the current session into that chat, backs up its previous Pocket first, and switches the open phone to that chat. The original Freeform session stays separate; future changes do not synchronize. Spindle's current public API does not create the host chat itself.
+
+## Chat appearance, scale, and icons
+
+Use the centered **+** beside the message composer to open **Add to conversation**. The **Photo** tab offers Gallery, upload, and generation with your Camera connection. Generated photos show live Swarm previews and step progress when available. Review the finished photo, edit its caption, retry if needed, then choose **Send photo**; generating or retrying never sends a chat message. Uploaded photos also require confirmation. Photos render inline and open at full size. **Settings → Messages → Allow character picture generation** lets characters optionally generate photos in direct and group chats; it is off by default. Pending character photos have Stop and Retry controls, and failed photos preserve the text message. Photo captions are available to reply context; uploaded image pixels are not automatically sent to the text model.
+
+The **Event** tab offers **Schedule event**. Choose the title, time precision, dates, and participants in Timeline, then save. The event stays linked to the source conversation and appears as a scheduled plan there. Editing it updates that plan. Timeline’s **Add** action also creates events directly.
+
+Use **Conversation menu → Timeskip** to choose elapsed minutes, hours, or days. This advances the Pocket clock shared by the session’s chats and inserts a persistent separator in the selected conversation. Future direct/group replies receive the boundary as elapsed-time context, without inventing events during the gap. The duration must be between one minute and 365 days.
+
+Open a conversation’s **Conversation menu → Chat theme** to choose its wallpaper from Gallery, upload an image, or enter an HTTPS image URL. These wallpapers belong only to that conversation. Bubble corner radius and vertical padding can be saved for that conversation or as the shared default for all chats. **Use shared chat theme** clears the conversation overrides. Default bubble vertical padding has slightly more space above and below text.
+
+In **Settings → Personalization → Device appearance**, enable **Independent mobile and desktop scale** to choose separate interface sizes. Turning it off restores the shared Interface size and preserves the platform values. Desktop phone size continues to control only handset geometry.
+
+**Settings → Personalization → Device appearance → Icon packs** (below **Advanced theme colors**) opens a picker for Classic, Paper, Midnight, Pastel, and Custom palettes. Custom lets you set tile background and glyph colors. The packs reuse Pocket’s existing vector artwork. **Persona & phone identity** also offers icon packs below its advanced theme colors, scoped to the active Persona (or an independent Freeform session). Choosing a pack enables its appearance override; **Use device icon pack** restores inheritance without clearing other Persona styling.
+
+Both the Freeform lock screen and **Manage sessions** have searchable Persona pickers. In the manager, the picker filters sessions by Persona without changing their identity.
+
+## Context settings
+
+**Settings → Context** is available in Roleplay and Freeform. **Prefer full character profiles** uses the linked Character/Council definition instead of only its compact phone brief for direct and group replies. Profiles remain bounded to protect the context budget. Each contact's detail page has **Profile used for replies** with Default, Compact, and Full choices.
+
+**Enable lorebooks** requires World Books permission. Roleplay uses the host's activated entries. Freeform uses constant and literal-keyword matches from global books and books attached to its Persona and conversation participants, scanning recent phone messages and the custom scenario. Freeform does not implement host regex/vector, probability, recursive, or timed activation.
+
+**Lorebook retrieval log** opens a screen under Context with the latest 20 retrievals for this Pocket. Expand a record to see its mode, conversation, scanned books, entry inclusion/skip reasons, character counts, or retrieval error. Disabled retrievals are recorded too. Logs show up to 200 entry summaries per retrieval and do not store the full phone/scenario scan text. Use **Refresh retrieval log** to load recent results.
+
+**Custom scenario** is saved only for the current session/chat and included in phone reply context. Save an empty scenario to clear it. Copying a Freeform session into a chat copies its scenario too. These settings do not change the host's own generation settings.
 
 ## Included apps
 

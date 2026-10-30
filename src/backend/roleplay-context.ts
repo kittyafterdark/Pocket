@@ -87,6 +87,7 @@ function currentChannelLines(state: PhoneState, contact: PocketContact, conversa
   ]
 }
 function threadLine(state: PhoneState, conversation: PocketConversation, message: PocketConversation['messages'][number]): string {
+  if(message.timeskip)return `TIME HAS PASSED: ${message.text}. Earlier messages are history; resume after this gap without inventing off-screen events.`
   const persona = state.pocketPersona.displayName || 'You'
   const sender = message.sender === 'persona' ? persona : message.senderName || 'Pocket'
   const stamp = `[${messageHistoryContextLabel(state, message, conversation)}]`
@@ -104,6 +105,8 @@ export async function assemblePocketContext(options: {
   conversation: PocketConversation
   preferences: DevicePreferences
   actorIdentity?: string
+  extraContext?: string
+  fullProfiles?: boolean
   getMessages?: () => Promise<HostMessage[]>
   includePhoneThread?: boolean
   includeRoleplayBackground?: boolean
@@ -116,7 +119,8 @@ export async function assemblePocketContext(options: {
   const authoritativeLatest = authoritative ? {
     id: clean(authoritative.id, 180), index: messageIndex(authoritative, hostMessages.length - 1), excerpt: sanitizeNarrativeContent(authoritative.content, 180),
   } : { id: '', index: -1, excerpt: '' }
-  const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, BUDGETS.actor)
+  const expandedProfile = options.fullProfiles ?? (contact.contextPolicy.profileMode === 'full' || (contact.contextPolicy.profileMode !== 'compact' && preferences.preferFullProfiles))
+  const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, expandedProfile ? 32000 : BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
   const continuity = conversationContinuityContext(state, conversation, [contact.id])
   // Structured Pocket state remains usable even when raw host narrative is isolated.
@@ -155,8 +159,9 @@ export async function assemblePocketContext(options: {
     ? [actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', continuity, thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
     : parts.join('\n\n')
   const finalLock = channel ? `FINAL CHANNEL LOCK\n${channel}` : ''
-  const bodyBudget = Math.max(0, BUDGETS.total - finalLock.length - (finalLock ? 2 : 0))
-  const finalText = [bodyText.slice(0, bodyBudget), finalLock].filter(Boolean).join('\n\n')
+  const extra = clean(options.extraContext, 24000)
+  const bodyBudget = Math.max(0, (expandedProfile ? 64000 : BUDGETS.total) - extra.length - finalLock.length - 4)
+  const finalText = [bodyText.slice(0, bodyBudget), extra, finalLock].filter(Boolean).join('\n\n')
   const latestMismatch = Boolean(authoritativeLatest.id && (!includedLatest.id || authoritativeLatest.id !== includedLatest.id))
   const freshnessWarning = mode === 'story' || mode === 'off' || !wantsRecent ? '' : latestMismatch
     ? 'The latest committed roleplay message is not included in the selected recent-context window.' : ''

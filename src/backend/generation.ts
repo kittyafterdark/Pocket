@@ -72,7 +72,7 @@ export async function runPocketGeneration(
   const started = Date.now()
   try {
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
-    const request = { ...input, reasoning: input.reasoning ?? { source: 'off' } } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
+    const request = { ...input, userId, reasoning: input.reasoning ?? { source: 'off' } } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
     const samplers = normalizeSamplerOverrides(preferences.samplerOverrides)
     if (Object.keys(samplers).length) request.parameters = { ...(request.parameters || {}), ...samplers }
     if (preferences.generationMode === 'sidecar') {

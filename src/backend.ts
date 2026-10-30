@@ -1,3 +1,4 @@
+import { characterPhotoInstruction, validChatPhotoUpload } from './domain/message-photo.js'
 import { GALLERY_PAGE_SIZE, galleryOffset } from './domain/gallery-page.js'
 import { voiceMessage } from './domain/voice.js'
 import { LAUNCHER_APPS, normalizeLauncherLayout, normalizeLauncherLayouts, pocketAppInstalled, setPocketAppInstalled } from './domain/launcher.js'
@@ -86,6 +87,10 @@ import { applyJevAnswer, jevQuestion, normalizeJevSettings } from './domain/jev.
 import { normalizeContactGroups, saveContactGroup } from './domain/contact-groups.js'
 import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
 
+import {timeskipMinutes,timeskipLabel} from './domain/timeskip.js'
+import {normalizeChatAppearance} from './domain/chat-appearance.js'
+import { fullProfile, profileContext, inspectFreeformLore } from './backend/context-options.js'
+import type { PocketLoreRetrievalLog } from './types.js'
 import { FreeformSessions } from './backend/freeform.js'
 import { isFreeformChat } from './domain/freeform.js'
 import type { FreeformDirectory } from './domain/freeform.js'
@@ -136,6 +141,7 @@ const socialDms = new SocialDms({ loadState, saveState, sendState, send, runStru
 const freeformSessions = new FreeformSessions({
   read: (path, userId) => spindle.userStorage.getJson(path, { fallback: null, userId }),
   write: async (path, value, userId) => { await spindle.userStorage.setJson(path, value, { indent: 2, userId }) },
+  remove: async(path,userId)=>{await spindle.userStorage.delete(path,userId)},
   path: statePath, key: stateKey, fresh: defaultState, load: loadState, lock: withStateLock,
   makeId: () => id('session'), now: nowIso,
 })
@@ -638,6 +644,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       if (!id || !speakerId || !body) return []
       const messageState: 'queued' | 'delivered' | 'cancelled' = message.state === 'delivered' || message.state === 'cancelled' ? message.state : 'queued'
       return [{
+        imagePrompt: text(message.imagePrompt, 4000) || undefined,
         id, speakerId, text: body, format: voiceMessage(message.format) ? 'voice' as const : undefined,
         eventSuggestion: normalizeEventSuggestion(message.eventSuggestion, (prefix) => `${prefix}_${id}`),
         state: messageState,
@@ -708,6 +715,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     version: STATE_VERSION,
     chatId,
     characterId,
+    contextScenario: text(value.contextScenario, 12000),
     characterName: characterName || text(value.characterName, 120) || fallback.characterName,
     roleplayNow: text(value.roleplayNow, 80) || fallback.roleplayNow,
     roleplayClockSource: value.roleplayClockSource === 'manual' || value.roleplayClockSource === 'narrative' ? value.roleplayClockSource : 'legacy',
@@ -828,8 +836,9 @@ function directGenerationHistory(state: PhoneState, conversation: PocketConversa
   const boundary = conversationSceneBoundary(state, conversation), historical: string[] = []
 
   for (const message of conversation.messages.slice(-20)) {
+    if(message.timeskip){history.push({role:'system',content:`TIME HAS PASSED: ${timeskipLabel(message.timeskip.minutes)}. Earlier phone messages are history; resume after this gap without inventing off-screen events.`});continue}
     if (message.sender === 'system') continue
-    const body = text(message.text, 8_000)
+    const body = text(message.text, 8_000) + (message.imageId ? `\n[Photo attachment${message.photo?.prompt ? ': '+message.photo.prompt : '; use the caption as context, visual content is not available'}]` : '')
     if (!body) continue
 
     const senderId = message.senderActorId || message.senderContactId || ''
@@ -904,6 +913,7 @@ function backfillDirectPhoneMemories(state: PhoneState): void {
 }
 
 async function loadState(chatId: string, characterId: string, userId?: string): Promise<PhoneState> {
+  if(isFreeformChat(chatId))await freeformSessions.get(chatId,userId)
   const characterPresentation = await characterPresentationFor(characterId, userId)
   const characterName = characterPresentation.name
   const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), {
@@ -1078,6 +1088,7 @@ async function saveNpcBank(value: unknown, userId?: string): Promise<PocketNpcBa
 }
 
 async function saveState(state: PhoneState, userId?: string): Promise<void> {
+  if(isFreeformChat(state.chatId))await freeformSessions.get(state.chatId,userId)
   state.updatedAt = nowIso()
   await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId })
 }
@@ -1117,6 +1128,17 @@ async function resolveWallpaperUrls(preferences: DevicePreferences, personaId: s
     resolvePocketImageSource(spindle, personaWallpaperActive(persona, 'chat') ? persona!.chatWallpaper.source : null, userId),
   ])
   return { deviceHome, deviceChat, personaHome, personaChat }
+}
+
+async function saveConversationWallpaper(context:{chatId:string;characterId:string},payload:AnyRecord,source:unknown,userId?:string):Promise<boolean> {
+  if(payload.target!=='conversation-chat')return false
+  await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
+    const state=await loadState(context.chatId,context.characterId,userId)
+    const conversation=state.conversations.find(c=>c.id===text(payload.conversationId,180))
+    if(!conversation)throw new Error('That conversation is unavailable.')
+    conversation.appearance={...conversation.appearance,wallpaper:normalizeWallpaper({...conversation.appearance?.wallpaper,...(isRecord(payload.wallpaper)?payload.wallpaper:{}),source})}
+    await saveState(state,userId)
+  });return true
 }
 
 function assignWallpaper(preferences: DevicePreferences, payload: AnyRecord, forcedSource?: unknown): void {
@@ -1352,13 +1374,28 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
       if (persona) activePersona = { id: text(persona.id, 180), name: text(persona.name, 120) || 'Persona' }
     } catch { /* appearance falls back to device defaults */ }
   }
-  if (isFreeformChat(state.chatId)) activePersona = state.pocketPersona.linkedPersonaId ? { id: state.pocketPersona.linkedPersonaId, name: state.pocketPersona.displayName } : null
-  const freeformSession = isFreeformChat(state.chatId) ? await freeformSessions.get(state.chatId, userId) : null
+  let freeformSession = isFreeformChat(state.chatId) ? await freeformSessions.get(state.chatId, userId) : null
+  if (isFreeformChat(state.chatId)) {
+    const baseId = freeformSession!.appearanceBasePersonaId || freeformSession!.personaId
+    // Preserve previously customized sessions; new sessions follow their base by default.
+    const independent = freeformSession!.independentStyling ?? Boolean(preferences.personaAppearance[state.chatId])
+    freeformSession = {...freeformSession!, appearanceBasePersonaId:baseId, independentStyling:independent}
+    const inherited = preferences.personaAppearance[baseId]
+    if (independent && !preferences.personaAppearance[state.chatId] && inherited) preferences.personaAppearance[state.chatId] = structuredClone(inherited)
+    const base = spindle.permissions.has('personas') ? await spindle.personas.get(baseId, userId).catch(() => null) : null
+    activePersona = { id: independent ? state.chatId : baseId, name: independent ? state.pocketPersona.displayName || 'This session' : base?.name || freeformSession.personaName }
+  }
   const resolvedWallpapers = await resolveWallpaperUrls(preferences, activePersona?.id || '', userId)
+  const conversationWallpapers:Record<string,string>={}
+  for(const conversation of state.conversations)if(conversation.appearance?.wallpaper?.source)conversationWallpapers[conversation.id]=(await resolvePocketImageSource(spindle,conversation.appearance.wallpaper.source,userId)).url
   for (const [target, result] of Object.entries(resolvedWallpapers)) {
     if (result.status === 'error') spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || 'unknown error'}`)
   }
   const displayState = projectSwipeScopedState(structuredClone(state))
+  await Promise.all(displayState.conversations.flatMap(conversation => conversation.messages.filter(message => message.imageId).map(async message => {
+    const image = await resolvePocketImageSource(spindle, { kind: 'gallery', imageId: message.imageId! }, userId)
+    message.imageUrl = image.status === 'ready' ? image.url : undefined
+  })))
   await Promise.all([...displayState.contacts, ...npcBank.entries].map(async contact => {
     if (!contact.avatarSource) return
     const image = await resolvePocketImageSource(spindle, contact.avatarSource, userId)
@@ -1366,7 +1403,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
     if ('avatarOverrideUrl' in contact) contact.avatarOverrideUrl = image.url
     else contact.avatarUrl = image.url
   }))
-  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, capabilities: isFreeformChat(state.chatId) ? { ...capabilities(), chatMutation: false, sceneSync: false } : capabilities(), generation, swarmProfile, activePersona, freeformSession, reason, open }, userId)
+  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, conversationWallpapers, capabilities: isFreeformChat(state.chatId) ? { ...capabilities(), chatMutation: false, sceneSync: false } : capabilities(), generation, swarmProfile, activePersona, freeformSession, reason, open }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -1529,6 +1566,65 @@ function pocketContactPhoneBrief(
     fallback?.personality,
     fallback?.behavior,
   ].filter(Boolean).join('. ').slice(0, 900)
+}
+
+async function extraPhoneContext(state: PhoneState, conversation: PocketConversation, userId?: string): Promise<string> {
+  const preferences = await loadPreferences(userId)
+  let lore = ''
+  const log: PocketLoreRetrievalLog = {id:id('lore'), createdAt:nowIso(), conversationId:conversation.id, mode:isFreeformChat(state.chatId)?'freeform':'roleplay', status:preferences.enableLorebooks?'ready':'disabled', includedChars:0, bookIds:[], entries:[]}
+  try {
+  if (preferences.enableLorebooks) {
+    if (!spindle.permissions.has('world_books')) throw new Error('Enable World Books access in Pocket permissions to use lorebooks.')
+    if (!isFreeformChat(state.chatId)) {
+      const entries: any[] = await spindle.world_books.getActivated(state.chatId, userId)
+      let remaining = 12000
+      const content: string[] = []
+      for (const activation of entries) {
+        const entry = await spindle.world_books.entries.get(activation.id,userId)
+        const body = entry && !entry.disabled ? String(entry.content || '').slice(0,remaining) : ''
+        const reason = !entry ? 'Entry unavailable' : entry.disabled ? 'Disabled after activation' : remaining<=0 ? 'Context budget exhausted' : `Host activated${activation.source ? ': '+activation.source : ''}`
+        log.entries.push({id:String(activation.id || ''), title:String(entry?.comment || activation.comment || activation.id || 'Activated entry').slice(0,160), bookId:String(entry?.world_book_id || activation.bookId || ''), reason, chars:body.length})
+        if (body) {content.push(body);remaining=Math.max(0,remaining-body.length-2)}
+      }
+      lore=content.join('\n\n'); log.bookIds=[...new Set(log.entries.map(e=>e.bookId).filter(Boolean))]
+    }
+    else {
+      const ids = new Set(await spindle.world_books.getGlobal(userId))
+      if (state.pocketPersona.linkedPersonaId && spindle.permissions.has('personas')) {
+        const persona = await spindle.personas.get(state.pocketPersona.linkedPersonaId, userId)
+        if (persona?.attached_world_book_id) ids.add(persona.attached_world_book_id)
+      }
+      for (const contact of state.contacts.filter(c => conversationActorIds(conversation).includes(c.id))) {
+        if (contact.source.kind !== 'character' || !spindle.permissions.has('characters')) continue
+        const character = await spindle.characters.get(contact.source.characterId, userId)
+        for (const book of character?.world_book_ids || []) ids.add(book)
+      }
+      const entries: any[] = []
+      for (const book of ids) {
+        let offset = 0
+        while (true) {
+          const page = await spindle.world_books.entries.list(book, {limit:100, offset, userId})
+          entries.push(...page.data); offset += page.data.length
+          if (!page.data.length || offset >= page.total) break
+        }
+      }
+      const result = inspectFreeformLore(entries, [state.contextScenario, conversation.messages.slice(-20).map(m => m.text).join('\n')].filter(Boolean).join('\n'))
+      lore=result.text; log.entries=result.entries; log.bookIds=[...ids]
+    }
+  }
+  } catch (error) { log.status='error'; log.error=error instanceof Error ? error.message.slice(0,400) : 'Lorebook retrieval failed'; throw error }
+  finally {
+    log.includedChars=lore.length; log.entries=log.entries.slice(0,200)
+    try {
+      const path=`context/lore/${stateKey(state.chatId,state.characterId)}.json`
+      await withStateLock(`${viewKey(userId)}:${path}`, async()=>{
+        if(isFreeformChat(state.chatId))await freeformSessions.get(state.chatId,userId)
+        const previous=await spindle.userStorage.getJson<PocketLoreRetrievalLog[]>(path,{fallback:[],userId})
+        await spindle.userStorage.setJson(path,[log,...previous].slice(0,20),{userId})
+      })
+    } catch { spindle.log.warn('Pocket could not save its lorebook retrieval log.') }
+  }
+  return [state.contextScenario ? `CUSTOM SCENARIO\n${state.contextScenario}` : '', lore ? `LOREBOOK REFERENCE\n${lore}` : ''].filter(Boolean).join('\n\n')
 }
 
 async function resolveContactProfile(contact: PocketContact, userId?: string): Promise<{ name: string; role: string; description: string; personality: string; behavior: string; source: string }> {
@@ -2275,6 +2371,41 @@ async function socialFeedPhoto(input: { state: PhoneState; app: import('./domain
   return { imageId, imageUrl }
 }
 
+const messagePhotoFlights = new Map<string,SocialPhotoJob>()
+function queueMessagePhoto(context: {chatId:string;characterId:string}, conversationId:string, message:PhoneMessage, userId?:string):void {
+  if (!message.photo || message.photo.status !== 'pending') return
+  const photo = { ...message.photo }, messageId = message.id
+  const flightKey = `${viewKey(userId)}:${context.chatId}:${context.characterId}:${photo.jobId}`
+  if(messagePhotoFlights.has(flightKey)) return
+  const marker:SocialPhotoJob={...context,owner:messageId,cancelled:false}
+  messagePhotoFlights.set(flightKey,marker)
+  setTimeout(() => { void (async () => {
+    let result: AnyRecord = {}, failure = ''
+    try {
+      const before = await loadState(context.chatId, context.characterId, userId)
+      const target = before.conversations.find(c => c.id === conversationId)?.messages.find(m => m.id === messageId)
+      if (target?.photo?.jobId !== photo.jobId || target.photo.status !== 'pending') return
+      if (!(await loadPreferences(userId)).characterPictures) throw new Error('Character picture generation is disabled.')
+      result = await cameraGenerate({ ...context, requestId: photo.jobId, scene: photo.prompt, purpose: 'message', enhance: false, __socialPhotoJob: marker }, userId)
+      if (!result.ok) failure = 'Photo generation stopped.'
+    } catch (error) { failure = error instanceof Error ? error.message : 'Could not generate the photo.' }
+    await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+      const latest = await loadState(context.chatId, context.characterId, userId)
+      const target = latest.conversations.find(c => c.id === conversationId)?.messages.find(m => m.id === messageId)
+      if (target?.photo?.jobId !== photo.jobId || target.photo.status !== 'pending') return
+      if (!(await loadPreferences(userId)).characterPictures) failure = 'Character picture generation is disabled.'
+      if (!failure && result.imageId) { target.imageId = text(result.imageId,180); target.imageUrl = text(result.imageUrl,2000); target.photo.status = 'ready' }
+      else { target.photo.status = 'failed'; target.photo.error = failure || 'No photo was returned.' }
+      await saveState(latest, userId); await sendState(latest, userId, 'message_photo')
+    })
+  })().catch(error => spindle.log.warn(`Pocket photo: ${error instanceof Error ? error.message : String(error)}`)).finally(()=>messagePhotoFlights.delete(flightKey)) }, 0)
+}
+
+function requestedMessagePhoto(prompt:unknown, enabled:boolean):PhoneMessage['photo'] {
+  const description = text(prompt, 4000)
+  return enabled && description ? {prompt:description,jobId:id('chat_photo'),status:'pending'} : undefined
+}
+
 async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRecord> {
   if (!spindle.permissions.has('image_gen')) throw new Error('Enable the Image Generation permission to use Camera.')
   const context = await resolveContext(input, userId)
@@ -2288,7 +2419,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   if (contactId && !portraitContact) throw new Error('That contact no longer exists.')
   const socialPhotoJob = input.__socialPhotoJob as SocialPhotoJob | undefined
   if (socialPhotoJob?.cancelled) return { ok: false, cancelled: true }
-  const purpose: ImagePurpose = portraitContact ? 'contact' : ['character', 'persona', 'draft'].includes(text(input.purpose, 30)) ? input.purpose as ImagePurpose : 'scene'
+  const purpose: ImagePurpose = portraitContact ? 'contact' : ['character', 'persona', 'draft', 'message'].includes(text(input.purpose, 30)) ? input.purpose as ImagePurpose : 'scene'
   const subject = portraitContact ? portraitContact.phoneProfile?.appearance || portraitContact.identityBrief || portraitContact.description : text(input.subject, 2000)
   const profile = await resolveSwarmProfile(context.chatId, context.characterId, preferences, userId)
   if (socialPhotoJob?.cancelled) return { ok: false, cancelled: true }
@@ -2329,7 +2460,7 @@ async function cameraGenerate(input: AnyRecord, userId?: string): Promise<AnyRec
   const imageId = text(result.imageId, 200)
   const route: PocketRoute = imageId ? { app: 'gallery', imageId } : { app: 'gallery' }
   // Profile utility images are completed inline; they are not photos taken in the story.
-  if (purpose !== 'contact' && purpose !== 'draft') await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+  if (purpose !== 'contact' && purpose !== 'draft' && purpose !== 'message') await withStateLock(stateKey(context.chatId, context.characterId), async () => {
     const latest = await loadState(context.chatId, context.characterId, userId)
   if (socialPhotoJob?.cancelled) return
   const notification = addNotification(latest, {
@@ -3421,10 +3552,11 @@ async function generateMessageJob(input: AnyRecord & { signal: AbortSignal }, us
     const replaceActiveIndex = replaceMessageId ? activeMessages.findIndex((message) => message.id === replaceMessageId && message.sender === 'contact') : -1
     const contextConversation = { ...conversation, messages: replaceActiveIndex >= 0 ? activeMessages.slice(0, replaceActiveIndex) : activeMessages }
     const knownIdentity = pocketContactPhoneBrief(contact, profile)
-    const compactIdentity = `Relationship importance: ${actor.relationship}.\n${knownIdentity || 'No full profile is registered; use only the name and current phone exchange.'}`.slice(0, 1_400)
+    const compactIdentity = profileContext(contact, profile, preferences, `Relationship importance: ${actor.relationship}.\n${knownIdentity || 'No full profile is registered; use only the name and current phone exchange.'}`.slice(0, 1_400))
     const assembled = await assemblePocketContext({
       state: generationState, contact, conversation: contextConversation, preferences,
       actorIdentity: compactIdentity,
+      extraContext: await extraPhoneContext(generationState, contextConversation, userId),
       getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
       includePhoneThread: conversation.kind !== 'direct',
       includeRoleplayBackground: false,
@@ -3486,6 +3618,7 @@ Return strict JSON only:
 {"recipient":"${personaName}","message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""},"suggestion":null}
 
 ${preferences.voiceMessages !== false ? 'You may add "format":"voice" when the character naturally sends a spoken voice message; message must contain only its spoken transcript. Omit format for ordinary text.' : 'Send ordinary text only; voice messages are disabled.'}
+${characterPhotoInstruction(preferences.characterPictures === true)}
 ${PHONE_TEXT_STYLE}
 The recipient field MUST be exactly "${personaName}".
 after describes the channel immediately after this message.
@@ -3515,7 +3648,8 @@ FINAL GENERATION LOCK: recipient=${personaName}; speaker=${profile.name}; thread
       : [
           {
             role: 'system',
-            content: `${PHONE_TEXT_STYLE}
+            content: `${characterPhotoInstruction(preferences.characterPictures === true)}
+${PHONE_TEXT_STYLE}
 Write exactly one private phone text as ${profile.name}. Stay in character and do not speak for another participant. The FINAL CHANNEL LOCK in the bounded context is authoritative. Return strict JSON only: {"message":"the phone text","after":{"state":"remote|arriving|local|paused","reason":""}}. after describes the channel immediately after this message.
 Use arriving while traveling toward the physical scene, local only when the message itself crosses into physical action or confirms arrival, paused for ended/busy/away/sleeping/unknown, otherwise remote. No narration, markdown, or custom UI copy.`,
           },
@@ -3560,6 +3694,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const visible = notificationDestinationVisible(state, route, userId)
     const nextMessage: PhoneMessage = {
       id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind === 'contact' || actor.kind === 'discovered' ? actor.kind : undefined, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
+      photo: requestedMessagePhoto(generated.imagePrompt, preferences.characterPictures === true),
       text: reply, format: preferences.voiceMessages !== false && voiceMessage(generated.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), storyClock: roleplayClockSnapshot(state), read: visible, status: visible ? 'read' : 'delivered',
       eventSuggestion: reconcileMessageEventSuggestion(state, contextConversation, generated.suggestion, id),
       generation: { requestId, retryOf: replaceIndex >= 0 ? replaceMessageId : undefined },
@@ -3629,6 +3764,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const activity = replaceIndex < 0 ? addActivity(state, { kind: 'message', title: actor.name, summary: reply.slice(0, 280), route, source: { contactId: actor.contact?.id, conversationId: conversation.id } }) : undefined
     await saveState(state, userId)
     if (notification) await maybePush(state, preferences, notification, userId)
+    queueMessagePhoto(context, conversation.id, nextMessage, userId)
     await sendState(state, userId, 'message', preferences.autoOpenOnModelAction)
     sendActivity(activity, userId)
     sendNotification(notification, userId)
@@ -3696,7 +3832,9 @@ async function generateGroupBatchJob(input: AnyRecord & { signal: AbortSignal },
     const projectedConversation = { ...conversation, messages: activeConversationMessages(state, conversation) }
     const assembled = await assemblePocketContext({
       state, contact: primary.contact, conversation: projectedConversation, preferences,
-      actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship})\n${pocketContactPhoneBrief(contact, profile) || 'No profile; infer only from the live exchange.'}`.slice(0, 900)).join('\n\n').slice(0, 3_600),
+      fullProfiles: profiles.some(({contact}) => fullProfile(contact, preferences)),
+      actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship})\n${profileContext(contact, profile, preferences, pocketContactPhoneBrief(contact, profile)) || 'No profile; infer only from the live exchange.'}`.slice(0, fullProfile(contact, preferences) ? 24000 : 900)).join('\n\n').slice(0, preferences.preferFullProfiles || profiles.some(({contact}) => fullProfile(contact, preferences)) ? 32000 : 3600),
+      extraContext: await extraPhoneContext(state, projectedConversation, userId),
       getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
       includeRoleplayBackground: false,
     })
@@ -3727,6 +3865,7 @@ async function generateGroupBatchJob(input: AnyRecord & { signal: AbortSignal },
       type: 'quiet',
       messages: [
         { role: 'system', content: `Generate the next natural burst in a fictional private group chat. The CURRENT PHONE CHANNEL block below is authoritative for current membership. Actors marked former participant in PHONE THREAD are historical only and are not current recipients or speakers. Return strict JSON only: {"messages":[{"speakerId":"exact eligible id","text":"phone text","suggestion":null}]}. Return 0–3 messages normally and never more than 4. Silence is valid. Use only eligible speaker IDs. Select only participants with something natural to contribute; never make everyone answer by default. The ordered array is one evolving exchange: later messages may directly react to earlier generated messages. A close relationship is important social context; a background/minimal discovered actor may still speak when the plot or current exchange makes them relevant, without inventing a biography. Talkativeness changes likelihood but never forces participation. Fragmentation may produce short consecutive messages by the same speaker, while low fragmentation favors one composed bubble.
+${characterPhotoInstruction(preferences.characterPictures === true)}
 ${PHONE_TEXT_STYLE}
 ${preferences.voiceMessages !== false ? 'Each row may add "format":"voice" for a natural character voice message; text is its spoken transcript. Omit format for ordinary text.' : 'Send ordinary text only; voice messages are disabled.'}
 Each row may include suggestion only when THAT speaker introduces a new future plan or changes its actual timing, place, or participants. Mere mentions, banter, questions about when, and reminders about an unchanged plan MUST use null. Reuse the exact planId from CONVERSATION PLANS when refining a plan; never recreate scheduled, declined, or closed invitations. suggestion is null otherwise. When present use {"kind":"event","planId":"existing plan id only when updating","title":"short event title","description":"why/what","whenKind":"exact|approximate|relative|unscheduled","whenText":"human story-time label","start":"optional ISO only when exact and grounded","end":"optional ISO only when exact and grounded","participants":["exact character names"]}. Name-only participants are valid. Do not manufacture events from casual chatter.
@@ -3741,7 +3880,7 @@ No narration, markdown, delay values, or hidden reasoning.` },
       const speakerId = text(row.speakerId, 180)
       const body = text(row.text, 8_000)
       if (!body || !eligible.some((actor) => actor.actorId === speakerId)) return []
-      return [{ id: id('group_slot'), speakerId, text: body, format: preferences.voiceMessages !== false && voiceMessage(row.format) ? 'voice' as const : undefined, eventSuggestion: generatedEventSuggestion(row.suggestion, id), state: 'queued' as const }]
+      return [{ imagePrompt: preferences.characterPictures ? text(row.imagePrompt, 4000) || undefined : undefined, id: id('group_slot'), speakerId, text: body, format: preferences.voiceMessages !== false && voiceMessage(row.format) ? 'voice' as const : undefined, eventSuggestion: generatedEventSuggestion(row.suggestion, id), state: 'queued' as const }]
     })
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
     const batchId = id('group_batch')
@@ -3800,6 +3939,7 @@ No narration, markdown, delay values, or hidden reasoning.` },
         const speakerContact = profileRow.contact
         const message: PhoneMessage = {
           id: id('msg'), sender: 'contact', senderActorId: speaker.actorId, senderActorKind: speaker.kind === 'contact' || speaker.kind === 'discovered' ? speaker.kind : undefined, senderContactId: speaker.contact?.id, senderName: speaker.name, senderAccent: speaker.accent,
+          photo: requestedMessagePhoto(latestSlot.imagePrompt, preferences.characterPictures === true),
           text: cleanPhoneMessageText(latestSlot.text), format: latestSlot.format, createdAt: phoneMessageTimestamp(latest), storyClock: roleplayClockSnapshot(latest), read: visible, status: visible ? 'read' : 'delivered',
           eventSuggestion: reconcileMessageEventSuggestion(latest, { ...latestConversation, messages: activeConversationMessages(latest, latestConversation) }, latestSlot.eventSuggestion, id),
           generation: { requestId, info: {
@@ -3833,6 +3973,7 @@ No narration, markdown, delay values, or hidden reasoning.` },
           : null
         const activity = addActivity(latest, { kind: 'message', title: speaker.name, summary: message.text.slice(0, 280), route, source: { contactId: speaker.contact?.id, conversationId } })
         await saveState(latest, userId)
+        queueMessagePhoto(context, conversationId, message, userId)
         await sendState(latest, userId, 'group_message', preferences.autoOpenOnModelAction)
         return { notification, activity }
       })
@@ -4708,6 +4849,8 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         senderContactId: senderContact?.id,
         senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
         senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
+        ...(source === 'user' && isRecord(input.__chatPhoto) ? {imageId:text(input.__chatPhoto.id,180),imageUrl:text(input.__chatPhoto.url,2000)} : {}),
+        photo: source !== 'user' ? requestedMessagePhoto(payload.imagePrompt, preferences.characterPictures === true) : undefined,
         text: messageText, format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), storyClock: roleplayClockSnapshot(state), read: personaRead,
         call,
         status: sender === 'persona' ? 'sent' : sender === 'system' ? 'read' : personaRead ? 'read' : 'delivered',
@@ -4804,7 +4947,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           inScene: bool(payload.inScene ?? payload.in_scene, existing?.presence.inScene),
           lastSceneAt: bool(payload.inScene ?? payload.in_scene, existing?.presence.inScene) ? nowIso() : existing?.presence.lastSceneAt || '',
         },
-        contextPolicy: { pinned: bool(payload.pinned, existing?.contextPolicy.pinned) },
+        contextPolicy: { pinned: bool(payload.pinned, existing?.contextPolicy.pinned), ...(existing?.contextPolicy.profileMode ? {profileMode: existing.contextPolicy.profileMode} : {}) },
         generationPolicy: { relevant: bool(payload.generationRelevant ?? payload.generation_relevant, existing?.generationPolicy.relevant ?? true) },
         messagingPolicy: {
           remoteEligible: bool(payload.remoteEligible ?? payload.remote_eligible, existing?.messagingPolicy.remoteEligible ?? true),
@@ -4867,6 +5010,18 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       }
       if (existing) Object.assign(existing, event)
       else state.events.push(event)
+      if (source === 'user' && sourceConversationId && !sourceSuggestionId) {
+        const conversation = state.conversations.find(c => c.id === sourceConversationId)
+        if (!conversation || !conversationDeviceActorIds(state,conversation).includes(pocketPersonaActorId(state))) throw new Error('Choose a conversation on your phone.')
+        let marker = conversation.messages.find(m => m.sender === 'system' && m.eventSuggestion?.scheduledEventId === event.id)
+        if (!marker) {
+          marker={id:id('msg'),sender:'system',senderName:'Pocket',senderAccent:'',text:`Scheduled: ${title}`,createdAt:phoneMessageTimestamp(state),storyClock:roleplayClockSnapshot(state),read:true,status:'read'}
+          conversation.messages.push(marker);conversation.messages=conversation.messages.slice(-MAX_MESSAGES);conversation.updatedAt=marker.createdAt
+        }
+        marker.text=`Scheduled: ${title}`
+        marker.eventSuggestion={id:marker.eventSuggestion?.id||id('suggestion'),kind:'event',status:'scheduled',title,description:event.description,whenKind:event.whenKind||'exact',whenText:event.whenText||start,start:event.start,end:event.end,participantNames:event.participantNames||[],scheduledEventId:event.id}
+        event.source!.messageId=marker.id
+      }
       if (sourceConversationId && sourceMessageId && sourceSuggestionId) {
         const sourceConversation = state.conversations.find((entry) => entry.id === sourceConversationId)
         const sourceEntry = sourceConversation ? messageSuggestion(sourceConversation, sourceMessageId) : null
@@ -4971,6 +5126,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
     }
     await saveState(state, userId)
     if (!candidateMessageProvisional) {
+      if(action==='message' && typeof result.conversationId==='string'){const message=state.conversations.find(c=>c.id===result.conversationId)?.messages.find(m=>m.id===result.messageId);if(message)queueMessagePhoto(context,result.conversationId,message,userId)}
       if (notification) await maybePush(state, preferences, notification, userId)
       await sendState(state, userId, action, source !== 'user' && preferences.autoOpenOnModelAction)
       sendActivity(activity, userId)
@@ -4996,6 +5152,87 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       'lumiphone:sync_scene_contacts', 'lumiphone:timeline_review', 'lumiphone:jev_evaluate', 'lumiphone:reset_all_roleplay', 'lumiphone:gallery_add_to_chat',
     ].includes(String(payload.type))) throw new Error('This action needs a roleplay chat. Start from a Freeform session in Settings to keep its history separate.')
     switch (payload.type) {
+      case 'lumiphone:timeskip': {
+        const minutes=timeskipMinutes(payload.minutes), conversationId=text(payload.conversationId,180)
+        const initial=await loadState(context.chatId,context.characterId,userId)
+        if(!initial.conversations.some(c=>c.id===conversationId))throw new Error('That conversation is unavailable.')
+        if(text(payload.deviceOwnerActorId,180) && payload.deviceOwnerActorId!==pocketPersonaActorId(initial))throw new Error('Switch to your own phone to advance time.')
+        const commandId=`timeskip:${requestId || id('skip')}`.slice(0,180)
+        if(!initial.processedCommands.some(c=>c.id===commandId)){
+          replyJobs.cancel(replyJobScope(context.chatId,context.characterId,conversationId,userId))
+          arrivalIdle.cancel(burstTimerKey(context.chatId,context.characterId,conversationId,userId))
+        }
+        await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
+          const state=await loadState(context.chatId,context.characterId,userId)
+          const conversation=state.conversations.find(c=>c.id===conversationId)
+          if(!conversation)throw new Error('That conversation is unavailable.')
+          if(!state.processedCommands.some(c=>c.id===commandId)){
+            const next=Date.parse(state.roleplayNow)+minutes*60000
+            if(!Number.isFinite(next) || !Number.isFinite(new Date(next).getTime()))throw new Error('Set a valid Pocket clock before advancing time.')
+            const roleplayNow=new Date(next).toISOString(),label=timeskipLabel(minutes)
+            state.trackers=state.trackers.map(tracker=>materializeTracker(tracker,roleplayNow).tracker)
+            state.roleplayNow=roleplayNow;state.roleplayClockSource='manual'
+            if(state.sceneSnapshot)state.sceneSnapshot.stale=true
+            state.roleplayClockPrecision=state.roleplayClockPrecision==='exact'?'exact':'relative'
+            state.roleplayClockLabel=state.roleplayClockPrecision==='exact'?'Manual timeskip':label
+            if(conversation.outgoingBurst){conversation.outgoingBurst.open=false;conversation.outgoingBurst.finalized=true}
+            for(const batch of state.groupBatches.filter(b=>b.conversationId===conversationId && (b.status==='queued' || b.status==='delivering')))batch.status='cancelled'
+            conversation.messages.push({id:id('timeskip'),sender:'system',senderName:'Pocket',senderAccent:'',text:label,timeskip:{minutes},createdAt:roleplayNow,storyClock:roleplayClockSnapshot(state),read:true,status:'read'})
+            conversation.messages=conversation.messages.slice(-MAX_MESSAGES);conversation.updatedAt=nowIso()
+            state.processedCommands.push({id:commandId,semanticKey:commandId,createdAt:nowIso()});state.processedCommands=state.processedCommands.slice(-160)
+            await saveState(state,userId)
+          }
+          await sendState(state,userId,'timeskip')
+        });break
+      }
+      case 'lumiphone:save_chat_appearance': {
+        await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
+          const state=await loadState(context.chatId,context.characterId,userId)
+          const conversation=state.conversations.find(c=>c.id===text(payload.conversationId,180))
+          if(!conversation)throw new Error('That conversation is unavailable.')
+          conversation.appearance=payload.appearance===null?undefined:normalizeChatAppearance(payload.appearance)
+          await saveState(state,userId);await sendState(state,userId,'chat_appearance')
+        });break
+      }
+      case 'lumiphone:get_lore_log': {
+        const entries = await spindle.userStorage.getJson<PocketLoreRetrievalLog[]>(`context/lore/${stateKey(context.chatId, context.characterId)}.json`, {fallback:[], userId})
+        send({type:'lumiphone:lore_log', requestId, ...context, entries}, userId)
+        break
+      }
+      case 'lumiphone:freeform_appearance': {
+        if (!isFreeformChat(context.chatId)) throw new Error('Open a Freeform session first.')
+        const session = await freeformSessions.get(context.chatId, userId)
+        const baseId = text(payload.basePersonaId,180) || session.appearanceBasePersonaId || session.personaId
+        if (baseId !== (session.appearanceBasePersonaId || session.personaId)) {
+          if (!spindle.permissions.has('personas') || !await spindle.personas.get(baseId,userId)) throw new Error('Choose an available base Persona.')
+        }
+        const independent = payload.independent === true
+        if (independent) {
+          const preferences = await loadPreferences(userId)
+          if (!preferences.personaAppearance[context.chatId] && preferences.personaAppearance[baseId]) {
+            preferences.personaAppearance[context.chatId] = structuredClone(preferences.personaAppearance[baseId])
+            await savePreferences(preferences,userId)
+          }
+        }
+        await freeformSessions.setAppearance(context.chatId,baseId,independent,userId)
+        await sendState(await loadState(context.chatId,'_none',userId),userId,'appearance_scope')
+        break
+      }
+      case 'lumiphone:save_context_scenario':
+      case 'lumiphone:set_contact_profile_mode': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          if (payload.type === 'lumiphone:save_context_scenario') state.contextScenario = text(payload.scenario, 12000)
+          else {
+            const contact = state.contacts.find(c => c.id === text(payload.contactId, 180))
+            if (!contact) throw new Error('That contact is unavailable.')
+            if (!['default', 'compact', 'full'].includes(String(payload.mode))) throw new Error('Choose Default, Compact, or Full.')
+            contact.contextPolicy.profileMode = payload.mode as 'default' | 'compact' | 'full'
+          }
+          await saveState(state, userId); await sendState(state, userId, 'context')
+        })
+        break
+      }
       case 'lumiphone:freeform_list': {
         send({ type: 'lumiphone:freeform_directory', requestId, directory: await freeformDirectory(userId) }, userId)
         break
@@ -5019,10 +5256,30 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         await sendState(await loadState(session.id, '_none', userId), userId, 'freeform_open', true)
         break
       }
+      case 'lumiphone:freeform_delete': {
+        const sessionId=text(payload.sessionId,180)
+        await freeformSessions.get(sessionId,userId)
+        const state=await loadState(sessionId,'_none',userId)
+        for(const conversation of state.conversations)replyJobs.cancel(replyJobScope(sessionId,'_none',conversation.id,userId))
+        const view=currentView(userId)
+        if(view?.chatId===sessionId)socialAutomation.forget(userId)
+        for(const job of cameraJobs.values())if(job.chatId===sessionId && job.userId===userId){job.cancelled=true;job.controller.abort()}
+        for(const job of personaJobs.values())if(job.chatId===sessionId && job.userId===userId){job.cancelled=true;job.controller.abort()}
+        const result=await freeformSessions.delete(sessionId,userId)
+        let warning=result.cleanupError
+        try {
+          const preferences=await loadPreferences(userId)
+          delete preferences.personaAppearance[sessionId];await savePreferences(preferences,userId)
+          const logPath=`context/lore/${stateKey(sessionId,'_none')}.json`
+          await withStateLock(`${viewKey(userId)}:${logPath}`,async()=>{await spindle.userStorage.delete(logPath,userId)})
+        } catch { warning=warning || 'Session deleted, but its saved styling or retrieval logs could not be cleaned up.' }
+        send({type:'lumiphone:freeform_deleted',requestId,sessionId,warning},userId)
+        break
+      }
       case 'lumiphone:freeform_rename': {
-        if (!isFreeformChat(context.chatId)) throw new Error('Open a Freeform session first.')
-        await freeformSessions.rename(context.chatId, payload.name, userId)
-        await sendState(await loadState(context.chatId, '_none', userId), userId, 'freeform_rename')
+        await freeformSessions.rename(text(payload.sessionId,180) || context.chatId, payload.name, userId)
+        if(isFreeformChat(context.chatId))await sendState(await loadState(context.chatId, '_none', userId), userId, 'freeform_rename')
+        send({type:'lumiphone:freeform_renamed',requestId,sessionId:text(payload.sessionId,180) || context.chatId},userId)
         break
       }
       case 'lumiphone:freeform_copy_to_chat': {
@@ -5709,7 +5966,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const projectedConversation = { ...conversation, messages: activeConversationMessages(state, conversation) }
         const assembled = await assemblePocketContext({
           state, contact, conversation: projectedConversation, preferences: await loadPreferences(userId),
-          actorIdentity: contact.identityBrief || profile.description,
+          actorIdentity: profileContext(contact, profile, await loadPreferences(userId), contact.identityBrief || profile.description),
+          extraContext: await extraPhoneContext(state, projectedConversation, userId),
           getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
         })
         send({ type: 'lumiphone:context_preview', requestId, conversationId: conversation.id, diagnostics: assembled.diagnostics }, userId)
@@ -6023,7 +6281,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const source = { kind: 'gallery' as const, imageId }
         assertPocketImageResolved(await resolvePocketImageSource(spindle, source, userId))
         const preferences = await loadPreferences(userId)
-        assignWallpaper(preferences, { ...payload, target: String(payload.target).startsWith('persona-') ? payload.target : payload.personaId ? payload.target === 'chat' ? 'persona-chat' : 'persona-home' : payload.target === 'chat' ? 'device-chat' : payload.target === 'home' ? 'device-home' : payload.target }, source)
+        if(!await saveConversationWallpaper(context,payload,source,userId))assignWallpaper(preferences, { ...payload, target: String(payload.target).startsWith('persona-') ? payload.target : payload.personaId ? payload.target === 'chat' ? 'persona-chat' : 'persona-home' : payload.target === 'chat' ? 'device-chat' : payload.target === 'home' ? 'device-home' : payload.target }, source)
         await savePreferences(preferences, userId)
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences')
         send({ type: 'lumiphone:gallery_action_done', requestId, action: 'set-wallpaper', message: `Saved ${text(payload.personaName, 120) ? `for ${text(payload.personaName, 120)} · ` : ''}${String(payload.target).endsWith('chat') ? 'chat' : 'home'} wallpaper.` }, userId)
@@ -6034,7 +6292,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const source = payload.source === null ? null : normalizeImageSource(payload.source)
         if (payload.source !== null && !source) throw new Error('Choose a valid Gallery image, uploaded asset, or HTTPS image URL.')
         if (source) assertPocketImageResolved(await resolvePocketImageSource(spindle, source, userId))
-        assignWallpaper(preferences, payload, source)
+        if(!await saveConversationWallpaper(context,payload,source,userId))assignWallpaper(preferences, payload, source)
         await savePreferences(preferences, userId)
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences')
         send({ type: 'lumiphone:gallery_action_done', requestId, action: 'set-wallpaper', message: 'Wallpaper saved.' }, userId)
@@ -6053,7 +6311,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const source = { kind: 'asset' as const, assetId: image.id }
         assertPocketImageResolved(await resolvePocketImageSource(spindle, source, userId))
         const preferences = await loadPreferences(userId)
-        assignWallpaper(preferences, payload, source)
+        if(!await saveConversationWallpaper(context,payload,source,userId))assignWallpaper(preferences, payload, source)
         await savePreferences(preferences, userId)
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences')
         send({ type: 'lumiphone:wallpaper_uploaded', requestId, imageId: image.id }, userId)
@@ -6092,6 +6350,51 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           await saveState(state, userId)
           await sendState(state, userId, 'contact_photo')
           send({ type: 'lumiphone:gallery_action_done', requestId, action: 'set-contact-photo', message: `${contact.name} photo updated.` }, userId)
+        })
+        break
+      }
+      case 'lumiphone:prepare_chat_photo':
+      case 'lumiphone:send_chat_photo': {
+        const conversationId = text(payload.conversationId,180)
+        const state = await loadState(context.chatId,context.characterId,userId)
+        const conversation = state.conversations.find(c => c.id === conversationId)
+        if (!conversation || !conversationDeviceActorIds(state,conversation).includes(pocketPersonaActorId(state))) throw new Error('Choose a conversation on your phone.')
+        let photo: {id:string;url:string}
+        if (payload.scene) {
+          const generated = await cameraGenerate({...context,requestId,scene:text(payload.scene,4000),purpose:'message',enhance:false},userId)
+          if (!generated.ok || !generated.imageId) break
+          photo = {id:text(generated.imageId,180),url:text(generated.imageUrl,2000)}
+        } else if (payload.dataUrl) {
+          if (!spindle.permissions.has('images')) throw new Error('Enable Images to upload a photo.')
+          const dataUrl = payload.dataUrl
+          if (!validChatPhotoUpload(dataUrl)) throw new Error('Choose a PNG, JPEG, WebP, or GIF photo up to 8 MB.')
+          photo = await spindle.images.uploadFromDataUrl(dataUrl,{originalFilename:text(payload.filename,240)||'Pocket photo',userId})
+        } else {
+          const imageId = text(payload.imageId,180)
+          if (!imageId) throw new Error('Choose a photo first.')
+          const image = await resolvePocketImageSource(spindle,{kind:'gallery',imageId},userId)
+          assertPocketImageResolved(image); photo = {id:imageId,url:image.url}
+        }
+        if(payload.type==='lumiphone:prepare_chat_photo'){send({type:'lumiphone:chat_photo_ready',requestId,...context,imageId:photo.id,imageUrl:photo.url},userId);break}
+        const result = await applyAction({...context,action:'message',__chatPhoto:photo,payload:{conversationId,text:text(payload.caption,8000)||'Photo',sender:'persona'}},userId,'user')
+        send({type:'lumiphone:chat_photo_sent',requestId,...context,...result},userId)
+        break
+      }
+      case 'lumiphone:message_photo_control': {
+        await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
+          const state = await loadState(context.chatId,context.characterId,userId)
+          const conversation = state.conversations.find(c=>c.id===payload.conversationId)
+          const message = conversation?.messages.find(m=>m.id===payload.messageId)
+          if (!conversation || !message?.photo || !conversationDeviceActorIds(state,conversation).includes(pocketPersonaActorId(state))) throw new Error('Photo is no longer available.')
+          const marker=messagePhotoFlights.get(`${viewKey(userId)}:${context.chatId}:${context.characterId}:${message.photo.jobId}`)
+          if(marker)marker.cancelled=true
+          const job = cameraJobs.get(`${viewKey(userId)}:${message.photo.jobId}`)
+          if (job) { job.cancelled=true; job.controller.abort() }
+          if (payload.action==='retry') {
+            if (!(await loadPreferences(userId)).characterPictures) throw new Error('Enable character picture generation in Settings → Messages.')
+            message.photo={prompt:message.photo.prompt,jobId:id('chat_photo'),status:'pending'}
+          } else message.photo.status='cancelled'
+          await saveState(state,userId); queueMessagePhoto(context,conversation.id,message,userId); await sendState(state,userId,'message_photo_control')
         })
         break
       }
@@ -6712,7 +7015,10 @@ async function pruneUncommittedCandidateMessages(
         if (removePocketMessageArtifacts(state, conversation.id, message.id)) removed += 1
       }
     }
-    if (removed || kept) await saveState(state, userId)
+    if (removed || kept) {
+      await saveState(state, userId)
+      for(const conversation of state.conversations) for(const message of conversation.messages) if(message.candidateCommitState==='committed' && message.photo?.status==='pending')queueMessagePhoto({chatId:origin.chatId,characterId},conversation.id,message,userId)
+    }
     const uniqueRemovedActivityIds = [...new Set(removedActivityIds)]
     const uniqueKeptActivityIds = [...new Set(keptActivityIds)]
     if (uniqueRemovedActivityIds.length) send({ type: 'lumiphone:candidate_activity_discard', activityIds: uniqueRemovedActivityIds, origin, reason: 'candidate_uncommitted' }, userId)
@@ -6809,6 +7115,12 @@ spindle.permissions.onChanged(({ permission, granted }) => {
     }
   }
   send({ type: 'lumiphone:capabilities', capabilities: capabilities() })
+})
+
+spindle.on('IMAGE_GEN_PROGRESS', (payload:any,userId?:string)=>{
+  const requestId=text(payload?.assetId,180),job=cameraJobs.get(`${viewKey(userId)}:${requestId}`)
+  if(!job || job.cancelled || job.chatId!==payload.chatId || !spindle.permissions.has('image_gen'))return
+  send({type:'lumiphone:camera_progress',requestId,phase:payload.preview?'preview':'generating',imageDataUrl:typeof payload.preview==='string' && /^data:image\/(png|jpeg|webp);base64,/i.test(payload.preview)?payload.preview:undefined,step:payload.step,totalSteps:payload.totalSteps},userId)
 })
 
 spindle.on('CHAT_SWITCHED', async (payload: any, userId?: string) => {

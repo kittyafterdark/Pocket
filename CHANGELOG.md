@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.0 — 2026-10-30
+
+### Context and Freeform
+
+- Added Context settings for full character profiles, lorebooks, and a per-Pocket custom scenario, available in Roleplay and Freeform.
+- Added per-contact compact/full profile selection and a lorebook retrieval log. Freeform scans linked/global lorebooks independently of host chat activation.
+- Added sidebar session management with Persona filtering, searchable Persona pickers, renaming, and confirmed deletion.
+- Freeform appearance follows a selected base Persona by default, with optional independent session styling that survives profile edits.
+
+### Messages and events
+
+- Added chat photo attachments from Gallery, uploads, and image generation. Generated and uploaded photos can be reviewed before explicitly sending; generated photos support retry, stop, and live Swarm previews with step progress.
+- Added opt-in character photo generation in direct and group chats, with inline progress, stop/retry, and protection against cancelled or stale results.
+- Redesigned the attachment modal with separate Photo and Event tabs and centered the composer attachment control.
+- Added manual event scheduling from conversations, linked Timeline plans, and plan updates when an event is edited. Event editor inputs survive background read-status updates.
+- Added Timeskip to the conversation menu, advancing the Pocket clock and leaving a persistent separator that reaches future reply context.
+- Added chat theme shortcuts, conversation wallpapers, bubble corner radius, and vertical padding controls, with more default breathing room around message text.
+- Reused the Home Messages icon for empty chats and softened casual texting guidance around terminal periods.
+
+### Appearance and fixes
+
+- Added independent mobile/desktop interface scales.
+- Added Classic, Paper, Midnight, Pastel, and Custom icon packs under Advanced theme colors in Device appearance and Persona identity. Persona/session overrides can inherit the device pack; custom colors use circular swatches.
+- Fixed operator-scoped LLM tracker judging by forwarding the authenticated user ID through generation requests, including retries and streaming.
+- Expanded release verification with context, appearance, timeskip, photo, and Freeform backend regression tests, plus mobile/desktop browser checks.
+
 ## 0.3.0 — 2026-10-30
 
 This release includes Freeform sessions, the redesigned sidebar, and the launcher, social, messaging, event, contact, and media improvements from this development pass.

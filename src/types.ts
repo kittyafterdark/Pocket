@@ -108,6 +108,9 @@ export interface PocketDeviceIdentity {
 }
 
 export interface PersonaAppearanceOverride {
+  iconPack?: DevicePreferences['iconPack']
+  iconBackground?: string
+  iconForeground?: string
   homeWallpaperEnabled?: boolean
   chatWallpaperEnabled?: boolean
   enabled: boolean
@@ -215,6 +218,7 @@ export interface PocketOperationProgress {
 
 export interface DevicePreferences {
   version: 5
+  characterPictures?: boolean
   voiceMessages?: boolean
   ttsVoiceURI?: string
   ttsConnectionId?: string
@@ -228,6 +232,14 @@ export interface DevicePreferences {
   desktopDockSide: 'left' | 'right'
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
   uiScale: number
+  independentUiScale:boolean
+  mobileUiScale:number
+  desktopUiScale:number
+  bubbleRadius:number
+  bubblePadding:number
+  iconPack: 'classic'|'paper'|'midnight'|'pastel'|'custom'
+  iconBackground:string
+  iconForeground:string
   /** Launcher float origin in CSS pixels; null means use default placement. */
   launcherPosition: { x: number; y: number } | null
   animation: OpenAnimation
@@ -248,6 +260,8 @@ export interface DevicePreferences {
   autoReplyAfterSend: boolean
   replyCadence: ReplyCadence
   ambientMessaging: AmbientMessageFrequency
+  preferFullProfiles: boolean
+  enableLorebooks: boolean
   roleplayContextMode: RoleplayContextMode
   /** Cosmetic status only; reconciliation still runs when hidden. */
   showReconciliationStatus: boolean
@@ -336,10 +350,12 @@ export interface PhoneMessage {
   createdAt: string
   /** Story-clock precision captured when this message was written; never inferred from the current clock. */
   storyClock?: PocketRoleplayClockSnapshot
+  timeskip?: {minutes:number}
   read: boolean
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
   imageId?: string
   imageUrl?: string
+  photo?: import('./domain/message-photo.js').MessagePhoto
   eventSuggestion?: PhoneEventSuggestion
   /** Host roleplay candidate that caused this model-authored side effect. */
   origin?: PocketTurnCandidateOrigin
@@ -518,7 +534,7 @@ export interface PocketContact {
   /** Close actors are disclosed prominently; background actors stay cheap. */
   relationship: PocketRelationship
   presence: { inScene: boolean; lastSceneAt: string }
-  contextPolicy: { pinned: boolean }
+  contextPolicy: { pinned: boolean; profileMode?: 'default' | 'compact' | 'full' }
   generationPolicy: { relevant: boolean }
   messagingPolicy: {
     remoteEligible: boolean
@@ -532,6 +548,7 @@ export interface PocketContact {
 }
 
 export interface PendingGroupBatchMessage {
+  imagePrompt?: string
   format?: 'voice'
   id: string
   speakerId: string
@@ -558,6 +575,7 @@ export interface PendingGroupBatch {
 }
 
 export interface PocketConversation {
+  appearance?:import('./domain/chat-appearance.js').ChatAppearance
   id: string
   kind: 'direct' | 'group'
   title: string
@@ -916,8 +934,21 @@ export interface PocketStateReconciliation {
   updatedAt: string
   domains: PocketReconciliationDomain[]
 }
+export interface PocketLoreRetrievalLog {
+  id: string
+  createdAt: string
+  conversationId: string
+  mode: 'freeform' | 'roleplay'
+  status: 'ready' | 'disabled' | 'error'
+  error?: string
+  includedChars: number
+  bookIds: string[]
+  entries: Array<{id:string; title:string; bookId:string; reason:string; chars:number}>
+}
+
 export interface PhoneState {
   version: 11
+  contextScenario?: string
   chatId: string
   characterId: string
   characterName: string

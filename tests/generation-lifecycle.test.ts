@@ -191,3 +191,24 @@ test('repeated standalone viewport notifications leave handset styles untouched,
     expect(writes).toEqual([])
   } finally { (globalThis as any).window = previous }
 })
+
+
+test('operator-scoped judge requests and retries use the authenticated user',async()=>{
+  const f=generationFixture([{content:'',finish_reason:'length'},{content:'{"answers":{}}',finish_reason:'stop'}])
+  const users:string[]=[]
+  const original=f.host.spindle.generate.quiet
+  f.host.spindle.generate.quiet=async(request:any)=>{
+    if(!request.userId)throw new Error('userId is required for operator-scoped extensions')
+    users.push(request.userId);return original(request)
+  }
+  await runPocketGeneration(f.host,'tracker-judge','operator-judge',{userId:'wrong-input-user',parameters:{max_tokens:1000}},'authenticated-user')
+  expect(users).toEqual(['authenticated-user','authenticated-user'])
+  expect(f.events.at(-1).run.status).toBe('completed')
+})
+
+test('operator-scoped streamed profile requests also retain the authenticated user',async()=>{
+  const f=generationFixture([]),requests:any[]=[]
+  ;(f.host.spindle.generate as any).quietStream=async function*(request:any){requests.push(request);yield{type:'done',content:'{"name":"Fixture"}',finish_reason:'stop'}}
+  await runPocketGeneration(f.host,'persona-profile','operator-stream',{},'stream-user')
+  expect(requests[0].userId).toBe('stream-user')
+})

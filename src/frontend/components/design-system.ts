@@ -59,10 +59,10 @@ ${SURFACE_TOKENS}
   .lumiphone-shell .lp-palette-grid .lp-setting-row { min-width:0; min-height:78px; padding:8px 3px; border:0; border-radius:12px; display:flex; flex-direction:column-reverse; justify-content:center; gap:4px; background:color-mix(in srgb,var(--lp-text) 4%,transparent); }
   .lp-palette-grid .lp-setting-row strong { font-size:10px; font-weight:550; overflow-wrap:anywhere; text-align:center; }
   .lumiphone-shell .lp-palette-bezel { min-height:48px; padding:2px 0 8px; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input { flex-shrink:0; width:44px; height:44px; padding:5px; border:1px solid var(--lp-border); border-radius:50%; background:transparent; cursor:pointer; overflow:hidden; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-webkit-color-swatch-wrapper { padding:0; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-webkit-color-swatch { border:0; border-radius:50%; }
-  .lumiphone-shell :is(.lp-accent-control,.lp-palette-sections) .lp-color-input::-moz-color-swatch { border:0; border-radius:50%; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input { flex-shrink:0; width:44px; height:44px; padding:5px; border:1px solid var(--lp-border); border-radius:50%; background:transparent; cursor:pointer; overflow:hidden; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input::-webkit-color-swatch-wrapper { padding:0; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input::-webkit-color-swatch { border:0; border-radius:50%; }
+  :is(.lumiphone-shell :is(.lp-accent-control,.lp-palette-sections),.lp-icon-pack-colors) .lp-color-input::-moz-color-swatch { border:0; border-radius:50%; }
   .lp-theme-live { display:grid; gap:12px; border-radius:22px; padding:20px; min-height:145px; border:1px solid var(--lp-border); }
   .lp-theme-live .lp-message-surface { justify-self:end; }
   .lumiphone-shell .lp-color-grid { grid-template-columns:minmax(0,1fr); }

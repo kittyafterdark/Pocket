@@ -2298,7 +2298,7 @@ for (const [name, width, scale] of [['min', 288, .7], ['max', 443, 1.3]]) {
 }
 const settingsIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Settings'))
 settingsIcon.click()
-assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 8, 'Settings root must render category navigation')
+assert.equal(dockRoot.querySelectorAll('[data-settings-category]').length, 9, 'Settings root must render category navigation')
 await exportVisual('settings', dockRoot)
 dockRoot.querySelector('[data-settings-category="jev"]').click()
 await exportVisual('judge-llm', dockRoot)

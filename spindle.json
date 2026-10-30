@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "name": "Pocket",
   "identifier": "lumiphone",
   "author": "kittyafterdark",
@@ -14,6 +14,7 @@
     "chat_mutation",
     "characters",
     "personas",
+    "world_books",
     "images",
     "cors_proxy",
     "image_gen",

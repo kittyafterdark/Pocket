@@ -1,3 +1,6 @@
+import { normalizeMessagePhoto } from './message-photo.js'
+import {normalizeTimeskip} from './timeskip.js'
+import {normalizeChatAppearance} from './chat-appearance.js'
 import type { ConversationLocalReason, ConversationPauseReason, PhoneMessage, PocketContact, PocketContactSource, PocketConversation } from '../types.js'
 import { normalizeEventSuggestion } from './scheduler.js'
 import { normalizeImageSource } from './preferences.js'
@@ -132,7 +135,7 @@ export function normalizePocketContact(value: unknown, context: {
       inScene: flag(presence.inScene, false),
       lastSceneAt: timestamp(presence.lastSceneAt, ''),
     },
-    contextPolicy: { pinned: flag(contextPolicy.pinned) },
+    contextPolicy: { pinned: flag(contextPolicy.pinned), ...(contextPolicy.profileMode === 'full' || contextPolicy.profileMode === 'compact' ? {profileMode: contextPolicy.profileMode} : {}) },
     generationPolicy: { relevant: flag(generationPolicy.relevant, true) },
     messagingPolicy: {
       remoteEligible: flag(messagingPolicy.remoteEligible, true),
@@ -183,8 +186,10 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     format: value.format === 'voice' ? 'voice' : undefined,
     createdAt: timestamp(value.createdAt, now),
     storyClock: normalizeMessageStoryClock(value.storyClock),
+    ...(sender==='system' && normalizeTimeskip(value.timeskip)?{timeskip:normalizeTimeskip(value.timeskip)}:{}),
     read,
     status,
+    photo: normalizeMessagePhoto(value.photo),
     imageId: clean(value.imageId, 160) || undefined,
     call: normalizeCallMarker(value.call),
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
@@ -277,6 +282,7 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     id: clean(value.id, 180) || makeId('conversation'),
     kind,
     title: clean(value.title, 120) || (kind === 'direct' ? fallback?.name || messages.at(-1)?.senderName || 'Conversation' : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group'),
+    appearance:normalizeChatAppearance(value.appearance),
     participantActorIds,
     includesPocketPersona,
     participantContactIds,

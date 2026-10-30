@@ -1,6 +1,6 @@
 import type { DevicePreferences, SwarmVisualProfile } from '../types.js'
 
-export type ImagePurpose = 'scene' | 'contact' | 'character' | 'persona' | 'draft'
+export type ImagePurpose = 'scene' | 'contact' | 'character' | 'persona' | 'draft' | 'message'
 
 /** Studio publishes exact native directives; preserve paths, order and repeated layers. */
 export function studioLoras(value: string): import('lumiverse-spindle-types').ImageGenLoraEntryDTO[] {
@@ -19,7 +19,7 @@ export function aspectDimensions(value: unknown): { width: number; height: numbe
 }
 
 export function effectiveImageRequest(scene: string, purpose: ImagePurpose, subject: string, aspect: string, profile: SwarmVisualProfile, preferences: DevicePreferences, overrides: Record<string, unknown> = {}) {
-  const identity = purpose === 'scene' ? [profile.characterPositive, profile.personaPositive] : purpose === 'character' ? [profile.characterPositive] : purpose === 'persona' ? [profile.personaPositive] : [`Single-subject contact portrait. ${subject}`]
+  const identity = purpose === 'message' ? [subject] : purpose === 'scene' ? [profile.characterPositive, profile.personaPositive] : purpose === 'character' ? [profile.characterPositive] : purpose === 'persona' ? [profile.personaPositive] : [`Single-subject contact portrait. ${subject}`]
   const dimensions = aspectDimensions(aspect || ((purpose === 'contact' || purpose === 'draft') ? '1:1' : profile.aspect))
   const parameters: Record<string, unknown> = { ...(dimensions || {}), ...preferences.manualVisualProfile.parameters, ...overrides }
   // An explicit aspect is a user choice and takes precedence over saved dimensions.

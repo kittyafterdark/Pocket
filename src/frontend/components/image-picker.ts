@@ -3,7 +3,7 @@ import { button, el } from '../shared.js'
 import { disclosure } from './ui.js'
 import { showWallpaperGallery } from './wallpaper-gallery.js'
 
-export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' | 'persona-chat' | 'contact-avatar'
+export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' | 'persona-chat' | 'contact-avatar' | 'conversation-chat'
 
 export interface PocketImageControlHost {
   choose(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void

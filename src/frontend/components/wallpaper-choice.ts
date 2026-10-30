@@ -1,7 +1,8 @@
 import {button,el} from '../shared.js'
-export interface WallpaperDestination { target:'device-home'|'device-chat'|'persona-home'|'persona-chat';personaId?:string;personaName?:string }
+export interface WallpaperDestination { target:'device-home'|'device-chat'|'persona-home'|'persona-chat'|'conversation-chat';conversationId?:string;personaId?:string;personaName?:string }
 let serial=0
 export function wallpaperDestinationLabel(value:WallpaperDestination):string {
+  if(value.target==='conversation-chat')return 'this conversation’s wallpaper'
   return value.target.startsWith('persona-')?`${value.personaName||'Persona'}’s ${value.target.endsWith('chat')?'chat':'home'} wallpaper`:`default ${value.target.endsWith('chat')?'chat':'home'} wallpaper`
 }
 /** Selection is captured when the chooser opens, independent of later persona changes. */

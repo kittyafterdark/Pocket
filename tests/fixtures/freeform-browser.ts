@@ -27,11 +27,13 @@ const ctx: any = {
     showModal(options: any) {
       const root = document.createElement('dialog'); root.setAttribute('aria-label', options.title); root.style.width = options.width + 'px'
       const previous = document.activeElement as HTMLElement
-      const dismiss = () => { root.close(); root.remove(); previous?.focus() }
+      const dismissHandlers=new Set<()=>void>()
+      const dismiss = () => { root.close(); root.remove();for(const handler of dismissHandlers)handler(); previous?.focus() }
+      root.addEventListener('cancel',event=>{event.preventDefault();dismiss()})
       const heading = document.createElement('h2'); heading.textContent = options.title; heading.style.cssText = 'font-size:18px;margin:0 0 18px;line-height:1.3'
       const close = document.createElement('button'); close.textContent = 'Close dialog'; close.onclick = dismiss
       close.style.cssText = 'display:block;margin:0 0 18px 0;background:transparent;color:inherit;border:0;font:inherit;min-height:44px'
-      root.append(heading, close); document.body.append(root); root.showModal(); return { root, dismiss }
+      root.append(heading, close); document.body.append(root); root.showModal(); return { root, dismiss,onDismiss(handler:()=>void){dismissHandlers.add(handler);return()=>dismissHandlers.delete(handler)} }
     },
   },
   messages: { registerTagInterceptor: () => () => {}, getLatestMessageId: () => null },
@@ -40,6 +42,7 @@ const ctx: any = {
   getActiveChat: host.activeChat,
   sendToBackend(payload: any) { setTimeout(() => { void host.send(payload) }, 0) },
   onBackendMessage(handler: typeof receive) { receive = handler; return () => { receive = () => {} } },
+  uploads: { async pickFile() { return [{name:'fixture-photo.png',mimeType:'image/png',bytes:new Uint8Array([1,2,3])}] } },
   ready() {},
 }
 host.connect(payload => receive(payload))

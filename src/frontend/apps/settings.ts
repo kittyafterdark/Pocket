@@ -11,6 +11,8 @@ import { resolvePocketTouchScrollMode } from '../touch-scroll.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
 import type { PocketImageTarget } from '../components/image-picker.js'
+import type { PocketLoreRetrievalLog } from '../../types.js'
+import type { FreeformPersona } from '../../domain/freeform.js'
 import type { FreeformSession } from '../../domain/freeform.js'
 import { ttsSettings } from '../components/tts-settings.js'
 
@@ -18,7 +20,11 @@ type Page = { page: HTMLDivElement; content: HTMLDivElement }
 type ActivePersona = { id: string; name: string } | null
 
 export interface SettingsViewHost {
+  chooseIconPack?(scope?:'persona'):void
   freeformSession?: FreeformSession | null
+  appearanceBases?: FreeformPersona[]
+  loreLogs?: PocketLoreRetrievalLog[] | null
+  loadLoreLogs?(): void
   renameFreeform?(name: string): void
   chooseFreeform?(): void
   copyFreeformToChat?(): void
@@ -133,6 +139,7 @@ function categories(host: SettingsViewHost): HTMLDivElement {
     ...(host.freeformSession ? [['freeform', 'Freeform session', 'Name, switch sessions, or start a separate roleplay chat']] : []),
     ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
+    ['context', 'Context', 'Character profiles, lorebooks, and this session’s scenario'],
     ['generation', 'Pocket Generation', 'Model source and connection diagnostics'],
     ['jev', 'Tracker judge', 'LLM or TypeSafe Jev decisions'],
     ['camera', 'Camera & Swarm Studio', 'Visual profile and macro diagnostics'],
@@ -181,12 +188,16 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
       choose: host.chooseImage, change: (wallpaper) => commit((next) => { next.chatWallpaper = wallpaper }),
     }),
   )
+  const independent=toggle('Independent mobile and desktop scale',settings.independentUiScale,value=>{commit(next=>{next.independentUiScale=value});host.rerender()},'Use separate interface sizes on mobile and desktop. Turning off restores the shared size.')
+  independent.querySelector('button')!.dataset.appearanceFocus='platform-scale'
   const scaleCard = el('section', 'lp-card lp-settings-section'); scaleCard.append(el('div', 'lp-eyebrow', 'Sizing'))
   const presets = el('div', 'lp-row')
   for (const [label, value] of [['Compact', .8], ['Default', 1], ['Large', 1.2]] as const) { const preset = button(label, 'lp-chip'); preset.setAttribute('aria-pressed', String(settings.uiScale === value)); preset.addEventListener('click', () => commit((next) => { next.uiScale = value })); presets.appendChild(preset) }
   scaleCard.append(
-    presets,
-    slider('Interface size', settings.uiScale, .7, 1.3, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.uiScale = value }), 'Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.'),
+    ...(settings.independentUiScale?[]:[presets]),
+    independent,
+    ...(settings.independentUiScale ? [slider('Mobile interface size',settings.mobileUiScale,.7,1.3,.05,value=>`${Math.round(value*100)}%`,value=>commit(next=>{next.mobileUiScale=value})),slider('Desktop interface size',settings.desktopUiScale,.7,1.3,.05,value=>`${Math.round(value*100)}%`,value=>commit(next=>{next.desktopUiScale=value}))] : []),
+    ...(settings.independentUiScale?[]:[slider('Interface size', settings.uiScale, .7, 1.3, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.uiScale = value }), 'Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.')]),
     slider('Desktop phone size', settings.handsetScale, .8, 1.25, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.handsetScale = value }, { resize: true }), 'Controls only the physical 9:18.4 handset on desktop.'),
   )
   const motion = el('section', 'lp-card lp-settings-section'); motion.append(el('div', 'lp-eyebrow', 'Motion'))
@@ -221,7 +232,8 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
     for (const choice of themeRow.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice.dataset.theme === settings.theme))
     themeRow.querySelector<HTMLButtonElement>('button[title="custom"]')?.style.setProperty('--theme-color', settings.colors.accent)
   }
-  content.append(preview, themes, paletteControls.accent, paletteControls.advanced, wallpapers, scaleCard, motion, scrolling, disclosure('Custom CSS', custom)); return page
+  const iconPacks=button('Icon packs','lp-button');iconPacks.dataset.iconPackLauncher='true';iconPacks.onclick=()=>host.chooseIconPack?.()
+  content.append(preview, themes, paletteControls.accent, paletteControls.advanced, iconPacks, wallpapers, scaleCard, motion, scrolling, disclosure('Custom CSS', custom)); return page
 }
 
 function persona(host: SettingsViewHost): HTMLDivElement {
@@ -323,6 +335,17 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   content.append(identityProfileControls(host.identityProfiles || [], 'persona', undefined, host.send, () => ({ name: name.value, pronouns: pronouns.value, role: role.value, identityBrief: profile.identityBrief, phoneProfile: { personality: personality.value, appearance: appearance.value, textingStyle: textingStyle.value } })))
   if (!host.activePersona) return page
   const active = host.activePersona
+  if (host.freeformSession) {
+    const session=host.freeformSession, base=el('select','lp-select')
+    for (const persona of host.appearanceBases || []) base.append(new Option(persona.name,persona.id))
+    const baseId=session.appearanceBasePersonaId || session.personaId
+    if (!Array.from(base.options).some(o=>o.value===baseId)) base.append(new Option(session.personaName,baseId))
+    base.value=baseId; base.dataset.appearanceScope='base'
+    base.onchange=()=>host.send('lumiphone:freeform_appearance',{basePersonaId:base.value,independent:session.independentStyling===true})
+    content.append(fieldBlock('Base Persona styling',base,'Shared styling follows this Persona ID. Editing it updates every phone following the same base.'))
+    const independent=toggle('Independent session styling',session.independentStyling===true,value=>host.send('lumiphone:freeform_appearance',{basePersonaId:base.value,independent:value}),'Decouple this session’s theme, wallpapers, and CSS from the base Persona. Turn off to follow the base again.')
+    independent.querySelector('button')!.dataset.appearanceScope='independent';content.append(independent)
+  }
   const current = host.draft.personaAppearance[active.id] || {
     enabled: false, theme: host.draft.theme, colors: clone(host.draft).colors, customCss: '',
     homeWallpaper: { ...structuredClone(host.draft.homeWallpaper), source: null },
@@ -330,7 +353,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   }
   const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }); paletteControls.sync(value.colors) }
   const card = el('section', 'lp-card lp-settings-section')
-  card.append(el('div', 'lp-eyebrow', 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
+  card.append(el('div', 'lp-eyebrow', host.freeformSession ? 'Session appearance' : 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
   const theme = el('select', 'lp-select')
   for (const themeName of ['midnight', 'porcelain', 'rose', 'forest', 'pink', 'custom'] as const) { const option = el('option', '', themeName === 'rose' ? 'Sunset' : themeName); option.value = themeName; option.selected = current.theme === themeName; theme.appendChild(option) }
   theme.addEventListener('change', () => commit((item) => { item.theme = theme.value as PhoneSettings['theme']; if (item.theme !== 'custom') item.colors = themePalette(item.theme) }))
@@ -344,9 +367,10 @@ function persona(host: SettingsViewHost): HTMLDivElement {
       choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.chatWallpaper = wallpaper; item.chatWallpaperEnabled = Boolean(wallpaper.source) }),
     }),
   )
-  const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
-  const apply = button('Apply persona CSS', 'lp-button'); apply.addEventListener('click', () => commit((item) => { item.customCss = css.value }))
-  card.append(fieldBlock('Theme', theme), paletteControls.accent, paletteControls.advanced, personaWallpapers, disclosure('Persona custom CSS', css, apply)); content.appendChild(card); return page
+  const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = host.freeformSession ? 'Session-scoped Pocket CSS' : 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
+  const apply = button(host.freeformSession ? 'Apply session CSS' : 'Apply persona CSS', 'lp-button'); apply.addEventListener('click', () => commit((item) => { item.customCss = css.value }))
+  const iconPacks=button('Icon packs','lp-button');iconPacks.dataset.iconPackLauncher='true';iconPacks.onclick=()=>host.chooseIconPack?.('persona')
+  card.append(fieldBlock('Theme', theme), paletteControls.accent, paletteControls.advanced, iconPacks, personaWallpapers, disclosure(host.freeformSession ? 'Session custom CSS' : 'Persona custom CSS', css, apply)); content.appendChild(card); return page
 }
 
 function messages(host: SettingsViewHost): HTMLDivElement {
@@ -354,6 +378,7 @@ function messages(host: SettingsViewHost): HTMLDivElement {
   const { page, content } = host.page('Messages', 'Generation and context bridge')
   const voice = el('section', 'lp-card lp-settings-section')
   voice.append(el('div', 'lp-eyebrow', 'Voice messages'), toggle('Allow character voice messages', settings.voiceMessages !== false, value => commit(next => { next.voiceMessages = value }), 'Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS.'))
+  voice.append(toggle('Allow character picture generation', settings.characterPictures === true, value => commit(next => { next.characterPictures = value }), 'Characters may generate and send photos in direct and group chats. Uses your Camera image generation connection.'))
   voice.append(ttsSettings(() => settings, commit, host.onCleanup))
   content.append(voice)
   const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })), el('p', 'lp-copy', 'When someone is on the way, 20 seconds without typing or a new phone message continues the main roleplay. Continue to arrival starts it immediately; idle time does not mark them Here.'))
@@ -562,7 +587,38 @@ function freeformSettings(host: SettingsViewHost): HTMLDivElement {
   content.append(card, start); return page
 }
 
+function contextSettings(host: SettingsViewHost): HTMLDivElement {
+  const {page, content} = host.page('Context', 'Used in Roleplay and Freeform')
+  let settings = clone(host.draft)
+  const commit = (key: 'preferFullProfiles' | 'enableLorebooks', value: boolean) => { settings = {...settings, [key]: value}; host.update(settings) }
+  content.append(toggle('Prefer full character profiles', settings.preferFullProfiles, value => commit('preferFullProfiles', value), 'Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default.'))
+  content.append(toggle('Enable lorebooks', settings.enableLorebooks, value => commit('enableLorebooks', value), 'Requires World Books access. Roleplay uses host-activated lore. Freeform scans constant and literal-keyword entries from global books and books attached to its Persona and participants; host regex/vector and timed activation are unavailable there.'))
+  const access = button('Manage lorebook access', 'lp-button lp-button-quiet'); access.onclick = () => host.requestPermissions(); content.append(access)
+  const logs=button('Lorebook retrieval log','lp-button'); logs.onclick=()=>host.navigate('lore-log'); content.append(logs)
+  const scenario = el('textarea', 'lp-textarea'); scenario.value = host.state.contextScenario || ''; scenario.maxLength = 12000
+  const save = button('Save scenario', 'lp-button'); save.onclick = () => host.send('lumiphone:save_context_scenario', {scenario:scenario.value})
+  content.append(fieldBlock('Custom scenario', scenario, 'Saved only for this Pocket session or chat. Leave blank to clear it.'), save)
+  return page
+}
+
 export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
+  if (host.section === 'lore-log') {
+    const {page,content}=host.page('Lorebook retrieval log','Recent retrievals for this Pocket')
+    const refresh=button('Refresh retrieval log','lp-button'); refresh.onclick=()=>host.loadLoreLogs?.(); content.append(refresh)
+    if (host.loreLogs == null) content.append(el('p','lp-copy','Loading retrieval log…'))
+    else if (!host.loreLogs.length) content.append(el('p','lp-copy','No retrievals yet. Generate a phone reply or preview its context to record one.'))
+    for (const log of host.loreLogs || []) {
+      const detail=el('details','lp-card'); detail.append(el('summary','',`${log.createdAt} · ${log.mode} · ${log.status} · ${log.includedChars} chars`))
+      detail.append(el('p','lp-copy',`Conversation: ${host.state.conversations.find(c=>c.id===log.conversationId)?.title || log.conversationId}`),el('p','lp-copy',`${log.bookIds.length} books · ${log.entries.filter(e=>e.chars>0).length} included entries`))
+      if (log.error) detail.append(el('p','lp-warning',log.error))
+      if (log.status==='disabled') detail.append(el('p','lp-copy','Lorebooks were disabled for this request.'))
+      const list=el('ul','lp-copy')
+      for(const entry of log.entries) list.append(el('li','',`${entry.title} · ${entry.reason} · ${entry.chars} chars${entry.bookId ? ' · '+entry.bookId : ''}`))
+      detail.append(list);content.append(detail)
+    }
+    return page
+  }
+  if (host.section === 'context') return contextSettings(host)
   if (host.section === 'freeform' && host.freeformSession) return freeformSettings(host)
   if (!host.section) return categories(host)
   if (host.section === 'personalization') {

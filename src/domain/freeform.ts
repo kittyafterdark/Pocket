@@ -8,6 +8,8 @@ export interface FreeformSession {
   name: string
   personaId: string
   personaName: string
+  appearanceBasePersonaId?: string
+  independentStyling?: boolean
   createdAt: string
 }
 export interface FreeformPersona { id: string; name: string; avatarUrl: string }

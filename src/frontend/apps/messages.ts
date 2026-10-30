@@ -21,6 +21,10 @@ export function centerMessageInThread(thread: HTMLElement, target: HTMLElement):
 }
 
 export interface MessagesViewHost {
+  attach?(conversationId:string):void
+  openPhoto?(message:PhoneMessage):void
+  chatTheme?(conversationId:string):void
+  timeskip?(conversationId:string):void
   state: PhoneState
   selectedConversationId: string
   deviceOwnerActorId: string
@@ -441,7 +445,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   title.appendChild(el('span', 'lp-nav-subtitle', host.readOnlyDevice ? `${conversation.kind === 'group' ? memberActorIds.length : 2} participants · inspection mode` : conversation.kind === 'group' ? `${memberActorIds.length} participants` : 'Direct message'))
   const menu = el('details', 'lp-conversation-menu')
   const menuToggle = el('summary', 'lp-nav-action', '⋯')
-  menuToggle.setAttribute('aria-label', 'Conversation menu')
+  menuToggle.setAttribute('aria-label', 'Conversation menu');menuToggle.dataset.appearanceFocus='chat-menu'
   const menuSheet = el('div', 'lp-conversation-menu-sheet')
   const menuAction = (label: string, callback: () => void): HTMLButtonElement => {
     const action = button(label, 'lp-conversation-menu-action')
@@ -455,6 +459,8 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const referenceAction = menuAction('Reference in roleplay', () => host.showReferenceSheet(conversation.id))
   referenceAction.disabled = host.readOnlyDevice || !conversation.messages.some((message) => message.sender !== 'system')
   menuSheet.appendChild(referenceAction)
+  if(host.timeskip){const skip=menuAction('Timeskip',()=>host.timeskip!(conversation.id));skip.disabled=host.readOnlyDevice;menuSheet.append(skip)}
+  if(host.chatTheme)menuSheet.append(menuAction('Chat theme',()=>host.chatTheme!(conversation.id)))
   menuSheet.appendChild(menuAction('View Timeline', () => host.openTimeline('')))
   menuSheet.appendChild(menuAction('Generation info', () => host.showConversationGenerationInfo(conversation.id)))
   menuSheet.appendChild(menuAction('Outgoing prompt', () => host.showOutgoingPrompt(conversation.id)))
@@ -496,6 +502,12 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     return separator
   }
   for (const message of conversation.messages) {
+    if(message.timeskip){
+      const separator=el('div','lp-conversation-status lp-story-day',message.text)
+      separator.dataset.messageId=message.id;separator.dataset.timeskip=String(message.timeskip.minutes)
+      separator.setAttribute('role','separator');separator.setAttribute('aria-label',message.text)
+      bubbles.append(separator);previousMessage=message;priorBurstKey='';priorGroupSpeakerId='';continue
+    }
     const boundary = previousMessage ? messageContinuityBoundary(host.state, previousMessage, message) : undefined
     if (boundary) { bubbles.append(daySeparator(boundary)); priorBurstKey = ''; priorGroupSpeakerId = '' }
     previousMessage = message
@@ -522,6 +534,20 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       const time = el('time', 'lp-call-history-time', formatTime(message.createdAt)); time.dateTime = message.createdAt
       bubble.append(el('span', '', message.text), time)
     } else bubble.append(message.format === 'voice' && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.sender === 'contact' ? cleanPhoneMessageText(message.text) : message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
+    if (message.imageUrl) {
+      const photo=button('','lp-message-photo');photo.type='button';photo.setAttribute('aria-label',`Open photo from ${message.senderName}`)
+      const image=el('img');image.src=message.imageUrl;image.alt=message.text==='Photo'?'Photo attachment':message.text;image.loading='lazy'
+      photo.append(image);photo.onclick=()=>host.openPhoto?.(message);bubble.prepend(photo)
+    }
+    if (message.photo && message.photo.status !== 'ready') {
+      const status=el('div','lp-message-photo-status',message.photo.status==='pending'?'Making a photo…':message.photo.error||'Photo stopped.')
+      if (!host.readOnlyDevice) {
+        const action=message.photo.status==='pending'?'stop':'retry',control=button(action==='stop'?'Stop photo':'Retry photo','lp-bubble-action')
+        control.type='button';control.setAttribute('aria-label',`${action==='stop'?'Stop':'Retry'} photo from ${message.senderName}`)
+        control.onclick=()=>host.send('lumiphone:message_photo_control',{conversationId:conversation.id,messageId:message.id,action});status.append(control)
+      }
+      bubble.append(status)
+    }
     if (!message.call && (message.generation || message.origin || !host.readOnlyDevice)) {
       const tools = el('div', 'lp-bubble-tools')
       let dismissActions: (() => void) | undefined
@@ -700,6 +726,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   })
   textarea.setAttribute('aria-label', 'Message')
   const inputShell = el('div', 'lp-compose-input')
+  if (host.attach) {
+    const attach=button('','lp-compose-attach');attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';attach.type='button';attach.setAttribute('aria-label','Attach to message');attach.title='Photos and events'
+    attach.onclick=()=>host.attach!(conversation.id);inputShell.append(attach)
+  }
   inputShell.append(textarea, submit)
   compose.append(sparkle, inputShell)
   compose.addEventListener('submit', (event) => {
