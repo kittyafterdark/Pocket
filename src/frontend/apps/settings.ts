@@ -1,4 +1,6 @@
+import { POCKET_REASONING_OPTIONS } from '../../domain/reasoning.js'
 import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
+import { personaWallpaperActive } from '../../domain/wallpaper-scope.js'
 import { normalizePreferences, themePalette } from '../../domain/preferences.js'
 import { SAMPLER_FIELDS } from '../../domain/samplers.js'
 import type { IdentityProfile } from '../../domain/identity-profiles.js'
@@ -351,7 +353,7 @@ function persona(host: SettingsViewHost): HTMLDivElement {
     homeWallpaper: { ...structuredClone(host.draft.homeWallpaper), source: null },
     chatWallpaper: { ...structuredClone(host.draft.chatWallpaper), source: null },
   }
-  const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }); paletteControls.sync(value.colors) }
+  const commit = (mutate: (value: typeof current) => void, persist = true) => { const next = clone(host.draft); const value = structuredClone(next.personaAppearance[active.id] || current); mutate(value); next.personaAppearance[active.id] = value; host.update(next, { persist }); paletteControls.sync(value.colors); theme.value=value.theme }
   const card = el('section', 'lp-card lp-settings-section')
   card.append(el('div', 'lp-eyebrow', host.freeformSession ? 'Session appearance' : 'Persona appearance'), toggle(`Enable for ${active.name}`, current.enabled, (value) => commit((item) => { item.enabled = value }), 'Appearance only; connections and notifications remain device-wide.'))
   const theme = el('select', 'lp-select')
@@ -361,10 +363,14 @@ function persona(host: SettingsViewHost): HTMLDivElement {
   const personaWallpapers = el('section', 'lp-settings-section')
   personaWallpapers.append(
     wallpaperImageControl(`${active.name} home`, 'persona-home', current.homeWallpaper, host.resolvedWallpapers.personaHome, {
-      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.homeWallpaper = wallpaper; item.homeWallpaperEnabled = Boolean(wallpaper.source) }),
+      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.homeWallpaper = wallpaper; item.homeWallpaperEnabled = true }),
+      inherited:!personaWallpaperActive(current,'home'),defaultResolved:host.resolvedWallpapers.deviceHome,
+      inherit:()=>commit(item=>{item.homeWallpaper={...item.homeWallpaper,source:null};item.homeWallpaperEnabled=false}),
     }),
     wallpaperImageControl(`${active.name} chat`, 'persona-chat', current.chatWallpaper, host.resolvedWallpapers.personaChat, {
-      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.chatWallpaper = wallpaper; item.chatWallpaperEnabled = Boolean(wallpaper.source) }),
+      choose: host.chooseImage, change: (wallpaper) => commit((item) => { item.chatWallpaper = wallpaper; item.chatWallpaperEnabled = true }),
+      inherited:!personaWallpaperActive(current,'chat'),defaultResolved:host.resolvedWallpapers.deviceChat,
+      inherit:()=>commit(item=>{item.chatWallpaper={...item.chatWallpaper,source:null};item.chatWallpaperEnabled=false}),
     }),
   )
   const css = el('textarea', 'lp-textarea lp-code-input'); css.placeholder = host.freeformSession ? 'Session-scoped Pocket CSS' : 'Persona-scoped Pocket CSS'; css.value = current.customCss; css.addEventListener('input', () => commit((item) => { item.customCss = css.value }, false))
@@ -377,9 +383,9 @@ function messages(host: SettingsViewHost): HTMLDivElement {
   let settings = clone(host.draft); const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); settings = normalizePreferences(next); host.update(settings) }
   const { page, content } = host.page('Messages', 'Generation and context bridge')
   const voice = el('section', 'lp-card lp-settings-section')
-  voice.append(el('div', 'lp-eyebrow', 'Voice messages'), toggle('Allow character voice messages', settings.voiceMessages !== false, value => commit(next => { next.voiceMessages = value }), 'Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS.'))
-  voice.append(toggle('Allow character picture generation', settings.characterPictures === true, value => commit(next => { next.characterPictures = value }), 'Characters may generate and send photos in direct and group chats. Uses your Camera image generation connection.'))
+  voice.append(el('div', 'lp-eyebrow', 'Media'), toggle('Allow character voice messages', settings.voiceMessages !== false, value => commit(next => { next.voiceMessages = value }), 'Characters may send a voice message with a readable transcript. Tap Play to hear it with your chosen TTS.'))
   voice.append(ttsSettings(() => settings, commit, host.onCleanup))
+  voice.append(toggle('Allow character picture generation', settings.characterPictures === true, value => commit(next => { next.characterPictures = value }), 'Characters may generate and send photos in direct and group chats. Uses your Camera image generation connection.'))
   content.append(voice)
   const replies = el('section', 'lp-card lp-settings-section'); replies.append(el('div', 'lp-eyebrow', 'Reply behavior'), toggle('Decide on a reply after user DMs', settings.autoReplyAfterSend, (value) => commit((next) => { next.autoReplyAfterSend = value })), el('p', 'lp-copy', 'When someone is on the way, 20 seconds without typing or a new phone message continues the main roleplay. Continue to arrival starts it immediately; idle time does not mark them Here.'))
   const cadence = el('select', 'lp-select'); for (const [value, label] of [['instant', 'Instant'], ['quick', 'Quick'], ['natural', 'Natural'], ['relaxed', 'Relaxed']] as const) { const option = el('option', '', label); option.value = value; option.selected = settings.replyCadence === value; cadence.appendChild(option) }; cadence.addEventListener('change', () => commit((next) => { next.replyCadence = cadence.value as DevicePreferences['replyCadence'] })); replies.append(fieldBlock('Outgoing message grace', cadence), el('p', 'lp-copy', 'Messages sent during this window form one burst and receive one reply decision. Typing or focusing the composer holds the decision.'))
@@ -441,6 +447,11 @@ function generation(host: SettingsViewHost): HTMLDivElement {
   const diagnostic = el('p', 'lp-copy', 'Not tested yet.'); diagnostic.dataset.pocketGenerationDiagnostic = 'true'
   const run = [...(host.generation?.history || [])].reverse().find((entry) => entry.task === 'connection-test'); if (run) diagnostic.textContent = run.status === 'started' ? '● Testing…' : run.status === 'completed' ? `✓ Success · ${run.latencyMs ?? 0} ms · ${run.connectionName} / ${run.model}` : `Failed · ${run.error || 'Unknown provider error'}`
   card.append(fieldBlock('Generation mode', mode), fieldBlock('Connection profile', connections), controlRow('Model override', modelMount), el('p', 'lp-copy', 'Leave blank to use the model configured on the selected connection profile.'), effectiveCard, test, diagnostic)
+  const reasoning = el('select', 'lp-select')
+  for (const [value, label] of POCKET_REASONING_OPTIONS) { const option = el('option', '', label); option.value = value; reasoning.append(option) }
+  reasoning.value = settings.reasoningEffort || 'off'
+  reasoning.addEventListener('change', () => commit(next => { next.reasoningEffort = reasoning.value as DevicePreferences['reasoningEffort'] }))
+  card.append(fieldBlock('Reasoning effort', reasoning, 'Applies to Pocket text generation, including Messages and Lumistry chats. Off or Low helps keep short replies within their output budget. Provider support varies. Lumistry profile authoring has separate controls.'))
   const samplers = el('div', 'lp-settings-section')
   samplers.append(el('p', 'lp-copy', 'Overrides apply to Pocket text generation in either mode. Default keeps existing generation settings. Provider support varies.'))
   const refreshers: Array<() => void> = []

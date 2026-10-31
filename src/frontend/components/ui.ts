@@ -89,20 +89,20 @@ export function disclosure(label: string, ...children: Node[]): HTMLDetailsEleme
 }
 
 /** A surface-local modal sheet. Never attaches persona styling to document.body. */
-export function showPocketSheet(anchor: HTMLElement, title: string, content: HTMLElement): { dismiss: () => void } | undefined {
+export function showPocketSheet(anchor: HTMLElement, title: string, content: HTMLElement, options:{closeLabel?:string;onDismiss?:()=>void}={}): { dismiss: () => void } | undefined {
   const parent = anchor.closest('.lumiphone-shell') || anchor.closest('[role="dialog"]') || anchor.parentElement
   if (!parent) return
   const dialog = el('dialog', 'lp-sheet')
   const panel = el('div', 'lp-sheet-panel')
   const heading = el('h2', 'lp-title', title)
   dialog.setAttribute('aria-label', title)
-  const close = el('button', 'lp-button lp-sheet-close', 'Done'); close.type = 'button'
+  const close = el('button', 'lp-button lp-sheet-close', options.closeLabel || 'Done'); close.type = 'button'
   const home = content.parentNode
   const marker = document.createComment('sheet content')
   home?.insertBefore(marker, content)
-  const dismiss = () => dialog.close()
+  const dismiss = () => {if(typeof dialog.close==='function')dialog.close();else{dialog.removeAttribute('open');dialog.dispatchEvent(new dialog.ownerDocument.defaultView!.Event('close'))}}
   close.addEventListener('click', dismiss)
-  dialog.addEventListener('keydown', event => { if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation() })
+  dialog.addEventListener('keydown', event => { if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation();if(event.key==='Escape'){event.preventDefault();dismiss()} })
   dialog.addEventListener('click', event => { if (event.target === dialog) dismiss() })
   dialog.addEventListener('close', () => {
     // Native dialog closing may restore the opener before this queued event runs.
@@ -111,6 +111,7 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
     const restoreFocus = !active || active === dialog.ownerDocument.body || dialog.contains(active)
     if (home) marker.replaceWith(content)
     dialog.remove()
+    options.onDismiss?.()
     if (restoreFocus && anchor.isConnected) anchor.focus({ preventScroll: true })
   }, { once: true })
   panel.append(heading, content, close); dialog.append(panel); parent.append(dialog)
@@ -135,7 +136,7 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
     const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
     Object.assign(dialog.style, { position:'fixed', margin:'0', left:`${viewport.innerWidth / 2 / zoom}px`, top:`${viewport.innerHeight / 2 / zoom}px`, bottom:'auto', transform:'translate(-50%,-50%)', width:`${Math.min(440, Math.max(0, viewport.innerWidth / zoom - 32))}px`, maxHeight:`calc(${viewport.innerHeight / zoom}px - 48px - var(--app-interactive-safe-top,0px))` })
   }
-  dialog.showModal()
+  if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','')
   return { dismiss }
 }
 

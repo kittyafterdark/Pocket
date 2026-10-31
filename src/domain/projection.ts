@@ -72,6 +72,7 @@ export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BU
       return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ''} · ${tracker.updateMode === 'model' && tracker.allowModelWrite ? 'model-writable' : 'read-only'}${tracker.updateMode === 'model' && tracker.allowModelWrite && tracker.modelPrompt ? ` · Update guidance: ${JSON.stringify(tracker.modelPrompt.slice(0, 2000))}` : ''}`
     })
   const upcoming = state.events
+    .filter(event=>!state.conversations.some(c=>c.id===event.source?.conversationId && c.channel==='dating'))
     .filter((event) => !event.completed)
     .sort((a, b) => safeTime(a.start) - safeTime(b.start))
     .slice(0, 8)

@@ -1,6 +1,6 @@
 import type { PhoneApp, PocketRoute } from '../types.js'
 
-const APPS = new Set<PhoneApp>(['home', 'messages', 'contacts', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'notifications', 'settings', 'appstore', 'twitter', 'discord', 'instagram', 'tumblr'])
+const APPS = new Set<PhoneApp>(['home', 'messages', 'contacts', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'notifications', 'settings', 'appstore', 'twitter', 'discord', 'instagram', 'tumblr','dating','spotify','sharing','bank','birthdays','browser','maps','twitch','stickers'])
 
 function shortId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -36,6 +36,9 @@ export function normalizePocketRoute(value: unknown, fallback: PocketRoute = { a
   if (app === 'settings') return { app, section: shortId(raw.section) }
   if (app === 'camera') return { app, contactId: shortId(raw.contactId), ...(raw.draft === true ? { draft: true } : {}) }
   if (app === 'twitter' || app === 'discord' || app === 'instagram' || app === 'tumblr') return { app }
+  if(app==='dating')return {app,conversationId:typeof raw.conversationId==='string'?raw.conversationId:undefined}
+  if(app==='spotify'||app==='sharing')return {app}
+  if(app==='bank'||app==='birthdays'||app==='browser'||app==='maps'||app==='twitch'||app==='stickers')return {app,view:shortId(raw.view)}
   if (app === 'weather' || app === 'notifications' || app === 'home' || app === 'appstore') return { app }
   return fallback
 }

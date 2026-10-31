@@ -1,6 +1,8 @@
 import type { PhoneState } from '../types.js'
 import { pocketPersonaActorId } from './device.js'
 import { normalizeSocialDirectThreads } from './social-dms.js'
+import { messageEmotes, normalizeMessageEmotes, type MessageEmote } from './sticker-packs.js'
+import { nativeFor } from './native-apps.js'
 import { socialGif, normalizeReactions, validEmoji, gradientColors, type SocialGif, type DiscordTheme } from './social-extras.js'
 
 export const SOCIAL_APPS = ['twitter', 'discord', 'instagram', 'tumblr'] as const
@@ -13,7 +15,7 @@ export type SocialRefreshMode = 'manual' | 'turn' | 'timer'
 export interface SocialAppSettings { refreshMode: SocialRefreshMode; refreshIntervalMinutes: number; /** Derived compatibility flag; refreshMode owns scheduling. */ autoRefresh: boolean; generateImages: boolean; randomCards: boolean; friendEntryIds: string[] }
 export interface SocialPost {
   id: string; app: SocialApp; account: SocialAccount; text: string; title?: string; photo?: string
-  imageId?: string; imageUrl?: string; gif?: SocialGif; reactions?: Array<{emoji:string;actorIds:string[]}>; pinned?: boolean; tags: string[]; createdAt: string
+  imageId?: string; imageUrl?: string; gif?: SocialGif; emotes?:MessageEmote[]; reactions?: Array<{emoji:string;actorIds:string[]}>; pinned?: boolean; tags: string[]; createdAt: string
   replyTo?: string; reblogOf?: string; channelId?: string; likedBy: string[]
   /** Explicit human authorship is separate from the account's actor identity. */
   authoredBy?: string
@@ -138,7 +140,7 @@ export function normalizeSocialState(raw: unknown): PocketSocialState {
     if (!id || postIds.has(id) || !accountId || !name || (!text && !photo && !item.imageId && !item.reblogOf && !socialGif(item.gif)) || (item.app === 'discord' && !channelIds.has(channelId || ''))) return []
     postIds.add(id)
     return [{ id, app: item.app, account: { id: accountId, name, handle: socialHandle(socialText(item.account.handle) || name), actorId: socialText(item.account.actorId) || undefined, cardId: socialText(item.account.cardId, 120) || undefined, bankId: socialText(item.account.bankId, 120) || undefined, avatarUrl: item.account.cardId || item.account.bankId ? socialUrl(item.account.avatarUrl) || undefined : undefined, bio: socialText(item.account.bio, 280) || undefined, accent: typeof item.account.accent==='string' && /^#[0-9a-f]{6}$/i.test(item.account.accent)?item.account.accent:undefined },
-      ...(item.app==='discord'?{reactions:normalizeReactions(item.reactions),pinned:item.pinned===true}:{}), gif:(item.app==='discord'||item.app==='twitter')?socialGif(item.gif):undefined,
+      ...(item.app==='discord'?{reactions:normalizeReactions(item.reactions),pinned:item.pinned===true,emotes:normalizeMessageEmotes(item.emotes)}:{}), gif:(item.app==='discord'||item.app==='twitter')?socialGif(item.gif):undefined,
       text, title: socialText(item.title, 160) || undefined, photo: photo || undefined, tags: socialStrings(item.tags, 12).map(tag => tag.replace(/^#/, '').slice(0, 60)), createdAt: socialText(item.createdAt, 80),
       channelId, replyTo: socialText(item.replyTo) || undefined, reblogOf: socialText(item.reblogOf) || undefined, likedBy: socialStrings(item.likedBy), authoredBy: socialText(item.authoredBy) || undefined,
       imageId: socialText(item.imageId) || undefined, imageUrl: socialUrl(item.imageUrl) || undefined }]
@@ -307,7 +309,7 @@ export function applySocialMutation(state: PhoneState, owner: string, input: Soc
     if (input.replyTo && !parent) throw new Error('That conversation is no longer available.')
     const text = socialText(input.text, input.app === 'twitter' ? 280 : 6000), photo = socialText(input.photo, 1000)
     if (!text && !photo && !input.imageId && !socialGif(input.gif) && input.action !== 'reblog') throw new Error('Write something before posting.')
-    world.posts.push({ id: makeId('social'), app: input.app, account, text, photo: photo || undefined, title: socialText(input.title, 160) || undefined,
+    world.posts.push({ id: makeId('social'), app: input.app, account, text, ...(input.app==='discord'?{emotes:messageEmotes(nativeFor({...state,pocketPersonaActorId:owner}),text)}:{}), photo: photo || undefined, title: socialText(input.title, 160) || undefined,
       tags: socialStrings(input.tags, 12).map(tag => tag.replace(/^#/, '').slice(0, 60)), createdAt: now, authoredBy: owner, likedBy: [],
       channelId, replyTo: parent?.id, reblogOf: input.action === 'reblog' ? target?.id : undefined, imageId: input.imageId, imageUrl: input.imageUrl, gif:(input.app==='discord'||input.app==='twitter')?socialGif(input.gif):undefined })
   }
@@ -357,7 +359,7 @@ export function socialGeneratedPosts(state: PhoneState, app: SocialApp, raw: unk
       if (!replyTo) continue
     }
     const id = makeId('social'); if (key) aliases.set(key, id)
-    result.push({ id, app, account, text, photo: photo || undefined, title: socialText(item.title, 160) || undefined, tags: socialStrings(item.tags, 12).map(tag => tag.replace(/^#/, '').slice(0, 60)), channelId, replyTo, reblogOf, likedBy: [], createdAt: now })
+    result.push({ id, app, account, text, ...(app==='discord'?{emotes:messageEmotes(nativeFor({...state,pocketPersonaActorId:owner}),text)}:{}), photo: photo || undefined, title: socialText(item.title, 160) || undefined, tags: socialStrings(item.tags, 12).map(tag => tag.replace(/^#/, '').slice(0, 60)), channelId, replyTo, reblogOf, likedBy: [], createdAt: now })
   }
   return result
 }

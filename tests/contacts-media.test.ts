@@ -2,6 +2,7 @@ import {test,expect} from 'bun:test'
 import {JSDOM} from 'jsdom'
 import {defaultPreferences,normalizePreferences} from '../src/domain/preferences.js'
 import {assignPocketWallpaper,personaWallpaperActive} from '../src/domain/wallpaper-scope.js'
+import {wallpaperImageControl} from '../src/frontend/components/image-picker.js'
 import {wallpaperChoice} from '../src/frontend/components/wallpaper-choice.js'
 import {renderContactsView,type ContactsViewHost} from '../src/frontend/apps/contacts.js'
 import {PocketRouteHistory} from '../src/frontend/router.js'
@@ -43,6 +44,25 @@ test('wallpaper-only Persona overrides persist, inherit on clear, and leave othe
   expect(()=>assignPocketWallpaper(normalized,{target:'persona-home',source:null})).toThrow('Choose a Persona')
   expect(()=>assignPocketWallpaper(normalized,{target:'persona-home',personaId:'__proto__',source:null})).toThrow()
   expect(normalized).toEqual(snapshot)
+})
+test('Persona gradients explicitly override device images while Use default restores inheritance',()=>{
+  const f=fixture(),prefs=defaultPreferences()
+  try{
+    prefs.homeWallpaper.source={kind:'url',url:'https://example.test/device.png'}
+    assignPocketWallpaper(prefs,{target:'persona-home',personaId:'fern',source:{kind:'url',url:'https://example.test/fern.png'}})
+    const persona=prefs.personaAppearance.fern
+    const control=wallpaperImageControl('Fern home','persona-home',persona.homeWallpaper,{status:'ready',url:'https://example.test/fern.png',sourceLabel:'Persona image'} as any,{choose(){},inherited:false,defaultResolved:{status:'ready',url:'https://example.test/device.png',sourceLabel:'Device image'} as any,change:w=>{persona.homeWallpaper=w;persona.homeWallpaperEnabled=true},inherit:()=>{persona.homeWallpaper={...persona.homeWallpaper,source:null};persona.homeWallpaperEnabled=false}})
+    document.body.replaceChildren(control)
+    f.press('Clear Fern home background')
+    expect(persona.homeWallpaper.source).toBeNull();expect(personaWallpaperActive(persona,'home')).toBe(true)
+    expect(personaWallpaperActive(normalizePreferences(prefs).personaAppearance.fern,'home')).toBe(true)
+    expect(control.querySelector<HTMLElement>('.lp-wallpaper-preview')!.dataset.empty).toBe('true')
+    const fit=control.querySelector<HTMLSelectElement>('select[aria-label="Fern home fit"]')!;fit.value='contain';fit.dispatchEvent(new window.Event('change'))
+    expect(persona.homeWallpaper.source).toBeNull()
+    f.press('Use default wallpaper for Fern home');expect(personaWallpaperActive(persona,'home')).toBe(false)
+    expect(control.querySelector<HTMLElement>('.lp-wallpaper-preview')!.style.backgroundImage).toContain('device.png')
+    expect(prefs.homeWallpaper.source).toEqual({kind:'url',url:'https://example.test/device.png'})
+  }finally{f.close()}
 })
 test('wallpaper chooser defaults to this Persona, makes global explicit, and names every radio',()=>{
   const f=fixture()

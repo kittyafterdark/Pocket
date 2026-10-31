@@ -1,7 +1,10 @@
 import type {DevicePreferences,PersonaAppearanceOverride} from '../types.js'
 import {defaultWallpaper,normalizeWallpaper} from './preferences.js'
 export function personaWallpaperActive(profile:PersonaAppearanceOverride|null|undefined,kind:'home'|'chat'):boolean {
-  return Boolean(profile?.[kind+'Wallpaper' as 'homeWallpaper'|'chatWallpaper'].source && (profile?.[kind+'WallpaperEnabled' as 'homeWallpaperEnabled'|'chatWallpaperEnabled'] ?? profile?.enabled))
+  if(!profile)return false
+  const enabled=profile[kind+'WallpaperEnabled' as 'homeWallpaperEnabled'|'chatWallpaperEnabled']
+  // An explicit override with no image uses the gradient; false inherits the device wallpaper.
+  return enabled ?? Boolean(profile.enabled && profile[kind+'Wallpaper' as 'homeWallpaper'|'chatWallpaper'].source)
 }
 export function assignPocketWallpaper(preferences:DevicePreferences,payload:Record<string,unknown>,forcedSource?:unknown) {
   const target=String(payload.target||''),personal=target==='persona-home'||target==='persona-chat',chat=target==='persona-chat'||target==='device-chat'||target==='chat'

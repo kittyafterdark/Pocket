@@ -1,0 +1,8 @@
+import {normalizeDating,normalizeDatingProfile} from '../../src/domain/lumistry.js';
+import type {PhoneState} from '../../src/types.js';
+export function replyPerformanceFixture(count:number,exchanged:boolean):PhoneState {
+ const profile=normalizeDatingProfile({id:'p',contactId:'npc',alias:'Aster',age:31,bio:'I repair lamps.',fields:{orientation:'straight',intentions:'friends first'},privateFields:{boundaries:'Respect an actual refusal.'}})!;
+ const messages=Array.from({length:count},(_,i)=>({id:'social-1-'+i,sender:i%2?'persona':'contact',senderActorId:i%2?'owner':'npc',senderName:i%2?'Owner':'Aster',text:i%2?'How was your afternoon?':'I fixed a lamp.',status:'sent',createdAt:'2026-10-16T12:00:00Z'}));
+ const c={id:'thread',channel:'dating',datingOwnerId:'owner',kind:'direct',includesPocketPersona:true,participantContactIds:['npc'],participantActorIds:['npc'],messages,availability:{state:'remote'}};
+ return {chatId:'c',characterId:'a',roleplayNow:'2026-10-16T12:00:00Z',pocketPersonaActorId:'owner',pocketPersona:{displayName:'Hidden name'},contacts:[],events:[],actorMemories:[],conversations:[c,...(exchanged?[{id:'ordinary',kind:'direct',includesPocketPersona:true,title:'Ordinary chat',participantContactIds:['npc'],messages:[{id:'ordinary-m',sender:'contact',senderName:'Aster',text:'We agreed to meet at noon.',createdAt:'2026-10-16T11:00:00Z'}]}]:[])],lumistry:{owner:normalizeDating({self:{alias:'Moon',age:30},profiles:[profile],decisions:[{profileId:'p',action:'like',status:'matched',conversationId:'thread',exchanged}],generationSettings:{experience:{scope:'C',socialLift:100,socialIntensity:60}},pipeline:{events:true,rpBridge:true,enrichment:true}})}} as unknown as PhoneState;
+}

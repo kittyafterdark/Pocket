@@ -119,7 +119,7 @@ export async function assemblePocketContext(options: {
   const authoritativeLatest = authoritative ? {
     id: clean(authoritative.id, 180), index: messageIndex(authoritative, hostMessages.length - 1), excerpt: sanitizeNarrativeContent(authoritative.content, 180),
   } : { id: '', index: -1, excerpt: '' }
-  const expandedProfile = options.fullProfiles ?? (contact.contextPolicy.profileMode === 'full' || (contact.contextPolicy.profileMode !== 'compact' && preferences.preferFullProfiles))
+  const expandedProfile = options.fullProfiles ?? (contact.contextPolicy?.profileMode === 'full' || (contact.contextPolicy?.profileMode !== 'compact' && preferences.preferFullProfiles))
   const actorIdentity = clean(options.actorIdentity || contact.identityBrief || contact.description, expandedProfile ? 32000 : BUDGETS.actor)
   const channel = trimBlock(currentChannelLines(state, contact, conversation), 1_400)
   const continuity = conversationContinuityContext(state, conversation, [contact.id])

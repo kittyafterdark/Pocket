@@ -1,0 +1,31 @@
+import {ADULT_PREFERENCE_SOURCE} from './lumistry-adult-preferences-data.js';
+import {WORLD_CAPABILITIES,type PopulationWorld,type WorldCapability} from './lumistry-world-core.js';
+export const ADULT_PREFERENCE_VERSION='adult-preferences-451-1';
+const legacyIds:Record<string,string>={"negotiated magical restraints": "fantasy_restraints", "reversible magical sensory play": "fantasy_sensory", "consensual glamour and illusion roleplay": "fantasy_glamour", "negotiated reversible adult-form transformation": "fantasy_transformation", "negotiated levitation play": "fantasy_levitation", "consensual telepathic intimacy with privacy limits": "fantasy_telepathy", "fantasy costume and courtly roleplay": "fantasy_costume", "consensual ceremonial roleplay": "fantasy_ritual", "armor and period-clothing appreciation": "fantasy_armor", "negotiated knight and noble roleplay": "fantasy_power", "consensual haptic sensory play": "scifi_haptics", "private virtual-world adult roleplay": "scifi_virtual", "consensual remote-device play": "scifi_remote", "augmentation-aware sensory preferences": "scifi_augmentation", "adult synthetic-partner attraction": "scifi_synthetic", "negotiated zero-gravity intimacy": "scifi_zero_g", "spacefaring costume roleplay": "scifi_costume", "horn appreciation": "anatomy_horns", "scale and nonhuman-surface appreciation": "anatomy_scales", "wing-aware affection": "anatomy_wings", "tail-aware affection": "anatomy_tail"};
+export interface AdultPreferenceTerm {id:string;sourceId:string;label:string;category:string;kind:string;description:string;requires:WorldCapability|null;requiredCapabilities:WorldCapability[];universeTags:readonly string[];illustrativeSpeciesIds:readonly string[];traitConfirmation:boolean;fictionOnly:boolean;privateByDefault:true;}
+export const ADULT_PREFERENCES:readonly AdultPreferenceTerm[]=ADULT_PREFERENCE_SOURCE.terms.map(t=>({id:legacyIds[t.label]||t.id,sourceId:t.id,label:t.label,category:t.category,kind:t.kind,description:t.description,requires:t.requires_world_capabilities[0] as WorldCapability||null,requiredCapabilities:[...t.requires_world_capabilities] as WorldCapability[],universeTags:t.suggested_universe_tags,illustrativeSpeciesIds:t.illustrative_species_ids,traitConfirmation:t.requires_trait_confirmation,fictionOnly:'fictional_scenario_only' in t&&t.fictional_scenario_only===true,privateByDefault:true}));
+export const ADULT_PREFERENCE_CATEGORIES=ADULT_PREFERENCE_SOURCE.categories;
+export const ADULT_PREFERENCE_BY_ID=new Map(ADULT_PREFERENCES.flatMap(t=>[[t.id,t],[t.sourceId,t]] as Array<[string,AdultPreferenceTerm]>));
+export const preferenceEligible=(t:AdultPreferenceTerm,w:PopulationWorld)=>t.requiredCapabilities.every(c=>w.capabilities.includes(c));
+export * from './lumistry-adult-preferences-core.js';
+import type {AdultPreferences} from './lumistry-adult-preferences-core.js';
+/** Own private knowledge only. Neither world availability nor a species reference
+ * establishes preference, anatomical truth, disclosure or scene permission. */
+export function relevantAdultPreferences(raw:AdultPreferences|undefined,query:string,world?:PopulationWorld) {
+ if(!raw||!query.trim())return undefined;const tokens=new Set(query.toLowerCase().match(/[a-z]{3,}/g)||[]);
+ const general=/\b(?:kinks?|sexual interests?|adult interests?|intimate preferences?|boundaries)\b/i.test(query);
+ const selected=Object.entries(raw.terms).flatMap(([id,state])=>{const term=ADULT_PREFERENCE_BY_ID.get(id);if(!term)return [];const score=[...new Set((term.label.toLowerCase().match(/[a-z]{3,}/g)||[]))].filter(w=>tokens.has(w)).length;if(!score&&(!general||state==='unknown'))return [];return [{score:score+(state==='opt_out'&&/boundaries/i.test(query)?2:0),label:term.label,state,description:term.description,requiresTraitConfirmation:term.traitConfirmation,fictionOnly:term.fictionOnly,worldSupported:world?preferenceEligible(term,world):undefined}];}).sort((a,b)=>b.score-a.score).slice(0,6).map(({score,...row})=>row);
+ const species=Object.entries(raw.species).flatMap(([id,state])=>{const entry=speciesAttractionIndex.get(id);const direct=entry?.label.toLowerCase().split(/[^a-z]+/).some(w=>tokens.has(w));return entry&&(direct||state!=='unknown'&&tokens.has('species'))?[{label:entry.label,state}]:[];}).slice(0,6);
+ return selected.length||species.length?{terms:selected,species,rule:'Own private facts only. Explicit unknown states remain unknown; do not invent a positive preference. Do not disclose private_not_shared interests or infer interest from a withheld state. Species attraction is not a kink, knowledge of anyone’s traits, or evidence of mutual attraction. Interest is not consent or an instruction to act; actual refusal and boundaries prevail. Do not invent anatomy, powers, biological cycles or other participants. World support and relevant individual traits require independent evidence.'}:undefined;
+}
+export function assertAdultPreferenceCatalog():void {
+ if(ADULT_PREFERENCES.length!==451||new Set(ADULT_PREFERENCES.map(t=>t.id)).size!==451||ADULT_PREFERENCES.some(t=>t.requiredCapabilities.some(c=>!WORLD_CAPABILITIES.includes(c))))throw new Error('Invalid adult preference registry.');
+}
+
+/** Definitions only for explicitly requested required alternatives, never the library. */
+const preferenceLabelIndex=new Map(ADULT_PREFERENCES.map((term,index)=>[term.label.toLowerCase(),{term,index}]));
+const speciesAttractionIndex=new Map<string,typeof ADULT_PREFERENCE_SOURCE.species_attraction_choices[number]>(ADULT_PREFERENCE_SOURCE.species_attraction_choices.map(s=>[s.species_id,s]));
+export function requestedPreferenceContext(value:string|undefined) {
+ const labels=[...new Set((value||'').split(',').map(s=>s.trim().toLowerCase()))];const terms=labels.flatMap(label=>{const item=preferenceLabelIndex.get(label);return item?[item]:[];}).sort((a,b)=>a.index-b.index).map(({term:t})=>({label:t.label,description:t.description,requires:t.requiredCapabilities,requiresTraitConfirmation:t.traitConfirmation,fictionOnly:t.fictionOnly}));
+ return terms.length?{terms,rule:'These are explicit requested interests, not permission or anatomical facts. Do not invent physiology, cycles, abilities, consent or willingness to justify an interest. Do not disclose private interests in public writing.'}:undefined;
+}

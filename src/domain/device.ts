@@ -15,6 +15,7 @@ export function messageSenderActorId(state: PhoneState, message: PhoneMessage): 
 }
 
 export function conversationDeviceActorIds(state: PhoneState, conversation: PocketConversation): string[] {
+  if(conversation.channel==='dating')return conversation.datingOwnerId?[conversation.datingOwnerId]:[]
   const result = conversation.includesPocketPersona ? [pocketPersonaActorId(state)] : []
   for (const actorId of conversation.participantActorIds || conversation.participantContactIds || []) {
     if (actorId && !result.includes(actorId)) result.push(actorId)
@@ -23,7 +24,7 @@ export function conversationDeviceActorIds(state: PhoneState, conversation: Pock
 }
 
 export function conversationVisibleOnDevice(state: PhoneState, conversation: PocketConversation, deviceOwnerActorId: string): boolean {
-  return conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state))
+  return !conversation.archived && conversationDeviceActorIds(state, conversation).includes(deviceOwnerActorId || pocketPersonaActorId(state))
 }
 
 /** Latest committed communication visible on this phone, independent of unread state. */

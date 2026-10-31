@@ -1,3 +1,4 @@
+import { normalizePreferences } from '../src/domain/preferences.js'
 import { describe, expect, test } from 'bun:test'
 import { runPocketGeneration } from '../src/backend/generation.js'
 import { defaultPreferences } from '../src/domain/preferences.js'
@@ -211,4 +212,24 @@ test('operator-scoped streamed profile requests also retain the authenticated us
   ;(f.host.spindle.generate as any).quietStream=async function*(request:any){requests.push(request);yield{type:'done',content:'{"name":"Fixture"}',finish_reason:'stop'}}
   await runPocketGeneration(f.host,'persona-profile','operator-stream',{},'stream-user')
   expect(requests[0].userId).toBe('stream-user')
+})
+
+test('reasoning effort migrates safely and reaches normal and Lumistry text generation', async () => {
+  expect(normalizePreferences({}).reasoningEffort).toBe('off')
+  expect(normalizePreferences({ reasoningEffort: 'unknown' }).reasoningEffort).toBe('off')
+  for (const effort of ['off', 'inherit', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const) {
+    let preferences = normalizePreferences({ ...defaultPreferences(), reasoningEffort: effort })
+    const requests: any[] = []
+    const host = {
+      loadPreferences: async () => structuredClone(preferences), savePreferences: async (next: any) => (preferences = next), send() {},
+      spindle: { permissions: { has: () => true }, connections: { list: async () => [{ id: 'main', is_default: true }] },
+        generate: { quiet: async (request: any) => { requests.push(request); return { content: 'A short reply', finish_reason: 'stop' } } } },
+    }
+    await runPocketGeneration(host, 'message-reply', `effort-${effort}`, {}, 'operator')
+    expect(requests[0].reasoning).toEqual(effort === 'off' || effort === 'inherit' ? { source: effort } : { source: 'custom', apiReasoning: true, effort })
+    expect(requests[0].userId).toBe('operator')
+    expect(preferences.reasoningEffort).toBe(effort)
+    await runPocketGeneration(host, 'scene-planner', `explicit-${effort}`, { reasoning: { source: 'off' } }, 'operator')
+    expect(requests[1].reasoning).toEqual({ source: 'off' })
+  }
 })

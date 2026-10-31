@@ -1,3 +1,18 @@
+import {personaPhotoSheet,type PersonaPhotoChoice} from './components/lumistry-user-photo.js'
+import {renderLumistry,newDatingUI,backDating,acknowledgeWorldReview} from './apps/lumistry.js'
+import {datingFor,datingDisplayState} from '../domain/lumistry.js'
+import {acknowledgeSetupSettings} from './apps/lumistry-settings-state.js'
+import {acknowledgeFilterSave,filterScopeKey} from './apps/lumistry-filters.js'
+import { attachmentMenu } from './components/attachment-menu.js'
+import { stickerTray } from './apps/sticker-library-app.js'
+import { nativeFor } from '../domain/native-apps.js'
+import { renderNativeApp, newNativeUI } from './apps/native-apps.js'
+import { NATIVE_APP_IDS, type NativeApp } from '../domain/native-apps.js'
+import {renderSpotifyShareCard,spotifyShareSheet,spotifyPlayer,type SpotifySharePreview} from './components/spotify-share.js'
+import {renderLumistryCapture} from './components/lumistry-capture.js'
+import {pocketShareSheet} from './components/pocket-share-sheet.js'
+import {createPocketCapture} from '../domain/pocket-sharing.js'
+import {lumistryCaptureText} from '../domain/lumistry-sharing.js'
 import { socialGif, type SocialGif } from '../domain/social-extras.js'
 import {personaWallpaperActive} from '../domain/wallpaper-scope.js'
 import { GALLERY_PAGE_SIZE } from '../domain/gallery-page.js'
@@ -181,7 +196,11 @@ class PocketController {
   private state: PhoneState | null = null
   private preferences: DevicePreferences = defaultPreferences()
   private settingsDraft: DevicePreferences | null = null
+  private portraitRefreshRequest=''
+  private portraitRefreshStatus=''
   private settingsSaveTimer = 0
+  private settingsRevision = 0
+  private settingsSaveRevisions = new Map<string,number>()
   private activePersona: { id: string; name: string } | null = null
   private caps: PhoneCapabilities | null = null
   private swarmProfile: SwarmVisualProfile | null = null
@@ -237,6 +256,26 @@ class PocketController {
   private selectedNoteId = ''
   private manualEventConversationId = ''
   private chatPhotoSelection: {conversationId:string;context:{chatId:string|null;characterId:string|null};caption:string} | null = null
+  private datingUI=newDatingUI()
+  private datingRequest=''
+  private datingProfileRequest=''
+  private datingProfileAction=''
+  private datingLastAction=''
+  private datingExchangeId=''
+  private pendingDatingPhoto=''
+  private personaPhotoDraft:{conversationId:string;draft:PersonaPhotoChoice}|null=null
+  private stickerTrayConversationId=''
+  private attachmentMenuDispose:(()=>void)|null=null
+  private nativeUI=newNativeUI()
+  private nativeBusy:Partial<Record<NativeApp,string>>={}
+  private nativeStatus:Partial<Record<NativeApp,string>>={}
+  private nativeErrors:Partial<Record<NativeApp,string>>={}
+  private nativeRequests=new Map<string,{app:NativeApp;context:string;action:string;done?:()=>void}>()
+  private pendingNativeSticker:{description:string;caption:string;packId?:string;name?:string}|null=null
+  private spotifyTarget=''
+  private spotifyPlayerState:{key:string;requestId:string;loading:boolean;preview?:SpotifySharePreview;error?:string}|null=null
+  private sharingDraft={sourceId:'',target:'',ids:[] as string[],caption:''}
+  private communityRequests=new Map<string,(payload:BackendPayload)=>void>()
   private chatPhotoRequests = new Map<string,(payload:BackendPayload)=>void>()
   private selectedEventId = ''
   private pendingEventSuggestion: { conversationId: string; messageId: string; suggestion: PhoneEventSuggestion } | null = null
@@ -633,13 +672,14 @@ class PocketController {
     this.clearActivitySurfaces(true, true)
     this.hideComposerReferencePill()
     this.state = null; this.deviceOwnerActorId = ''; this.selectedConversationId = ''; this.selectedMessageId = ''
-    this.currentApp = 'home'; this.router.reset({ app: 'home' }); this.settingsDraft = null
+    this.currentApp = 'home'; this.router.reset({ app: 'home' }); this.settingsDraft = null;this.portraitRefreshRequest='';this.portraitRefreshStatus=''
     this.contextPreview = null; this.personaPreview = null
     this.loreLogs=null; this.loreLogRequest=''
     this.operations.clear(); this.messageRequests.clear(); this.selectedSettingsSection = ''
     this.cameraBusy = false; this.cameraRequestId = ''; this.cameraPreview = ''; this.cameraReady = false
     this.npcDraft = null; this.previousNpcDraft = null
     this.galleryRequestId = ''; this.galleryLoading = false; this.gallery = { data: [], total: 0 }
+    this.datingUI=newDatingUI();this.datingRequest='';this.datingProfileRequest='';this.pendingDatingPhoto='';this.personaPhotoDraft=null;this.communityRequests.clear();this.nativeUI=newNativeUI();this.stickerTrayConversationId='';this.attachmentMenuDispose?.();this.attachmentMenuDispose=null;this.nativeBusy={};this.nativeStatus={};this.nativeErrors={};this.nativeRequests.clear();this.pendingNativeSticker=null;this.spotifyTarget='';this.spotifyPlayerState=null;this.sharingDraft={sourceId:'',target:'',ids:[],caption:''}
     this.pendingRoute = null; this.pendingEventSuggestion = null; this.manualEventConversationId = ''; this.chatPhotoSelection = null; this.chatPhotoRequests.clear()
     this.cameraDraft = { scene: '', enhance: undefined }; this.cameraImageId = ''; this.cameraContactId = ''; this.cameraNpcDraft = null
     this.trackerMutationRequest = ''; this.trackerJevRequest = ''; this.jevWorking = false
@@ -719,7 +759,7 @@ class PocketController {
     if (this.state) {
       const personaId = pocketPersonaActorId(this.state)
       const selected = this.currentDeviceOwnerActorId() || personaId
-      const list = renderDevicePicker(this.state, selected,
+      const list = renderDevicePicker(datingDisplayState(this.state), selected,
         actorId => pocketDeviceKey(this.state!.chatId, this.state!.characterId, actorId),
         (actorId, route) => {
           if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
@@ -743,6 +783,12 @@ class PocketController {
     }
 
     const actions = el('div', 'lumiphone-device-footer')
+    if(this.state){
+      const refresh=button(this.portraitRefreshRequest?'Refreshing portrait…':'Refresh Persona portrait','lumiphone-device-access');refresh.dataset.refreshPersonaPortrait='true';refresh.disabled=Boolean(this.portraitRefreshRequest)
+      refresh.onclick=()=>{this.portraitRefreshStatus='';this.portraitRefreshRequest=this.send('lumiphone:refresh_persona_portrait',{deviceOwnerActorId:pocketPersonaActorId(this.state!)});this.renderDrawerLanding()}
+      actions.append(refresh)
+      if(this.portraitRefreshStatus){const status=el('p','lumiphone-device-copy',this.portraitRefreshStatus);status.setAttribute('role','status');actions.append(status)}
+    }
     const permission = button('Manage access', 'lumiphone-device-access')
     permission.addEventListener('click', () => this.requestPermissions())
     actions.append(permission)
@@ -1193,6 +1239,39 @@ class PocketController {
   }
 
   private onBackend(payload: BackendPayload): void {
+    if(this.portraitRefreshRequest&&this.portraitRefreshRequest===payload.requestId&&['lumiphone:persona_portrait_refreshed','lumiphone:error'].includes(payload.type)){
+      this.portraitRefreshRequest='';this.portraitRefreshStatus=payload.error||'Persona portrait refreshed.';this.renderDrawerLanding()
+      if(document.activeElement===document.body)this.drawer.root.querySelector<HTMLButtonElement>('[data-refresh-persona-portrait]')?.focus({preventScroll:true})
+      return
+    }
+    const nativeRequest=this.nativeRequests.get(payload.requestId)
+    if(nativeRequest&&['lumiphone:native_result','lumiphone:error','lumiphone:camera_progress','lumiphone:camera_done'].includes(payload.type)){
+      const {app,context,action,done}=nativeRequest
+      if(payload.type==='lumiphone:camera_done')return
+      if(payload.type==='lumiphone:camera_progress'){if(this.nativeBusy[app]===payload.requestId){this.nativeStatus[app]=payload.message||payload.phase||'Making an image…';if(app==='stickers'){const current=this.nativeUI.stickerProgress||{};this.nativeUI.stickerProgress={url:payload.imageDataUrl||current.url,step:payload.step??current.step,totalSteps:payload.totalSteps??current.totalSteps}}if(this.currentApp===app)this.render(false)}return}
+      this.nativeRequests.delete(payload.requestId)
+      if(this.nativeBusy[app]!==payload.requestId)return
+      delete this.nativeBusy[app]
+      if(context!==JSON.stringify(this.activeContext()))return
+      this.nativeErrors[app]=payload.type==='lumiphone:error'?payload.error:''
+      this.nativeStatus[app]=payload.type==='lumiphone:error'?'':action==='cancel'?'Request stopped.':'Done.'
+      if(payload.privateBrowser)this.nativeUI.privateBrowser=payload.privateBrowser
+      if(payload.suggestions)this.nativeUI.suggestions=payload.suggestions
+      if(app==='stickers'){
+        this.nativeUI.stickerProgress=undefined
+        if(payload.stickerPreview){const p=payload.stickerPreview;this.nativeUI.stickerPreview=p;this.nativeUI.panels.stickers='review';Object.assign(this.nativeUI.drafts,{'review-sticker-name':p.name,'review-sticker-description':p.description,'review-sticker-caption':p.caption,'review-sticker-pack':p.packId||'mine'})}
+        else if(payload.type!=='lumiphone:error'&&['accept','discard','cancel'].includes(action))this.nativeUI.stickerPreview=undefined
+      }
+      if(payload.type!=='lumiphone:error')done?.()
+      if(this.currentApp===app||app==='stickers'&&this.stickerTrayConversationId)this.render(false)
+      return
+    }
+    const communityRequest=this.communityRequests.get(payload.requestId)
+    if(communityRequest && ['lumiphone:spotify_preview','lumiphone:spotify_sent','lumiphone:share_sent','lumiphone:persona_photo_sent','lumiphone:error'].includes(payload.type)){this.communityRequests.delete(payload.requestId);communityRequest(payload);return}
+    if(payload.type==='lumiphone:error' && [this.datingRequest,this.datingProfileRequest].includes(payload.requestId)){
+      if(payload.requestId===this.datingProfileRequest){this.datingUI.profileBusy=false;this.datingUI.profileError=payload.error;this.datingProfileRequest=''}else{this.datingUI.busy=false;this.datingUI.error=payload.error;this.datingRequest=''}
+      if(this.currentApp==='dating')this.render(false);return
+    }
     const photoRequest=this.chatPhotoRequests.get(payload.requestId)
     if(photoRequest && payload.type==='lumiphone:camera_progress'){photoRequest(payload);return}
     if(photoRequest && ['lumiphone:chat_photo_ready','lumiphone:chat_photo_sent','lumiphone:error','lumiphone:camera_cancelled'].includes(payload.type)){
@@ -1271,6 +1350,51 @@ class PocketController {
       this.showFeedback(payload.backupPath ? 'Copied into the current chat. Its previous Pocket was backed up. Freeform stays separate.' : 'Copied into the current chat. Freeform stays separate.')
       return
     }
+    if (payload.type === 'lumiphone:dating_result') {
+      const active=this.activeContext()
+      const profileResult = payload.requestId === this.datingProfileRequest
+      const completedAction = profileResult ? this.datingProfileAction : this.datingLastAction
+      if((payload.requestId!==this.datingRequest && !profileResult) || payload.chatId!==active.chatId || payload.characterId!==active.characterId || (payload.ownerActorId&&payload.ownerActorId!==this.state?.pocketPersonaActorId))return
+      if(payload.phase==='working'){if(profileResult)this.datingUI.profileStatus=payload.message||(completedAction==='world'?'Reading world evidence…':'Creating profiles…');else this.datingUI.status=payload.message||'Working…'}
+      else if(payload.phase==='exchange')this.datingExchangeId=payload.conversationId
+      else {
+        if(profileResult){this.datingUI.profileBusy=false;this.datingUI.profileStatus=payload.message||(completedAction==='world'?'World reading complete':'Profile generation complete');this.datingProfileRequest=''}else this.datingUI.busy=false
+        if(['tools_tone','tools_restore_tone'].includes(completedAction))this.datingUI.moodReview=undefined
+        if(['self_draft','draft','edit_draft'].includes(payload.phase)){this.datingUI.pendingProfile=payload.draft;this.datingUI.pendingProfileKind=payload.phase;this.datingUI.profileStatus='Profile draft ready to review'}
+        if(payload.phase==='diagnostics_export'&&payload.bundle?.schema==='lumistry-diagnostics-1'){
+          const url=URL.createObjectURL(new Blob([JSON.stringify(payload.bundle,null,2)],{type:'application/json'}));
+          const a=document.createElement('a');a.href=url;a.download='lumistry-diagnostics.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+          this.datingUI.status='Lumistry diagnostics downloaded.';
+        }
+        if(['setup_draft','setup_preset_draft'].includes(payload.phase)){this.datingUI.setup=payload.draft;if(!payload.refreshed)this.datingUI.setupGroups=undefined;if(payload.phase==='setup_preset_draft')this.datingUI.settingsPage='setup';this.datingUI.status=payload.message;}
+        if(payload.phase==='setup_presets'){this.datingUI.setupPresets=payload.entries;this.datingUI.setupDeleteId=undefined;this.datingUI.status=payload.message;}
+        if(payload.phase==='setup_applied'||payload.phase==='setup_section_saved'){this.datingUI.moodReview=undefined;this.datingUI.setup=payload.draft||this.datingUI.setup;this.datingUI.settingsPage='home';this.datingUI.directBaseline=undefined;if(this.state)acknowledgeSetupSettings(this.datingUI,datingFor(this.state),payload.phase==='setup_applied'?(payload.groups||[]):[payload.group],payload.phase==='setup_section_saved');this.datingUI.status=payload.message;}
+        if(payload.phase==='saved_profiles'){this.datingUI.savedProfiles=payload.entries;this.datingUI.savedProfileDeleteId=undefined;if(typeof payload.selectedId==='string')this.datingUI.savedProfileId=payload.selectedId;this.datingUI.status=payload.message||'Saved dating profiles loaded.';}
+        if(payload.phase==='saved_self_draft'){this.datingUI.editor=payload.draft;this.datingUI.selfBaseline=undefined;this.datingUI.selfEditing=true;this.datingUI.tab='self';this.datingUI.savedProfileId=payload.entry.id;this.datingUI.savedProfileName=payload.entry.name;this.datingUI.status=payload.message;}
+        if(payload.phase==='archive')this.datingUI.authoringArchive=payload.archive
+        if(payload.phase==='relationship_sources'){
+          const content=el('section','lp-stack');for(const source of payload.sources||[]){const row=el('article','lp-card');row.append(el('strong','',source.channel==='dating'?'Dating chat':'Authorized ordinary DM'),el('p','lp-copy',source.text));content.append(row);}
+          if(payload.unavailable)content.append(el('p','lp-copy','Some supporting messages are no longer available on the selected branch. No hidden or edited source was substituted.'));
+          showPocketSheet(this.screen.querySelector<HTMLElement>('button')||this.screen,'Supporting messages',content);
+        }
+        if(payload.phase==='diagnostics_preview')this.datingUI.supportExport=payload.bundle
+        if(payload.phase==='world_sources'){this.datingUI.worldSources=payload.sources;this.datingUI.worldSourceIds=payload.sources.filter((s:any)=>s.selected).map((s:any)=>s.id);this.datingUI.worldSourceWarnings=payload.warnings;}
+        if(payload.phase==='world'){this.datingUI.worldReview=payload.review;this.datingUI.world=payload.worldFields;this.datingUI.worldContext=payload.worldContext}
+        if(payload.phase==='done') {
+          if(completedAction==='self_preferences'){this.datingUI.preferenceDraft=undefined;this.datingUI.preferenceLeave=undefined;this.datingUI.selfPage=undefined;this.datingUI.status='Preferences saved.';}
+          if(completedAction==='self'){this.datingUI.selfBaseline=undefined;this.datingUI.selfPage=undefined;}
+
+          if(completedAction==='self' || completedAction==='accept' || completedAction==='edit'){if(completedAction==='self'){this.datingUI.savedProfileDiff=this.datingUI.profileDiffPending;this.datingUI.profileDiffPending=undefined;}this.datingUI.draft=undefined;this.datingUI.editor=undefined;this.datingUI.selfEditing=false;if(completedAction==='self')this.datingUI.tab='self';if(completedAction==='accept')this.datingUI.tab='discover'}
+          if(completedAction==='generation_settings'){this.datingUI.worldSettingsBaseline=undefined;this.datingUI.worldGuideDraft=undefined;this.datingUI.worldContextDraft=undefined;this.datingUI.populationWorldDraft=undefined;this.datingUI.worldFieldsDraft=undefined;}
+          if(completedAction==='filters'&&this.state){acknowledgeFilterSave(this.datingUI,datingFor(this.state).filters,filterScopeKey(this.state.chatId,this.state.characterId,this.state.pocketPersonaActorId),true)}
+          if(completedAction==='world_accept'){if(this.state)acknowledgeWorldReview(this.datingUI,datingFor(this.state));this.datingUI.filterDraft=undefined;this.datingUI.world=undefined;this.datingUI.worldReview=undefined;this.datingUI.worldGuideDraft=undefined;this.datingUI.worldContextDraft=undefined;this.datingUI.populationWorldDraft=undefined;this.datingUI.worldFieldsDraft=undefined;this.datingUI.worldSettingsBaseline=undefined;this.datingUI.tab='discover'}
+          if(!profileResult)this.datingUI.photoTarget=undefined
+        }
+      }
+      if(this.currentApp==='dating'){this.render(false)}
+      return
+    }
+
     if (payload.type === 'lumiphone:state' && payload.state) {
       const active = this.freeformSession ? { chatId: this.freeformSession.id, characterId: '_none' } : this.ctx.getActiveChat()
       if (!this.freeformSession && isFreeformChat(payload.state.chatId)) return
@@ -1304,10 +1428,16 @@ class PocketController {
         && payload.preferences?.generationMode === this.preferences.generationMode
         && payload.preferences?.sidecarConnectionId === this.preferences.sidecarConnectionId
       const previousDockSide = this.preferences.desktopDockSide
-      this.preferences = normalizePreferences(payload.preferences || this.preferences)
+      const savedRevision=payload.reason==='preferences'?this.settingsSaveRevisions.get(payload.requestId):undefined
+      const staleSave=savedRevision!==undefined && savedRevision<this.settingsRevision
+      if(!staleSave)this.preferences = normalizePreferences(payload.preferences || this.preferences)
       applyPocketTouchScroll(this.mobileWidget, this.preferences.nativeTouchScrollMode)
       this.applyLauncherPosition()
-      if (payload.reason === 'import' || payload.reason === 'reset_preferences' || payload.reason === 'preferences' || payload.reason === 'appearance_scope') this.settingsDraft = structuredClone(this.preferences)
+      if (!staleSave && ['import','reset_preferences','preferences','appearance_scope'].includes(payload.reason)) {
+        // Mounted controls retain this draft; replacing it leaves later swatches editing an old palette.
+        if(this.settingsDraft)Object.assign(this.settingsDraft,structuredClone(this.preferences))
+        else this.settingsDraft=structuredClone(this.preferences)
+      }
       if (previousDockSide !== this.preferences.desktopDockSide) this.resizeExpanded()
       this.caps = payload.capabilities || this.caps
       this.swarmProfile = payload.swarmProfile || this.swarmProfile
@@ -1852,6 +1982,7 @@ class PocketController {
   private updatePreferences(next: DevicePreferences, options: { persist?: boolean; resize?: boolean } = {}): void {
     const dockSideFocused = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
     const normalized = normalizePreferences(next)
+    this.settingsRevision++
     const dockSideChanged = normalized.desktopDockSide !== this.preferences.desktopDockSide
     if (this.settingsDraft) Object.assign(this.settingsDraft, structuredClone(normalized))
     else this.settingsDraft = structuredClone(normalized)
@@ -1878,7 +2009,10 @@ class PocketController {
     if (options.persist === false) return
     window.clearTimeout(this.settingsSaveTimer)
     this.settingsSaveTimer = window.setTimeout(() => {
-      this.send('lumiphone:save_preferences', { preferences: this.settingsDraft || this.preferences })
+      const id=requestId('preferences')
+      this.settingsSaveRevisions.set(id,this.settingsRevision)
+      if(this.settingsSaveRevisions.size>64)this.settingsSaveRevisions.delete(this.settingsSaveRevisions.keys().next().value!)
+      this.send('lumiphone:save_preferences', { requestId:id, preferences: this.settingsDraft || this.preferences })
     }, 240)
   }
 
@@ -1926,8 +2060,8 @@ class PocketController {
     const chatWallpaper = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
     const homeSetting = personaWallpaperActive(persona, 'home') ? persona!.homeWallpaper : settings.homeWallpaper
     const chatSetting = personaWallpaperActive(persona, 'chat') ? persona!.chatWallpaper : settings.chatWallpaper
-    const homeImage = (personaWallpaperActive(persona, 'home') ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url
-    const chatImage = (personaWallpaperActive(persona, 'chat') ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url
+    const homeImage = homeSetting.source ? (personaWallpaperActive(persona, 'home') ? this.resolvedWallpapers.personaHome : this.resolvedWallpapers.deviceHome).url : ''
+    const chatImage = chatSetting.source ? (personaWallpaperActive(persona, 'chat') ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat).url : ''
     const imageLayer = (url: string, setting: typeof homeSetting, gradient: string) => url
       ? `linear-gradient(rgba(7,6,11,${setting.scrim}),rgba(7,6,11,${setting.scrim})),url(${JSON.stringify(url)}),${gradient}`
       : gradient
@@ -2026,7 +2160,7 @@ class PocketController {
     const image = personaWallpaperActive(persona, 'chat') ? this.resolvedWallpapers.personaChat : this.resolvedWallpapers.deviceChat
     const wallpaper = personaWallpaperActive(persona, 'chat') ? persona!.chatWallpaper : this.preferences.chatWallpaper
     const gradient = wallpaperCss(appearance.colors.chatPrimary, appearance.colors.chatSecondary)
-    const background = image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
+    const background = wallpaper.source && image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
     return { appearance: this.preferences.inlineAppearance || 'cards', reducedMotion: this.preferences.reducedMotion || this.preferences.animation === 'none', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
       backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
@@ -2062,6 +2196,7 @@ class PocketController {
   }
 
   private back(): void {
+    if(this.currentApp==='dating' && !this.selectedConversationId && backDating(this.datingUI)){this.render(false);return}
     this.openPocket(this.router.back(), false)
   }
 
@@ -2073,6 +2208,7 @@ class PocketController {
 
   private openPocket(routeInput: PocketRoute, pushHistory = true): void {
     let normalized = normalizePocketRoute(routeInput)
+    if(normalized.app==='messages' && this.state?.conversations.find(c=>c.id===('conversationId' in normalized?normalized.conversationId:undefined))?.channel==='dating')normalized={app:'dating',conversationId:normalized.conversationId}
     if (this.state && LAUNCHER_APPS.some(entry => entry.app === normalized.app) && !pocketAppInstalled(normalizeLauncherLayout(this.state.launcherLayouts?.[this.currentDeviceOwnerActorId()]), normalized.app)) {
       const key = this.deviceIdentity().key, ui = this.storeSessions.get(key) || {}
       ui.focusApp = normalized.app as typeof LAUNCHER_APPS[number]['app']; ui.query = ''; ui.filter = 'all'; this.storeSessions.set(key, ui)
@@ -2088,8 +2224,9 @@ class PocketController {
     if (!this.expanded) this.open()
     if (this.currentApp === 'settings' && route.app !== 'settings') this.settingsDraft = null
     if (this.currentApp === 'calendar' && route.app !== 'calendar') { this.pendingEventSuggestion = null; this.manualEventConversationId = '' }
-    if(this.currentApp==='gallery' && route.app!=='gallery')this.chatPhotoSelection=null
+    if(this.currentApp==='gallery' && route.app!=='gallery'){this.chatPhotoSelection=null;this.personaPhotoDraft=null;this.pendingNativeSticker=null}
     this.currentApp = route.app
+    if(route.app==='dating'){if(route.conversationId)this.send('lumiphone:mark_read',{app:'messages',conversationId:route.conversationId});this.selectedConversationId=route.conversationId||'';this.selectedConversationView='thread';this.selectedMessageId=''}
     if (route.app === 'messages') {
       const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state)
       const conversation = (route.conversationId ? this.state.conversations.find((entry) => entry.id === route.conversationId && conversationVisibleOnDevice(this.state!, entry, owner)) : null)
@@ -2345,6 +2482,10 @@ class PocketController {
       : this.currentApp === 'calendar' ? this.renderCalendar()
       : this.currentApp === 'trackers' ? this.renderTrackers()
       : this.currentApp === 'notifications' ? this.renderNotifications()
+      : this.currentApp === 'dating' ? this.renderDating()
+      : this.currentApp === 'spotify' ? this.renderSpotify()
+      : this.currentApp === 'sharing' ? this.renderSharing()
+      : NATIVE_APP_IDS.includes(this.currentApp as NativeApp) ? this.renderNative()
       : this.currentApp === 'appstore' ? this.renderStore()
       : isSocialApp(this.currentApp) ? this.renderSocial(this.currentApp)
       : this.renderSettings()
@@ -2540,6 +2681,7 @@ class PocketController {
       },
       uploadPhoto: () => { void this.uploadSocialImage(key, app) },
       uploadServerPicture: serverId => { void this.uploadSocialImage(key, 'discord', serverId || '') },
+      manageStickers:()=>{const installed=pocketAppInstalled(normalizeLauncherLayout(this.state?.launcherLayouts?.[owner]),'stickers');if(installed){this.nativeUI.panels.stickers='packs';this.openPocket({app:'stickers'})}else this.openPocket({app:'appstore'})},
       searchGifs: query => new Promise<SocialGif[]>((resolve,reject) => {
         const id = this.send('lumiphone:social_gif_search', { app, query })
         const timer = setTimeout(() => { this.socialGifRequests.delete(id); reject(new Error('Tenor took too long. Try again.')) }, 15000)
@@ -2635,15 +2777,137 @@ class PocketController {
     return node
   }
 
-  private renderMessages(): HTMLDivElement {
+  private datingAction(action:string,payload:Record<string,unknown>={}):void {
+    if(action==='cancel_profiles'){
+      this.send('lumiphone:dating',{action:'cancel',scope:'profiles'});this.datingProfileRequest='';this.datingUI.profileBusy=false;this.datingUI.profileStatus=this.datingUI.profileAction==='image_check'?'Image inspection cancelled; photo and profile kept':this.datingUI.profileAction==='world'?'World reading cancelled; accepted settings kept':'Profile generation cancelled; saved profiles kept';this.render(false);return
+    }
+    if(['discover','generate','enrich','self_generate','world','voice_lab','rewrite_item','image_check','relationship_assess'].includes(action)){
+      if(this.datingUI.profileBusy)return
+      if(this.datingUI.pendingProfile && action!=='discover'){this.datingUI.profileStatus='Review the existing generated profile before creating another';this.render(false);return}
+      this.datingUI.profileBusy=true;this.datingUI.profileAction=action;this.datingUI.profileStatus=action==='relationship_assess'?'Assessing this connection (one request)...':action==='image_check'?'Inspecting saved image…':action==='world'?'Reading world evidence…':'Creating profiles…';this.datingUI.profileError='';this.datingProfileAction=action
+      this.datingProfileRequest=this.send('lumiphone:dating',{action,...payload});this.render(false);return
+    }
+    if(action==='cancel'){
+      this.send('lumiphone:dating',{action:'cancel',scope:'photos'});this.datingRequest='';this.datingUI.busy=false;this.datingUI.status='Cancelled';this.render(false);return
+    }
+    if(this.datingUI.busy)return
+    this.datingUI.busy=true;this.datingUI.error='';this.datingLastAction=action
+    this.datingRequest=this.send('lumiphone:dating',{action,...payload});this.render(false)
+  }
+
+  private renderDating():HTMLDivElement {
+    if(this.selectedConversationId && this.state?.conversations.some(c=>c.id===this.selectedConversationId && c.channel==='dating'))return this.renderMessages(true)
+    const view=renderLumistry({visible:this.expanded,state:this.state!,owner:this.currentDeviceOwnerActorId()||pocketPersonaActorId(this.state!),ui:this.datingUI,generation:Boolean(this.caps?.generation),images:Boolean(this.caps?.imageGen),backgroundEnabled:this.preferences.ambientMessaging!=='off',automaticReplies:this.preferences.autoReplyAfterSend,
+      creationConfiguration:{authoring:this.preferences.authoring,generationMode:this.preferences.generationMode,samplers:this.preferences.samplerOverrides},
+      openTimeline:id=>this.openPocket({app:'calendar',eventId:id}),action:(action,payload)=>this.datingAction(action,payload),render:()=>this.render(false),back:()=>this.back(),openConversation:id=>this.openPocket({app:'dating',conversationId:id}),gallery:id=>{this.pendingDatingPhoto=id;this.openPocket({app:'gallery'});this.requestGallery('all')}})
+    return view
+  }
+
+  private nativeAction(app:NativeApp,action:string,data:Record<string,any>={},done?:()=>void):void {
+    if(this.nativeBusy[app]&&action!=='cancel')return
+    const context=this.activeContext(),id=requestId('native')
+    if(app==='stickers'&&action==='generate'){this.nativeUI.stickerPreview=undefined;this.nativeUI.stickerProgress={};this.nativeUI.panels.stickers='create'}
+    this.nativeBusy[app]=id;this.nativeErrors[app]='';this.nativeStatus[app]='Working on it…'
+    this.nativeRequests.set(id,{app,context:JSON.stringify(context),action,done})
+    this.send('lumiphone:native',{...context,requestId:id,app,action,data,deviceOwnerActorId:this.currentDeviceOwnerActorId()})
+    this.render(false)
+  }
+
+  private renderNative():HTMLDivElement {
+    const app=this.currentApp as NativeApp
+    if(this.currentDeviceOwnerActorId()!==this.state!.pocketPersonaActorId){const {page,content}=this.page('Your apps','A little world of your own');content.append(el('p','lp-copy','Switch to your own phone to use this app.'));return page}
+    return renderNativeApp({app,state:this.state!,ui:this.nativeUI,busy:Boolean(this.nativeBusy[app]),status:this.nativeStatus[app]||'',error:this.nativeErrors[app]||'',images:Boolean(this.caps?.images),imageGeneration:Boolean(this.caps?.imageGen),dismissError:()=>{this.nativeErrors[app]='';this.render(false)},openApp:app=>this.openPocket({app}),page:(title,subtitle)=>this.page(title,subtitle),render:()=>this.render(false),action:(app,action,data,done)=>this.nativeAction(app,action,data,done),
+      openConversation:id=>this.openPocket({app:'messages',conversationId:id}),
+      gallery:(description,caption,packId,name)=>{this.pendingNativeSticker={description:description.trim(),caption,packId,name};this.openPocket({app:'gallery'});this.requestGallery('all')},
+      upload:(description,caption,packId,name)=>{void(async()=>{
+        const context=JSON.stringify(this.activeContext())
+        try{const files=await this.ctx.uploads.pickFile({accept:['image/png','image/jpeg','image/webp','image/gif'],multiple:false,maxSizeBytes:8*1024*1024}),file=files[0];if(!file||context!==JSON.stringify(this.activeContext()))return
+          if(!/^image\/(png|jpeg|webp|gif)$/i.test(file.mimeType)||file.bytes.length>8*1024*1024)throw new Error('Choose a PNG, JPEG, WebP or GIF up to 8 MB.')
+          const dataUrl=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||''));reader.onerror=()=>reject(new Error('Could not read this sticker.'));reader.readAsDataURL(new Blob([file.bytes.slice().buffer],{type:file.mimeType}))})
+          if(context===JSON.stringify(this.activeContext()))this.nativeAction('stickers','upload',{dataUrl,filename:file.name,name:name?.trim()||file.name.replace(/\.[^.]+$/,'')||'New sticker',packId,description:description.trim()||file.name.replace(/\.[^.]+$/,'')||'Sticker',caption})
+        }catch(error){this.nativeErrors.stickers=error instanceof Error?error.message:'Could not upload this sticker.';this.render(false)}
+      })()},
+    })
+  }
+
+  private renderSpotify():HTMLDivElement {
+    const {page,content}=this.page('Spotify Share','A little song for someone')
+    content.classList.add('lp-song-home')
+    if(this.currentDeviceOwnerActorId()!==this.state!.pocketPersonaActorId){content.append(el('p','lp-copy','Switch to your own phone to share a song.'));return page}
+    const target=el('select','lp-select'),conversations=this.state!.conversations.filter(c=>!c.archived&&conversationVisibleOnDevice(this.state!,c,this.currentDeviceOwnerActorId()))
+    target.append(new Option('Choose a conversation',''))
+    for(const c of conversations)target.append(new Option(`${c.channel==='dating'?'Lumistry · ':''}${c.title}`,c.id))
+    if(!conversations.some(c=>c.id===this.spotifyTarget))this.spotifyTarget=conversations[0]?.id||''
+    target.value=this.spotifyTarget
+    const key=JSON.stringify([this.activeContext(),this.spotifyTarget])
+    if(this.spotifyTarget&&this.spotifyPlayerState?.key!==key)this.loadSpotifyPlayer(this.spotifyTarget)
+    const player=this.spotifyPlayerState?.key===key?this.spotifyPlayerState:null
+    target.onchange=()=>{this.spotifyTarget=target.value;this.spotifyPlayerState=null;this.render(false)}
+    content.append(spotifyPlayer({snapshot:player?.preview?.snapshot,loading:player?.loading||false,canRefresh:Boolean(this.spotifyTarget),error:player?.error,refresh:()=>{if(this.spotifyTarget){this.loadSpotifyPlayer(this.spotifyTarget);this.render(false)}},share:()=>this.showSpotifyShare(this.spotifyTarget)}),fieldBlock('Send to',target),el('p','lp-song-source',conversations.length?'Uses SpotifyControls · preview before sending':'Start a conversation to share your first song.'))
+    return page
+  }
+
+  private loadSpotifyPlayer(conversationId:string):void {
+    const context=this.activeContext(),id=requestId('spotify_player'),key=JSON.stringify([context,conversationId])
+    if(this.spotifyPlayerState)this.communityRequests.delete(this.spotifyPlayerState.requestId)
+    this.spotifyPlayerState={key,requestId:id,loading:true}
+    this.communityRequests.set(id,payload=>{
+      if(this.spotifyPlayerState?.requestId!==id||JSON.stringify([this.activeContext(),this.spotifyTarget])!==key)return
+      this.spotifyPlayerState={key,requestId:id,loading:false,...(payload.type==='lumiphone:error'?{error:payload.error}:{preview:payload as unknown as SpotifySharePreview})}
+      if(this.currentApp==='spotify')this.render(false)
+    })
+    this.send('lumiphone:spotify_preview',{...context,requestId:id,conversationId})
+  }
+
+  private showSpotifyShare(conversationId:string):void {
+    const context=this.activeContext(),modal=this.ctx.ui.showModal({title:'Share a song',width:500,maxHeight:700});modal.root.classList.add('lp-media-viewer','lp-attachment-dialog','lp-share-dialog')
+    this.applyShareAppearance(modal.root)
+    modal.root.addEventListener('keydown',event=>{if(event.key==='Escape'||event.key==='Tab')event.stopPropagation()})
+    const body=el('div','lp-settings-section');body.append(el('p','lp-copy','Loading your current song…'));modal.root.append(body)
+    const id=requestId('spotify');this.communityRequests.set(id,payload=>{
+      if(!modal.root.isConnected)return
+      body.replaceChildren()
+      if(payload.type==='lumiphone:error'){body.append(el('p','lp-copy',payload.error));return}
+      body.append(spotifyShareSheet({preview:payload as any,dismiss:()=>modal.dismiss(),send:spotifyShare=>{const sent=requestId('spotify_send');this.communityRequests.set(sent,result=>{if(result.type==='lumiphone:error')this.showError(result.error);else if(this.activeContext().chatId===context.chatId)this.openPocket({app:'messages',conversationId})});this.send('lumiphone:spotify_send',{...context,requestId:sent,conversationId,spotifyShare})}}))
+    });this.send('lumiphone:spotify_preview',{...context,requestId:id,conversationId})
+    modal.onDismiss?.(()=>this.communityRequests.delete(id))
+  }
+
+  private showPersonaPhoto(conversationId:string,selected?:PersonaPhotoChoice):void {
+    const context=this.activeContext(),modal=this.ctx.ui.showModal({title:'Send a photo',width:460,maxHeight:720});modal.root.classList.add('lp-media-viewer','lp-attachment-dialog','pocket-freeform-confirm')
+    modal.root.addEventListener('keydown',event=>{if(event.key==='Escape'||event.key==='Tab')event.stopPropagation()})
+    modal.root.append(personaPhotoSheet({profile:datingFor(this.state!).self||undefined,galleryAvailable:Boolean(this.caps?.images),selected,dismiss:()=>modal.dismiss(),gallery:draft=>{this.personaPhotoDraft={conversationId,draft};modal.dismiss();this.openPocket({app:'gallery'})},send:(photo,comment,complete)=>{
+      const id=requestId('persona_photo');this.communityRequests.set(id,payload=>complete(payload.type==='lumiphone:error'?payload.error:undefined));this.send('lumiphone:persona_photo_send',{...context,requestId:id,conversationId,photo,comment})
+    }}))
+  }
+
+  private renderSharing():HTMLDivElement {
+    const {page,content}=this.page('Screenshots','Share a little context')
+    if(this.currentDeviceOwnerActorId()!==this.state!.pocketPersonaActorId){content.append(el('p','lp-copy','Switch to your own phone to share excerpts.'));return page}
+    content.append(this.sharingControls());return page
+  }
+
+  private sharingControls(target=''):HTMLDivElement {
+    const state=this.state!,context=this.activeContext()
+    return pocketShareSheet(state,(conversationId,request)=>{
+      const id=requestId('share');this.communityRequests.set(id,payload=>{if(payload.type==='lumiphone:error')this.showError(payload.error);else if(this.activeContext().chatId===context.chatId)this.openPocket({app:'messages',conversationId})})
+      this.send('lumiphone:share_capture',{...context,requestId:id,conversationId,request,expectedCapture:lumistryCaptureText(createPocketCapture(state,request))})
+    },target,this.sharingDraft)
+  }
+
+  private renderMessages(dating=false): HTMLDivElement {
     this.viewCleanups.push(() => this.voicePlayer.stop())
     const owner = this.currentDeviceOwnerActorId() || pocketPersonaActorId(this.state!)
     return renderMessagesView({
-      state: this.state!, selectedConversationId: this.selectedConversationId,
+      dating,
+      state: datingDisplayState(this.state!,dating?this.selectedConversationId:undefined), selectedConversationId: this.selectedConversationId,
       renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
       chatTheme:conversationId=>this.showChatTheme(conversationId),
+      datingPhotoAction:(conversationId,messageId)=>this.datingAction('message_photo',{conversationId,messageId}),
+      datingPhotoAvailable:Boolean(this.caps?.imageGen),datingPhotoBusy:this.datingUI.busy,
       timeskip:conversationId=>this.showTimeskip(conversationId),
-      attach:conversationId=>this.showChatAttachment(conversationId),
+      attach:conversationId=>this.showAttachmentMenu(conversationId),
+      stickerTray:this.stickerTrayConversationId===this.selectedConversationId?stickerTray({library:nativeFor(this.state!),pack:this.nativeUI.drafts['sticker-tray-pack'],query:this.nativeUI.drafts['sticker-tray-query'],remember:(pack,query)=>{this.nativeUI.drafts['sticker-tray-pack']=pack;this.nativeUI.drafts['sticker-tray-query']=query},busy:Boolean(this.nativeBusy.stickers),send:id=>this.nativeAction('stickers','send',{id,conversationId:this.selectedConversationId},()=>{this.stickerTrayConversationId='';this.render(false);queueMicrotask(()=>this.screen.querySelector<HTMLTextAreaElement>('[data-pocket-composer]')?.focus())}),close:()=>{this.stickerTrayConversationId='';this.render(false);queueMicrotask(()=>this.screen.querySelector<HTMLTextAreaElement>('[data-pocket-composer]')?.focus())},manage:()=>{this.stickerTrayConversationId='';this.openPocket({app:'stickers'})}}):undefined,
       openPhoto:message=>{
         const modal=this.ctx.ui.showModal({title:`Photo from ${message.senderName}`,width:700,maxHeight:800});modal.root.classList.add('lp-media-viewer')
         const image=el('img');image.src=message.imageUrl!;image.alt=message.text;image.style.cssText='display:block;max-width:100%;max-height:70vh;object-fit:contain';modal.root.append(image)
@@ -2694,7 +2958,7 @@ class PocketController {
       continueArrival: (conversationId) => { this.send('lumiphone:continue_arrival', { conversationId }) },
       openRoleplay: () => this.close(),
       openTimeline: (eventId) => this.openPocket({ app: 'calendar', eventId }),
-      quickstartEvent: isFreeformChat(this.state?.chatId) ? undefined : (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
+      quickstartEvent: dating || isFreeformChat(this.state?.chatId) ? undefined : (conversationId, eventId) => this.quickstartEvent(conversationId, eventId),
       scheduleEventSuggestion: (conversationId, messageId) => this.scheduleEventSuggestion(conversationId, messageId),
       declineEventSuggestion: (conversationId, messageId) => this.declineEventSuggestion(conversationId, messageId),
       showReferenceSheet: (conversationId) => this.showReferenceSheet(conversationId),
@@ -2811,18 +3075,35 @@ class PocketController {
     modal.root.appendChild(content)
   }
 
+  private applyShareAppearance(root:HTMLElement):void {
+    const appearance=this.shell.ownerDocument.defaultView!.getComputedStyle(this.shell)
+    for(const key of ['--lp-accent','--lp-bg','--lp-surface','--lp-text','--lp-muted','--lp-border','--lp-outgoing'])root.style.setProperty(key,appearance.getPropertyValue(key))
+  }
+
   private showReferenceSheet(conversationId: string): void {
     const conversation = this.state?.conversations.find((entry) => entry.id === conversationId)
     if (!conversation) return
-    const modal = this.ctx.ui.showModal({ title: 'Reference in roleplay', width: 480, maxHeight: 680 })
+    const modal = this.ctx.ui.showModal({ title: 'Reference in roleplay', width: 480, maxHeight: 740 })
+    modal.root.classList.add('lp-share-dialog','lp-attachment-dialog','lp-reference-dialog')
+    const opener=this.screen.querySelector<HTMLElement>('.lp-conversation-menu > summary')
+    modal.onDismiss?.(()=>queueMicrotask(()=>{if(opener?.isConnected)opener.focus({preventScroll:true})}))
+    this.applyShareAppearance(modal.root)
+    modal.root.addEventListener('keydown',event=>{if(event.key==='Escape'||event.key==='Tab')event.stopPropagation()})
     const content = el('div', 'lp-reference-sheet')
-    content.appendChild(el('p', 'lp-copy', 'Attach Pocket context to your next normal roleplay turn. Pocket will wait for your RP message and will not change anyone’s scene presence.'))
+    const intro=el('div','lp-reference-intro'),mark=el('span','lp-reference-intro-mark','↗')
+    mark.setAttribute('aria-hidden','true');intro.append(mark,el('p','','Take a little context into the next scene.'))
+    content.append(intro,el('p','lp-copy','Attach phone context to your next normal RP turn. Pocket waits for your message; nobody’s scene presence changes.'))
+    const modes=el('fieldset','lp-reference-modes');modes.append(el('legend','','What should Pocket attach?'));content.append(modes)
     let scope: 'conversation' | 'recent_messages' | 'selected_messages' = 'conversation'
     const messageInputs: HTMLInputElement[] = []
-    const attach = button('Attach to next RP turn', 'lp-button lp-button-primary')
+    const attach = button('Attach to next RP turn', 'lp-button lp-button-primary'),selection=el('fieldset','lp-reference-selection'),choices=el('div','lp-reference-message-list lp-clipping-list'),count=el('span','lp-selection-count'),clear=button('Clear selection','lp-share-clear'),summary=el('p','lp-copy')
+    selection.append(el('legend','','Choose messages'));const toolbar=el('div','lp-clipping-toolbar');toolbar.append(count,clear);selection.append(toolbar,choices)
     const update = () => {
       for (const input of messageInputs) input.disabled = scope !== 'selected_messages'
-      attach.disabled = scope === 'selected_messages' && !messageInputs.some((input) => input.checked)
+      const selected=messageInputs.filter(input=>input.checked).length
+      selection.hidden=scope!=='selected_messages';count.textContent=`${selected} of ${messageInputs.length} selected`;clear.disabled=!selected
+      attach.disabled = scope === 'selected_messages' && !selected
+      summary.textContent=scope==='selected_messages'?`${selected} message${selected===1?'':'s'} will be attached.`:scope==='recent_messages'?'The latest 6 messages will be attached.':'Conversation context and up to 8 recent messages will be attached.'
     }
     const addScope = (value: typeof scope, label: string, description: string) => {
       const row = el('label', 'lp-reference-scope')
@@ -2833,31 +3114,34 @@ class PocketController {
       const copy = el('span', 'lp-grow')
       copy.append(el('strong', '', label), el('span', 'lp-copy', description))
       row.append(input, copy)
-      content.appendChild(row)
+      modes.appendChild(row)
     }
     addScope('conversation', 'Current conversation', 'Conversation state, participants, and up to 8 recent messages.')
     addScope('recent_messages', 'Recent messages', 'Only the last 6 messages and minimal conversation context.')
     addScope('selected_messages', 'Selected messages', 'Choose the exact bubbles Pocket should attach.')
-    const choices = el('div', 'lp-reference-message-list')
+    clear.onclick=()=>{for(const input of messageInputs)input.checked=false;update()}
     for (const message of conversation.messages.filter((entry) => entry.sender !== 'system').slice(-12)) {
-      const row = el('label', 'lp-reference-message-choice')
+      const row = el('label', 'lp-reference-message-choice lp-clipping-choice')
       const input = el('input')
       input.type = 'checkbox'; input.value = message.id; input.dataset.referenceMessage = message.id
       input.checked = message.id === this.selectedMessageId
       input.addEventListener('change', update)
-      const copy = el('span', 'lp-grow')
-      copy.append(el('strong', '', message.senderName), el('span', 'lp-copy', message.text.slice(0, 180)))
-      row.append(input, copy)
+      const copy = el('span', 'lp-clipping-copy'),avatar=el('span','lp-clipping-avatar',Array.from(message.senderName||'?')[0])
+      avatar.setAttribute('aria-hidden','true')
+      copy.append(el('strong', '', message.senderName), el('span', '', message.text||'Photo attachment'))
+      row.append(input, avatar, copy)
       choices.appendChild(row)
       messageInputs.push(input)
     }
-    content.appendChild(choices)
+    if(!messageInputs.length)choices.append(el('p','lp-copy','No messages to select yet.'))
+    content.appendChild(selection)
     attach.addEventListener('click', () => {
       const messageIds = messageInputs.filter((input) => input.checked).map((input) => input.value)
       this.send('lumiphone:arm_reference', { conversationId, scope, messageIds })
       modal.dismiss()
     })
-    content.appendChild(attach)
+    summary.setAttribute('role','status')
+    const footer=el('div','lp-share-send lp-reference-footer');footer.append(summary,attach);content.appendChild(footer)
     modal.root.appendChild(content)
     update()
   }
@@ -2996,7 +3280,7 @@ class PocketController {
     if (!this.contactBrowsers.has(browserKey)) this.contactBrowsers.set(browserKey, {})
     return renderContactsView({
       browser: this.contactBrowsers.get(browserKey),
-      state: this.state!, selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
+      state: datingDisplayState(this.state!), selectedContactId: this.selectedContactId, selectedView: this.selectedContactView,
       generationBrief: this.npcBriefs.get(`${this.state!.chatId}:${this.state!.characterId}`) || '',
       updateGenerationBrief: brief => { this.npcBriefs.set(`${this.state!.chatId}:${this.state!.characterId}`, brief) },
       sources: this.contactSources, npcBank: this.npcBank, identityProfiles: this.identityProfiles, capabilities: this.caps,
@@ -3137,6 +3421,16 @@ class PocketController {
     const image=el('img');image.src=item.fullUrl||item.url;image.alt=item.filename||'Pocket photo'
     image.style.cssText='display:block;width:100%;max-height:65vh;object-fit:contain;border-radius:12px;background:#080808'
     const actions=el('div','lp-gallery-actions'),feedback=el('p','lp-wallpaper-result');feedback.setAttribute('role','status')
+    if(this.pendingDatingPhoto && this.state && this.currentDeviceOwnerActorId()===this.state.pocketPersonaActorId){
+      const use=button('Use as Lumistry photo','lp-button');use.onclick=()=>{this.datingAction('photo_add',{profileId:this.pendingDatingPhoto,imageId:item.id,imageUrl:item.fullUrl||item.url,index:this.datingUI.photoIndex[this.pendingDatingPhoto]||0});this.pendingDatingPhoto='';modal.dismiss();this.openPocket({app:'dating'})};actions.append(use)
+    }
+    if(this.pendingNativeSticker){const pending=this.pendingNativeSticker,use=button('Review sticker','lp-button');use.onclick=()=>{
+      this.pendingNativeSticker=null;modal.dismiss();const drafts=this.nativeUI.drafts
+      drafts['edit-sticker-id']='';drafts['edit-sticker-image-id']=item.id;drafts['edit-sticker-image-url']=item.fullUrl||item.url||item.thumbnailUrl||''
+      drafts['edit-sticker-name']=pending.name?.trim()||item.filename?.replace(/\.[^.]+$/,'')||'New sticker';drafts['edit-sticker-description']=pending.description;drafts['edit-sticker-caption']=pending.caption;drafts['edit-sticker-pack']=pending.packId||'mine'
+      this.nativeUI.panels.stickers='edit';this.openPocket({app:'stickers'})
+    };actions.append(use)}
+    if(this.personaPhotoDraft){const pending=this.personaPhotoDraft,use=button('Use in Lumistry message','lp-button');use.onclick=()=>{this.personaPhotoDraft=null;modal.dismiss();this.openPocket({app:'dating',conversationId:pending.conversationId});this.showPersonaPhoto(pending.conversationId,{...pending.draft,imageId:item.id,url:item.fullUrl||item.url})};actions.append(use)}
     const chatPhoto=this.chatPhotoSelection
     if(chatPhoto && this.activeContext().chatId===chatPhoto.context.chatId && this.activeContext().characterId===chatPhoto.context.characterId){
       const use=button('Send photo to conversation','lp-button');use.onclick=()=>{
@@ -3774,16 +4068,26 @@ class PocketController {
     modal.root.append(form);amount.focus();amount.select()
   }
 
+  private showAttachmentMenu(conversationId:string):void {
+    if(this.attachmentMenuDispose){this.attachmentMenuDispose();this.attachmentMenuDispose=null;return}
+    const anchor=this.screen.querySelector<HTMLButtonElement>('[aria-label="Attach to message"]');if(!anchor)return
+    const installed=(app:string)=>pocketAppInstalled(normalizeLauncherLayout(this.state?.launcherLayouts?.[this.currentDeviceOwnerActorId()]),app)
+    const items=[{label:'Photo',icon:'image',run:()=>this.showChatAttachment(conversationId)}]
+    if(installed('stickers'))items.push({label:'Stickers',icon:'stickers',run:()=>{this.stickerTrayConversationId=this.stickerTrayConversationId===conversationId?'':conversationId;this.render(false);queueMicrotask(()=>this.screen.querySelector<HTMLButtonElement>('.st-chat-sticker:not(:disabled),.st-chat-tray button')?.focus({preventScroll:true}))}})
+    if(installed('spotify'))items.push({label:'Share a song',icon:'music',run:()=>this.showSpotifyShare(conversationId)})
+    if(installed('sharing'))items.push({label:'Share an excerpt',icon:'share',run:()=>{this.sharingDraft.target=conversationId;this.openPocket({app:'sharing'})}})
+    items.push({label:'Schedule event',icon:'calendar',run:()=>{this.pendingEventSuggestion=null;this.manualEventConversationId=conversationId;this.openPocket({app:'calendar',eventId:'__new__'})}})
+    if(this.state?.conversations.find(c=>c.id===conversationId)?.channel==='dating')items.push({label:'Describe a photo',icon:'camera',run:()=>this.showPersonaPhoto(conversationId)})
+    const cleanup=attachmentMenu(anchor,items.map(item=>({...item,run:()=>{this.attachmentMenuDispose=null;item.run()}})),()=>{this.attachmentMenuDispose=null})
+    this.attachmentMenuDispose=cleanup;this.viewCleanups.push(()=>{cleanup();if(this.attachmentMenuDispose===cleanup)this.attachmentMenuDispose=null})
+  }
+
   private showChatAttachment(conversationId:string):void {
     const context=this.activeContext(), current=()=>!this.destroyed && this.activeContext().chatId===context.chatId && this.activeContext().characterId===context.characterId
-    const modal=this.ctx.ui.showModal({title:'Add to conversation',width:460,maxHeight:760});modal.root.classList.add('lp-media-viewer','lp-attachment-dialog')
-    const content=el('div','lp-attachment'),tabs=el('div','lp-attachment-tabs'),photos=el('div','lp-attachment-panel'),events=el('div','lp-attachment-panel')
-    const uid=requestId('attachment'),photoTab=button('Photo','lp-attachment-tab'),eventTab=button('Event','lp-attachment-tab')
-    tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Attachment type')
-    for(const [tab,panel,name] of [[photoTab,photos,'photo'],[eventTab,events,'event']] as const){tab.type='button';tab.id=uid+'-'+name;panel.id=uid+'-'+name+'-panel';tab.setAttribute('role','tab');tab.setAttribute('aria-controls',panel.id);panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',tab.id);tabs.append(tab)}
-    const selectTab=(selected:HTMLButtonElement)=>{for(const [tab,panel] of [[photoTab,photos],[eventTab,events]] as const){const active=tab===selected;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;panel.hidden=!active}}
-    photoTab.onclick=()=>selectTab(photoTab);eventTab.onclick=()=>selectTab(eventTab)
-    tabs.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const selected=event.key==='Home'?photoTab:event.key==='End'?eventTab:document.activeElement===photoTab?eventTab:photoTab;if(!selected.disabled){selectTab(selected);selected.focus()}}
+    const modal=this.ctx.ui.showModal({title:'Send a photo',width:460,maxHeight:760});modal.root.classList.add('lp-media-viewer','lp-attachment-dialog')
+    modal.root.addEventListener('keydown',event=>{if(event.key==='Escape'||event.key==='Tab')event.stopPropagation()})
+    modal.onDismiss?.(()=>queueMicrotask(()=>{if(current()&&this.currentApp==='messages'&&this.selectedConversationId===conversationId)this.screen.querySelector<HTMLButtonElement>('[aria-label="Attach to message"]')?.focus({preventScroll:true})}))
+    const content=el('div','lp-attachment'),photos=el('div','lp-attachment-panel')
     const art=(path:string)=>{const node=el('span');node.setAttribute('aria-hidden','true');node.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'+path+'</svg>';return node}
     const caption=el('textarea','lp-input'),prompt=el('textarea','lp-input');caption.rows=2;prompt.rows=2
     caption.value=this.messageDrafts.get(conversationId)||'';caption.maxLength=8000;caption.placeholder='Add a message with your photo';prompt.maxLength=4000;prompt.placeholder='What should the photo show?'
@@ -3798,7 +4102,7 @@ class PocketController {
     confirm.dataset.primary='true';confirm.hidden=stop.hidden=true;footer.append(generate,stop,confirm)
     let activeRequest='',readyImage='',generated=false,sending=false
     const feedback=(text:string)=>{if(status.textContent!==text)status.textContent=text}
-    const busy=(value:boolean)=>{generate.disabled=gallery.disabled=upload.disabled=eventTab.disabled=value;prompt.disabled=value;confirm.disabled=value}
+    const busy=(value:boolean)=>{generate.disabled=gallery.disabled=upload.disabled=value;prompt.disabled=value;confirm.disabled=value}
     const showPreview=(url:string,final=false)=>{image.src=url;image.alt=final?'Photo ready to send':'Generation preview';image.hidden=false;placeholder.hidden=true}
     const prepare=(payload:Record<string,unknown>,isGeneration:boolean)=>{
       if(!current()){modal.dismiss();return}
@@ -3837,10 +4141,7 @@ class PocketController {
         if(current() && modal.root.isConnected)prepare({dataUrl,filename:file.name},false)
       }catch(error){feedback(error instanceof Error?error.message:'Could not upload this photo.')}finally{if(!activeRequest)upload.disabled=false}
     })()}
-    const eventContent=el('div','lp-attachment-event'),eventArt=art('<rect x="3" y="5" width="18" height="16" rx="4"/><path d="M7 3v4m10-4v4M3 11h18m-9 3v4m-2-2h4"/>');eventArt.className='lp-attachment-event-art'
-    const schedule=button('Schedule event','lp-attachment-action');schedule.dataset.primary='true';schedule.onclick=()=>{if(!current())return;modal.dismiss();this.pendingEventSuggestion=null;this.manualEventConversationId=conversationId;this.openPocket({app:'calendar',eventId:'__new__'})}
-    eventContent.append(eventArt,el('h3','','Make a plan'),el('p','','Choose when, who’s coming, and what’s happening. Your event will appear in this conversation and on the Timeline.'),schedule);events.append(eventContent)
-    photos.append(sources,fieldBlock('Photo description',prompt),preview,meter,fieldBlock('Photo caption',caption),status,footer);content.append(tabs,photos,events);modal.root.append(content);selectTab(photoTab);photoTab.focus()
+    photos.append(sources,fieldBlock('Photo description',prompt),preview,meter,fieldBlock('Photo caption',caption),status,footer);content.append(photos);modal.root.append(content);photos.hidden=false;generate.focus()
     modal.onDismiss?.(()=>{if(activeRequest && !sending){this.chatPhotoRequests.delete(activeRequest);this.send('lumiphone:camera_cancel',{...context,requestId:activeRequest});activeRequest=''}})
   }
 

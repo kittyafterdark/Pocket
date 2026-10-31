@@ -78,6 +78,7 @@ export const SOCIAL_STYLES = `
   .lp-social-quote p { white-space:pre-wrap; margin:5px 0 0; line-height:1.5; }
   .lp-social-reblog-label { display:block; margin-top:6px; font-size:10px; color:var(--social-muted); }
   .lp-social-photo { display:block; width:100%; max-height:420px; object-fit:contain; border-radius:12px; margin:9px 0; background:var(--social-bg); }
+  .lp-social-twitter .lp-social-post-body>.lp-social-photo,.lp-social-twitter .lp-social-post-body>.lp-social-gif,.lp-social-twitter .lp-social-post-body>.lp-social-gif img { width:100%; max-width:100%; height:auto; max-height:none; }
   .lp-social-photo-description { margin:10px 0; display:grid; align-content:center; justify-items:center; gap:10px; min-height:150px; padding:24px; border:1px solid var(--social-border); border-radius:8px; background:color-mix(in srgb,var(--social-text) 5%,var(--social-bg)); text-align:center; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
   .lp-social-photo-description > .lp-social-glyph { width:28px; height:28px; opacity:.5; }
   .lp-social-photo-description > span:not(.lp-social-glyph) { font-size:8px; letter-spacing:.14em; color:var(--social-muted); }

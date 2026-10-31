@@ -14,6 +14,15 @@ interface AppStoreHost {
   onCleanup?(cleanup: () => void): void
 }
 const POCKET_APP_DESCRIPTIONS: Record<Exclude<LauncherApp, 'appstore'>, [string, string]> = {
+  bank:['For life’s little expenses','A fictional wallet with currencies, transactions, loans and bills.'],
+  birthdays:['A little reason to celebrate','Keep birthdays, find dates in saved contact briefs, and add celebrations to Timeline.'],
+  browser:['A window into your world','Fictional pages, tabs, bookmarks and playful quizzes generated for your scene.'],
+  maps:['Somewhere new to go','Discover fictional places, save favourites and make plans.'],
+  twitch:['Your corner of the internet','Watch fictional streams or go live, chat and send gifts from your Pocket wallet.'],
+  stickers:['Say it with a little sticker','Upload, generate and collect stickers to send in Pocket conversations.'],
+  dating:['Find a little chemistry','Discover people, build profiles and connections, and make plans in your fictional world.'],
+  spotify:['Send a song','Share your current Spotify track and selected lyrics through SpotifyControls.'],
+  sharing:['Show a little context','Preview and share selected Pocket excerpts and photo descriptions with a conversation.'],
   twitter: ['A little bird told you', 'Quick posts, replies, quotes, and voices from across your world.'],
   discord: ['Find your people', 'Your own servers, channels, and conversations with the community.'],
   instagram: ['Little moments, shared', 'Photos, captions, and comments from your cast and beyond.'],

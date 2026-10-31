@@ -1,3 +1,4 @@
+import { pocketReasoning } from '../domain/reasoning.js'
 import type { DevicePreferences, PocketConnectionSummary, PocketGenerationInfo, PocketGenerationRun } from '../types.js'
 
 import { normalizeSamplerOverrides } from '../domain/samplers.js'
@@ -56,15 +57,18 @@ export async function runPocketGeneration(
   requestId: string,
   input: GenerateInput,
   userId?: string,
+  options:{connectionId?:string;transport?:'response'|'stream';preservePartial?:boolean;automaticRetry?:boolean;progressRequestId?:string;validate?:(response:any)=>void}={},
 ): Promise<any> {
   const preferences = await host.loadPreferences(userId)
   const info = await inspectPocketGeneration(host, preferences, userId)
+  if(options.connectionId){const selected=info.connections.find(c=>c.id===options.connectionId);if(!selected)throw new Error('The selected authoring connection is unavailable.');info.effective=selected}
   if (!info.effective) throw new Error(preferences.generationMode === 'sidecar' ? 'The selected Pocket sidecar connection is unavailable.' : 'No active roleplay generation connection is configured.')
   const startedAt = new Date().toISOString()
   const run: PocketGenerationRun = {
     requestId, task, mode: preferences.generationMode,
     connectionId: info.effective.id, connectionName: info.effective.name,
-    provider: info.effective.provider, model: preferences.generationMode === 'sidecar' ? preferences.sidecarModelOverride || info.effective.model : info.effective.model,
+    usageStatus:'unavailable',
+    provider: info.effective.provider, model: !options.connectionId && preferences.generationMode === 'sidecar' ? preferences.sidecarModelOverride || info.effective.model : info.effective.model,
     status: 'started', startedAt,
   }
   await writeRun(host, run, userId)
@@ -72,10 +76,11 @@ export async function runPocketGeneration(
   const started = Date.now()
   try {
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
-    const request = { ...input, userId, reasoning: input.reasoning ?? { source: 'off' } } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
+    const request = { ...input, userId, reasoning: input.reasoning ?? pocketReasoning(preferences.reasoningEffort) } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
     const samplers = normalizeSamplerOverrides(preferences.samplerOverrides)
     if (Object.keys(samplers).length) request.parameters = { ...(request.parameters || {}), ...samplers }
-    if (preferences.generationMode === 'sidecar') {
+    if(options.connectionId)request.connection_id=options.connectionId
+    if (preferences.generationMode === 'sidecar' && !options.connectionId) {
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
     }
@@ -84,10 +89,11 @@ export async function runPocketGeneration(
     const generate = async () => {
       if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
       result = undefined
-      if (profileTask && typeof host.spindle.generate.quietStream === 'function') {
-        let phase = ''
-        for await (const chunk of host.spindle.generate.quietStream(request)) {
+      if ((profileTask || options.transport==='stream') && typeof host.spindle.generate.quietStream === 'function') {
+        let phase = '',answer=''
+        try{for await (const chunk of host.spindle.generate.quietStream(request)) {
           if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
+          if(chunk.type==='token'&&typeof chunk.token==='string')answer+=chunk.token
           const next = chunk.type === 'reasoning' ? 'thinking' : chunk.type === 'token' ? 'writing' : ''
           if (next && next !== phase) {
             phase = next
@@ -96,13 +102,16 @@ export async function runPocketGeneration(
           }
           if (chunk.type === 'done') result = chunk
         }
+        }catch(error){if(!options.preservePartial || !answer || request.signal instanceof AbortSignal && request.signal.aborted)throw error;result={content:answer,finish_reason:'length'};run.diagnostic={layer:'provider',code:'partial-stream',saved:true,retryable:true}}
+        if (!result && options.preservePartial && answer)result={content:answer,finish_reason:'length'}
         if (!result) throw new Error('The provider stream ended without a completed response. Retry enrichment.')
       } else result = await host.spindle.generate.quiet(request)
     }
     await generate()
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const empty = () => typeof result?.content !== 'string' || !result.content.trim()
-    if (preferences.automaticGenerationRetry && empty() && result?.finish_reason === 'length') {
+    const usage=result?.usage||{},reasoningOnly=Number(usage.reasoning_tokens??usage.completion_tokens_details?.reasoning_tokens)>0 && Number(usage.reasoning_tokens??usage.completion_tokens_details?.reasoning_tokens)>=Number(usage.completion_tokens)
+    if (preferences.automaticGenerationRetry && options.automaticRetry!==false && !reasoningOnly && empty() && result?.finish_reason === 'length') {
       const limit = Number(request.parameters?.max_tokens) || 0
       const expanded = Math.min(16384, Math.max(8192, limit * 2))
       if (expanded > limit) {
@@ -111,11 +120,13 @@ export async function runPocketGeneration(
         await generate()
       }
     }
+    if(empty() && reasoningOnly)throw new Error(`The model used all ${Number(usage.completion_tokens).toLocaleString('en-US')} output tokens for reasoning and returned no answer text. Lower reasoning or increase the output limit, then retry.`)
     if (empty()) throw new Error(result?.finish_reason === 'length'
       ? preferences.automaticGenerationRetry ? 'The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model.' : 'The model reached its output limit before answering. Automatic retry is off; retry manually.'
       : 'The model returned no answer text. Check the provider or try another model.')
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
-    const completed: PocketGenerationRun = { ...run, status: 'completed', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }
+    options.validate?.(result)
+    const completed: PocketGenerationRun = { ...run, status: 'completed',usageStatus:result?.usage?.total_tokens!==undefined?'reported':'unavailable', completedAt: new Date().toISOString(), latencyMs: Date.now() - started }
     await writeRun(host, completed, userId)
     host.send({ type: 'lumiphone:generation_status', run: completed }, userId)
     return result

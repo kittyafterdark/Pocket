@@ -15,6 +15,15 @@ export const LAUNCHER_APPS = [
   { app: 'discord', label: 'Discord', icon: 'discord' },
   { app: 'instagram', label: 'Instagram', icon: 'instagram' },
   { app: 'tumblr', label: 'Tumblr', icon: 'tumblr' },
+  {app:'dating',label:'Lumistry',icon:'dating'},
+  {app:'spotify',label:'Spotify Share',icon:'spotify'},
+  {app:'sharing',label:'Screenshots',icon:'sharing'},
+  {app:'bank',label:'Pocket Bank',icon:'bank'},
+  {app:'birthdays',label:'Birthdays',icon:'birthdays'},
+  {app:'browser',label:'Browser',icon:'browser'},
+  {app:'maps',label:'Maps',icon:'maps'},
+  {app:'twitch',label:'Twitch',icon:'twitch'},
+  {app:'stickers',label:'Stickers',icon:'stickers'},
 ] as const satisfies ReadonlyArray<{ app: PhoneApp; label: string; icon: string }>
 export type LauncherApp = typeof LAUNCHER_APPS[number]['app']
 export type LauncherItem = { id: string; kind: 'app'; app: LauncherApp }

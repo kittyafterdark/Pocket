@@ -227,3 +227,33 @@ test('Messages settings list host TTS connections, preserve edits and ignore dis
     globalThis.document = previous.document; globalThis.window = previous.window; globalThis.fetch = previous.fetch; dom.window.close()
   }
 })
+
+test('Media settings keep picture generation below TTS and preserve cumulative edits', () => withDom(dom => {
+  let saved = defaultPreferences()
+  const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
+  const view = renderSettingsView({ draft: saved, section: 'messages', state: { references: [], conversations: [] }, page: () => ({ page, content }), update: (next: any) => { saved = next } } as any)
+  expect(view.querySelector('.lp-eyebrow')!.textContent).toBe('Media')
+  const tts = view.querySelector('[aria-label="Voice message TTS connection"]')!
+  const picture = view.querySelector<HTMLButtonElement>('[aria-label="Allow character picture generation"]')!
+  expect(tts.compareDocumentPosition(picture) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  picture.click()
+  view.querySelector<HTMLButtonElement>('[aria-label="Allow character voice messages"]')!.click()
+  expect(saved.characterPictures).toBe(true)
+  expect(saved.voiceMessages).toBe(false)
+}))
+
+test('Reasoning effort selector saves and restores without clearing other generation settings', () => withDom(dom => {
+  let saved = defaultPreferences()
+  const mount = () => {
+    const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
+    return renderSettingsView({ draft: saved, section: 'generation', state: { setup: { initialized: true } }, capabilities: {}, mountModelCombobox() {}, page: () => ({ page, content }), update: (next: any) => { saved = normalizePreferences(next) } } as any)
+  }
+  const view = mount(), select = [...view.querySelectorAll('select')].find(node => node.parentElement!.textContent!.startsWith('Reasoning effort'))!
+  expect(select.value).toBe('off')
+  select.value = 'low'; select.dispatchEvent(new dom.window.Event('change'))
+  expect(saved.reasoningEffort).toBe('low')
+  view.querySelector<HTMLButtonElement>('[aria-label="Automatic retry"]')!.click()
+  expect(saved.reasoningEffort).toBe('low')
+  expect(saved.automaticGenerationRetry).toBe(false)
+  expect([...mount().querySelectorAll('select')].find(node => node.parentElement!.textContent!.startsWith('Reasoning effort'))!.value).toBe('low')
+}))

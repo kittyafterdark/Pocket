@@ -4,6 +4,9 @@ import type { SocialApp, SocialMutation, SocialPost, SocialAccount } from '../..
 import { button, el, requestId } from '../shared.js'
 import { socialDirectApp } from '../../domain/social-dms.js'
 import { tumblrHub, tumblrActivity, tumblrSearch, type TumblrSession } from './tumblr.js'
+import { nativeFor } from '../../domain/native-apps.js'
+import { messageEmotes, stickerToken } from '../../domain/sticker-packs.js'
+import { discordEmoteText } from '../components/discord-emotes.js'
 import type { SocialGif } from '../../domain/social-extras.js'
 import { discordMessage, discordPins, discordOwnProfile, discordGradientEditor, discordExpressionPicker, gifPicker, gifMedia } from './discord-chat.js'
 import { discordPeople as renderDiscordPeople, discordServerPicture } from './discord-people.js'
@@ -15,7 +18,7 @@ import { sectionBlock } from '../components/ui.js'
 import { showPocketSheet } from '../components/ui.js'
 
 export interface SocialSession extends TumblrSession {
-  discordBottom?: boolean; gif?: SocialGif
+  emotePack?:string; emoteQuery?:string; discordBottom?: boolean; gif?: SocialGif
   serverMenus?: Record<string, boolean>; peopleViews?: Record<string, 'members' | 'add'>; serverImage?: { id: string; url: string }
   friendGroups?: Record<string, boolean>; friendsScreen?: boolean; peopleOpen?: boolean; personDrafts?: Record<string, { name: string; bio: string }>; settingsFocus?: string
   dmDrafts?: Record<string, string>; dmScrollTop?: Record<string, number>; dmStickToBottom?: Record<string, boolean>; friendsOpen?: boolean; peopleFriendsOpen?: Record<string, boolean>
@@ -46,6 +49,7 @@ interface SocialViewHost {
   generatePhoto?(prompt: string): void
   uploadPhoto?(): void
   uploadServerPicture?(serverId?: string): void
+  manageStickers?():void
   searchGifs?(query:string): Promise<SocialGif[]>
   cancelPhoto?(): void
 }
@@ -355,9 +359,10 @@ export function renderSocial(host: SocialViewHost): HTMLDivElement {
   textLabel.append(el('span', '', reply ? app === 'tumblr' ? 'Your comment' : 'Your reply' : app === 'instagram' ? 'Caption' : app === 'discord' ? 'Message' : 'Your post'), text)
   text.value = ui.draft || ''; text.rows = reply ? (app === 'twitter' ? 2 : 1) : app === 'tumblr' ? 4 : 2; text.maxLength = app === 'twitter' ? 280 : 6000; text.placeholder = reply ? app === 'tumblr' ? 'Add a comment' : 'Post your reply' : reblog && app === 'twitter' ? 'Add a comment' : app === 'twitter' ? 'What’s happening in your world?' : app === 'tumblr' ? 'Go on. Make a little post.' : app === 'discord' ? 'Say something to the channel…' : 'A little moment, a little caption…'; text.dataset.socialFocus = 'Social composer'; text.disabled = Boolean(ui.pending)
   const footer = el('div', 'lp-social-compose-footer'), count = el('span', 'lp-social-count', `${text.value.length}/${text.maxLength}`), submit = button(app === 'discord' ? 'Send' : reply ? app === 'tumblr' ? 'Comment' : app === 'instagram' ? 'Post' : 'Reply' : reblog ? app === 'twitter' ? 'Quote' : 'Reblog' : 'Post', 'lp-social-primary'); submit.type = 'submit'
+  let updateEmotePreview=()=>{}
   let updatePhotoTools = () => {}
   const updateSubmit = () => { count.textContent = `${text.value.length}/${text.maxLength}`; submit.disabled = Boolean(ui.pending || ui.imageBusy) || (app === 'discord' && !ui.channelId) || !(text.value.trim() || ui.photo?.trim() || ui.imageId || ui.gif || reblog); if (app === 'instagram' && !reply && !reblog && !ui.imageId && !ui.photo?.trim()) submit.disabled = true; updatePhotoTools() }
-  text.oninput = () => { ui.draft = text.value; updateSubmit() }
+  text.oninput = () => { ui.draft = text.value; updateSubmit(); updateEmotePreview() }
   compose.append(textLabel)
   if (app !== 'discord' && !reply) {
     const media = el('details', 'lp-social-media'), summary = el('summary', '', ui.imageId ? 'Photo attached' : 'Add a photo or description'); media.open = Boolean(ui.mediaOpen || ui.photosOpen || ui.photo || ui.imageId); summary.onclick = () => { ui.mediaOpen = !media.open }
@@ -386,17 +391,18 @@ export function renderSocial(host: SocialViewHost): HTMLDivElement {
     const tagLabel = el('label', 'lp-social-field lp-social-post-tags-field'), tags = el('input', 'lp-input'); tagLabel.append(el('span', '', 'Tags, separated by commas'), tags); tags.placeholder = app === 'tumblr' ? '# Add tags' : 'Add hashtags'; tags.value = ui.tags || ''; tags.maxLength = 400; tags.disabled = Boolean(ui.pending); tags.oninput = () => { ui.tags = tags.value }; tags.dataset.socialFocus = 'Post tags'; if (app === 'instagram' || app === 'tumblr') compose.append(tagLabel)
   }
   if (app === 'discord' || (app === 'twitter' && host.searchGifs)) {
-    const gifs = button(app === 'discord' ? '' : 'GIF', app === 'discord' ? 'lp-discord-expression-button' : 'lp-discord-gif-button'); gifs.setAttribute('aria-label', app === 'discord' ? 'Emoji and GIFs' : 'Attach a GIF'); gifs.setAttribute('aria-haspopup', 'dialog'); gifs.disabled = Boolean(ui.pending)
+    const gifs = button(app === 'discord' ? '' : 'GIF', app === 'discord' ? 'lp-discord-expression-button' : 'lp-discord-gif-button'); gifs.setAttribute('aria-label', app === 'discord' ? 'Emoji and GIFs' : 'Attach a GIF'); if(app==='discord')gifs.setAttribute('aria-expanded','false');else gifs.setAttribute('aria-haspopup', 'dialog'); gifs.disabled = Boolean(ui.pending)
     const chooseGif = (gif:SocialGif) => { ui.gif = gif; ui.focusComposer = true; host.render() }
     if (app === 'discord') { gifs.append(socialIcon('smile')); gifs.onclick = () => discordExpressionPicker(gifs, host.searchGifs, emoji => {
       const start = text.selectionStart, end = text.selectionEnd
       if (text.value.length - (end - start) + emoji.length > text.maxLength) return
       text.setRangeText(emoji, start, end, 'end'); ui.draft = text.value; ui.focusComposer = true
       const mount = page.parentElement; host.render(); const replacement = mount?.querySelector<HTMLTextAreaElement>('[data-social-focus="Social composer"]'); replacement?.focus({preventScroll:true}); replacement?.setSelectionRange(start + emoji.length, start + emoji.length)
-    }, chooseGif) } else gifs.onclick = () => gifPicker(gifs, host.searchGifs!, chooseGif)
+    }, chooseGif,{library:nativeFor({...state,pocketPersonaActorId:owner}),pack:ui.emotePack,query:ui.emoteQuery,remember:(pack,query)=>{ui.emotePack=pack;ui.emoteQuery=query},manage:host.manageStickers,chooseEmote:sticker=>{const token=stickerToken(sticker),start=text.selectionStart,end=text.selectionEnd;if(text.value.length-(end-start)+token.length+2>text.maxLength)return;text.setRangeText(' '+token+' ',start,end,'end');ui.draft=text.value;ui.focusComposer=true;const mount=page.parentElement;host.render();const replacement=mount?.querySelector<HTMLTextAreaElement>('[data-social-focus="Social composer"]');replacement?.focus({preventScroll:true});replacement?.setSelectionRange(start+token.length+2,start+token.length+2)}}) } else gifs.onclick = () => gifPicker(gifs, host.searchGifs!, chooseGif)
     footer.append(gifs)
     if (ui.gif) { const preview = el('div', 'lp-social-gif-draft'), remove = actionButton('Remove GIF', 'Remove attached GIF', () => { ui.gif = undefined; host.render() }); preview.append(gifMedia(ui.gif), remove); compose.append(preview) }
   }
+  if(app==='discord'){const preview=el('div','lp-discord-emote-preview');updateEmotePreview=()=>{const refs=messageEmotes(nativeFor({...state,pocketPersonaActorId:owner}),text.value);preview.replaceChildren();preview.hidden=!refs.length;if(refs.length)preview.append(discordEmoteText(text.value,refs))};compose.append(preview);updateEmotePreview()}
   if (app === 'discord') text.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!submit.disabled) compose.requestSubmit() } }
   updateSubmit(); footer.append(count, submit); compose.append(footer)
   if (app === 'discord') { submit.setAttribute('aria-label', 'Send'); submit.replaceChildren(socialIcon('send')); const bar = el('div', 'lp-discord-composer-bar'); bar.append(textLabel, footer); compose.append(bar) }
@@ -425,7 +431,7 @@ export function renderSocial(host: SocialViewHost): HTMLDivElement {
     if (post.imageUrl) { const image = el('img', 'lp-social-photo'); image.src = post.imageUrl; image.alt = post.photo || `Photo shared by ${post.account.name}`; image.loading = 'lazy'; image.onerror = () => { image.replaceWith(el('p', 'lp-social-photo-description', post.photo || 'This photo is unavailable.')) }; body.append(image) }
     else if (post.photo && (app === 'instagram' || app === 'tumblr')) { const photo = el('figure', 'lp-social-photo-description'); photo.append(socialIcon('camera'), el('span', '', 'PHOTO DESCRIPTION'), el('figcaption', '', post.photo)); body.append(photo) }
     if (post.gif) body.append(gifMedia(post.gif))
-    if (post.text) { const copy = el('p', 'lp-social-post-text'); if (app === 'instagram') { copy.classList.add('lp-social-caption'); copy.append(el('strong', '', post.account.handle + ' '), el('span', '', post.text)) } else copy.textContent = post.text; body.append(copy) }
+    if (post.text) { const copy = el('p', 'lp-social-post-text'); if (app === 'instagram') { copy.classList.add('lp-social-caption'); copy.append(el('strong', '', post.account.handle + ' '), el('span', '', post.text)) } else copy.textContent = post.text; if(app==='twitter')body.prepend(copy);else body.append(copy) }
     if (post.tags.length && (app === 'instagram' || app === 'tumblr')) body.append(el('p', 'lp-social-tags', post.tags.map(tag => `#${tag}`).join(' ')))
     const actions = el('div', 'lp-social-post-actions'), label = `${post.account.name}’s post ${post.id}`
     const openDiscussion = actionButton('', `Open discussion for ${label}`, () => { ui.discussionFocus = `Open discussion for ${rootOf(post).account.name}’s post ${rootOf(post).id}`; ui.threadId = rootOf(post).id; ui.replyTo = undefined; ui.reblogOf = undefined; ui.composing = false; if (app === 'tumblr') ui.notesView = post.reblogOf ? 'reblogs' : 'comments'; ui.scrollTop = 0; host.render() }, 'lp-social-open-discussion')

@@ -2,6 +2,10 @@ import type { PhoneState } from '../../types.js'
 import type { SocialAccount, SocialPost, SocialMutation, PocketSocialState } from '../../domain/social.js'
 import { contactAccent } from '../../domain/contacts.js'
 import { gradientColors, QUICK_REACTIONS, EMOJI_CHOICES, type SocialGif } from '../../domain/social-extras.js'
+import type { PocketSticker } from '../../domain/native-apps.js'
+import type { StickerLibrary } from '../../domain/sticker-packs.js'
+import { stickerCollection } from '../components/sticker-collection.js'
+import { discordEmoteText } from '../components/discord-emotes.js'
 import { button, el, requestId } from '../shared.js'
 import { showPocketSheet } from '../components/ui.js'
 
@@ -54,20 +58,27 @@ export function gifPicker(anchor:HTMLElement,searchGifs:(query:string)=>Promise<
   const search=gifSearchContent(searchGifs,gif=>{handle?.dismiss();choose(gif)})
   handle=sheet(anchor,'GIFs from Tenor',search.body);search.focus()
 }
-export function discordExpressionPicker(anchor:HTMLElement,searchGifs:((query:string)=>Promise<SocialGif[]>)|undefined,chooseEmoji:(emoji:string)=>void,chooseGif:(gif:SocialGif)=>void) {
-  const body=el('div','lp-discord-expression-picker'),tabs=el('div','lp-discord-expression-tabs'),id=requestId('discord_expressions')
-  tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Message expressions')
-  let handle:ReturnType<typeof sheet>,active=0
-  const emoji=emojiChoices(value=>{handle?.dismiss();chooseEmoji(value)})
-  const gifs=searchGifs?gifSearchContent(searchGifs,value=>{handle?.dismiss();chooseGif(value)}):undefined
-  const choices=[{name:'Emoji',content:emoji},{name:'GIFs',content:gifs}]
+export function discordExpressionPicker(anchor:HTMLElement,searchGifs:((query:string)=>Promise<SocialGif[]>)|undefined,chooseEmoji:(emoji:string)=>void,chooseGif:(gif:SocialGif)=>void,options:{library?:StickerLibrary;chooseEmote?(s:PocketSticker):void;manage?():void;pack?:string;query?:string;remember?(pack:string,query:string):void}={}) {
+  const compose=anchor.closest('.lp-social-compose');if(!compose)return
+  const existing=compose.querySelector<HTMLElement>('.lp-discord-expression-tray');if(existing){existing.remove();anchor.setAttribute('aria-expanded','false');anchor.removeAttribute('aria-controls');anchor.focus();return}
+  const body=el('section','lp-discord-expression-picker lp-discord-expression-tray'),head=el('header','lp-discord-tray-heading'),tabs=el('div','lp-discord-expression-tabs'),id=requestId('discord_expressions')
+  body.id=id;body.setAttribute('aria-label','Message expressions');anchor.setAttribute('aria-expanded','true');anchor.setAttribute('aria-controls',id);anchor.removeAttribute('aria-haspopup')
+  const close=(focus=true)=>{body.remove();anchor.setAttribute('aria-expanded','false');anchor.removeAttribute('aria-controls');if(focus&&anchor.isConnected)anchor.focus({preventScroll:true})}
+  tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Message expressions');const dismiss=button('×','lp-discord-tray-close');dismiss.setAttribute('aria-label','Close message expressions');dismiss.onclick=()=>close();head.append(tabs,dismiss)
+  const emoji=emojiChoices(value=>{close(false);chooseEmoji(value)}),gifs=searchGifs?gifSearchContent(searchGifs,value=>{close(false);chooseGif(value)}):undefined
+  const emotes=options.library?stickerCollection({library:options.library,pack:options.pack,query:options.query,remember:options.remember,verb:'Insert',choose:s=>{close(false);options.chooseEmote?.(s)}}):undefined
+  if(emotes&&options.manage){const manage=button('Browse & manage packs','lp-discord-manage-packs');manage.onclick=()=>{close(false);options.manage?.()};emotes.root.append(manage)}
+  const choices=[{name:'Emoji',content:emoji},{name:'Emotes',content:emotes?{body:emotes.root,focus:emotes.focus}:undefined},{name:'GIFs',content:gifs}]
+  let active=0
   const controls=choices.map((choice,index)=>{const control=button(choice.name);control.id=id+'_tab_'+index;control.setAttribute('role','tab');control.setAttribute('aria-controls',id+'_panel_'+index);control.disabled=!choice.content;tabs.append(control);return control})
   const panels=choices.map((choice,index)=>{const panel=el('div');panel.id=id+'_panel_'+index;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',controls[index].id);if(choice.content)panel.append(choice.content.body);return panel})
   const select=(index:number,focusContent=false)=>{active=index;controls.forEach((control,i)=>{control.setAttribute('aria-selected',String(i===index));control.tabIndex=i===index?0:-1;panels[i].hidden=i!==index});if(focusContent)choices[index].content?.focus()}
   controls.forEach((control,index)=>{control.onclick=()=>select(index,true)})
-  tabs.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();event.stopPropagation();const next=event.key==='Home'?0:event.key==='End'?1:1-active;if(controls[next].disabled)return;select(next);controls[next].focus()}
-  body.append(tabs,...panels);select(0);handle=sheet(anchor,'Emoji and GIFs',body);emoji.focus()
+  tabs.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();event.stopPropagation();let next=event.key==='Home'?0:event.key==='End'?choices.length-1:(active+(event.key==='ArrowLeft'?-1:1)+choices.length)%choices.length;for(let i=0;controls[next].disabled&&i<choices.length;i++)next=(next+(event.key==='ArrowLeft'?-1:1)+choices.length)%choices.length;if(controls[next].disabled)return;select(next);controls[next].focus()}
+  body.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close()}}
+  body.append(head,...panels);select(0);compose.prepend(body);emoji.focus()
 }
+
 export function discordGradientEditor(anchor:HTMLElement,colors:[string,string],save:(colors:[string,string])=>void,title='Profile gradient') {
   const body=el('form','lp-discord-gradient-editor'),preview=el('div','lp-discord-gradient-preview'),values:[string,string]=[...colors]
   const update=()=>{preview.style.background=`linear-gradient(135deg,${values[0]},${values[1]})`};update();body.append(preview)
@@ -114,7 +125,7 @@ export function discordMessage(host:MessageHost,post:SocialPost) {
   }
   if(post.replyTo){const original=host.posts.find(other=>other.id===post.replyTo);if(original){const hook=button('','lp-discord-reply-hook');hook.setAttribute('aria-label',`Jump to message by ${original.account.name}`);hook.append(avatar(original.account.name,original.account.actorId,original.account.avatarUrl),el('strong','',original.account.handle),el('span','',original.text||original.gif?.description||'GIF'));hook.onclick=()=>{const target=[...row.parentElement!.querySelectorAll<HTMLElement>('[data-social-post]')].find(node=>node.dataset.socialPost===original.id);target?.scrollIntoView({block:'center',behavior:'smooth'});target?.focus({preventScroll:true})};main.append(hook)}}
   head.append(name,time,menu);main.append(head)
-  if(post.text)main.append(el('p','lp-discord-message-text',post.text))
+  if(post.text)main.append(discordEmoteText(post.text,post.emotes))
   if(post.gif)main.append(gifMedia(post.gif))
   const reactions=el('div','lp-discord-reactions')
   for(const reaction of post.reactions||[]) {const choice=button(`${reaction.emoji} ${reaction.actorIds.length}`,'lp-discord-reaction');choice.setAttribute('aria-label',`${reaction.emoji} reaction, ${reaction.actorIds.length} people`);choice.setAttribute('aria-pressed',String(reaction.actorIds.includes(owner)));choice.title=reaction.actorIds.map(id=>id===owner?'You':world.servers.flatMap(server=>server.participants||[]).find(member=>member.id===id)?.name||host.posts.find(post=>post.account.id===id)?.account.name||'Member').join(', ');choice.disabled=Boolean(host.pending);choice.onclick=()=>react(reaction.emoji);reactions.append(choice)}

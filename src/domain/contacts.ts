@@ -1,3 +1,6 @@
+import {normalizeDatingAttachment} from './lumistry-person.js'
+import {normalizeLumistryCapture} from './lumistry-sharing.js'
+import {normalizeSpotifyShare} from './spotify-share.js'
 import { normalizeMessagePhoto } from './message-photo.js'
 import {normalizeTimeskip} from './timeskip.js'
 import {normalizeChatAppearance} from './chat-appearance.js'
@@ -155,7 +158,7 @@ export function normalizePocketContact(value: unknown, context: {
 function normalizeMessage(value: unknown, fallbackContact: PocketContact | undefined, now: string, makeId: (prefix: string) => string, personaActorId: string): PhoneMessage | null {
   if (!record(value)) return null
   const messageText = clean(value.text, 12_000)
-  if (!messageText) return null
+  if (!messageText && !normalizeDatingAttachment(value.datingPhoto)) return null
   const legacySender = clean(value.sender, 20)
   const sender = legacySender === 'system' ? 'system' : legacySender === 'user' || legacySender === 'persona' ? 'persona' : 'contact'
   const senderContactId = sender === 'contact' ? clean(value.senderContactId, 180) || fallbackContact?.id : undefined
@@ -190,6 +193,8 @@ function normalizeMessage(value: unknown, fallbackContact: PocketContact | undef
     read,
     status,
     photo: normalizeMessagePhoto(value.photo),
+    sticker:record(value.sticker)?{description:clean(value.sticker.description,1000),caption:clean(value.sticker.caption,70),builtinId:clean(value.sticker.builtinId,180)||undefined}:undefined,
+    spotifyShare:normalizeSpotifyShare(value.spotifyShare),sharedCapture:normalizeLumistryCapture(value.sharedCapture),datingPhoto:normalizeDatingAttachment(value.datingPhoto),
     imageId: clean(value.imageId, 160) || undefined,
     call: normalizeCallMarker(value.call),
     imageUrl: clean(value.imageUrl, 2_000) || undefined,
@@ -283,6 +288,7 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     kind,
     title: clean(value.title, 120) || (kind === 'direct' ? fallback?.name || messages.at(-1)?.senderName || 'Conversation' : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group'),
     appearance:normalizeChatAppearance(value.appearance),
+    channel:value.channel==='dating'?'dating':'phone',datingOwnerId:clean(value.datingOwnerId,180)||undefined,archived:value.archived===true,
     participantActorIds,
     includesPocketPersona,
     participantContactIds,
@@ -349,11 +355,11 @@ function activeContact(context: { characterId: string; characterName: string; no
 }
 
 export function ensureDirectConversation(state: { contacts: PocketContact[]; conversations: PocketConversation[] }, contactId: string, now: string, makeId: (prefix: string) => string): PocketConversation {
-  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona !== false && (conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId)
+  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.channel!=='dating' && conversation.includesPocketPersona !== false && (conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId)
   if (existing) return existing
   const contact = state.contacts.find((entry) => entry.id === contactId)
   const conversation: PocketConversation = {
-    id: makeId('conversation'), kind: 'direct', title: contact?.name || 'Conversation', participantActorIds: [contactId], includesPocketPersona: true, participantContactIds: [contactId],
+    id: makeId('conversation'), kind: 'direct', channel:'phone', title: contact?.name || 'Conversation', participantActorIds: [contactId], includesPocketPersona: true, participantContactIds: [contactId],
     messages: [], unread: 0, availability: { state: 'remote' }, createdAt: now, updatedAt: now,
   }
   state.conversations.push(conversation)
@@ -419,7 +425,7 @@ export function normalizeContactCollections(value: AnyRecord, context: {
       conversations.push(conversation)
       continue
     }
-    const directKey = `${conversation.includesPocketPersona ? 'persona' : 'external'}:${[...conversation.participantActorIds].sort().join('|')}`
+    const directKey = `${conversation.channel||'phone'}:${conversation.datingOwnerId||''}:${conversation.includesPocketPersona ? 'persona' : 'external'}:${[...conversation.participantActorIds].sort().join('|')}`
     const duplicate = directByContact.get(directKey)
     if (!duplicate) {
       directByContact.set(directKey, conversation)

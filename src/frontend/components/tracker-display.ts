@@ -208,6 +208,7 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
     if (latest.reason) history.title = latest.reason
     card.append(history)
   }
+  if(Object.values(state.nativeApps||{}).some(data=>data.wallet.trackerId===tracker.id))card.append(el('small','lp-tracker-bank-sync','Synced with Pocket Bank'))
   return card
 }
 

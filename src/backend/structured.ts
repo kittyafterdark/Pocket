@@ -1,3 +1,5 @@
+export {StructuredOutputError,runStructuredResponse,validateStructuredTask,expandedStructuredBudget} from './community-structured.js'
+
 type JsonObject = Record<string, unknown>
 
 function object(value: unknown): JsonObject {

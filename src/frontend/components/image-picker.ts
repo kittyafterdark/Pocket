@@ -8,6 +8,9 @@ export type PocketImageTarget = 'device-home' | 'device-chat' | 'persona-home' |
 export interface PocketImageControlHost {
   choose(target: PocketImageTarget, mode: 'gallery' | 'upload' | 'url'): void
   change(wallpaper: PocketWallpaper): void
+  inherit?():void
+  inherited?:boolean
+  defaultResolved?:PocketResolvedImage
 }
 
 function range(label: string, value: number, update: (value: number) => void): HTMLLabelElement {
@@ -28,26 +31,37 @@ export function wallpaperImageControl(
   resolved: PocketResolvedImage,
   host: PocketImageControlHost,
 ): HTMLElement {
+  let current=structuredClone(wallpaper),inherited=host.inherited===true
+  const personal=target.startsWith('persona-')
+  const change=(next:PocketWallpaper)=>{current=structuredClone(next);inherited=false;host.change(current);sync()}
   const card = el('section', 'lp-wallpaper-control')
   card.dataset.imageTarget = target
   card.setAttribute('aria-label', `${label} wallpaper`)
   const heading = el('div', 'lp-row-between')
   const copy = el('span'); copy.append(el('strong', '', label), el('span', 'lp-copy', resolved.status === 'error' ? `${resolved.sourceLabel} · unavailable` : resolved.sourceLabel))
-  const clear = button(target.startsWith('persona-') ? 'Use default' : 'Clear', 'lp-button lp-button-quiet')
-  clear.setAttribute('aria-label', target.startsWith('persona-') ? `Use default wallpaper for ${label}` : `Clear ${label} wallpaper`)
-  clear.disabled = !wallpaper.source
-  clear.addEventListener('click', () => host.change({ ...wallpaper, source: null }))
-  heading.append(copy, clear)
+  const clear = button('Clear background', 'lp-button lp-button-quiet')
+  clear.setAttribute('aria-label',`Clear ${label} background`)
+  clear.addEventListener('click',()=>change({...current,source:null}))
+  const useDefault=personal?button('Use default','lp-button lp-button-quiet'):null
+  if(useDefault){useDefault.setAttribute('aria-label',`Use default wallpaper for ${label}`);useDefault.onclick=()=>{current={...current,source:null};inherited=true;if(host.inherit)host.inherit();else host.change(current);sync()}}
+  heading.append(copy);if(!personal)heading.append(clear)
   const preview = el('div', 'lp-wallpaper-preview')
-  preview.dataset.empty = String(!resolved.url)
-  preview.dataset.resolutionStatus = resolved.status
-  preview.style.backgroundImage = resolved.url ? `linear-gradient(rgba(5,4,8,${wallpaper.scrim}),rgba(5,4,8,${wallpaper.scrim})),url(${JSON.stringify(resolved.url)})` : ''
-  preview.style.backgroundSize = wallpaper.fit === 'stretch' ? '100% 100%' : wallpaper.fit
-  preview.style.backgroundPosition = `${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%`
-  preview.textContent = resolved.url ? '' : resolved.error || 'Theme background'
+  function sync(){
+    const image=personal&&inherited?host.defaultResolved:current.source?resolved:undefined,url=image?.url
+    clear.disabled=personal?!current.source&&!inherited:!current.source
+    if(useDefault)useDefault.disabled=inherited
+    preview.dataset.empty=String(!url);preview.dataset.resolutionStatus=image?.status||'empty'
+    preview.style.backgroundImage=url?`linear-gradient(rgba(5,4,8,${current.scrim}),rgba(5,4,8,${current.scrim})),url(${JSON.stringify(url)})`:''
+    preview.style.backgroundSize=current.fit==='stretch'?'100% 100%':current.fit
+    preview.style.backgroundPosition=`${current.focalX*100}% ${current.focalY*100}%`
+    preview.textContent=url?'':image?.error||'Top/bottom gradient'
+    copy.querySelector('.lp-copy')!.textContent=image?.sourceLabel||(personal&&inherited?'Device default':'Top/bottom gradient')
+  }
+  sync()
+  const modes=el('div','lp-wallpaper-modes');if(useDefault)modes.append(useDefault,clear)
   const actions = el('div', 'lp-wallpaper-actions')
   const presets = button('Pocket Wallpapers', 'lp-button lp-button-quiet lp-wallpaper-presets-button')
-  presets.addEventListener('click', () => showWallpaperGallery(presets, wallpaper, target.endsWith('chat') ? 'Chat' : 'Home', host.change))
+  presets.addEventListener('click', () => showWallpaperGallery(presets, current, target.endsWith('chat') ? 'Chat' : 'Home', change))
   actions.append(presets)
   for (const [mode, text] of [['gallery', 'Gallery'], ['upload', 'Upload'], ['url', 'Image URL']] as const) {
     const choose = button(text, 'lp-button lp-button-quiet')
@@ -59,13 +73,13 @@ export function wallpaperImageControl(
     const option = el('option', '', value[0].toUpperCase() + value.slice(1)); option.value = value; option.selected = wallpaper.fit === value; fit.appendChild(option)
   }
   fit.setAttribute('aria-label', `${label} fit`)
-  fit.addEventListener('change', () => host.change({ ...wallpaper, fit: fit.value as PocketWallpaper['fit'] }))
+  fit.addEventListener('change', () => change({ ...current, fit: fit.value as PocketWallpaper['fit'] }))
   const focal = el('div', 'lp-wallpaper-focal')
   focal.append(
-    range('Horizontal focus', wallpaper.focalX, (value) => host.change({ ...wallpaper, focalX: value })),
-    range('Vertical focus', wallpaper.focalY, (value) => host.change({ ...wallpaper, focalY: value })),
-    range('Scrim', wallpaper.scrim, (value) => host.change({ ...wallpaper, scrim: value })),
+    range('Horizontal focus', wallpaper.focalX, (value) => change({ ...current, focalX: value })),
+    range('Vertical focus', wallpaper.focalY, (value) => change({ ...current, focalY: value })),
+    range('Scrim', wallpaper.scrim, (value) => change({ ...current, scrim: value })),
   )
-  card.append(heading, preview, actions, disclosure('Adjust wallpaper', fit, focal))
+  card.append(heading, preview);if(useDefault)card.append(modes);card.append(actions, disclosure('Adjust wallpaper', fit, focal))
   return card
 }

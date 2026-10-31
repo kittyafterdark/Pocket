@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0 — 2026-10-31
+
+### More apps for your Pocket
+
+- Added optional Lumistry, Spotify Share and Screenshots apps to the App Store. Lumistry brings fictional dating profiles, discovery and its own inbox; Spotify Share previews songs and selected lyrics through SpotifyControls; Screenshots shares reviewed excerpts from multiple Pocket apps.
+- Added Pocket Bank, Birthdays, Browser, Maps, Twitch and Stickers, with data isolated to each Pocket and Persona phone.
+- Rebuilt native app layouts around their purpose: bank cards, transactions and spending breakdowns; a birthday calendar; browser address bar and tabs; a pannable neighborhood map; streaming feeds, channel views and live chat.
+- Added explicit two-way synchronization between Pocket Bank and an existing money counter or meter, with a choice of starting balance.
+
+### Stickers and sharing
+
+- Added searchable sticker packs shared by Messages and Discord, including 199 bundled images across Double Underlined, Gatos Cartoon, Nyas and Forbidden Emotes 2.0. Animated GIFs retain their original animation.
+- Added custom pack creation, renaming, moving stickers between packs, and sticker editing for names, descriptions and captions. Gallery selections now open a naming/review screen before saving.
+- Added Swarm generation previews and step progress, followed by explicit Accept, Retry or Discard controls. Generated stickers no longer enter the library automatically.
+- Replaced the crowded attachment modal with a compact menu and separate photo, event and sharing screens. Messages stickers and Discord emoji/emotes/GIFs use composer drawers that leave chat visible.
+- Fixed mobile sticker thumbnail sizing, pack-rail overflow, and scaling. Removing packs preserves already-sent images and emotes.
+- Redesigned Spotify sharing, screenshot selection and the roleplay reference selector. Twitter captions now appear above full-width pictures and GIFs.
+
+### Persona appearance and fixes
+
+- Fixed Persona color swatches overwriting one another after save replies, including delayed replies arriving out of order. Custom color edits update the Theme selector correctly.
+- Added Clear background for Persona Home and Chat gradients, separately from Use default, which inherits the device wallpaper.
+- Fixed Persona portraits to prefer Lumiverse's displayed avatar crop over the original upload, with identity-scoped refreshes in roleplay and Freeform.
+- Added Refresh Persona portrait to the Pocket devices sidebar for repairing older saved phones without resetting their identity, history or appearance.
+- Added Pocket text reasoning effort controls, defaulting to Off, and grouped voice/TTS and image settings under Media.
+- Expanded backend, persistence, cancellation, accessibility and mobile/desktop browser verification for the new apps and fixes.
+
 ## 0.4.0 — 2026-10-30
 
 ### Context and Freeform

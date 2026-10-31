@@ -18,6 +18,10 @@ let receive: (payload: any) => void = () => {}, activated = () => {}
 const widget = (root: HTMLElement) => ({ root, widgetId: root.id, moveTo() {}, getPosition: () => ({ x: 10, y: 10 }), onDragEnd: () => () => {},
   setVisible: (show: boolean) => { root.hidden = !show }, isVisible: () => !root.hidden, isFullscreen: () => innerWidth < 600, setFullscreen() {}, setSize() {}, setTouchScrollMode() {}, destroy() { root.replaceChildren(); root.hidden = true } })
 const ctx: any = {
+  components: { mountModelCombobox(target: HTMLElement, options: any) {
+    const input = document.createElement('input'); input.value = options.value || ''; input.disabled = Boolean(options.disabled); input.setAttribute('aria-label', 'Model override'); input.onchange = () => options.onChange(input.value); target.append(input)
+    return { destroy() { input.remove() } }
+  } },
   dom: { addStyle(css: string) { const sheet = document.createElement('style'); sheet.textContent = css; document.head.append(sheet); return () => sheet.remove() }, findMessageElement: () => null, uninject: (node: HTMLElement) => node.remove() },
   ui: {
     registerDrawerTab: () => ({ root: drawer, setBadge() {}, activate() { activated() }, onActivate(handler: () => void) { activated = handler; return () => { activated = () => {} } }, destroy() { drawer.replaceChildren() } }),

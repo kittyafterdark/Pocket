@@ -1,3 +1,6 @@
+import {normalizeReliabilityDiagnostic} from './reliability.js'
+import {normalizeAuthoringPolicy} from './authoring-policy.js'
+import { normalizeReasoningEffort } from './reasoning.js'
 import type { DevicePreferences, PocketImageSource, PocketWallpaper, PhonePalette, PhoneTheme } from '../types.js'
 import { normalizeJevSettings } from './jev.js'
 import { builtinWallpaper } from './wallpapers.js'
@@ -136,6 +139,7 @@ export function defaultPreferences(): DevicePreferences {
     sidecarConnectionId: '',
     sidecarModelOverride: '',
     samplerOverrides: {},
+    reasoningEffort: 'off',
     autoReplyAfterSend: false,
     replyCadence: 'natural',
     ambientMessaging: 'off',
@@ -152,6 +156,7 @@ export function defaultPreferences(): DevicePreferences {
     customCss: '',
     personaAppearance: {},
     generationHistory: [],
+    authoring:normalizeAuthoringPolicy(null),
     manualVisualProfile: { positive: '', negative: '', model: '', connectionId: '', loras: [], parameters: {} },
   }
 }
@@ -192,7 +197,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
     const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge', 'social-feed'])
-    if (!requestId || !tasks.has(task)) return []
+    if (!requestId || !tasks.has(task) && !/^lumistry-[a-z_]+$/.test(task) && !/^native-(bank|birthdays|browser|maps|twitch|stickers)$/.test(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{
       requestId, task,
@@ -203,6 +208,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
       completedAt: text(item.completedAt, '', 40) || undefined,
       latencyMs: Number.isFinite(Number(item.latencyMs)) ? Math.max(0, Math.round(Number(item.latencyMs))) : undefined,
       error: text(item.error, '', 500) || undefined,
+      usageStatus:(item.usageStatus==='reported'||item.usageStatus==='partial'?item.usageStatus:'unavailable') as DevicePreferences['generationHistory'][number]['usageStatus'],
+      diagnostic:normalizeReliabilityDiagnostic(item.diagnostic),
     }]
   })
   const rawPersonaAppearance = record(raw.personaAppearance)
@@ -275,9 +282,12 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
     automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
+    ...(raw.authoring?{authoring:normalizeAuthoringPolicy(raw.authoring)}:{}),
+    lumistryImageDialect:raw.lumistryImageDialect==='anima'||raw.lumistryImageDialect==='generic'?raw.lumistryImageDialect:'auto',
     sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
     sidecarModelOverride: text(raw.sidecarModelOverride, '', 500),
     samplerOverrides: normalizeSamplerOverrides(raw.samplerOverrides),
+    reasoningEffort: normalizeReasoningEffort(raw.reasoningEffort),
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     replyCadence: raw.replyCadence === 'instant' || raw.replyCadence === 'quick' || raw.replyCadence === 'relaxed' ? raw.replyCadence : 'natural',
     ambientMessaging: raw.ambientMessaging === 'sparse' || raw.ambientMessaging === 'normal' ? raw.ambientMessaging : 'off',

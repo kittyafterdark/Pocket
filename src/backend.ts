@@ -1,3 +1,16 @@
+import { syncWalletTrackers } from './domain/wallet-tracker-sync.js'
+import { NativeAppsRuntime } from './backend/native-apps.js'
+import { normalizeNativeApps, NATIVE_APP_IDS } from './domain/native-apps.js'
+import {createCommunityRuntime} from './backend/community-runtime.js'
+import {SpotifyShareBridge} from './backend/spotify-share.js'
+import {datingReplyTexts} from './domain/lumistry-reply-burst.js'
+import {preparePersonaDatingPhoto} from './domain/lumistry-user-photo.js'
+import {normalizeDating,datingReplyMessages,datingDecisionMessages,datingThread,datingFor,hiddenDatingContact} from './domain/lumistry.js'
+import {normalizeDatingAttachment} from './domain/lumistry-person.js'
+import {createPocketCapture} from './domain/pocket-sharing.js'
+import {lumistryCaptureText,LUMISTRY_CAPTURE_GUIDANCE} from './domain/lumistry-sharing.js'
+import {normalizeLumistryCapture} from './domain/lumistry-sharing.js'
+import {normalizeSpotifyShare,spotifySharePromptContext} from './domain/spotify-share.js'
 import { characterPhotoInstruction, validChatPhotoUpload } from './domain/message-photo.js'
 import { GALLERY_PAGE_SIZE, galleryOffset } from './domain/gallery-page.js'
 import { voiceMessage } from './domain/voice.js'
@@ -146,6 +159,35 @@ const freeformSessions = new FreeformSessions({
   makeId: () => id('session'), now: nowIso,
 })
 
+const spotifyShare = new SpotifyShareBridge((template,scope)=>spindle.macros.resolve(template,scope))
+const TRUSTED_SPOTIFY_SHARE=Symbol('spotify-share')
+const TRUSTED_CAPTURE=Symbol('pocket-capture')
+const TRUSTED_DATING_PHOTO=Symbol('dating-photo')
+const TRUSTED_STICKER=Symbol('sticker')
+const lumistry=createCommunityRuntime({spindle,loadState,saveState,sendState,send,withStateLock,stateKey,nowIso,id,loadPreferences,savePreferences,
+  getMessages:pocketHostMessages,validateImage:async(imageId,user)=>{assertPocketImageResolved(await resolvePocketImageSource(spindle,{kind:'gallery',imageId},user))},
+  camera:(input,user)=>cameraGenerate({...input,purpose:'message'},user),
+  cancelCamera:(request,user)=>{const job=cameraJobs.get(`${viewKey(user)}:${request}`);if(job){job.cancelled=true;job.controller.abort()}},
+  activeScope:(chat,character,user)=>{const view=currentView(user);return !view || view.chatId===chat && view.characterId===character},
+  cancelReply:(chat,character,conversation,user)=>replyJobs.cancel(replyJobScope(chat,character,conversation,user)),
+})
+
+const nativeApps=new NativeAppsRuntime({loadState,saveState,sendState,send,withStateLock,stateKey,id,now:nowIso,
+  permitted:p=>spindle.permissions.has(p),
+  generate:(task,requestId,input,user)=>runPocketGeneration({spindle,loadPreferences,savePreferences,send},task,requestId,input,user),
+  image:cameraGenerate,
+  cancelImage:(requestId,user)=>{const job=cameraJobs.get(`${viewKey(user)}:${requestId}`);if(job){job.cancelled=true;job.controller.abort()}},
+  imageSource:async(imageId,user)=>{const image=await resolvePocketImageSource(spindle,{kind:'gallery',imageId},user);assertPocketImageResolved(image);return image},
+  uploadImage:async(dataUrl,filename,user)=>{if(!spindle.permissions.has('images'))throw new Error('Enable Images to upload stickers.');if(!validChatPhotoUpload(dataUrl))throw new Error('Choose a PNG, JPEG, WebP or GIF up to 8 MB.');return spindle.images.uploadFromDataUrl(dataUrl,{originalFilename:filename||'Pocket sticker',userId:user})},
+  sendMessage:async(context,conversationId,body,user,image)=>{
+    const state=await loadState(context.chatId,context.characterId,user),conversation=state.conversations.find(c=>c.id===conversationId&&!c.archived&&conversationDeviceActorIds(state,c).includes(pocketPersonaActorId(state)))
+    if(!conversation)throw new Error('Choose a conversation on your own phone.')
+    const payload:any={conversationId,text:body,sender:'persona'};if(image){payload.sticker={description:image.description,caption:image.caption,builtinId:image.builtinId};payload[TRUSTED_STICKER]=true}
+    return applyAction({...context,action:'message',payload,...(image?{__chatPhoto:{id:image.imageId,url:image.imageUrl}}:{})},user,'user')
+  },
+  addEvent:(context,event,user)=>applyAction({...context,action:'event',payload:event},user,'user'),
+})
+
 async function pocketHostMessages(chatId: string): Promise<any[]> {
   return isFreeformChat(chatId) ? [] : spindle.chat.getMessages(chatId)
 }
@@ -158,11 +200,7 @@ async function freeformDirectory(userId?: string): Promise<FreeformDirectory> {
     while (true) {
       const page = await spindle.personas.list({ limit: 100, offset, userId })
       for (const persona of page.data) {
-        let avatarUrl = ''
-        if (persona.image_id && spindle.permissions.has('images')) {
-          const image = await spindle.images.get(persona.image_id, { specificity: 'sm', userId }).catch(() => null)
-          avatarUrl = image?.url || ''
-        }
+        const avatarUrl=await personaPortrait(persona,userId)
         personas.push({ id: persona.id, name: persona.name, avatarUrl })
       }
       offset += page.data.length
@@ -716,6 +754,9 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     chatId,
     characterId,
     contextScenario: text(value.contextScenario, 12000),
+    storageRevision:Math.max(0,Math.round(numberValue(value.storageRevision,0))),
+    nativeApps:Object.fromEntries(Object.entries(isRecord(value.nativeApps)?value.nativeApps:{}).slice(0,16).map(([owner,data])=>[owner,normalizeNativeApps(data)])),
+    lumistry:Object.fromEntries(Object.entries(isRecord(value.lumistry)?value.lumistry:{}).slice(0,16).map(([owner,data])=>[owner,normalizeDating(data)])),
     characterName: characterName || text(value.characterName, 120) || fallback.characterName,
     roleplayNow: text(value.roleplayNow, 80) || fallback.roleplayNow,
     roleplayClockSource: value.roleplayClockSource === 'manual' || value.roleplayClockSource === 'narrative' ? value.roleplayClockSource : 'legacy',
@@ -790,16 +831,24 @@ async function stateCharacterIdForChat(chatId: string, hintedCharacterId: unknow
   return text(hintedCharacterId, 180) || '_none'
 }
 
+async function personaPortrait(persona:any,userId?:string):Promise<string> {
+  // Match Lumiverse's avatar surfaces: the current square portrait can differ from the original upload.
+  const metadata=isRecord(persona?.metadata)?persona.metadata:{}
+  const imageId=text(metadata.avatar_crop_image_id,180)||text(persona?.image_id ?? persona?.imageId,180)
+  if(imageId){
+    if(!spindle.permissions.has('images'))return ''
+    const image:any=await spindle.images.get(imageId,{specificity:'sm',userId}).catch(()=>null)
+    return text(image?.url,2000)
+  }
+  return text(persona?.avatar_url ?? persona?.avatarUrl,2000)
+}
+
 async function resolveActivePocketPersona(userId?: string): Promise<ChatPocketPersona | null> {
   if (!spindle.permissions.has('personas')) return null
   try {
     const persona: any = await spindle.personas.getActive(userId)
     if (!persona) return null
-    let avatarUrl = ''
-    if (persona.image_id && spindle.permissions.has('images')) {
-      const image: any = await spindle.images.get(String(persona.image_id), { specificity: 'sm', userId }).catch(() => null)
-      avatarUrl = text(image?.url, 2_000)
-    }
+    const avatarUrl=await personaPortrait(persona,userId)
     const metadata = isRecord(persona.metadata) ? persona.metadata : {}
     return {
       source: 'lumiverse', linkedPersonaId: text(persona.id, 180), displayName: text(persona.name, 120) || 'You',
@@ -838,7 +887,7 @@ function directGenerationHistory(state: PhoneState, conversation: PocketConversa
   for (const message of conversation.messages.slice(-20)) {
     if(message.timeskip){history.push({role:'system',content:`TIME HAS PASSED: ${timeskipLabel(message.timeskip.minutes)}. Earlier phone messages are history; resume after this gap without inventing off-screen events.`});continue}
     if (message.sender === 'system') continue
-    const body = text(message.text, 8_000) + (message.imageId ? `\n[Photo attachment${message.photo?.prompt ? ': '+message.photo.prompt : '; use the caption as context, visual content is not available'}]` : '')
+    const body = text(message.spotifyShare?spotifySharePromptContext(message):message.text, 8_000) + (message.imageId ? `\n[Photo attachment${message.photo?.prompt ? ': '+message.photo.prompt : '; use the caption as context, visual content is not available'}]` : '')
     if (!body) continue
 
     const senderId = message.senderActorId || message.senderContactId || ''
@@ -913,7 +962,7 @@ function backfillDirectPhoneMemories(state: PhoneState): void {
 }
 
 async function loadState(chatId: string, characterId: string, userId?: string): Promise<PhoneState> {
-  if(isFreeformChat(chatId))await freeformSessions.get(chatId,userId)
+  const freeformIdentity=isFreeformChat(chatId)?await freeformSessions.get(chatId,userId):null
   const characterPresentation = await characterPresentationFor(characterId, userId)
   const characterName = characterPresentation.name
   const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), {
@@ -960,6 +1009,13 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
       state.pocketPersona = changed ? mergedHostPersona : state.pocketPersona
       stateChanged ||= changed
     }
+  }
+  // Portrait identity follows the session's chosen Persona, never its appearance base or host active Persona.
+  const portraitPersonaId=freeformIdentity?.personaId || (state.pocketPersona.source!=='lumiverse'?state.pocketPersona.linkedPersonaId:'')
+  if(portraitPersonaId && spindle.permissions.has('personas') && typeof spindle.personas.get==='function'){
+    try{const bound=await spindle.personas.get(portraitPersonaId,userId)
+      if(bound){const portrait=await personaPortrait(bound,userId);if(state.pocketPersona.avatarUrl!==portrait){state.pocketPersona.avatarUrl=portrait;stateChanged=true}}
+    }catch{/* A failed portrait lookup must not prevent other phone apps from loading. */}
   }
   if (raw === null) {
     const profiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries
@@ -1090,6 +1146,8 @@ async function saveNpcBank(value: unknown, userId?: string): Promise<PocketNpcBa
 async function saveState(state: PhoneState, userId?: string): Promise<void> {
   if(isFreeformChat(state.chatId))await freeformSessions.get(state.chatId,userId)
   state.updatedAt = nowIso()
+  syncWalletTrackers(state,state.updatedAt)
+  state.storageRevision=Math.max(0,state.storageRevision||0)+1
   await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId })
 }
 
@@ -1359,7 +1417,7 @@ async function validateChangedWallpaperSources(existing: DevicePreferences, next
   }
 }
 
-async function sendState(state: PhoneState, userId?: string, reason = 'refresh', open = false): Promise<void> {
+async function sendState(state: PhoneState, userId?: string, reason = 'refresh', open = false, preferenceRequestId?: string): Promise<void> {
   const preferences = await loadPreferences(userId)
   const npcBank = await loadNpcBank(userId)
   const identityProfiles = normalizeIdentityProfiles(await spindle.userStorage.getJson(IDENTITY_PROFILES_PATH, { fallback: null, userId })).entries
@@ -1403,7 +1461,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
     if ('avatarOverrideUrl' in contact) contact.avatarOverrideUrl = image.url
     else contact.avatarUrl = image.url
   }))
-  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, conversationWallpapers, capabilities: isFreeformChat(state.chatId) ? { ...capabilities(), chatMutation: false, sceneSync: false } : capabilities(), generation, swarmProfile, activePersona, freeformSession, reason, open }, userId)
+  send({ type: 'lumiphone:state', state: displayState, npcBank, identityProfiles, preferences, jevKeyConfigured: Boolean(await getJevApiKey(userId)), resolvedWallpapers, conversationWallpapers, capabilities: isFreeformChat(state.chatId) ? { ...capabilities(), chatMutation: false, sceneSync: false } : capabilities(), generation, swarmProfile, activePersona, freeformSession, reason, open, ...(preferenceRequestId?{requestId:preferenceRequestId}:{}) }, userId)
 }
 
 function viewKey(userId?: string): string { return userId || '_default' }
@@ -3556,7 +3614,7 @@ async function generateMessageJob(input: AnyRecord & { signal: AbortSignal }, us
     const assembled = await assemblePocketContext({
       state: generationState, contact, conversation: contextConversation, preferences,
       actorIdentity: compactIdentity,
-      extraContext: await extraPhoneContext(generationState, contextConversation, userId),
+      extraContext: conversation.channel==='dating'?'':await extraPhoneContext(generationState, contextConversation, userId),
       getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
       includePhoneThread: conversation.kind !== 'direct',
       includeRoleplayBackground: false,
@@ -3583,7 +3641,7 @@ async function generateMessageJob(input: AnyRecord & { signal: AbortSignal }, us
       : 'EMPTY THREAD — no prior phone messages exist. This generated message starts the conversation.'
     const generationTask = replaceIndex >= 0 ? 'message-retry' : 'message-reply'
     const generationInfo = await inspectPocketGeneration({ spindle, loadPreferences, savePreferences, send }, preferences, userId)
-    const personaName = generationPersona.displayName?.trim() || 'You'
+    const personaName = conversation.channel==='dating' ? datingFor(state,conversation.datingOwnerId).self?.alias || 'You' : generationPersona.displayName?.trim() || 'You'
     const personaIdentity = pocketPersonaPhoneBrief(generationPersona)
     const continuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(continuitySeed, profile.name, [profile.name, personaName])
     const actorMemoryText = actorPhoneMemoryContext(state.actorMemories, {
@@ -3660,6 +3718,8 @@ Use arriving while traveling toward the physical scene, local only when the mess
         ]
 
     input.signal?.throwIfAborted()
+    if(contextConversation.messages.some(m=>m.sharedCapture))generationMessages.unshift({role:'system',content:LUMISTRY_CAPTURE_GUIDANCE.replaceAll('Lumistry','Pocket')})
+    if(conversation.channel==='dating'){generationMessages.splice(0,generationMessages.length,...datingReplyMessages(state,conversation,instruction));generationMessages.unshift({role:'system',content:PHONE_TEXT_STYLE});if(conversation.messages.some(m=>m.sharedCapture))generationMessages.unshift({role:'system',content:LUMISTRY_CAPTURE_GUIDANCE.replaceAll('Lumistry','Pocket')})}
     if (isFreeformChat(context.chatId)) generationMessages.unshift({ role: 'system', content: 'FREEFORM SESSION: This phone is independent of any roleplay chat. Use only this session’s persona, contacts, phone conversations, and app state. Keep the channel remote; there is no external scene or roleplay handoff. Never assume events from the host’s active chat.' })
     const generationRequest: AnyRecord = {
       signal: input.signal,
@@ -3682,6 +3742,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     let generated: AnyRecord = {}
     try { generated = parseGeneratedObject(response.content) }
     catch { generated = { message: response.content, after: { state: 'remote' } } }
+    if(conversation.channel==='dating'){const burst=datingReplyTexts(generated);generated.message=burst[0]||generated.message;generated.__burst=burst.slice(1);generated.after={state:'remote'}}
     const reply = cleanPhoneMessageText(text(generated.message, 8_000))
     if (!reply) throw new Error('The character did not return a phone message.')
     if (conversation.kind === 'direct') {
@@ -3694,6 +3755,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     const visible = notificationDestinationVisible(state, route, userId)
     const nextMessage: PhoneMessage = {
       id: id('msg'), sender: 'contact', senderActorId: actor.actorId, senderActorKind: actor.kind === 'contact' || actor.kind === 'discovered' ? actor.kind : undefined, senderContactId: actor.contact?.id, senderName: actor.name, senderAccent: actor.accent,
+      datingPhoto:conversation.channel==='dating'?normalizeDatingAttachment(generated.photo):undefined,
       photo: requestedMessagePhoto(generated.imagePrompt, preferences.characterPictures === true),
       text: reply, format: preferences.voiceMessages !== false && voiceMessage(generated.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), storyClock: roleplayClockSnapshot(state), read: visible, status: visible ? 'read' : 'delivered',
       eventSuggestion: reconcileMessageEventSuggestion(state, contextConversation, generated.suggestion, id),
@@ -3728,6 +3790,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     }
     conversation.messages = conversation.messages.slice(-MAX_MESSAGES)
     rememberPhoneMessage(state, conversation, nextMessage)
+    if(conversation.channel==='dating' && replaceIndex<0 && Array.isArray(generated.__burst))for(const body of generated.__burst.slice(0,3)){const extra:PhoneMessage={...nextMessage,id:id('msg'),text:cleanPhoneMessageText(text(body,8000)),datingPhoto:undefined,eventSuggestion:undefined};conversation.messages.push(extra);rememberPhoneMessage(state,conversation,extra)}
     if (!visible && replaceIndex < 0) conversation.unread += 1
     conversation.updatedAt = nowIso()
     const phoneMessageId = conversation.messages.at(-1)?.id
@@ -4198,7 +4261,7 @@ async function syncSceneContacts(input: AnyRecord, userId?: string): Promise<voi
       stale: false,
     }
     for (const conversation of state.conversations) {
-      if (conversation.kind !== 'direct') continue
+      if (conversation.kind !== 'direct' || conversation.channel==='dating') continue
       const participant = resolvePocketActor(state, conversationActorIds(conversation)[0])?.contact
       if (participant?.presence.inScene && conversation.availability.state !== 'local') {
         const decision = normalizeReplyDecision({
@@ -4326,9 +4389,9 @@ async function maybeReplyAfterSendJob(chatId: string, characterId: string, conve
       type: 'lumiphone:message_progress', requestId, chatId, characterId,
       conversationId, actorId: actor.actorId, contactId: actor.contact?.id, speakerContactId: actor.actorId, phase: 'checking',
     }, userId)
-    const explicitRemoteOverride = isFreeformChat(chatId) || Boolean(burst?.explicitRemoteOverride)
+    const explicitRemoteOverride = isFreeformChat(chatId) || conversation.channel==='dating' || Boolean(burst?.explicitRemoteOverride)
     const deterministicLocal = !explicitRemoteOverride && (contact.presence.inScene || conversation.availability.state === 'local')
-    const rawDecision = isFreeformChat(chatId) ? { action: 'reply' } : deterministicLocal ? { action: 'handoff', reason: contact.presence.inScene ? conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene' : conversation.availability.state === 'local' ? conversation.availability.reason : 'continued_in_person' } : !contact.messagingPolicy.remoteEligible && conversation.availability.state !== 'arriving'
+    const rawDecision = conversation.channel==='dating' ? await runStructuredGeneration('reply-decision',requestId,{type:'quiet',messages:datingDecisionMessages(state,conversation,'Decide whether to reply to the latest settled message. Return strict JSON.'),parameters:{temperature:.2,max_tokens:400}},userId) : isFreeformChat(chatId) ? { action: 'reply' } : deterministicLocal ? { action: 'handoff', reason: contact.presence.inScene ? conversation.availability.state === 'arriving' ? 'arrived' : 'in_scene' : conversation.availability.state === 'local' ? conversation.availability.reason : 'continued_in_person' } : !contact.messagingPolicy.remoteEligible && conversation.availability.state !== 'arriving'
       ? { action: 'pause', reason: 'away' }
       : await runStructuredGeneration('reply-decision', requestId, {
         signal,
@@ -4409,7 +4472,7 @@ async function considerAmbientMessage(chatId: string, characterId: string, oppor
     if (!spindle.permissions.has('generation') || !shouldTakeAmbientOpportunity(preferences.ambientMessaging)) return
     const state = await loadState(chatId, characterId, userId)
     if (preferences.ambientMessaging === 'off') return
-    const candidates = ambientEligibleContacts(state.contacts)
+    const candidates = ambientEligibleContacts(state.contacts.filter(c=>!hiddenDatingContact(state,c.id)))
       .filter((contact) => contact.generationPolicy.relevant && contactCooldownReady(contact, preferences.ambientMessaging as 'sparse' | 'normal', state.roleplayNow))
       .slice(0, 16)
     if (!candidates.length) return
@@ -4670,7 +4733,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
           readByActorIds,
           senderActorKind: sender === 'contact' ? (senderActor!.kind === 'persona' ? undefined : senderActor!.kind) : undefined,
           senderContactId: senderContact?.id,
-          senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
+          senderName: sender === 'persona' ? (conversation.channel==='dating' ? datingFor(state,conversation.datingOwnerId).self?.alias || 'You' : state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
           senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
           text: row.messageText,
           format: preferences.voiceMessages !== false && voiceMessage(row.raw.format) ? 'voice' : undefined,
@@ -4847,8 +4910,12 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         id: id('msg'), sender, senderActorId, recipientActorIds, readByActorIds,
         senderActorKind: sender === 'contact' ? (senderActor!.kind === 'persona' ? undefined : senderActor!.kind) : undefined,
         senderContactId: senderContact?.id,
-        senderName: sender === 'persona' ? (state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
+        senderName: sender === 'persona' ? (conversation.channel==='dating' ? datingFor(state,conversation.datingOwnerId).self?.alias || 'You' : state.pocketPersona.displayName || 'You') : sender === 'system' ? 'Pocket' : senderActor!.name,
         senderAccent: sender === 'contact' ? senderActor!.accent : state.pocketPersona.accent,
+        datingPhoto:(payload as any)[TRUSTED_DATING_PHOTO]===true?normalizeDatingAttachment(payload.datingPhoto):undefined,
+        sticker:(payload as any)[TRUSTED_STICKER]===true?{description:text((payload.sticker as AnyRecord)?.description,1000),caption:text((payload.sticker as AnyRecord)?.caption,70),builtinId:text((payload.sticker as AnyRecord)?.builtinId,180)||undefined}:undefined,
+        sharedCapture:(payload as any)[TRUSTED_CAPTURE]===true?normalizeLumistryCapture(payload.sharedCapture):undefined,
+        spotifyShare:(payload as any)[TRUSTED_SPOTIFY_SHARE]===true?normalizeSpotifyShare(payload.spotifyShare):undefined,
         ...(source === 'user' && isRecord(input.__chatPhoto) ? {imageId:text(input.__chatPhoto.id,180),imageUrl:text(input.__chatPhoto.url,2000)} : {}),
         photo: source !== 'user' ? requestedMessagePhoto(payload.imagePrompt, preferences.characterPictures === true) : undefined,
         text: messageText, format: !call && preferences.voiceMessages !== false && voiceMessage(payload.format) ? 'voice' : undefined, createdAt: phoneMessageTimestamp(state), storyClock: roleplayClockSnapshot(state), read: personaRead,
@@ -5111,7 +5178,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
       activity = addActivity(state, { kind: 'tracker-change', title: next.label, summary: trackerSummary, route, source: { messageId: text(input.messageId, 180) || undefined, trackerId: next.id } }, command)
     } else if (action === 'notify') {
       const requestedApp = text(payload.app ?? input.app, 40)
-      const allowedApps = new Set(['home', 'messages', 'contacts', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'settings', 'appstore', 'twitter', 'discord', 'instagram', 'tumblr'])
+      const allowedApps = new Set(['home', 'messages', 'contacts', 'gallery', 'camera', 'notes', 'weather', 'calendar', 'trackers', 'settings', 'appstore', 'twitter', 'discord', 'instagram', 'tumblr','dating','spotify','sharing',...NATIVE_APP_IDS])
       const notifyTitle = text(payload.title ?? input.title, 160) || 'Pocket'
       const notifyBody = text(payload.body ?? payload.text ?? payload.content, 1_000)
       const notifyRoute = normalizePocketRoute(payload.route, { app: (allowedApps.has(requestedApp) ? requestedApp : 'home') as PhoneNotification['app'] } as PocketRoute)
@@ -5151,6 +5218,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       'lumiphone:arm_reference', 'lumiphone:rearm_reference', 'lumiphone:setup_world_seed',
       'lumiphone:sync_scene_contacts', 'lumiphone:timeline_review', 'lumiphone:jev_evaluate', 'lumiphone:reset_all_roleplay', 'lumiphone:gallery_add_to_chat',
     ].includes(String(payload.type))) throw new Error('This action needs a roleplay chat. Start from a Freeform session in Settings to keep its history separate.')
+    if(payload.type==='lumiphone:native'){await nativeApps.handle(payload,context,userId);return}
+    if(payload.type==='lumiphone:dating'){
+      const state=await loadState(context.chatId,context.characterId,userId)
+      if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'dating'))throw new Error('Install Lumistry from the App Store first.')
+      if(payload.deviceOwnerActorId && payload.deviceOwnerActorId!==pocketPersonaActorId(state))throw new Error('Switch to your own phone to use Lumistry.')
+      await lumistry.handle(payload,context,userId);return
+    }
     switch (payload.type) {
       case 'lumiphone:timeskip': {
         const minutes=timeskipMinutes(payload.minutes), conversationId=text(payload.conversationId,180)
@@ -5245,11 +5319,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const persona = await spindle.personas.get(text(payload.personaId, 180), userId)
           if (!persona) throw new Error('That Persona is unavailable. Refresh the lock screen.')
           const metadata = isRecord(persona.metadata) ? persona.metadata : {}
-          const image = persona.image_id && spindle.permissions.has('images') ? await spindle.images.get(persona.image_id, { specificity: 'sm', userId }).catch(() => null) : null
+          const portrait=await personaPortrait(persona,userId)
           session = await freeformSessions.create(payload.name, {
             source: 'manual', linkedPersonaId: persona.id, displayName: persona.name,
             pronouns: text(metadata.pronouns, 120), role: persona.title || 'Persona', identityBrief: text(persona.description, 1200),
-            avatarUrl: image?.url || '', accent: text(metadata.color, 20) || '#8b7dff', canAppear: false, updatedAt: nowIso(),
+            avatarUrl: portrait, accent: text(metadata.color, 20) || '#8b7dff', canAppear: false, updatedAt: nowIso(),
           }, userId)
         } else session = await freeformSessions.get(text(payload.sessionId, 180), userId)
         send({ type: 'lumiphone:freeform_opened', requestId, session }, userId)
@@ -5259,6 +5333,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       case 'lumiphone:freeform_delete': {
         const sessionId=text(payload.sessionId,180)
         await freeformSessions.get(sessionId,userId)
+        nativeApps.cancel({chatId:sessionId,characterId:'_none'},userId)
         const state=await loadState(sessionId,'_none',userId)
         for(const conversation of state.conversations)replyJobs.cancel(replyJobScope(sessionId,'_none',conversation.id,userId))
         const view=currentView(userId)
@@ -5388,6 +5463,11 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           const owner = text(payload.deviceOwnerActorId, 180) || pocketPersonaActorId(state)
           const available = owner === pocketPersonaActorId(state) || state.conversations.some(conversation => conversationDeviceActorIds(state, conversation).includes(owner))
           if (!available) throw new Error('That phone is no longer available.')
+          if(payload.installed===false&&owner===pocketPersonaActorId(state))nativeApps.cancel(context,userId,app)
+          if(app==='dating' && payload.installed===false && owner===pocketPersonaActorId(state)){
+            lumistry.cancelAll(userId)
+            for(const conversation of state.conversations.filter(c=>c.channel==='dating'))replyJobs.cancel(replyJobScope(context.chatId,context.characterId,conversation.id,userId))
+          }
           const layout = setPocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[owner]), app, payload.installed as boolean)
           state.launcherLayouts = { ...normalizeLauncherLayouts(state.launcherLayouts), [owner]: layout }
           await saveState(state, userId)
@@ -5763,7 +5843,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const next = normalizePreferences({ ...existing, ...(isRecord(payload.preferences) ? payload.preferences : isRecord(payload.settings) ? payload.settings : {}) })
         await validateChangedWallpaperSources(existing, next, userId)
         await savePreferences(next, userId)
-        await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences')
+        await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences', false, requestId)
         break
       }
       case 'lumiphone:identity_profile_save': {
@@ -5805,6 +5885,20 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         })
         send({ type: 'lumiphone:identity_profile_applied', requestId }, userId)
         break
+      }
+      case 'lumiphone:refresh_persona_portrait': {
+        await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
+          const state=await loadState(context.chatId,context.characterId,userId)
+          if(payload.deviceOwnerActorId&&payload.deviceOwnerActorId!==pocketPersonaActorId(state))throw new Error('Refresh the Persona portrait from your own phone.')
+          if(!spindle.permissions.has('personas')||!spindle.permissions.has('images'))throw new Error('Enable Personas and Images access to refresh the portrait.')
+          const session=isFreeformChat(context.chatId)?await freeformSessions.get(context.chatId,userId):null
+          const linked=session?.personaId||state.pocketPersona.linkedPersonaId
+          const persona=linked?await spindle.personas.get(linked,userId):await spindle.personas.getActive(userId)
+          if(!persona)throw new Error('No linked Persona is available to refresh.')
+          state.pocketPersona.avatarUrl=await personaPortrait(persona,userId)
+          await saveState(state,userId);await sendState(state,userId,'persona_portrait')
+        })
+        send({type:'lumiphone:persona_portrait_refreshed',requestId,...context},userId);break
       }
       case 'lumiphone:save_pocket_persona': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
@@ -6352,6 +6446,43 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           send({ type: 'lumiphone:gallery_action_done', requestId, action: 'set-contact-photo', message: `${contact.name} photo updated.` }, userId)
         })
         break
+      }
+      case 'lumiphone:persona_photo_send': {
+        const state=await loadState(context.chatId,context.characterId,userId),conversationId=text(payload.conversationId,180)
+        if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'dating'))throw new Error('Install Lumistry from the App Store first.')
+        const prepared=await preparePersonaDatingPhoto(state,conversationId,payload.photo,'user',async imageId=>assertPocketImageResolved(await resolvePocketImageSource(spindle,{kind:'gallery',imageId},userId)))
+        const trusted:any={conversationId,sender:'persona',text:text(payload.comment,8000)||'Photo',datingPhoto:prepared.datingPhoto};trusted[TRUSTED_DATING_PHOTO]=true
+        const image=prepared.imageId?await resolvePocketImageSource(spindle,{kind:'gallery',imageId:prepared.imageId},userId):undefined
+        await applyAction({...context,action:'message',payload:trusted,...(prepared.imageId?{__chatPhoto:{id:prepared.imageId,url:image?.url}}:{})},userId,'user')
+        send({type:'lumiphone:persona_photo_sent',requestId,...context,conversationId},userId);break
+      }
+      case 'lumiphone:share_capture': {
+        const state=await loadState(context.chatId,context.characterId,userId),conversationId=text(payload.conversationId,180)
+        if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'sharing'))throw new Error('Install Screenshots from the App Store first.')
+        const target=state.conversations.find(c=>c.id===conversationId && !c.archived && conversationDeviceActorIds(state,c).includes(pocketPersonaActorId(state)))
+        if(!target)throw new Error('Choose a conversation on your phone.')
+        if(!isRecord(payload.request))throw new Error('Preview a selection first.')
+        const capture=createPocketCapture(state,{sourceId:text(payload.request.sourceId,240),ids:Array.isArray(payload.request.ids)?payload.request.ids.map(id=>text(id,180)):[],caption:text(payload.request.caption,501)})
+        if(payload.expectedCapture!==lumistryCaptureText(capture))throw new Error('The source changed. Preview the selection again before sending.')
+        const trusted:any={conversationId,sender:'persona',text:lumistryCaptureText(capture),sharedCapture:capture};trusted[TRUSTED_CAPTURE]=true
+        await applyAction({...context,action:'message',payload:trusted},userId,'user')
+        send({type:'lumiphone:share_sent',requestId,...context,conversationId},userId);break
+      }
+      case 'lumiphone:spotify_preview': {
+        const state=await loadState(context.chatId,context.characterId,userId),conversationId=text(payload.conversationId,180)
+        if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'spotify'))throw new Error('Install Spotify Share from the App Store first.')
+        if(!state.conversations.some(c=>c.id===conversationId && conversationDeviceActorIds(state,c).includes(pocketPersonaActorId(state))))throw new Error('Choose a conversation on your phone.')
+        const preview=await spotifyShare.preview({...context,conversationId,userId})
+        send({type:'lumiphone:spotify_preview',requestId,...context,...preview},userId);break
+      }
+      case 'lumiphone:spotify_send': {
+        const state=await loadState(context.chatId,context.characterId,userId),conversationId=text(payload.conversationId,180)
+        if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'spotify'))throw new Error('Install Spotify Share from the App Store first.')
+        if(!state.conversations.some(c=>c.id===conversationId && conversationDeviceActorIds(state,c).includes(pocketPersonaActorId(state))))throw new Error('Choose a conversation on your phone.')
+        const prepared=spotifyShare.consume(isRecord(payload.spotifyShare)?payload.spotifyShare:{},{...context,conversationId,userId})
+        const trusted:any={conversationId,sender:'persona',text:prepared.text,spotifyShare:prepared.attachment};trusted[TRUSTED_SPOTIFY_SHARE]=true
+        await applyAction({...context,action:'message',payload:trusted},userId,'user')
+        send({type:'lumiphone:spotify_sent',requestId,...context,conversationId},userId);break
       }
       case 'lumiphone:prepare_chat_photo':
       case 'lumiphone:send_chat_photo': {
@@ -7103,6 +7234,7 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
 ensureInterceptor()
 registerTool()
 spindle.permissions.onChanged(({ permission, granted }) => {
+  if(!granted)nativeApps.revoke(permission)
   if (permission === 'tools') {
     if (granted) registerTool()
     else spindle.unregisterTool('phone_action')

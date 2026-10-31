@@ -400,3 +400,158 @@ test('manual JEV evaluation carries the operator user through the actual backend
     expect(host.read('phones/jev-operator-chat__host-character.json')).toBeUndefined()
   }finally{host.api.generate.quiet=original}
 })
+
+
+test('community Store apps install, preserve Lumistry state, and share only explicit saved content',async()=>{
+  const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Community integration'}),context=scope(session.id)
+  const before=await send('dating',{...context,action:'self',profile:{alias:'Fern',age:25}})
+  expect(before.error.error).toContain('Install Lumistry')
+  const imported=await send('import_contact',{...context,kind:'character',sourceId:'host-character'})
+  const conversationId=imported.responses.find(p=>p.type==='lumiphone:contact_created').conversationId
+  for(const app of ['dating','spotify','sharing'])expect((await send('app_install',{...context,appId:app,installed:true})).error).toBeUndefined()
+  const self=await send('dating',{...context,action:'self',profile:{alias:'Moon',age:25,fields:{interests:'books'}}})
+  expect(self.error).toBeUndefined()
+  const path=`phones/${session.id}___none.json`,owner=host.read(path).pocketPersonaActorId
+  expect(host.read(path).lumistry[owner].self.alias).toBe('Moon')
+  const accepted=await send('dating',{...context,action:'accept',profile:{id:'dating_fixture',alias:'Juniper',age:28,distanceKm:8,fields:{interests:'books'},interest:{version:2,status:'matched',seen:true,context:(await import('../src/domain/lumistry-compatibility.js')).interestContext(host.read(path).lumistry[owner])}}})
+  expect(accepted.error).toBeUndefined()
+  const profileId=host.read(path).lumistry[owner].profiles.at(-1).id
+  const originalLike=host.api.generate.quiet;host.api.generate.quiet=async()=>({content:JSON.stringify({status:'matched'})})
+  try{expect((await send('dating',{...context,action:'like',profileId})).error).toBeUndefined()}finally{host.api.generate.quiet=originalLike}
+  const dateThread=host.read(path).conversations.find((c:any)=>c.channel==='dating')
+  expect(dateThread).toBeDefined();expect(dateThread.id).not.toBe(conversationId)
+  const originalReply=host.api.generate.quiet
+  try{
+    host.api.generate.quiet=async(request:any)=>{
+      expect(JSON.stringify(request.messages)).not.toContain('HOST HISTORY MUST NEVER ENTER FREEFORM')
+      return {content:JSON.stringify({recipient:'Moon',messages:['A first dating text','And a second text'],photo:{description:'A cup of tea on a desk',subjectIds:[],aspect:'square'}})}
+    }
+    const reply=await send('generate_message',{...context,conversationId:dateThread.id})
+    expect(reply.error).toBeUndefined()
+    const messages=host.read(path).conversations.find((c:any)=>c.id===dateThread.id).messages
+    expect(messages.map((m:any)=>m.text)).toEqual(['A first dating text','And a second text'])
+    expect(messages[0].datingPhoto.description).toBe('A cup of tea on a desk')
+    expect(host.read(path).conversations.find((c:any)=>c.id===conversationId).messages).toHaveLength(0)
+  }finally{host.api.generate.quiet=originalReply}
+  const personaPhoto=await send('persona_photo_send',{...context,conversationId:dateThread.id,photo:{description:'My book on the table',includesSelf:false,aspect:'square'},comment:'Reading tonight'})
+  expect(personaPhoto.error).toBeUndefined()
+  expect(host.read(path).conversations.find((c:any)=>c.id===dateThread.id).messages.at(-1)).toMatchObject({sender:'persona',senderName:'Moon',datingPhoto:{description:'My book on the table'}})
+
+  await send('app_install',{...context,appId:'dating',installed:false})
+  expect((await send('dating',{...context,action:'diagnostics_preview'})).error.error).toContain('Install Lumistry')
+  await send('app_install',{...context,appId:'dating',installed:true})
+  expect((await send('freeform_open',{sessionId:session.id})).state.lumistry[owner].self.alias).toBe('Moon')
+  await send('action',{...context,action:'note',payload:{title:'Shared note',text:'An explicitly selected note excerpt'}})
+  const state=host.read(path),note=state.notes.at(-1),request={sourceId:'notes',ids:[note.id],caption:'Look at this'}
+  const {createPocketCapture}=await import('../src/domain/pocket-sharing.js'),{lumistryCaptureText}=await import('../src/domain/lumistry-sharing.js')
+  const expectedCapture=lumistryCaptureText(createPocketCapture(state,request))
+  const count=state.conversations.find((c:any)=>c.id===conversationId).messages.length
+  expect((await send('share_capture',{...context,conversationId,request,expectedCapture:'forged preview'})).error.error).toContain('source changed')
+  expect(host.read(path).conversations.find((c:any)=>c.id===conversationId).messages).toHaveLength(count)
+  const shared=await send('share_capture',{...context,conversationId,request,expectedCapture})
+  expect(shared.error).toBeUndefined()
+  const message=host.read(path).conversations.find((c:any)=>c.id===conversationId).messages.at(-1)
+  expect(message.sharedCapture.title).toBe('Notes');expect(message.text).toContain(note.body)
+  const macros=host.api.macros.resolve
+  try{
+    const values:any={spotify_now_playing:'Synthetic Sunrise by Fixture Band',spotify_track_name:'Synthetic Sunrise',spotify_artists:'Fixture Band',spotify_album_name:'Fixture Album',spotify_album_art:'',spotify_is_playing:'true',spotify_has_lyrics:'true',spotify_lyrics:'A synthetic first line\nA synthetic second line'}
+    host.api.macros.resolve=async(template:string,options:any)=>{expect(options.commit).toBe(false);return{text:template.replace(/\{\{(spotify_\w+)\}\}/g,(_:string,key:string)=>values[key]||''),diagnostics:[]}}
+    const preview=await send('spotify_preview',{...context,conversationId})
+    expect(preview.error).toBeUndefined()
+    const ready=preview.responses.find(p=>p.type==='lumiphone:spotify_preview')
+    const sent=await send('spotify_send',{...context,conversationId,spotifyShare:{previewId:ready.previewId,mode:'card',note:'For you'}})
+    expect(sent.error).toBeUndefined()
+    expect(host.read(path).conversations.find((c:any)=>c.id===conversationId).messages.at(-1).spotifyShare).toMatchObject({title:'Synthetic Sunrise',mode:'card',note:'For you'})
+    expect((await send('spotify_send',{...context,conversationId,spotifyShare:{previewId:ready.previewId,mode:'card'}})).error).toBeDefined()
+  }finally{host.api.macros.resolve=macros}
+})
+
+
+test('native apps use the actual backend in normal and Freeform Pockets without sharing balances',async()=>{
+  const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Native scope check'})
+  const normal={chatId:'native-normal-fixture',characterId:'host-character'},freeform=scope(session.id)
+  for(const context of [normal,freeform]){
+    const installed=await send('app_install',{...context,appId:'bank',installed:true});expect(installed.error).toBeUndefined()
+    const saved=await send('native',{...context,app:'bank',action:'balance',data:{amount:context.chatId===normal.chatId?125:40}});expect(saved.error).toBeUndefined()
+    const data=Object.values(saved.state.nativeApps)[0] as any;expect(data.wallet.balance).toBe(context.chatId===normal.chatId?125:40)
+  }
+  const restored=await send('get_state',normal);expect(restored.error).toBeUndefined();expect((Object.values(restored.state.nativeApps)[0] as any).wallet.balance).toBe(125)
+})
+
+
+test('connected money trackers and Pocket Bank persist changes from either native app boundary',async()=>{
+  const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Connected wallet'}),context=scope(session.id)
+  await send('app_install',{...context,appId:'bank',installed:true})
+  const tracker=await send('action',{...context,action:'tracker',payload:{id:'money-sync',key:'money',label:'Money',kind:'counter',value:125.5,initialValue:0,min:0,max:1000,unit:'USD',updateMode:'manual',presentation:'counter',step:.01}})
+  expect(tracker.error).toBeUndefined()
+  const connected=await send('native',{...context,app:'bank',action:'tracker_link',data:{trackerId:'money-sync',source:'tracker'}})
+  expect(connected.error).toBeUndefined();expect((Object.values(connected.state.nativeApps)[0] as any).wallet.balance).toBe(125.5)
+  const paid=await send('native',{...context,app:'bank',action:'transaction',data:{amount:-25,label:'Lunch'}})
+  expect(paid.error).toBeUndefined();expect(paid.state.trackers.find((t:any)=>t.id==='money-sync').value).toBe(100.5)
+  const earned=await send('action',{...context,action:'tracker',payload:{trackerId:'money-sync',operation:'add',amount:20,reason:'Earned a tip'}})
+  expect(earned.error).toBeUndefined();expect((Object.values(earned.state.nativeApps)[0] as any).wallet.balance).toBe(120.5)
+  expect((Object.values(earned.state.nativeApps)[0] as any).wallet.transactions).toHaveLength(1)
+})
+
+test('Freeform portraits refresh from the bound Persona, independent of active Persona, styling base and local profile edits',async()=>{
+  const savedImages=host.api.images,hadImages=host.permissions.has('images'),fernImage=host.personas[0].image_id,mikaImage=host.personas[1].image_id
+  const lookups:Array<{id:string;user?:string}>=[]
+  try{
+    host.permissions.add('images');(host.personas[0] as any).image_id='fern-portrait';(host.personas[1] as any).image_id='mika-portrait'
+    host.api.images={get:async(id:string,options:any)=>{lookups.push({id,user:options?.userId});return {id,url:'/images/'+id}}}
+    host.switchPersona('persona-mika')
+    const {session,state}=await send('freeform_create',{personaId:'persona-fern',name:'Bound portrait'},'portrait-user')
+    expect(state.pocketPersona.avatarUrl).toBe('/images/fern-portrait')
+    await send('freeform_appearance',{...scope(session.id),basePersonaId:'persona-mika',independent:false},'portrait-user')
+    await send('save_pocket_persona',{...scope(session.id),followLumiverse:false,persona:{...state.pocketPersona,displayName:'Fern local overlay',linkedPersonaId:'',avatarUrl:'/images/mika-portrait'}},'portrait-user')
+    const first=await send('freeform_open',{sessionId:session.id},'portrait-user')
+    expect(first.state.pocketPersona).toMatchObject({displayName:'Fern local overlay',avatarUrl:'/images/fern-portrait',linkedPersonaId:''})
+    expect(first.responses.find(p=>p.type==='lumiphone:state').activePersona.id).toBe('persona-mika')
+    ;(host.personas[0] as any).image_id='fern-updated'
+    const next=await send('freeform_open',{sessionId:session.id},'portrait-user')
+    expect(next.state.pocketPersona.avatarUrl).toBe('/images/fern-updated')
+    expect(host.read(`phones/${session.id}___none.json`,'portrait-user').pocketPersona.avatarUrl).toBe('/images/fern-updated')
+    ;(host.personas[0] as any).image_id=null
+    expect((await send('freeform_open',{sessionId:session.id},'portrait-user')).state.pocketPersona.avatarUrl).toBe('')
+    expect(lookups.every(call=>call.user==='portrait-user')).toBe(true)
+    expect(lookups.some(call=>call.id==='mika-portrait')).toBe(false)
+  }finally{host.api.images=savedImages;(host.personas[0] as any).image_id=fernImage;(host.personas[1] as any).image_id=mikaImage;if(!hadImages)host.permissions.delete('images')}
+})
+
+test('normal roleplay uses the current Persona avatar crop rather than its older original image',async()=>{
+  const savedImages=host.api.images,hadImages=host.permissions.has('images'),original=structuredClone(host.personas[1]),calls:any[]=[]
+  try{
+    Object.assign(host.personas[1],{name:'Katsuki Bakugo',image_id:'older-original',metadata:{avatar_crop_image_id:'katsuki-portrait'}})
+    host.switchPersona('persona-mika');host.permissions.add('images')
+    host.api.images={get:async(id:string,options:any)=>{calls.push({id,userId:options?.userId});return {id,url:'/images/'+id}}}
+    const context={chatId:'portrait-roleplay',characterId:'host-character'}
+    const first=await send('get_state',context,'crop-user')
+    expect(first.error).toBeUndefined();expect(first.state.pocketPersona).toMatchObject({displayName:'Katsuki Bakugo',avatarUrl:'/images/katsuki-portrait'})
+    expect(calls.some(c=>c.id==='older-original')).toBe(false)
+    ;(host.personas[1].metadata as any).avatar_crop_image_id='katsuki-updated'
+    expect((await send('get_state',context,'crop-user')).state.pocketPersona.avatarUrl).toBe('/images/katsuki-updated')
+    await send('save_pocket_persona',{...context,followLumiverse:false,persona:{...first.state.pocketPersona,source:'manual',displayName:'Local nickname'}},'crop-user')
+    expect((await send('get_state',context,'crop-user')).state.pocketPersona).toMatchObject({displayName:'Local nickname',avatarUrl:'/images/katsuki-updated'})
+    ;(host.personas[1].metadata as any).avatar_crop_image_id=' '
+    expect((await send('get_state',context,'crop-user')).state.pocketPersona.avatarUrl).toBe('/images/older-original')
+    expect(calls.every(c=>c.userId==='crop-user')).toBe(true)
+  }finally{Object.assign(host.personas[1],original);host.api.images=savedImages;if(!hadImages)host.permissions.delete('images')}
+})
+
+test('manual portrait repair updates an older Pocket without replacing its local identity or history',async()=>{
+  const images=host.api.images,hadImages=host.permissions.has('images'),persona=structuredClone(host.personas[1])
+  try{
+    host.permissions.add('images');Object.assign(host.personas[1],{image_id:'old-original',metadata:{avatar_crop_image_id:'repaired-portrait'}});host.switchPersona('persona-mika')
+    host.api.images={get:async(id:string)=>({id,url:'/images/'+id})}
+    const context={chatId:'portrait-repair',characterId:'host-character'},initial=await send('get_state',context,'repair-user'),state=initial.state
+    state.pocketPersona={...state.pocketPersona,source:'manual',linkedPersonaId:'',displayName:'Keep my local name',avatarUrl:'/images/old-original',phoneProfile:{personality:'Local overlay',appearance:'Local appearance',textingStyle:'Lowercase'}}
+    await host.api.userStorage.setJson('phones/portrait-repair__host-character.json',state,{userId:'repair-user'})
+    const before=structuredClone(state.pocketPersona),result=await send('refresh_persona_portrait',{...context,deviceOwnerActorId:state.pocketPersonaActorId},'repair-user')
+    expect(result.error).toBeUndefined();expect(result.responses.some(p=>p.type==='lumiphone:persona_portrait_refreshed')).toBe(true)
+    expect(result.state.pocketPersona).toEqual({...before,avatarUrl:'/images/repaired-portrait'})
+    expect(JSON.parse(JSON.stringify(result.state.conversations))).toEqual(JSON.parse(JSON.stringify(state.conversations.map((c:any)=>({...c,archived:c.archived??false})))));expect(result.state.notes).toEqual(state.notes)
+    expect(host.read('phones/portrait-repair__host-character.json','repair-user').pocketPersona.avatarUrl).toBe('/images/repaired-portrait')
+    expect((await send('refresh_persona_portrait',{...context,deviceOwnerActorId:'someone-else'},'repair-user')).error.error).toContain('own phone')
+    host.permissions.delete('images');expect((await send('refresh_persona_portrait',context,'repair-user')).error.error).toContain('Images')
+  }finally{host.api.images=images;Object.assign(host.personas[1],persona);if(hadImages)host.permissions.add('images');else host.permissions.delete('images')}
+})

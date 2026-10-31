@@ -1,3 +1,7 @@
+import { builtinStickerUrl } from '../builtin-sticker-assets.js'
+import {datingFor} from '../../domain/lumistry.js'
+import {renderSpotifyShareCard} from '../components/spotify-share.js'
+import {renderLumistryCapture} from '../components/lumistry-capture.js'
 import type { PhoneMessage, PhoneState, PocketContextReference, PocketConversation, PocketRelay } from '../../types.js'
 import { conversationActorIds, listPocketActors, resolvePocketActor } from '../../domain/actors.js'
 import { counterpartActorIds, conversationDeviceActorIds, conversationTitleForDevice, conversationUnreadForDevice, conversationVisibleOnDevice, messageDirection } from '../../domain/device.js'
@@ -21,6 +25,11 @@ export function centerMessageInThread(thread: HTMLElement, target: HTMLElement):
 }
 
 export interface MessagesViewHost {
+  dating?:boolean
+  datingPhotoAction?(conversationId:string,messageId:string):void
+  datingPhotoAvailable?:boolean
+  datingPhotoBusy?:boolean
+  stickerTray?:HTMLElement
   attach?(conversationId:string):void
   openPhoto?(message:PhoneMessage):void
   chatTheme?(conversationId:string):void
@@ -394,13 +403,14 @@ function referenceAttachment(host: MessagesViewHost, reference: PocketContextRef
 }
 
 export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
-  const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId && conversationVisibleOnDevice(host.state, item, host.deviceOwnerActorId)) || null
+  const dating=typeof host.dating==='boolean'?host.dating:host.state.conversations.some(c=>c.id===host.selectedConversationId&&c.channel==='dating')
+  const selectedConversation = host.state.conversations.find((item) => item.id === host.selectedConversationId && Boolean(item.channel==='dating')===Boolean(dating) && conversationVisibleOnDevice(host.state, item, host.deviceOwnerActorId)) || null
   if (host.selectedView === 'new-group') return newConversationView(host)
   if (host.selectedView === 'group-editor') return groupEditor(host, null)
   if (selectedConversation?.kind === 'group' && host.selectedView === 'group-detail') return groupEditor(host, selectedConversation)
 
   if (!selectedConversation) {
-    const conversations = host.state.conversations.filter((conversation) => conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    const conversations = host.state.conversations.filter((conversation) => !conversation.archived && Boolean(conversation.channel==='dating')===Boolean(dating) && conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const { page, content } = host.page('Messages', `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`, {
       label: host.readOnlyDevice ? '' : 'New', callback: () => host.selectConversation('', 'new-group'), enabled: !host.readOnlyDevice,
     })
@@ -436,6 +446,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   const conversation = selectedConversation
   const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId)
   const page = el('div', 'lp-thread')
+  if(conversation.channel==='dating'){page.classList.add('lumistry','lumistry-thread');page.dataset.lumistryTheme=datingFor(host.state,conversation.datingOwnerId).theme}
   const nav = el('header', 'lp-nav')
   const back = button('‹ Back', 'lp-nav-action')
   back.addEventListener('click', () => host.back())
@@ -533,11 +544,17 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     if (message.call) {
       const time = el('time', 'lp-call-history-time', formatTime(message.createdAt)); time.dateTime = message.createdAt
       bubble.append(el('span', '', message.text), time)
-    } else bubble.append(message.format === 'voice' && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.sender === 'contact' ? cleanPhoneMessageText(message.text) : message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
-    if (message.imageUrl) {
+    } else if(message.spotifyShare || message.sharedCapture || message.sticker)bubble.append(el('span','lp-bubble-time',`${formatTime(message.createdAt)} · ${message.status}`))
+    else bubble.append(message.format === 'voice' && host.renderVoiceMessage ? host.renderVoiceMessage(message) : document.createTextNode(message.sender === 'contact' ? cleanPhoneMessageText(message.text) : message.text), el('span', 'lp-bubble-time', `${formatTime(message.createdAt)} · ${message.status}`))
+    if(message.spotifyShare)bubble.prepend(renderSpotifyShareCard(message.spotifyShare))
+    if(message.sharedCapture)bubble.prepend(renderLumistryCapture(message.sharedCapture))
+    if(message.datingPhoto && !message.imageUrl){const described=el('div','lumistry-chat-photo');described.append(el('p','lp-copy',`Photo: ${message.datingPhoto.description}`));if(!host.readOnlyDevice&&host.datingPhotoAction){const make=button('Generate image','lp-button');make.disabled=!host.datingPhotoAvailable||host.datingPhotoBusy===true;make.onclick=()=>host.datingPhotoAction!(conversation.id,message.id);described.append(make)}bubble.prepend(described)}
+    if(message.sticker){bubble.classList.add('lp-sticker-message');if(message.sticker.caption)bubble.prepend(el('span','lp-sticker-caption',message.sticker.caption))}
+    const stickerImage=message.imageUrl||builtinStickerUrl(message.sticker?.builtinId)
+    if (stickerImage) {
       const photo=button('','lp-message-photo');photo.type='button';photo.setAttribute('aria-label',`Open photo from ${message.senderName}`)
-      const image=el('img');image.src=message.imageUrl;image.alt=message.text==='Photo'?'Photo attachment':message.text;image.loading='lazy'
-      photo.append(image);photo.onclick=()=>host.openPhoto?.(message);bubble.prepend(photo)
+      const image=el('img');image.src=stickerImage;image.alt=message.sticker?.description||(message.text==='Photo'?'Photo attachment':message.text);image.loading='lazy'
+      photo.append(image);photo.onclick=()=>host.openPhoto?.({...message,imageUrl:stickerImage});bubble.prepend(photo)
     }
     if (message.photo && message.photo.status !== 'ready') {
       const status=el('div','lp-message-photo-status',message.photo.status==='pending'?'Making a photo…':message.photo.error||'Photo stopped.')
@@ -727,7 +744,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   textarea.setAttribute('aria-label', 'Message')
   const inputShell = el('div', 'lp-compose-input')
   if (host.attach) {
-    const attach=button('','lp-compose-attach');attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';attach.type='button';attach.setAttribute('aria-label','Attach to message');attach.title='Photos and events'
+    const attach=button('','lp-compose-attach');attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';attach.type='button';attach.setAttribute('aria-label','Attach to message');attach.title='Attach to conversation';attach.setAttribute('aria-haspopup','menu');attach.setAttribute('aria-expanded','false')
     attach.onclick=()=>host.attach!(conversation.id);inputShell.append(attach)
   }
   inputShell.append(textarea, submit)
@@ -742,6 +759,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     resizeComposer()
   })
   const composerStack = el('div', 'lp-compose-stack')
+  if(host.stickerTray?.nodeType===1)composerStack.append(host.stickerTray)
   if (conversation.kind === 'group') composerStack.appendChild(speakerMenu)
   composerStack.appendChild(compose)
   page.append(bubbles, composerStack)

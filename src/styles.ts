@@ -1,3 +1,6 @@
+import { NATIVE_APP_STYLES } from './frontend/apps/native-app-styles.js'
+import { SHARE_STYLES } from './frontend/components/share-styles.js'
+import {LUMISTRY_STYLES} from './frontend/lumistry-styles.js'
 import {ATTACHMENT_STYLES} from './frontend/components/attachment-styles.js'
 import {APPEARANCE_CONTROL_STYLES} from './frontend/components/appearance-controls.js'
 import { INLINE_BASE_STYLES, INLINE_FINISH_STYLES } from './frontend/components/inline-styles.js'
@@ -233,7 +236,7 @@ export const PHONE_STYLES = `
   .lp-list-separator { height:1px; margin-left:52px; background:var(--lp-border); }
   .lp-unread { min-width:20px; height:20px; padding:0 5px; display:grid; place-items:center; border-radius:99px; background:var(--lp-accent); color:#fff; font-size:9px; font-weight:800; }
 
-  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
+  .lp-thread { height:100%; min-height:0; overflow:hidden; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr) auto; background-image:var(--lp-chat-wallpaper); background-color:var(--lp-bg); background-size:var(--lp-chat-wallpaper-size,cover); background-position:var(--lp-chat-wallpaper-position,center); background-repeat:no-repeat; }
   .lp-thread .lp-nav { position:relative; }
   .lumiphone-app-view.lp-thread { overflow:hidden; }
   .lp-thread .lp-bubbles { overscroll-behavior:contain; }
@@ -691,6 +694,7 @@ ${INLINE_BASE_STYLES}
   .lp-wallpaper-control:first-of-type { border-top:0; }
   .lp-wallpaper-preview { min-height:120px; display:grid; place-items:center; border:1px solid var(--lp-border); border-radius:14px; background-color:var(--lp-bg); background-repeat:no-repeat; color:var(--lp-muted); font-size:var(--pocket-font-sm); overflow:hidden; }
   .lp-wallpaper-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .lp-wallpaper-modes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
   .lp-wallpaper-focal { display:grid; gap:6px; }
   .lp-wallpaper-range { display:grid; grid-template-columns:minmax(100px,auto) 1fr; align-items:center; gap:8px; }
   .lp-wallpaper-range input { width:100%; accent-color:var(--lp-accent); }
@@ -1333,4 +1337,10 @@ ${CONTACTS_MEDIA_STYLES}
 ${POCKET_PORTAL_STYLES}
 ${APPEARANCE_CONTROL_STYLES}
 ${ATTACHMENT_STYLES}
+${LUMISTRY_STYLES}
+  .lp-icon-dating {background:#b05c83;color:#fff}.lp-icon-spotify {background:#1d9154;color:#fff}.lp-icon-sharing {background:#5571b2;color:#fff}
+${SHARE_STYLES}
+${NATIVE_APP_STYLES}
+.lp-icon-bank{background:#466f64;color:#fff}.lp-icon-birthdays{background:#c57596;color:#fff}.lp-icon-browser{background:#53799b;color:#fff}.lp-icon-maps{background:#6e9276;color:#fff}.lp-icon-twitch{background:#7e5abc;color:#fff}.lp-icon-stickers{background:#d6b66d;color:#352b25}
+
 `

@@ -1,6 +1,6 @@
 {
   "name": "pocket-spindle-extension",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,14 @@
     "build:backend": "bun build src/backend.ts --target=bun --format=esm --outfile=dist/backend.js",
     "build:frontend": "bun build src/frontend.ts --target=browser --format=esm --outfile=dist/frontend.js",
     "typecheck": "bunx tsc --noEmit",
-    "verify": "bun run typecheck && bun run build && bun test ./tests/contacts-media.test.ts ./tests/discord-chat.test.ts ./tests/message-continuity.test.ts ./tests/social-context.test.ts ./tests/social-dms.test.ts ./tests/social-automation.test.ts ./tests/social-settings.test.ts ./tests/social.test.ts ./tests/app-store.test.ts ./tests/launcher.test.ts ./tests/launcher-lifecycle.test.ts ./tests/domain.test.ts ./tests/jev.test.ts ./tests/generation-lifecycle.test.ts ./tests/tracker-display.test.ts ./tests/weather-display.test.ts ./tests/event-invite.test.ts ./tests/image-jobs.test.ts ./tests/settings-camera.test.ts ./tests/touch-scroll.test.ts ./tests/app-reviews.test.ts ./tests/activity-connectors.test.ts ./tests/activity-clock.test.ts ./tests/voice.test.ts ./tests/phone-sequence.test.ts ./tests/freeform-backend.test.ts ./tests/context-options.test.ts ./tests/appearance-options.test.ts ./tests/timeskip.test.ts ./tests/message-photo.test.ts && node ./tests/contracts.mjs",
+    "verify": "bun run typecheck && bun run build && bun test ./tests/contacts-media.test.ts ./tests/discord-chat.test.ts ./tests/message-continuity.test.ts ./tests/social-context.test.ts ./tests/social-dms.test.ts ./tests/social-automation.test.ts ./tests/social-settings.test.ts ./tests/social.test.ts ./tests/app-store.test.ts ./tests/launcher.test.ts ./tests/launcher-lifecycle.test.ts ./tests/domain.test.ts ./tests/jev.test.ts ./tests/generation-lifecycle.test.ts ./tests/tracker-display.test.ts ./tests/weather-display.test.ts ./tests/event-invite.test.ts ./tests/image-jobs.test.ts ./tests/settings-camera.test.ts ./tests/touch-scroll.test.ts ./tests/app-reviews.test.ts ./tests/activity-connectors.test.ts ./tests/activity-clock.test.ts ./tests/voice.test.ts ./tests/phone-sequence.test.ts ./tests/freeform-backend.test.ts ./tests/context-options.test.ts ./tests/appearance-options.test.ts ./tests/timeskip.test.ts ./tests/message-photo.test.ts ./tests/native-apps.test.ts ./tests/wallet-tracker-sync.test.ts ./tests/sticker-packs.test.ts && node ./tests/contracts.mjs",
+    "test:community": "bun test ./tests/lumistry-adult-preferences.test.ts ./tests/lumistry-amplification.test.ts ./tests/lumistry-appearance.test.ts ./tests/lumistry-authoring-contract.test.ts ./tests/lumistry-boundaries.test.ts ./tests/lumistry-catalog.test.ts ./tests/lumistry-compatibility.test.ts ./tests/lumistry-connection-eligibility.test.ts ./tests/lumistry-contract-replay.test.ts ./tests/lumistry-discovery-view.test.ts ./tests/lumistry-efficiency.test.ts ./tests/lumistry-experience-tools.test.ts ./tests/lumistry-facts.test.ts ./tests/lumistry-filters.test.ts ./tests/lumistry-library.test.ts ./tests/lumistry-love-integration.test.ts ./tests/lumistry-love.test.ts ./tests/lumistry-performance.test.ts ./tests/lumistry-persona.test.ts ./tests/lumistry-pipeline.test.ts ./tests/lumistry-population.test.ts ./tests/lumistry-prompt-review.test.ts ./tests/lumistry-release-b.test.ts ./tests/lumistry-reliability.test.ts ./tests/lumistry-repair-routing.test.ts ./tests/lumistry-saved-profiles.test.ts ./tests/lumistry-setup.test.ts ./tests/lumistry-sharing.test.ts ./tests/lumistry-species.test.ts ./tests/lumistry-thread.test.ts ./tests/lumistry-tropes.test.ts ./tests/lumistry-ui.test.ts ./tests/lumistry-usability.test.ts ./tests/lumistry-user-photo.test.ts ./tests/lumistry-v2.test.ts ./tests/lumistry-variety.test.ts ./tests/lumistry-visual-polish.test.ts ./tests/lumistry-wishlist.test.ts ./tests/lumistry-world.test.ts ./tests/lumistry.test.ts ./tests/spotify-share.test.ts ./tests/pocket-sharing.test.ts",
+    "test:native-apps": "bun test ./tests/native-apps.test.ts ./tests/wallet-tracker-sync.test.ts ./tests/sticker-packs.test.ts",
+    "test:persona-portrait": "node scripts/check-persona-portrait.mjs",
+    "test:persona-colors": "node scripts/check-persona-colors.mjs",
+    "test:sticker-packs:browser": "node scripts/check-sticker-packs.mjs",
+    "test:native-apps:browser": "node scripts/check-native-apps.mjs",
+    "test:community:browser": "node scripts/check-community-apps.mjs",
     "test:launcher": "node scripts/check-launcher.mjs",
     "test:floating-widget": "node scripts/check-floating-widget.mjs",
     "test:socials": "node scripts/check-socials.mjs",

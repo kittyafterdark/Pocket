@@ -1,5 +1,7 @@
 export type PhoneApp =
   | 'home'
+  | 'dating' | 'spotify' | 'sharing'
+  | 'bank' | 'birthdays' | 'browser' | 'maps' | 'twitch' | 'stickers'
   | 'messages'
   | 'contacts'
   | 'gallery'
@@ -18,6 +20,10 @@ export type OpenAnimation = 'spring' | 'slide' | 'fade' | 'none'
 
 export type PocketRoute =
   | { app: 'home' }
+  | { app:'dating';conversationId?:string;view?:string }
+  | { app:'spotify' }
+  | { app:'sharing' }
+  | { app: 'bank' | 'birthdays' | 'browser' | 'maps' | 'twitch' | 'stickers'; view?:string }
   | { app: 'messages'; conversationId?: string; contactId?: string; messageId?: string; view?: 'thread' | 'new-group' | 'group-editor' | 'group-detail' }
   | { app: 'contacts'; contactId?: string; groupId?: string; view?: 'list' | 'detail' | 'config' | 'import' | 'quick-gen' | 'new' | 'draft' | 'groups' | 'group-config' | 'bank' | 'cast-config' | 'cast-import' | 'bank-entry' }
   | { app: 'trackers'; trackerId?: string; view?: 'detail' | 'config' }
@@ -111,6 +117,7 @@ export interface PersonaAppearanceOverride {
   iconPack?: DevicePreferences['iconPack']
   iconBackground?: string
   iconForeground?: string
+  /** True overrides the device wallpaper, including a gradient when source is null; false inherits. */
   homeWallpaperEnabled?: boolean
   chatWallpaperEnabled?: boolean
   enabled: boolean
@@ -122,8 +129,23 @@ export interface PersonaAppearanceOverride {
 }
 
 export interface PocketGenerationRun {
+  usageStatus?:'reported'|'partial'|'unavailable'
+  promptCharacters?:number
+  contextMetrics?:import('./backend/lumistry-reply-context.js').ReplyContextMetrics
+  appScope?:'lumistry'
+  transport?:'response'|'stream'
+  streamEvents?:number
+  answerBytesObserved?:number
+  reasoningEvents?:number
+  firstAnswerMs?:number
+  lastActivityMs?:number
+  diagnostic?: import('./domain/reliability.js').ReliabilityDiagnostic
+  reasoningSource?:string
+  attemptUsage?:Array<{promptTokens?:number;completionTokens?:number;reasoningTokens?:number;usageStatus:'reported'|'partial'|'unavailable'}>
+
+
   requestId: string
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge' | 'social-feed'
+  task: 'native-bank' | 'native-birthdays' | 'native-browser' | 'native-maps' | 'native-twitch' | 'native-stickers' | 'lumistry-relationship-assess' | 'lumistry-image-check' | 'lumistry-author' | 'lumistry-development' | 'lumistry-portrayal' | 'lumistry-events' | 'lumistry-enrich' | 'lumistry-discover' | 'lumistry-self_generate' | 'lumistry-generate' | 'lumistry-world' | 'lumistry-photo' | 'lumistry-like' | 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge' | 'social-feed'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -210,13 +232,15 @@ export interface PocketContextDiagnostics {
 }
 
 export interface PocketOperationProgress {
-  task: 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'world-seed' | 'persona-profile' | 'weather-week' | 'timeline-review'
+  task: 'native-bank' | 'native-birthdays' | 'native-browser' | 'native-maps' | 'native-twitch' | 'native-stickers' | 'lumistry-relationship-assess' | 'lumistry-image-check' | 'lumistry-author' | 'lumistry-development' | 'lumistry-portrayal' | 'lumistry-events' | 'lumistry-enrich' | 'lumistry-discover' | 'lumistry-self_generate' | 'lumistry-generate' | 'lumistry-world' | 'lumistry-photo' | 'lumistry-like' | 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'world-seed' | 'persona-profile' | 'weather-week' | 'timeline-review'
   requestId: string
   phase: 'request' | 'generating' | 'thinking' | 'writing' | 'parsing' | 'saving' | 'complete' | 'error'
   message: string
 }
 
 export interface DevicePreferences {
+  authoring?:import('./domain/authoring-policy.js').AuthoringPolicy
+  lumistryImageDialect?:'auto'|'generic'|'anima'
   version: 5
   characterPictures?: boolean
   voiceMessages?: boolean
@@ -254,6 +278,7 @@ export interface DevicePreferences {
   jev?: PocketJevSettings
   generationMode: PocketGenerationMode
   automaticGenerationRetry: boolean
+  reasoningEffort?: 'off' | 'inherit' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   sidecarConnectionId: string
   sidecarModelOverride: string
   samplerOverrides?: Partial<Record<'temperature' | 'top_p' | 'top_k' | 'min_p' | 'frequency_penalty' | 'presence_penalty' | 'repetition_penalty', number>>
@@ -298,6 +323,7 @@ export interface PhoneEventSuggestion {
 export type PocketMessageDirection = 'outbound' | 'inbound' | 'external'
 
 export interface PocketTurnCandidateOrigin {
+  sourceInvalidated?:boolean
   chatId: string
   hostMessageId: string
   swipeId: number
@@ -330,6 +356,10 @@ export interface PocketCandidateClockSnapshot extends PocketRoleplayClockSnapsho
 }
 
 export interface PhoneMessage {
+  sharedCapture?:import('./domain/lumistry-sharing.js').LumistryCapture
+  spotifyShare?:import('./domain/spotify-share.js').SpotifyShareAttachment
+  datingPhoto?:import('./domain/lumistry-person.js').DatingPhotoAttachment
+  sticker?:{description:string;caption:string;builtinId?:string}
   format?: 'voice'
   call?: PocketCallMarker
   id: string
@@ -575,6 +605,9 @@ export interface PendingGroupBatch {
 }
 
 export interface PocketConversation {
+  channel?:'phone'|'dating'
+  datingOwnerId?:string
+  archived?:boolean
   appearance?:import('./domain/chat-appearance.js').ChatAppearance
   id: string
   kind: 'direct' | 'group'
@@ -947,6 +980,9 @@ export interface PocketLoreRetrievalLog {
 }
 
 export interface PhoneState {
+  lumistry?:Record<string,import('./domain/lumistry.js').DatingState>
+  storageRevision?:number
+  nativeApps?:Record<string,import('./domain/native-apps.js').NativeAppsState>
   version: 11
   contextScenario?: string
   chatId: string
