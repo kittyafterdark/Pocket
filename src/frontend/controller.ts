@@ -184,6 +184,7 @@ class PocketController {
   private freeformDraft = { personaId: '', sessionId: '', name: '' }
   private freeformRequest = ''
   private freeformListRequest = ''
+  private freeformListPreferenceRevision = 0
   private freeformCopyRequest = ''
   private sessionManageRequest=''
   private sessionManageError=''
@@ -664,6 +665,7 @@ class PocketController {
 
   private loadFreeformDirectory(): void {
     this.freeformError = ''
+    this.freeformListPreferenceRevision=this.settingsRevision
     this.freeformListRequest = this.send('lumiphone:freeform_list')
   }
 
@@ -740,6 +742,7 @@ class PocketController {
         login: session => this.openFreeform(session.id), create: (personaId, name) => this.openFreeform(undefined, personaId, name),
         refresh: () => { this.loadFreeformDirectory(); this.renderDrawerLanding() },
       })
+      const isolate=el('label','lp-row'),suppress=el('input');suppress.type='checkbox';suppress.checked=this.preferences.suppressRoleplayTools;suppress.addEventListener('change',()=>this.updatePreferences({...this.preferences,suppressRoleplayTools:suppress.checked}));isolate.append(suppress,el('span','','Suppress Pocket tools in roleplay'));lock.append(isolate,el('p','lp-copy','Keeps Freeform phone actions available while disabling Pocket tools and automatic phone context in roleplay chats. Applies across roleplay chats until unchecked.'));
       const manage=button('Manage sessions','pocket-portal-text-action');manage.onclick=()=>this.navigatePortal('sessions');lock.append(manage)
       this.drawer.root.append(renderPocketPortal('freeform', view => this.navigatePortal(view), lock))
       if (activeField) {
@@ -1124,6 +1127,7 @@ class PocketController {
       const reference = this.activeComposerReference()
       if (!reference) return
       const messageId = reference.messages.at(-1)?.messageId
+      if(reference.sourceApp==='sharing'&&reference.capture){const modal=this.ctx.ui.showModal({title:'Attached app excerpt',width:480,maxHeight:740});this.applyShareAppearance(modal.root);modal.root.append(renderLumistryCapture(reference.capture));return}
       this.openPocket({ app: 'messages', conversationId: reference.conversationId, messageId })
     })
 
@@ -1204,8 +1208,8 @@ class PocketController {
     if (count) {
       const messageCount = reference.messages.length
       count.hidden = messageCount <= 1
-      count.textContent = messageCount > 1 ? `${messageCount} msgs` : ''
-      count.title = messageCount > 1 ? `${messageCount} Pocket messages attached` : ''
+      count.textContent = messageCount > 1 ? `${messageCount} ${reference.sourceApp==='sharing'?'items':'msgs'}` : ''
+      count.title = messageCount > 1 ? `${messageCount} Pocket ${reference.sourceApp==='sharing'?'items':'messages'} attached` : ''
       count.setAttribute('aria-label', count.title || 'One Pocket message attached')
     }
 
@@ -1296,7 +1300,7 @@ class PocketController {
       return
     }
     const communityRequest=this.communityRequests.get(payload.requestId)
-    if(communityRequest && ['lumiphone:spotify_preview','lumiphone:spotify_sent','lumiphone:share_sent','lumiphone:persona_photo_sent','lumiphone:error'].includes(payload.type)){this.communityRequests.delete(payload.requestId);communityRequest(payload);return}
+    if(communityRequest && ['lumiphone:spotify_preview','lumiphone:spotify_sent','lumiphone:share_sent','lumiphone:persona_photo_sent','lumiphone:reference_armed','lumiphone:error'].includes(payload.type)){this.communityRequests.delete(payload.requestId);communityRequest(payload);return}
     if(payload.type==='lumiphone:error' && [this.datingRequest,this.datingProfileRequest].includes(payload.requestId)){
       if(payload.requestId===this.datingProfileRequest){this.datingUI.profileBusy=false;this.datingUI.profileError=payload.error;this.datingProfileRequest=''}else{this.datingUI.busy=false;this.datingUI.error=payload.error;this.datingRequest=''}
       if(this.currentApp==='dating')this.render(false);return
@@ -1354,6 +1358,7 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:freeform_directory' && payload.requestId === this.freeformListRequest) {
       this.freeformListRequest = ''; this.freeformDirectory = payload.directory; this.freeformError = ''
+      if(this.settingsRevision===this.freeformListPreferenceRevision&&typeof payload.suppressRoleplayTools==='boolean')this.preferences.suppressRoleplayTools=payload.suppressRoleplayTools
       this.renderDrawerLanding()
       if(this.sessionManageFocus){this.sessionManageFocus=false;this.drawer.root.querySelector<HTMLElement>('h2')?.focus({preventScroll:true})}
       return
@@ -2922,7 +2927,10 @@ class PocketController {
     return pocketShareSheet(state,(conversationId,request)=>{
       const id=requestId('share');this.communityRequests.set(id,payload=>{if(payload.type==='lumiphone:error')this.showError(payload.error);else if(this.activeContext().chatId===context.chatId)this.openPocket({app:'messages',conversationId})})
       this.send('lumiphone:share_capture',{...context,requestId:id,conversationId,request,expectedCapture:lumistryCaptureText(createPocketCapture(state,request))})
-    },target,this.sharingDraft)
+    },target,this.sharingDraft,this.freeformSession?undefined:request=>{
+      const id=requestId('attach_capture');this.communityRequests.set(id,payload=>{if(payload.type==='lumiphone:error')this.showError(payload.error);else this.showFeedback('App excerpt attached to your next roleplay turn.')})
+      this.send('lumiphone:attach_capture',{...context,requestId:id,request,expectedCapture:lumistryCaptureText(createPocketCapture(state,request))})
+    })
   }
 
   private renderMessages(dating=false): HTMLDivElement {

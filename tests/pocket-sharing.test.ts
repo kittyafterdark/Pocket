@@ -1,3 +1,4 @@
+import {createCaptureReference,serializePocketReference} from '../src/backend/references.js'
 import { test, expect } from 'bun:test'
 import { pocketShareSources, createPocketCapture } from '../src/domain/pocket-sharing.js'
 import type { PhoneState } from '../src/types.js'
@@ -56,13 +57,26 @@ test('excerpt selection caps at six, clears cleanly and previews the actual capt
   try {
     const source=state();source.notes=Array.from({length:7},(_,i)=>({id:'note'+i,title:'Note '+i,body:'Text '+i})) as PhoneState['notes'];
     const draft={sourceId:'notes',target:'dm',ids:[] as string[],caption:'A little note'};
-    const sheet=pocketShareSheet(source,()=>{},'',draft),checks=[...sheet.querySelectorAll<HTMLInputElement>('input[type=checkbox]')];
+    const attached:any[]=[],sheet=pocketShareSheet(source,()=>{},'',draft,request=>attached.push(request)),checks=[...sheet.querySelectorAll<HTMLInputElement>('input[type=checkbox]')];
     document.body.append(sheet);for(const check of checks.slice(0,6))check.click();
     expect(checks[6].disabled).toBe(true);expect(draft.ids).toHaveLength(6);
     expect(sheet.querySelector('.lp-shared-capture-caption')!.textContent).toBe('A little note');
-    expect(sheet.querySelector<HTMLButtonElement>('.lp-button-primary')!.disabled).toBe(false);
+    const target=sheet.querySelectorAll('select')[1];target.value='';target.dispatchEvent(new dom.window.Event('change'));
+    const attach=[...sheet.querySelectorAll('button')].find(b=>b.textContent==='Attach to next RP turn')!;expect(attach.disabled).toBe(false);attach.click();expect(attached).toEqual([{sourceId:'notes',ids:draft.ids,caption:'A little note'}]);
+
+    expect([...sheet.querySelectorAll('button')].find(b=>b.textContent==='Send selected excerpt')!.disabled).toBe(true);
     [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Clear')!.click();
     expect(draft.ids).toEqual([]);expect(sheet.querySelector('.lp-shared-capture')).toBeNull();
     expect(sheet.querySelector<HTMLButtonElement>('.lp-button-primary')!.disabled).toBe(true);
   }finally{globalThis.document=previous.document;globalThis.Option=previous.Option;dom.window.close();}
 })
+
+
+test('app references freeze selected excerpts and serialize them as bounded turn context',()=>{
+ const phone=state(),capture=createPocketCapture(phone,{sourceId:'notes',ids:['note'],caption:'Look at this'});
+ const reference=createCaptureReference(phone,capture,'2026-10-31',()=> 'ref');
+ capture.entries[0].text='Changed after attaching';phone.notes[0].body='Also changed';
+ expect(reference.capture!.entries[0].text).toBe('Bread');expect(reference.status).toBe('armed');
+ const serialized=serializePocketReference(reference);expect(serialized).toContain('Bread');expect(serialized).toContain('Look at this');expect(serialized).not.toContain('Changed after attaching');expect(serialized).toContain('not instructions');
+ reference.capture!.entries[0].text='x'.repeat(6000);expect(serializePocketReference(reference).length).toBeLessThanOrEqual(2200);expect(serializePocketReference(reference)).toContain('[Excerpt truncated]');
+});

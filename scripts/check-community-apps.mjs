@@ -22,7 +22,7 @@ try{
   try{
    await page.route('https://pocket-fixture.invalid/cover.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#254c68"/><circle cx="285" cy="120" r="65" fill="#f1be93"/><path d="M0 280Q100 160 220 290T400 250V400H0" fill="#86b0aa"/><path d="M0 340Q100 260 240 330T400 300V400H0" fill="#19394b"/><text x="30" y="60" font-family="Georgia" font-size="25" fill="#fff0d4">SYNTHETIC SUNRISE</text><text x="30" y="370" font-family="monospace" font-size="14" fill="#fff0d4">FIXTURE BAND / POCKET SESSIONS</text></svg>'}))
    await page.goto(`http://127.0.0.1:${server.address().port}`)
-   await press('Open Freeform');await page.getByRole('combobox',{name:'Choose persona',exact:true}).selectOption('persona-fern')
+   await press('Open Freeform');const isolate=page.getByRole('checkbox',{name:'Suppress Pocket tools in roleplay',exact:true});await isolate.focus();await page.keyboard.press('Space');await page.waitForFunction(()=>window.freeformFixture.host.read('device/preferences.json')?.suppressRoleplayTools===true);await press('Refresh personas & sessions');await page.waitForFunction(()=>document.querySelector('label input[type=checkbox]')?.checked===true);await isolate.uncheck();await page.waitForFunction(()=>window.freeformFixture.host.read('device/preferences.json')?.suppressRoleplayTools===false);await page.getByRole('combobox',{name:'Choose persona',exact:true}).selectOption('persona-fern')
    await page.getByRole('textbox',{name:'Session name',exact:true}).fill('Community apps');await press('Create session')
    await page.getByRole('button',{name:'Settings',exact:true}).waitFor()
    const sessionId=await page.locator('.lumiphone-shell').getAttribute('data-pocket-chat-id')
@@ -92,13 +92,28 @@ try{
    await page.getByRole('combobox',{name:'Send to',exact:true}).selectOption({label:'Alex'})
    await page.getByRole('checkbox',{name:/Shared note/}).check()
    await page.screenshot({path:resolve(output,`sharing-preview-${width}.png`)})
+   assert.equal(await page.getByRole('button',{name:'Attach to next RP turn',exact:true}).isVisible(),false,'Freeform has no RP turn to attach to')
    await page.getByRole('button',{name:'Send selected excerpt',exact:true}).focus();await page.keyboard.press('Enter');await page.locator('[data-pocket-thread] .lp-shared-capture').waitFor()
    await page.screenshot({path:resolve(output,`shared-chat-${width}.png`)})
    const saved=await page.evaluate(sessionId=>window.freeformFixture.host.read(`phones/${sessionId}___none.json`),sessionId)
    assert.ok(saved.conversations.some(c=>c.messages.some(m=>m.spotifyShare?.title==='Synthetic Sunrise')))
    assert.ok(saved.conversations.some(c=>c.messages.some(m=>m.sharedCapture?.title==='Notes')))
+   await page.evaluate(async sessionId=>{
+    const f=window.freeformFixture,phone=f.host.read(`phones/${sessionId}___none.json`)
+    phone.chatId='host-chat';phone.characterId='host-character'
+    await f.host.api.userStorage.setJson('phones/host-chat__host-character.json',phone)
+    f.host.switchPersona('persona-fern')
+   },sessionId)
+   await press('Home or dismiss phone');await press('Dismiss phone');await press('All spaces');await press('Open Roleplay')
+   await page.getByRole('button',{name:'Open Pocket',exact:true}).waitFor();await press('Open Pocket');await press('Open app drawer');await press('Screenshots')
+   await page.getByRole('combobox',{name:'Source app or conversation',exact:true}).selectOption('notes')
+   await page.getByRole('checkbox',{name:/Shared note/}).check()
+   await page.getByRole('combobox',{name:'Send to',exact:true}).selectOption('')
+   await page.getByRole('button',{name:'Attach to next RP turn',exact:true}).focus();await page.keyboard.press('Enter')
+   await page.waitForFunction(()=>window.freeformFixture.host.read('phones/host-chat__host-character.json')?.references?.some(r=>r.sourceApp==='sharing'&&r.status==='armed'))
+   await page.screenshot({path:resolve(output,`app-reference-${width}.png`)})
    assert.deepEqual(errors,[])
-   console.log(`Community apps ${width}: Store installation, Lumistry setup, Spotify preview/send and cross-app excerpts passed`)
+   console.log(`Community apps ${width}: Store installation, Lumistry setup, Spotify preview/send, cross-app excerpts and RP attachments passed`)
   }catch(error){await page.screenshot({path:resolve(output,`failure-${width}.png`)});console.error(await page.locator('body').innerText());console.error(errors);throw error}
   finally{await page.close()}
  }

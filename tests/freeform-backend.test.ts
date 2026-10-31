@@ -608,3 +608,34 @@ test('duplicate Persona names offer actual portraits without writing until an ex
     const deduped=await send('refresh_persona_portrait',context,'duplicate-user');expect(deduped.error).toBeUndefined();expect(deduped.state.pocketPersona.linkedPersonaId).toBe('portrait-one')
   }finally{host.api.images=images;host.api.personas.list=list;host.personas.splice(count);if(!had)host.permissions.delete('images')}
 })
+
+
+test('Screenshots references validate the preview, survive reload and cancellation without sending a chat',async()=>{
+ const {session,state}=await send('freeform_create',{personaId:'persona-fern',name:'Capture source'});
+ const {defaultLauncherLayout,setPocketAppInstalled}=await import('../src/domain/launcher.js');
+ const {createPocketCapture}=await import('../src/domain/pocket-sharing.js');
+ const {lumistryCaptureText}=await import('../src/domain/lumistry-sharing.js');
+ const context={chatId:'capture-roleplay',characterId:'host-character'},path='phones/capture-roleplay__host-character.json';
+ state.chatId=context.chatId;state.characterId=context.characterId;state.notes=[{id:'note',title:'Remember',body:'Saved app text'}];
+ state.launcherLayouts[state.pocketPersonaActorId]=setPocketAppInstalled(defaultLauncherLayout(),'sharing',true);
+ await host.api.userStorage.setJson(path,state);
+ const request={sourceId:'notes',ids:['note'],caption:'For this scene'},expectedCapture=lumistryCaptureText(createPocketCapture(state,request));
+ const attached=await send('attach_capture',{...context,request,expectedCapture});expect(attached.error).toBeUndefined();
+ const saved=host.read(path).references.at(-1);expect(saved.status).toBe('armed');expect(saved.capture.entries[0].text).toBe('Saved app text');
+ const reloaded=await send('get_state',context);expect(reloaded.state.references.at(-1).capture).toEqual(saved.capture);
+ const stale=await send('attach_capture',{...context,request,expectedCapture:'stale'});expect(stale.error.error).toContain('source changed');
+ expect(host.read(path).references).toHaveLength(1);
+ await send('cancel_reference',{...context,referenceId:saved.id});expect(host.read(path).references.at(-1).status).toBe('cancelled');
+ const freeform=await send('attach_capture',{...scope(session.id),request,expectedCapture});expect(freeform.error.error).toContain('roleplay chat');
+});
+
+
+test('Freeform isolation suppresses RP tools and prompt context while keeping phone actions available',async()=>{
+ const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Isolated phone'}),context=scope(session.id);
+ const enabled=await send('save_preferences',{...context,preferences:{suppressRoleplayTools:true}});expect(enabled.error).toBeUndefined();expect(host.tools.has('phone_action')).toBe(false);
+ const messages=[{role:'user',content:'A regular RP turn'}];expect(host.interceptors.length).toBeGreaterThan(0);
+ const result=await host.interceptors[0](messages,{chatId:'host-chat',characterId:'host-character'});expect(result).toEqual(messages);
+ const note=await send('action',{...context,action:'note',payload:{title:'Freeform still works',text:'Saved locally'}});expect(note.error).toBeUndefined();expect(note.state.notes.some((n:any)=>n.title==='Freeform still works')).toBe(true);
+ const reopened=await send('freeform_open',{sessionId:session.id});expect(reopened.error).toBeUndefined();expect(host.read(PREFERENCES_PATH).suppressRoleplayTools).toBe(true);
+ const disabled=await send('save_preferences',{...context,preferences:{suppressRoleplayTools:false}});expect(disabled.error).toBeUndefined();expect(host.tools.has('phone_action')).toBe(true);
+});

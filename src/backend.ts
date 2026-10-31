@@ -98,7 +98,7 @@ import type { ImagePurpose } from './backend/image-jobs.js'
 import { runTypeSafeJev, jevSourceKey, readJevAnswers, jevLlmRequest } from './backend/jev.js'
 import { applyJevAnswer, jevQuestion, normalizeJevSettings } from './domain/jev.js'
 import { normalizeContactGroups, saveContactGroup } from './domain/contact-groups.js'
-import { createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
+import { createCaptureReference, createPocketReference, latestArmedReference, referenceForGeneration, serializePocketReference } from './backend/references.js'
 
 import {timeskipMinutes,timeskipLabel} from './domain/timeskip.js'
 import {normalizeChatAppearance} from './domain/chat-appearance.js'
@@ -624,7 +624,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     if (!isRecord(item)) return []
     const referenceId = text(item.id, 180)
     const conversationId = text(item.conversationId, 180)
-    if (!referenceId || !conversationId) return []
+    const capture=item.sourceApp==='sharing'?normalizeLumistryCapture(item.capture):undefined
+    if (!referenceId || (item.sourceApp==='sharing'?!capture:!conversationId)) return []
     const scope: PocketReferenceScope = item.scope === 'recent_messages' || item.scope === 'selected_messages' ? item.scope : 'conversation'
     const status = item.status === 'injected' || item.status === 'consumed' || item.status === 'cancelled' || item.status === 'failed' ? item.status : 'armed'
     const participants = (Array.isArray(item.participants) ? item.participants : []).slice(0, 16).flatMap((participant) => {
@@ -654,7 +655,8 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
       id: referenceId,
       chatId,
       characterId,
-      sourceApp: 'messages' as const,
+      sourceApp: capture?'sharing' as const:'messages' as const,
+      ...(capture?{capture}:{}),
       conversationId,
       conversationTitle: text(item.conversationTitle, 120) || 'Pocket conversation',
       conversationKind: item.conversationKind === 'group' ? 'group' as const : 'direct' as const,
@@ -3018,7 +3020,7 @@ async function reconcilePostTurnCandidate(
   userId?: string,
   options: { auditClock: boolean } = { auditClock: false },
 ): Promise<void> {
-  if (!spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) return
+  if (!spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')||(await roleplayToolsSuppressed(userId))) return
   const hostMessages: any[] = await pocketHostMessages(chatId).catch(() => [])
   const current = hostMessages.find((message) => text(message?.id, 180) === origin.hostMessageId)
   const currentNarrative = sanitizeNarrativeContent(hostMessageCandidateContent(current, origin.swipeId, 12_000), 6_000)
@@ -5225,7 +5227,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
     const context = await resolveContext(payload, userId)
     if (isFreeformChat(context.chatId) && [
       'lumiphone:quickstart_event', 'lumiphone:continue_relay', 'lumiphone:continue_arrival',
-      'lumiphone:arm_reference', 'lumiphone:rearm_reference', 'lumiphone:setup_world_seed',
+      'lumiphone:arm_reference', 'lumiphone:attach_capture', 'lumiphone:rearm_reference', 'lumiphone:setup_world_seed',
       'lumiphone:sync_scene_contacts', 'lumiphone:timeline_review', 'lumiphone:jev_evaluate', 'lumiphone:reset_all_roleplay', 'lumiphone:gallery_add_to_chat',
     ].includes(String(payload.type))) throw new Error('This action needs a roleplay chat. Start from a Freeform session in Settings to keep its history separate.')
     if(payload.type==='lumiphone:native'){await nativeApps.handle(payload,context,userId);return}
@@ -5318,7 +5320,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         break
       }
       case 'lumiphone:freeform_list': {
-        send({ type: 'lumiphone:freeform_directory', requestId, directory: await freeformDirectory(userId) }, userId)
+        const suppressRoleplayTools=await roleplayToolsSuppressed(userId);registerTool(suppressRoleplayTools)
+        send({ type: 'lumiphone:freeform_directory', requestId, directory: await freeformDirectory(userId),suppressRoleplayTools }, userId)
         break
       }
       case 'lumiphone:freeform_create':
@@ -5853,6 +5856,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         const next = normalizePreferences({ ...existing, ...(isRecord(payload.preferences) ? payload.preferences : isRecord(payload.settings) ? payload.settings : {}) })
         await validateChangedWallpaperSources(existing, next, userId)
         await savePreferences(next, userId)
+        if(existing.suppressRoleplayTools!==next.suppressRoleplayTools)registerTool(next.suppressRoleplayTools)
         await sendState(await loadState(context.chatId, context.characterId, userId), userId, 'preferences', false, requestId)
         break
       }
@@ -6482,6 +6486,21 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         await applyAction({...context,action:'message',payload:trusted,...(prepared.imageId?{__chatPhoto:{id:prepared.imageId,url:image?.url}}:{})},userId,'user')
         send({type:'lumiphone:persona_photo_sent',requestId,...context,conversationId},userId);break
       }
+      case 'lumiphone:attach_capture': {
+        await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
+          const state=await loadState(context.chatId,context.characterId,userId)
+          if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'sharing'))throw new Error('Install Screenshots from the App Store first.')
+          if(state.references.some(r=>r.status==='injected'))throw new Error('A Pocket reference is already attached to an active roleplay generation.')
+          if(!isRecord(payload.request))throw new Error('Preview a selection first.')
+          const capture=createPocketCapture(state,{sourceId:text(payload.request.sourceId,240),ids:Array.isArray(payload.request.ids)?payload.request.ids.map(v=>text(v,180)):[],caption:text(payload.request.caption,501)})
+          if(payload.expectedCapture!==lumistryCaptureText(capture))throw new Error('The source changed. Preview the selection again before attaching.')
+          const reference=createCaptureReference(state,capture,nowIso(),id)
+          for(const previous of state.references)if(previous.status==='armed'||previous.status==='failed')previous.status='cancelled'
+          state.references.push(reference);state.references=state.references.slice(-24)
+          await saveState(state,userId);await sendState(state,userId,'reference_armed')
+          send({type:'lumiphone:reference_armed',requestId,referenceId:reference.id},userId)
+        });break
+      }
       case 'lumiphone:share_capture': {
         const state=await loadState(context.chatId,context.characterId,userId),conversationId=text(payload.conversationId,180)
         if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'sharing'))throw new Error('Install Screenshots from the App Store first.')
@@ -6745,7 +6764,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
   }
 }
 
-function registerTool(): void {
+async function roleplayToolsSuppressed(userId?:string):Promise<boolean> {
+  const saved=await spindle.userStorage.getJson<any>(PREFERENCES_PATH,{fallback:null,userId})
+  return saved?.suppressRoleplayTools===true
+}
+
+function registerTool(suppressed=false): void {
+  if(suppressed){spindle.unregisterTool('phone_action');return}
   if (!spindle.permissions.has('tools')) return
   spindle.registerTool({
     name: 'phone_action',
@@ -6776,6 +6801,7 @@ function ensureInterceptor(): void {
   if (interceptorDisposer || !spindle.permissions.has('interceptor')) return
   interceptorDisposer = spindle.registerInterceptor(async (messages, context) => {
     try {
+      if((await roleplayToolsSuppressed(context.userId)))return messages
       const chatId = context.chatId || '_lobby'
       const characterId = await stateCharacterIdForChat(chatId, context.characterId, context.userId)
       const generationId = text(context.generationId, 180)
@@ -6978,7 +7004,7 @@ async function compileLegacyPhoneTags(
   origin: PocketTurnCandidateOrigin,
   userId?: string,
 ): Promise<{ compiled: number; messageAnchors: number }> {
-  if (!spindle.permissions.has('chats')) return { compiled: 0, messageAnchors: 0 }
+  if (!spindle.permissions.has('chats')||(await roleplayToolsSuppressed(userId))) return { compiled: 0, messageAnchors: 0 }
   const messages: any[] = await pocketHostMessages(origin.chatId).catch(() => [])
   const target = messages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
   if (!target) return { compiled: 0, messageAnchors: 0 }
@@ -7224,6 +7250,7 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
   try {
     const userId = eventUserId
     if (!userId) throw new Error('Pocket tool invocation is missing authenticated user context')
+    if((await roleplayToolsSuppressed(userId)))throw new Error('Pocket tools are suppressed for roleplay. Use the Freeform phone directly.')
     const args = isRecord(payload.args) ? payload.args : {}
     const merged = {
       ...args, ...(isRecord(args.payload) ? args.payload : {}), payload: args.payload,
@@ -7258,11 +7285,11 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
 })
 
 ensureInterceptor()
-registerTool()
+void roleplayToolsSuppressed().then(registerTool).catch(error=>spindle.log.warn(`Pocket could not restore tool availability: ${error instanceof Error?error.message:String(error)}`))
 spindle.permissions.onChanged(({ permission, granted }) => {
   if(!granted)nativeApps.revoke(permission)
   if (permission === 'tools') {
-    if (granted) registerTool()
+    if (granted) void roleplayToolsSuppressed().then(registerTool)
     else spindle.unregisterTool('phone_action')
   }
   if (permission === 'interceptor') {
@@ -7554,7 +7581,7 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
             kind: 'message',
             title: 'Referenced chat',
             summary: `${reference.conversationTitle} · ${reference.messages.length} message${reference.messages.length === 1 ? '' : 's'}`,
-            route: { app: 'messages', conversationId: reference.conversationId },
+            route: reference.sourceApp==='sharing'?{app:'sharing'}:{ app: 'messages', conversationId: reference.conversationId },
             presentation: { kind: 'referenced', conversationTitle: reference.conversationTitle },
             source: { messageId, conversationId: reference.conversationId },
           })

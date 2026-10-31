@@ -255,6 +255,7 @@ export interface DevicePreferences {
   handsetScale: number
   desktopPhoneOffset: number
   freeformRoleplayMessages: number
+  suppressRoleplayTools: boolean
   desktopDockSide: 'left' | 'right'
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
   uiScale: number
@@ -764,7 +765,8 @@ export interface PocketContextReference {
   id: string
   chatId: string
   characterId: string
-  sourceApp: 'messages'
+  sourceApp: 'messages' | 'sharing'
+  capture?: import('./domain/lumistry-sharing.js').LumistryCapture
   conversationId: string
   conversationTitle: string
   conversationKind: 'direct' | 'group'

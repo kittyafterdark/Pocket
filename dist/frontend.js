@@ -25955,6 +25955,7 @@ function defaultPreferences() {
     handsetScale: 1,
     desktopPhoneOffset: 0,
     freeformRoleplayMessages: 0,
+    suppressRoleplayTools: false,
     desktopDockSide: "left",
     uiScale: 1,
     independentUiScale: false,
@@ -26100,6 +26101,7 @@ function normalizePreferences(value) {
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     desktopPhoneOffset: numberIn(raw.desktopPhoneOffset, 0, 0, 160),
     freeformRoleplayMessages: Math.round(numberIn(raw.freeformRoleplayMessages, 0, 0, 40)),
+    suppressRoleplayTools: raw.suppressRoleplayTools === true,
     desktopDockSide: raw.desktopDockSide === "right" ? "right" : "left",
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     independentUiScale: bool(raw.independentUiScale, false),
@@ -31695,6 +31697,27 @@ function spotifyShareSheet(options) {
   return content;
 }
 
+// src/frontend/components/lumistry-capture.ts
+function renderLumistryCapture(capture) {
+  const card = el("div", "lp-shared-capture");
+  const heading = el("div", "lp-shared-capture-heading"), mark = el("span", "lp-shared-capture-mark", "▧");
+  mark.setAttribute("aria-hidden", "true");
+  heading.append(mark, el("strong", "", `${capture.kind === "screenshot" ? "Screenshot" : "Photos"} · ${capture.title}`));
+  card.append(heading);
+  for (const entry of capture.entries) {
+    const row = el("div", "lp-shared-capture-row");
+    row.append(el("strong", "", entry.speaker));
+    if (entry.text)
+      row.append(el("p", "", entry.text));
+    if (entry.photoDescription)
+      row.append(el("p", "lp-shared-capture-photo", `Photo: ${entry.photoDescription}`));
+    card.append(row);
+  }
+  if (capture.caption)
+    card.append(el("p", "lp-shared-capture-caption", capture.caption));
+  return card;
+}
+
 // src/domain/pocket-sharing.ts
 function pocketShareSources(state) {
   const owner = state.pocketPersonaActorId, sources = [];
@@ -31738,29 +31761,8 @@ function createPocketCapture(state, request) {
   return capture;
 }
 
-// src/frontend/components/lumistry-capture.ts
-function renderLumistryCapture(capture) {
-  const card = el("div", "lp-shared-capture");
-  const heading = el("div", "lp-shared-capture-heading"), mark = el("span", "lp-shared-capture-mark", "▧");
-  mark.setAttribute("aria-hidden", "true");
-  heading.append(mark, el("strong", "", `${capture.kind === "screenshot" ? "Screenshot" : "Photos"} · ${capture.title}`));
-  card.append(heading);
-  for (const entry of capture.entries) {
-    const row = el("div", "lp-shared-capture-row");
-    row.append(el("strong", "", entry.speaker));
-    if (entry.text)
-      row.append(el("p", "", entry.text));
-    if (entry.photoDescription)
-      row.append(el("p", "lp-shared-capture-photo", `Photo: ${entry.photoDescription}`));
-    card.append(row);
-  }
-  if (capture.caption)
-    card.append(el("p", "lp-shared-capture-caption", capture.caption));
-  return card;
-}
-
 // src/frontend/components/pocket-share-sheet.ts
-function pocketShareSheet(state, send, selectedTarget = "", draft = { sourceId: "", target: "", ids: [], caption: "" }) {
+function pocketShareSheet(state, send, selectedTarget = "", draft = { sourceId: "", target: "", ids: [], caption: "" }, attach) {
   const root = el("div", "lp-pocket-share"), sources = pocketShareSources(state), source = el("select", "lp-select"), target = el("select", "lp-select");
   const hero = el("div", "lp-clippings-hero"), intro = el("div"), art = el("div", "lp-clippings-art");
   intro.append(el("span", "lp-share-eyebrow", "POCKET CLIPPINGS"), el("h2", "", "Too good to keep to yourself."), el("p", "", "Collect a few little moments. Send them as one card."));
@@ -31779,6 +31781,14 @@ look at this ↗`));
   if (sources.some((s) => s.id === draft.sourceId))
     source.value = draft.sourceId;
   const choices = el("fieldset", "lp-pocket-share-choices"), legend = el("legend", "", "Choose up to six items"), list = el("div", "lp-clipping-list"), preview = el("div", "lp-pocket-share-preview"), caption = el("textarea", "lp-textarea"), status = el("p", "lp-copy"), submit = button("Send selected excerpt", "lp-button lp-button-primary");
+  const reference = button("Attach to next RP turn", "lp-button lp-button-primary");
+  reference.hidden = !attach;
+  reference.onclick = () => {
+    if (reference.disabled)
+      return;
+    reference.disabled = true;
+    attach?.({ sourceId: source.value, ids: [...selected], caption: caption.value });
+  };
   const count = el("span", "lp-selection-count"), clear = button("Clear", "lp-share-clear"), toolbar = el("div", "lp-clipping-toolbar");
   toolbar.append(count, clear);
   choices.append(legend, toolbar, list);
@@ -31797,8 +31807,9 @@ look at this ↗`));
     clear.disabled = !selected.size;
     for (const check of list.querySelectorAll("input"))
       check.disabled = !check.checked && selected.size >= 6;
-    preview.replaceChildren(el("span", "lp-share-eyebrow", "THE CARD THEY’LL SEE"));
+    preview.replaceChildren(el("span", "lp-share-eyebrow", "EXCERPT PREVIEW"));
     submit.disabled = true;
+    reference.disabled = true;
     status.textContent = "";
     if (!selected.size) {
       const empty = el("div", "lp-clipping-empty");
@@ -31809,6 +31820,7 @@ look at this ↗`));
     try {
       preview.append(renderLumistryCapture(createPocketCapture(state, { sourceId: source.value, ids: [...selected], caption: caption.value })));
       submit.disabled = !target.value;
+      reference.disabled = false;
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : "Could not preview the selection.";
     }
@@ -31854,7 +31866,7 @@ look at this ↗`));
   const pickers = el("div", "lp-clipping-pickers");
   pickers.append(fieldBlock("Source app or conversation", source), fieldBlock("Send to", target));
   const footer = el("div", "lp-share-send");
-  footer.append(status, submit, el("p", "lp-share-disclaimer", "A readable excerpt card, rather than a screen image."));
+  footer.append(status, reference, submit, el("p", "lp-share-disclaimer", "A readable excerpt card, rather than a screen image."));
   root.append(pickers, choices, fieldBlock("Caption", caption), preview, footer);
   populate();
   if (!sources.length) {
@@ -43226,6 +43238,7 @@ class PocketController {
   freeformDraft = { personaId: "", sessionId: "", name: "" };
   freeformRequest = "";
   freeformListRequest = "";
+  freeformListPreferenceRevision = 0;
   freeformCopyRequest = "";
   sessionManageRequest = "";
   sessionManageError = "";
@@ -43740,6 +43753,7 @@ class PocketController {
   }
   loadFreeformDirectory() {
     this.freeformError = "";
+    this.freeformListPreferenceRevision = this.settingsRevision;
     this.freeformListRequest = this.send("lumiphone:freeform_list");
   }
   resetPocketSession() {
@@ -43895,6 +43909,12 @@ class PocketController {
           this.renderDrawerLanding();
         }
       });
+      const isolate = el("label", "lp-row"), suppress = el("input");
+      suppress.type = "checkbox";
+      suppress.checked = this.preferences.suppressRoleplayTools;
+      suppress.addEventListener("change", () => this.updatePreferences({ ...this.preferences, suppressRoleplayTools: suppress.checked }));
+      isolate.append(suppress, el("span", "", "Suppress Pocket tools in roleplay"));
+      lock.append(isolate, el("p", "lp-copy", "Keeps Freeform phone actions available while disabling Pocket tools and automatic phone context in roleplay chats. Applies across roleplay chats until unchecked."));
       const manage = button("Manage sessions", "pocket-portal-text-action");
       manage.onclick = () => this.navigatePortal("sessions");
       lock.append(manage);
@@ -44345,6 +44365,12 @@ class PocketController {
       if (!reference)
         return;
       const messageId = reference.messages.at(-1)?.messageId;
+      if (reference.sourceApp === "sharing" && reference.capture) {
+        const modal = this.ctx.ui.showModal({ title: "Attached app excerpt", width: 480, maxHeight: 740 });
+        this.applyShareAppearance(modal.root);
+        modal.root.append(renderLumistryCapture(reference.capture));
+        return;
+      }
       this.openPocket({ app: "messages", conversationId: reference.conversationId, messageId });
     });
     clear.addEventListener("click", (event) => {
@@ -44416,8 +44442,8 @@ class PocketController {
     if (count) {
       const messageCount = reference.messages.length;
       count.hidden = messageCount <= 1;
-      count.textContent = messageCount > 1 ? `${messageCount} msgs` : "";
-      count.title = messageCount > 1 ? `${messageCount} Pocket messages attached` : "";
+      count.textContent = messageCount > 1 ? `${messageCount} ${reference.sourceApp === "sharing" ? "items" : "msgs"}` : "";
+      count.title = messageCount > 1 ? `${messageCount} Pocket ${reference.sourceApp === "sharing" ? "items" : "messages"} attached` : "";
       count.setAttribute("aria-label", count.title || "One Pocket message attached");
     }
     if (preview) {
@@ -44558,7 +44584,7 @@ class PocketController {
       return;
     }
     const communityRequest = this.communityRequests.get(payload.requestId);
-    if (communityRequest && ["lumiphone:spotify_preview", "lumiphone:spotify_sent", "lumiphone:share_sent", "lumiphone:persona_photo_sent", "lumiphone:error"].includes(payload.type)) {
+    if (communityRequest && ["lumiphone:spotify_preview", "lumiphone:spotify_sent", "lumiphone:share_sent", "lumiphone:persona_photo_sent", "lumiphone:reference_armed", "lumiphone:error"].includes(payload.type)) {
       this.communityRequests.delete(payload.requestId);
       communityRequest(payload);
       return;
@@ -44684,6 +44710,8 @@ class PocketController {
       this.freeformListRequest = "";
       this.freeformDirectory = payload.directory;
       this.freeformError = "";
+      if (this.settingsRevision === this.freeformListPreferenceRevision && typeof payload.suppressRoleplayTools === "boolean")
+        this.preferences.suppressRoleplayTools = payload.suppressRoleplayTools;
       this.renderDrawerLanding();
       if (this.sessionManageFocus) {
         this.sessionManageFocus = false;
@@ -46935,7 +46963,16 @@ class PocketController {
           this.openPocket({ app: "messages", conversationId });
       });
       this.send("lumiphone:share_capture", { ...context, requestId: id, conversationId, request, expectedCapture: lumistryCaptureText(createPocketCapture(state, request)) });
-    }, target, this.sharingDraft);
+    }, target, this.sharingDraft, this.freeformSession ? undefined : (request) => {
+      const id = requestId("attach_capture");
+      this.communityRequests.set(id, (payload) => {
+        if (payload.type === "lumiphone:error")
+          this.showError(payload.error);
+        else
+          this.showFeedback("App excerpt attached to your next roleplay turn.");
+      });
+      this.send("lumiphone:attach_capture", { ...context, requestId: id, request, expectedCapture: lumistryCaptureText(createPocketCapture(state, request)) });
+    });
   }
   renderMessages(dating = false) {
     this.viewCleanups.push(() => this.voicePlayer.stop());

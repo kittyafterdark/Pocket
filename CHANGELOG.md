@@ -4,6 +4,10 @@
 
 ### Follow-up improvements
 
+- Added Screenshots attachments for the next roleplay turn, using the existing composer reference pill with a saved excerpt preview and removal. No Pocket conversation target is required.
+- Added “Suppress Pocket tools in roleplay” to the Freeform sidebar. The saved toggle disables Pocket tools, automatic RP context, fallback actions and post-turn phone audits while direct Freeform phone actions remain available.
+- Restored Lumistry’s Connection page and app connection override toggle, with connection/model selection and separate authoring controls.
+- Sticker generation now fills the app with an updating preview and progress strip, without rebuilding the page on each update. Sticker prompts bypass Camera’s scene enhancer so retries retain the chibi brief.
 - Added a configurable desktop phone offset under Appearance → Sizing, leaving an empty strip between the handset and its docked edge.
 - Added opt-in Freeform roleplay context: choose up to 40 recent messages from the active roleplay chat. Off by default.
 - Added A field to custom trackers for free text, with multiline instructions, manual or story updates, and reset support.
