@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — 2026-10-31
+## 0.6.0 — 2026-10-31
 
 ### Follow-up improvements
 
