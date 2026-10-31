@@ -4,7 +4,7 @@ import type {DiscoverySlot} from './lumistry-pipeline.js';
 /** Only execution settings can reopen a provider pause; spending limits are separate. */
 export function providerExecutionSignature(policy:unknown):string {
  const p=normalizeAuthoringPolicy(policy);
- return 'provider-stalled:'+JSON.stringify({connectionId:p.connectionId,transport:p.transport,reasoning:p.reasoning,outputTokens:p.outputTokens,timeoutSeconds:p.timeoutSeconds});
+ return 'provider-stalled:'+JSON.stringify({connectionId:p.overrideConnection?p.connectionId:'',...(p.overrideConnection&&p.model?{model:p.model}:{}),transport:p.transport,reasoning:p.reasoning,outputTokens:p.outputTokens,timeoutSeconds:p.timeoutSeconds});
 }
 /** Called only on the next user-authorized discovery invocation, never dispatches itself. */
 export function recoverProviderSlot(slot:DiscoverySlot,policy:unknown):boolean {

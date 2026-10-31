@@ -24309,6 +24309,112 @@ function renderPreferenceLibrary(d, world, guide, save, cancel, busy = false, on
   return root;
 }
 
+// src/domain/authoring-policy.ts
+var DEFAULT_AUTHORING_POLICY = { transport: "response", connectionId: "", overrideConnection: false, model: "", reasoning: "inherit", outputTokens: 0, timeoutSeconds: 180, sessionCalls: 24, maxCalls: 150, maxTokens: 800000 };
+function normalizeAuthoringPolicy(v) {
+  const integer = (key, min, max) => typeof v?.[key] === "number" && Number.isFinite(v[key]) ? Math.max(min, Math.min(max, Math.round(v[key]))) : Number(DEFAULT_AUTHORING_POLICY[key]);
+  return { overrideConnection: typeof v?.overrideConnection === "boolean" ? v.overrideConnection : !!v?.connectionId, model: typeof v?.model === "string" ? v.model.trim().slice(0, 500) : "", transport: v?.transport === "stream" ? "stream" : "response", connectionId: typeof v?.connectionId === "string" ? v.connectionId.trim().slice(0, 180) : "", reasoning: ["off", "low"].includes(v?.reasoning) ? v.reasoning : "inherit", outputTokens: v?.outputTokens === 0 ? 0 : integer("outputTokens", 0, 32768), timeoutSeconds: integer("timeoutSeconds", 15, 900), sessionCalls: integer("sessionCalls", 1, 100), maxCalls: integer("maxCalls", 1, 1000), maxTokens: integer("maxTokens", 1000, 1e7) };
+}
+
+// src/frontend/apps/lumistry-connection.ts
+function persist(h, patch) {
+  const settings = { ...normalizeAuthoringPolicy(h.connectionSettings), ...patch };
+  h.connectionSettings = settings;
+  h.saveConnectionSettings?.(settings);
+}
+function connectionOverrideControls(h) {
+  const box = el("section", "lp-card lp-stack"), label = el("label", "lp-row"), input = el("input");
+  const settings = normalizeAuthoringPolicy(h.connectionSettings);
+  input.type = "checkbox";
+  input.checked = settings.overrideConnection;
+  input.disabled = !h.saveConnectionSettings;
+  input.addEventListener("change", () => {
+    persist(h, { overrideConnection: input.checked });
+  });
+  label.append(input, el("span", "", "Override connection settings for the app"));
+  const open = button("Connection settings", "lp-button");
+  open.addEventListener("click", () => {
+    h.ui.settingsPage = "connection";
+    h.ui.tab = "settings";
+    h.render();
+  });
+  box.append(label, el("p", "lp-copy", "Applies to Lumistry text generation and chats. Off follows Pocket’s connection and model; your app override stays saved. Image generation uses Pocket’s image settings. Changes save immediately."), open);
+  return box;
+}
+function renderLumistryConnection(h) {
+  const box = el("section", "lp-stack");
+  box.append(el("h1", "lp-title", "Connection"));
+  const controls = connectionOverrideControls(h);
+  controls.querySelector("button")?.remove();
+  box.append(controls);
+  let settings = normalizeAuthoringPolicy(h.connectionSettings);
+  const save = (patch) => {
+    persist(h, patch);
+    settings = normalizeAuthoringPolicy(h.connectionSettings);
+  };
+  const fields = el("fieldset", "lp-card lp-stack");
+  fields.append(el("legend", "", "App connection"));
+  fields.disabled = !settings.overrideConnection || !h.saveConnectionSettings;
+  const connection = el("select", "lp-select");
+  connection.append(new Option("Choose a connection", ""));
+  for (const entry of h.connections || [])
+    connection.append(new Option(`${entry.name} · ${entry.model || entry.provider}`, entry.id));
+  if (settings.connectionId && !(h.connections || []).some((c) => c.id === settings.connectionId))
+    connection.append(new Option("Saved connection (unavailable)", settings.connectionId));
+  connection.value = settings.connectionId;
+  const connectionLabel = el("label", "lp-label", "Connection profile");
+  connectionLabel.append(connection);
+  const model = el("input", "lp-input");
+  model.value = settings.model;
+  model.placeholder = "Use connection model";
+  const modelLabel = el("label", "lp-label", "Model override");
+  modelLabel.append(model);
+  connection.addEventListener("change", () => {
+    model.value = "";
+    save({ connectionId: connection.value, model: "" });
+  });
+  model.addEventListener("change", () => save({ model: model.value.trim() }));
+  fields.append(connectionLabel, modelLabel, el("p", "lp-copy", "Leave the model blank to use the selected connection’s model. An unavailable connection reports an error instead of switching providers."));
+  const toggle = controls.querySelector("input");
+  toggle.addEventListener("change", () => {
+    settings.overrideConnection = toggle.checked;
+    fields.disabled = !toggle.checked || !h.saveConnectionSettings;
+  });
+  box.append(fields);
+  const authoring = el("section", "lp-card lp-stack");
+  authoring.append(el("h2", "lp-title", "Profile authoring"), el("p", "lp-copy", "These controls apply to profile writing and image inspection, independently of the connection toggle. Chats keep Pocket’s reasoning and output settings."));
+  for (const [key, title, options] of [
+    ["reasoning", "Reasoning effort", [["inherit", "Follow connection"], ["off", "Off"], ["low", "Low"]]],
+    ["transport", "Response mode", [["response", "Complete response"], ["stream", "Stream response"]]]
+  ]) {
+    const label = el("label", "lp-label", title), select = el("select", "lp-select");
+    for (const [value, name] of options)
+      select.append(new Option(name, value));
+    select.value = settings[key];
+    select.disabled = !h.saveConnectionSettings;
+    select.addEventListener("change", () => save({ [key]: select.value }));
+    label.append(select);
+    authoring.append(label);
+  }
+  for (const [key, title, min, max] of [["outputTokens", "Output token limit (0 follows connection)", 0, 32768], ["timeoutSeconds", "Request timeout (seconds)", 15, 900]]) {
+    const label = el("label", "lp-label", title), input = el("input", "lp-input");
+    input.type = "number";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = "1";
+    input.value = String(settings[key]);
+    input.disabled = !h.saveConnectionSettings;
+    input.addEventListener("change", () => {
+      if (input.value !== "" && input.checkValidity())
+        save({ [key]: Number(input.value) });
+    });
+    label.append(input);
+    authoring.append(label);
+  }
+  box.append(authoring);
+  return box;
+}
+
 // src/frontend/apps/lumistry-setup.ts
 var act3 = (label, fn, primary = false) => {
   const b = button(label, "lp-button" + (primary ? " lp-primary" : ""));
@@ -24715,7 +24821,7 @@ function renderSettingsDashboard(h, d, parts) {
   };
   if (page === "home") {
     box.append(el("h1", "lp-title", "Advanced settings"), el("p", "lp-copy", `${d.generationSettings.experience?.tone || "Balanced"} tone · ${d.populationWorld?.kind || "Current"} setting · ${d.worldGuide?.species.length || 0} reviewed species · ${d.generationSettings.creation?.readyTarget || 5} profiles ready target`), act3(d.setupApplied ? "Edit my setup" : d.setupDraft ? "Resume guided setup" : "Guided setup · optional", () => start(h, d, d.setupApplied ? 0 : undefined), true), el("p", "lp-copy", "Optional tools. Your everyday choices are in Me."));
-    const destinations = [["experience", "My experience", "Tone, conversation variety, adult themes and development"], ["world", "World & people", "Setting, species, appearance and occupations"], ["discovery", "Discovery & performance", "Filters, ready profiles, batching and concurrency"], ["app", "App & integrations", "Theme and optional NPC Bank participation"]];
+    const destinations = [["experience", "My experience", "Tone, conversation variety, adult themes and development"], ["world", "World & people", "Setting, species, appearance and occupations"], ["discovery", "Discovery & performance", "Filters, ready profiles, batching and concurrency"], ["app", "App & integrations", "Theme and optional NPC Bank participation"], ["connection", "Connection", "App connection override and authoring controls"]];
     const grid = el("div", "lumistry-settings-grid");
     for (const [id, title, description] of destinations) {
       const card = act3("", () => go(id));
@@ -24759,6 +24865,10 @@ function renderSettingsDashboard(h, d, parts) {
     box.append(act3("Open setup review", () => start(h, d, 6)));
     return box;
   }
+  if (page === "connection") {
+    box.append(renderLumistryConnection(h));
+    return box;
+  }
   if (page === "technical") {
     box.append(el("h1", "lp-title", "Technical controls & archives"));
     if (parts.tools)
@@ -24771,7 +24881,7 @@ function renderSettingsDashboard(h, d, parts) {
   h.ui.directBaseline = { group, signature: h.ui.settingsBaselines[group] };
   const generation = h.ui.generationDraft;
   if (page === "experience") {
-    box.append(el("h1", "lp-title", "My experience"), unpack(parts.personality));
+    box.append(el("h1", "lp-title", "My experience"), connectionOverrideControls(h), unpack(parts.personality));
     h.ui.contentDraft ||= structuredClone(d.experiencePreferences || defaultExperiencePreferences());
     if (!d.experiencePreferences)
       box.append(el("p", "lp-copy", "Adult-content preferences are not configured yet. Changing a control adopts these preferences; untouched controls keep the existing behaviour."));
@@ -25342,13 +25452,6 @@ function timeskipMinutes(value) {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 525600)
     throw new Error("Choose a timeskip from 1 minute to 365 days.");
   return value;
-}
-
-// src/domain/authoring-policy.ts
-var DEFAULT_AUTHORING_POLICY = { transport: "response", connectionId: "", reasoning: "inherit", outputTokens: 0, timeoutSeconds: 180, sessionCalls: 24, maxCalls: 150, maxTokens: 800000 };
-function normalizeAuthoringPolicy(v) {
-  const integer = (key, min, max) => typeof v?.[key] === "number" && Number.isFinite(v[key]) ? Math.max(min, Math.min(max, Math.round(v[key]))) : Number(DEFAULT_AUTHORING_POLICY[key]);
-  return { transport: v?.transport === "stream" ? "stream" : "response", connectionId: typeof v?.connectionId === "string" ? v.connectionId.trim().slice(0, 180) : "", reasoning: ["off", "low"].includes(v?.reasoning) ? v.reasoning : "inherit", outputTokens: v?.outputTokens === 0 ? 0 : integer("outputTokens", 0, 32768), timeoutSeconds: integer("timeoutSeconds", 15, 900), sessionCalls: integer("sessionCalls", 1, 100), maxCalls: integer("maxCalls", 1, 1000), maxTokens: integer("maxTokens", 1000, 1e7) };
 }
 
 // src/domain/reasoning.ts
@@ -30251,22 +30354,6 @@ function renderStickerLibrary(h, root, back) {
     return;
   }
   if (panel === "create") {
-    root.classList.add("na-editor");
-    root.append(header("Add stickers", subBack(h, "library")));
-    const body = scroll(), sources = el("div", "st-add-sources"), pack = () => h.ui.drafts["sticker-destination"] || "mine";
-    if (!packOptions.some(([id]) => id === h.ui.drafts["sticker-destination"]))
-      h.ui.drafts["sticker-destination"] = packOptions.some(([id]) => id === h.ui.drafts["sticker-pack"]) ? h.ui.drafts["sticker-pack"] : "mine";
-    body.append(packPicker("sticker-destination"));
-    for (const [title, copy, name, run, disabled] of [["Gallery", "Use a saved image", "image", () => h.gallery(h.ui.drafts["sticker-description"] || "", h.ui.drafts["sticker-caption"] || "", pack(), h.ui.drafts["sticker-name"] || ""), !h.images], ["Upload", "PNG, WebP, GIF or JPEG", "receive", () => h.upload(h.ui.drafts["sticker-description"] || "", h.ui.drafts["sticker-caption"] || "", pack(), h.ui.drafts["sticker-name"] || ""), !h.images]]) {
-      const b = tool(title, name, run, "st-source-tile");
-      b.append(el("strong", "", title), el("small", "", copy));
-      b.disabled = disabled || h.busy;
-      sources.append(b);
-    }
-    body.append(sources, el("h2", "st-create-heading", "Make a new sticker"), input2(h, "sticker-name", "Sticker name (optional)"), textarea(h, "sticker-description", "Sticker description"), input2(h, "sticker-caption", "Short caption (optional)"));
-    const generate = textButton("Generate a chibi sticker", () => h.action("stickers", "generate", { name: h.ui.drafts["sticker-name"], description: h.ui.drafts["sticker-description"], caption: h.ui.drafts["sticker-caption"], packId: pack() }), "na-button na-primary");
-    generate.disabled = !h.imageGeneration || h.busy;
-    body.append(generate);
     if (h.busy) {
       const progress = h.ui.stickerProgress, frame = el("figure", "st-generation-preview");
       if (progress?.url) {
@@ -30284,8 +30371,27 @@ function renderStickerLibrary(h, root, back) {
         meter.setAttribute("aria-label", "Sticker generation progress");
         frame.append(meter);
       }
-      body.append(frame);
-    } else if (h.ui.stickerPreview)
+      root.classList.add("st-generating");
+      root.replaceChildren(frame);
+      return;
+    }
+    root.classList.add("na-editor");
+    root.append(header("Add stickers", subBack(h, "library")));
+    const body = scroll(), sources = el("div", "st-add-sources"), pack = () => h.ui.drafts["sticker-destination"] || "mine";
+    if (!packOptions.some(([id]) => id === h.ui.drafts["sticker-destination"]))
+      h.ui.drafts["sticker-destination"] = packOptions.some(([id]) => id === h.ui.drafts["sticker-pack"]) ? h.ui.drafts["sticker-pack"] : "mine";
+    body.append(packPicker("sticker-destination"));
+    for (const [title, copy, name, run, disabled] of [["Gallery", "Use a saved image", "image", () => h.gallery(h.ui.drafts["sticker-description"] || "", h.ui.drafts["sticker-caption"] || "", pack(), h.ui.drafts["sticker-name"] || ""), !h.images], ["Upload", "PNG, WebP, GIF or JPEG", "receive", () => h.upload(h.ui.drafts["sticker-description"] || "", h.ui.drafts["sticker-caption"] || "", pack(), h.ui.drafts["sticker-name"] || ""), !h.images]]) {
+      const b = tool(title, name, run, "st-source-tile");
+      b.append(el("strong", "", title), el("small", "", copy));
+      b.disabled = disabled || h.busy;
+      sources.append(b);
+    }
+    body.append(sources, el("h2", "st-create-heading", "Make a new sticker"), input2(h, "sticker-name", "Sticker name (optional)"), textarea(h, "sticker-description", "Sticker description"), input2(h, "sticker-caption", "Short caption (optional)"));
+    const generate = textButton("Generate a chibi sticker", () => h.action("stickers", "generate", { name: h.ui.drafts["sticker-name"], description: h.ui.drafts["sticker-description"], caption: h.ui.drafts["sticker-caption"], packId: pack() }), "na-button na-primary");
+    generate.disabled = !h.imageGeneration || h.busy;
+    body.append(generate);
+    if (h.ui.stickerPreview)
       body.append(textButton("Review generated sticker", () => go(h, "review")));
     root.append(body);
     return;
@@ -44387,8 +44493,39 @@ class PocketController {
             const current = this.nativeUI.stickerProgress || {};
             this.nativeUI.stickerProgress = { url: payload.imageDataUrl || current.url, step: payload.step ?? current.step, totalSteps: payload.totalSteps ?? current.totalSteps };
           }
-          if (this.currentApp === app)
-            this.render(false);
+          if (this.currentApp === app) {
+            const frame = this.screen.querySelector(".st-generation-preview");
+            if (app === "stickers" && frame) {
+              const progress = this.nativeUI.stickerProgress;
+              if (progress?.url) {
+                let image = frame.querySelector("img");
+                if (!image) {
+                  image = el("img");
+                  image.alt = "Sticker generation preview";
+                  frame.querySelector(".na-icon")?.remove();
+                  frame.prepend(image);
+                }
+                image.src = progress.url;
+              }
+              const caption = frame.querySelector("figcaption");
+              if (caption)
+                caption.textContent = this.nativeStatus[app] || "";
+              if (progress?.totalSteps) {
+                let meter = frame.querySelector("progress");
+                if (!meter) {
+                  meter = el("progress");
+                  meter.setAttribute("aria-label", "Sticker generation progress");
+                  frame.append(meter);
+                }
+                meter.max = progress.totalSteps;
+                meter.value = progress.step || 0;
+              }
+              const strip = this.screen.querySelector(".na-progress");
+              if (strip?.firstChild?.nodeType === Node.TEXT_NODE)
+                strip.firstChild.textContent = this.nativeStatus[app] || "";
+            } else
+              this.render(false);
+          }
         }
         return;
       }
@@ -46594,6 +46731,9 @@ class PocketController {
       images: Boolean(this.caps?.imageGen),
       backgroundEnabled: this.preferences.ambientMessaging !== "off",
       automaticReplies: this.preferences.autoReplyAfterSend,
+      connectionSettings: this.preferences.authoring,
+      connections: this.generation?.connections,
+      saveConnectionSettings: (settings) => this.updatePreferences({ ...this.preferences, authoring: settings }),
       creationConfiguration: { authoring: this.preferences.authoring, generationMode: this.preferences.generationMode, samplers: this.preferences.samplerOverrides },
       openTimeline: (id) => this.openPocket({ app: "calendar", eventId: id }),
       action: (action, payload) => this.datingAction(action, payload),
@@ -49250,6 +49390,8 @@ var NATIVE_APP_STYLES = `
   .lumiphone-shell .lp-bubble.lp-sticker-message{background:transparent;border-color:transparent;box-shadow:none}.lp-sticker-message .lp-message-photo{max-width:160px;background:transparent}.lp-sticker-message .lp-message-photo img{max-height:160px;object-fit:contain}
   .na-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.na-error{display:flex;align-items:center;gap:10px}.na-error>.na-icon-button{margin-left:auto;flex:none;width:30px;height:30px;padding:6px}.bk-balance>strong{overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.bk-debit-card{background:linear-gradient(120deg,color-mix(in srgb,var(--lp-outgoing,#5d4a8a) 80%,#503867),color-mix(in srgb,var(--lp-outgoing,#5d4a8a) 70%,#272943))}.tw-live-chat strong{color:color-mix(in srgb,var(--lp-text) 55%,var(--tw-name-color,#ab85df))}.lp-tracker-bank-sync{display:block;grid-column:1/-1;justify-self:start;margin-top:7px;padding:3px 7px;border:1px solid var(--lp-border);border-radius:6px;color:var(--lp-muted);font-size:9px;font-weight:500;line-height:1.4}
   .mp-canvas{z-index:0}.mp-search,.mp-filters{z-index:5}.mp-map-tools{z-index:4}.mp-place-sheet{z-index:6}.mp-place-shelf{z-index:3}.mp-attribution{z-index:2}
+  .na-stickers.st-generating .st-generation-preview{flex:1;min-height:0;margin:0;border:0;border-radius:0;position:relative;padding:12px;display:flex;align-items:center;justify-content:center}.na-stickers.st-generating .st-generation-preview img{width:100%;height:100%;min-height:0;object-fit:contain}.st-generating .st-generation-preview figcaption{display:none}.st-generating .st-generation-preview progress{position:absolute;bottom:12px;left:12px;width:calc(100% - 24px)}
+  .na-stickers>.na-progress{position:static;flex:none;margin:8px 17px;inset:auto}
   .st-pack-destination{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}.st-pack-destination>label{min-width:0}.st-pack-destination>.na-button{min-height:44px;padding:8px 11px;font-size:.85em!important}.st-review-footer{flex:none;display:grid;gap:7px;padding:10px 17px 12px;border-top:1px solid var(--lp-border);background:var(--lp-bg)}.st-review-footer>button{width:100%}.st-review-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.st-review-actions>button{min-height:36px;padding:7px;font-size:.85em!important}.st-generation-preview{display:grid;justify-items:center;gap:10px;margin:15px 0;padding:14px;border:1px solid var(--lp-border);border-radius:16px;background:var(--lp-surface)}.st-generation-preview img{display:block;width:100%;height:180px;object-fit:contain}.st-generation-preview>.na-icon{width:70px;height:70px;color:var(--lp-muted)}.st-generation-preview figcaption{font-size:.85em;color:var(--lp-muted)}.st-generation-preview progress{width:100%;accent-color:var(--lp-accent)}
   .st-edit-image{display:block;width:150px;height:150px;object-fit:contain;margin:4px auto 22px}
   /* Shared pack rail and compact composer drawer. Each drawer consumes layout space. */

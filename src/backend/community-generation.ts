@@ -15,7 +15,7 @@ export async function runCommunityNativeGeneration(host:PocketGenerationHost,tas
   delete request.receiptKey;delete request.contextMetrics;delete request.diagnosticScope;delete request.progressRequestId
   if(policy.outputTokens)request.parameters.max_tokens=policy.outputTokens
   const safeHost={...host,savePreferences:async(value:any,user?:string)=>{try{return await host.savePreferences(value,user)}catch{host.send({type:'lumiphone:diagnostic',appScope:'lumistry',diagnostic:{layer:'storage',code:'history-write-failed',saved:true,retryable:true}},user);return value}}}
-  const result=await generationDeadline(policy.timeoutSeconds,input.signal,signal=>runPocketGeneration(safeHost,task,requestId,{...request,signal},userId,{automaticRetry:false,connectionId:policy.connectionId||undefined,transport:policy.transport,preservePartial:true,progressRequestId:input.progressRequestId}))
+  const result=await generationDeadline(policy.timeoutSeconds,input.signal,signal=>runPocketGeneration(safeHost,task,requestId,{...request,signal},userId,{automaticRetry:false,transport:policy.transport,preservePartial:true,progressRequestId:input.progressRequestId}))
   const usage=result.usage||{},receipt={requestId,usageStatus:usage.total_tokens!==undefined?'reported' as const:'unavailable' as const,promptTokens:usage.prompt_tokens,completionTokens:usage.completion_tokens,totalTokens:usage.total_tokens}
   // Cache only bounded answer text and numeric usage; provider reasoning never enters receipts.
   const answer={content:result.content,finish_reason:result.finish_reason,usage:result.usage?{prompt_tokens:usage.prompt_tokens,completion_tokens:usage.completion_tokens,total_tokens:usage.total_tokens}:undefined}

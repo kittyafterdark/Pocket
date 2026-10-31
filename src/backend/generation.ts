@@ -1,3 +1,4 @@
+import { normalizeAuthoringPolicy } from '../domain/authoring-policy.js'
 import { pocketReasoning } from '../domain/reasoning.js'
 import type { DevicePreferences, PocketConnectionSummary, PocketGenerationInfo, PocketGenerationRun } from '../types.js'
 
@@ -61,14 +62,19 @@ export async function runPocketGeneration(
 ): Promise<any> {
   const preferences = await host.loadPreferences(userId)
   const info = await inspectPocketGeneration(host, preferences, userId)
-  if(options.connectionId){const selected=info.connections.find(c=>c.id===options.connectionId);if(!selected)throw new Error('The selected authoring connection is unavailable.');info.effective=selected}
+  const appPolicy = normalizeAuthoringPolicy(preferences.authoring)
+  const appOverride = (task.startsWith('lumistry-') || input.diagnosticScope === 'lumistry') && appPolicy.overrideConnection
+  const connectionId = options.connectionId || (appOverride ? appPolicy.connectionId : '')
+  const model = appOverride && connectionId ? appPolicy.model : ''
+  if (appOverride && !connectionId) throw new Error('Choose a Lumistry connection or turn off the app connection override.')
+  if(connectionId){const selected=info.connections.find(c=>c.id===connectionId);if(!selected)throw new Error('The selected Lumistry connection is unavailable.');info.effective=selected}
   if (!info.effective) throw new Error(preferences.generationMode === 'sidecar' ? 'The selected Pocket sidecar connection is unavailable.' : 'No active roleplay generation connection is configured.')
   const startedAt = new Date().toISOString()
   const run: PocketGenerationRun = {
     requestId, task, mode: preferences.generationMode,
     connectionId: info.effective.id, connectionName: info.effective.name,
     usageStatus:'unavailable',
-    provider: info.effective.provider, model: !options.connectionId && preferences.generationMode === 'sidecar' ? preferences.sidecarModelOverride || info.effective.model : info.effective.model,
+    provider: info.effective.provider, model: model || (!connectionId && preferences.generationMode === 'sidecar' ? preferences.sidecarModelOverride || info.effective.model : info.effective.model),
     status: 'started', startedAt,
   }
   await writeRun(host, run, userId)
@@ -79,8 +85,9 @@ export async function runPocketGeneration(
     const request = { ...input, userId, reasoning: input.reasoning ?? pocketReasoning(preferences.reasoningEffort) } as GenerateInput & { connection_id?: string; parameters?: Record<string, unknown> }
     const samplers = normalizeSamplerOverrides(preferences.samplerOverrides)
     if (Object.keys(samplers).length) request.parameters = { ...(request.parameters || {}), ...samplers }
-    if(options.connectionId)request.connection_id=options.connectionId
-    if (preferences.generationMode === 'sidecar' && !options.connectionId) {
+    if(connectionId)request.connection_id=connectionId
+    if(model)request.parameters={...(request.parameters || {}),model}
+    if (preferences.generationMode === 'sidecar' && !connectionId) {
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
     }

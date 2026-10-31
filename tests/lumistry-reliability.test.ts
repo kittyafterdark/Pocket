@@ -100,7 +100,7 @@ test('optional unknown companion metadata is retained without an organizer and c
 function generationHost(){let prefs=defaultPreferences(),calls=0,writes=0;const requests:any[]=[],events:any[]=[];const host:any={loadPreferences:async()=>structuredClone(prefs),savePreferences:async(p:any)=>{writes++;prefs=normalizePreferences(p);return prefs;},send:(e:any)=>events.push(e),spindle:{permissions:{has:()=>true},connections:{list:async()=>[{id:'main',name:'Main',provider:'synthetic',model:'main-model',is_default:true},{id:'author',name:'Author',provider:'synthetic',model:'author-model'}]},generate:{quiet:async(req:any)=>{calls++;requests.push(req);return {content:'Bio: valid output',finish_reason:'stop',reasoning:'PRIVATE REASONING',usage:{prompt_tokens:12,completion_tokens:5,total_tokens:17,provider_raw:{private:'PRIVATE RAW'}}};}}}};return {host,requests,events,get prefs(){return prefs;},set prefs(p){prefs=p;},get calls(){return calls;},get writes(){return writes;}};}
 
 test('explicit native authoring connection, reasoning and output settings are scoped to authoring',async()=>{
- const f=generationHost();f.prefs={...f.prefs,generationMode:'sidecar',sidecarConnectionId:'main',sidecarModelOverride:'chat-override',authoring:{...f.prefs.authoring!,connectionId:'author',reasoning:'low',outputTokens:4096}};
+ const f=generationHost();f.prefs={...f.prefs,generationMode:'sidecar',sidecarConnectionId:'main',sidecarModelOverride:'chat-override',authoring:{...f.prefs.authoring!,connectionId:'author',overrideConnection:true,reasoning:'low',outputTokens:4096}};
  await runPocketGeneration(f.host,'lumistry-author','author-policy',{messages:[]});await runPocketGeneration(f.host,'message-reply','ordinary-policy',{messages:[]});
  expect(f.requests[0].connection_id).toBe('author');expect(f.requests[0].parameters.model).toBeUndefined();expect(f.requests[0].parameters.max_tokens).toBe(4096);expect(f.requests[0].reasoning).toEqual({source:'custom',apiReasoning:true,effort:'low'});
  expect(f.requests[1].parameters.model).toBe('chat-override');expect(f.requests[1].reasoning).toEqual({source:'off'});
@@ -188,4 +188,24 @@ test('discovery retains the controlled timeout explanation and stamps provider s
  const h=harness();h.generate=async()=>{throw new PocketFailure({layer:'provider',code:'timeout',saved:false,retryable:true},'The provider did not finish within 180 seconds (stream; 0 answer bytes and 115 reasoning events received). Saved work is kept.');};
  await h.run();expect(h.calls).toHaveLength(1);
  const job=h.state.lumistry.owner.discoveryJob!;expect(job.lastError).toContain('115 reasoning events');expect(job.slots[0].failureSignature).toStartWith('provider-stalled:');expect(job.spent!.reported).toBe(0);expect(job.spent!.calls).toBe(1);
+});
+
+
+test('Lumistry override routes authoring and dating chats, then restores Pocket without losing the saved model',async()=>{
+ const f=generationHost();f.prefs={...f.prefs,generationMode:'sidecar',sidecarConnectionId:'main',sidecarModelOverride:'pocket-model',authoring:{...f.prefs.authoring!,overrideConnection:true,connectionId:'author',model:'app-model'}};
+ await runPocketGeneration(f.host,'lumistry-author','app-author',{messages:[]});
+ await runPocketGeneration(f.host,'message-reply','app-chat',{messages:[],diagnosticScope:'lumistry'});
+ await runPocketGeneration(f.host,'message-reply','normal-chat',{messages:[]});
+ expect(f.requests.slice(0,2).map(r=>[r.connection_id,r.parameters.model])).toEqual([['author','app-model'],['author','app-model']]);
+ expect(f.requests[2].connection_id).toBe('main');expect(f.requests[2].parameters.model).toBe('pocket-model');
+ f.prefs.authoring!.overrideConnection=false;
+ await runPocketGeneration(f.host,'lumistry-world','inherited',{messages:[]});
+ expect(f.requests[3].connection_id).toBe('main');expect(f.requests[3].parameters.model).toBe('pocket-model');expect(f.prefs.authoring!.model).toBe('app-model');
+});
+
+test('enabled unavailable or empty app connections fail before calling a provider',async()=>{
+ for(const connectionId of ['missing','']){
+  const f=generationHost();f.prefs.authoring={...f.prefs.authoring!,overrideConnection:true,connectionId};
+  await expect(runPocketGeneration(f.host,'lumistry-author','missing-'+connectionId,{messages:[]})).rejects.toThrow(connectionId?'unavailable':'Choose a Lumistry connection');expect(f.calls).toBe(0);
+ }
 });

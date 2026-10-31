@@ -1268,7 +1268,16 @@ class PocketController {
     if(nativeRequest&&['lumiphone:native_result','lumiphone:error','lumiphone:camera_progress','lumiphone:camera_done'].includes(payload.type)){
       const {app,context,action,done}=nativeRequest
       if(payload.type==='lumiphone:camera_done')return
-      if(payload.type==='lumiphone:camera_progress'){if(this.nativeBusy[app]===payload.requestId){this.nativeStatus[app]=payload.message||payload.phase||'Making an image…';if(app==='stickers'){const current=this.nativeUI.stickerProgress||{};this.nativeUI.stickerProgress={url:payload.imageDataUrl||current.url,step:payload.step??current.step,totalSteps:payload.totalSteps??current.totalSteps}}if(this.currentApp===app)this.render(false)}return}
+      if(payload.type==='lumiphone:camera_progress'){if(this.nativeBusy[app]===payload.requestId){this.nativeStatus[app]=payload.message||payload.phase||'Making an image…';if(app==='stickers'){const current=this.nativeUI.stickerProgress||{};this.nativeUI.stickerProgress={url:payload.imageDataUrl||current.url,step:payload.step??current.step,totalSteps:payload.totalSteps??current.totalSteps}}if(this.currentApp===app){
+          const frame=this.screen.querySelector<HTMLElement>('.st-generation-preview')
+          if(app==='stickers'&&frame){
+            const progress=this.nativeUI.stickerProgress
+            if(progress?.url){let image=frame.querySelector('img');if(!image){image=el('img');image.alt='Sticker generation preview';frame.querySelector('.na-icon')?.remove();frame.prepend(image)}image.src=progress.url}
+            const caption=frame.querySelector('figcaption');if(caption)caption.textContent=this.nativeStatus[app]||''
+            if(progress?.totalSteps){let meter=frame.querySelector('progress');if(!meter){meter=el('progress');meter.setAttribute('aria-label','Sticker generation progress');frame.append(meter)}meter.max=progress.totalSteps;meter.value=progress.step||0}
+            const strip=this.screen.querySelector('.na-progress');if(strip?.firstChild?.nodeType===Node.TEXT_NODE)strip.firstChild.textContent=this.nativeStatus[app]||''
+          }else this.render(false)
+        }}return}
       this.nativeRequests.delete(payload.requestId)
       if(this.nativeBusy[app]!==payload.requestId)return
       delete this.nativeBusy[app]
@@ -2818,6 +2827,7 @@ class PocketController {
   private renderDating():HTMLDivElement {
     if(this.selectedConversationId && this.state?.conversations.some(c=>c.id===this.selectedConversationId && c.channel==='dating'))return this.renderMessages(true)
     const view=renderLumistry({visible:this.expanded,state:this.state!,owner:this.currentDeviceOwnerActorId()||pocketPersonaActorId(this.state!),ui:this.datingUI,generation:Boolean(this.caps?.generation),images:Boolean(this.caps?.imageGen),backgroundEnabled:this.preferences.ambientMessaging!=='off',automaticReplies:this.preferences.autoReplyAfterSend,
+      connectionSettings:this.preferences.authoring,connections:this.generation?.connections,saveConnectionSettings:settings=>this.updatePreferences({...this.preferences,authoring:settings}),
       creationConfiguration:{authoring:this.preferences.authoring,generationMode:this.preferences.generationMode,samplers:this.preferences.samplerOverrides},
       openTimeline:id=>this.openPocket({app:'calendar',eventId:id}),action:(action,payload)=>this.datingAction(action,payload),render:()=>this.render(false),back:()=>this.back(),openConversation:id=>this.openPocket({app:'dating',conversationId:id}),gallery:id=>{this.pendingDatingPhoto=id;this.openPocket({app:'gallery'});this.requestGallery('all')}})
     return view

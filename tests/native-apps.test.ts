@@ -119,3 +119,14 @@ test('sticker generation previews require acceptance; retry/discard/cancel canno
   await h.run('stickers','generate',{description:'One more cat'},'alice','preview-4');h.runtime.cancel(h.context,'alice','stickers')
   await expect(h.run('stickers','accept',{previewId:'preview-4'},'alice')).rejects.toThrow('preview')
 })
+
+
+test('sticker retries keep the same chibi prompt and bypass camera scene rewriting',async()=>{
+ const h=fixture(),brief={name:'Angry',description:'An angry chibi with a closed fist, face closeup',caption:'hey'};
+ await h.run('stickers','generate',brief,'alice','first');
+ await h.run('stickers','generate',brief,'alice','retry');
+ const {requestId:first,...original}=h.images[0],{requestId:second,...retried}=h.images[1];
+ expect(first).not.toBe(second);expect(retried).toEqual(original);
+ expect(original.enhance).toBe(false);
+ expect(original.prompt).toBe('A single cute expressive chibi chat sticker. Isolated clean silhouette, simple background. '+brief.description+'. Short caption: hey');
+});

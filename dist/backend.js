@@ -27158,7 +27158,7 @@ class NativeAppsRuntime {
     const job = { id: requestId, user };
     this.images.set(key, job);
     try {
-      const result = await this.h.image({ ...context, requestId, purpose: "message", prompt }, user);
+      const result = await this.h.image({ ...context, requestId, purpose: "message", prompt, ...app === "stickers" ? { enhance: false } : {} }, user);
       if (this.images.get(key) !== job)
         throw new Error("Image generation was cancelled.");
       return result;
@@ -27711,6 +27711,13 @@ Caption: ${sticker.caption}` : ""}`, user, { ...sticker, imageUrl: image.url });
   }
 }
 
+// src/domain/authoring-policy.ts
+var DEFAULT_AUTHORING_POLICY = { transport: "response", connectionId: "", overrideConnection: false, model: "", reasoning: "inherit", outputTokens: 0, timeoutSeconds: 180, sessionCalls: 24, maxCalls: 150, maxTokens: 800000 };
+function normalizeAuthoringPolicy(v) {
+  const integer = (key, min, max) => typeof v?.[key] === "number" && Number.isFinite(v[key]) ? Math.max(min, Math.min(max, Math.round(v[key]))) : Number(DEFAULT_AUTHORING_POLICY[key]);
+  return { overrideConnection: typeof v?.overrideConnection === "boolean" ? v.overrideConnection : !!v?.connectionId, model: typeof v?.model === "string" ? v.model.trim().slice(0, 500) : "", transport: v?.transport === "stream" ? "stream" : "response", connectionId: typeof v?.connectionId === "string" ? v.connectionId.trim().slice(0, 180) : "", reasoning: ["off", "low"].includes(v?.reasoning) ? v.reasoning : "inherit", outputTokens: v?.outputTokens === 0 ? 0 : integer("outputTokens", 0, 32768), timeoutSeconds: integer("timeoutSeconds", 15, 900), sessionCalls: integer("sessionCalls", 1, 100), maxCalls: integer("maxCalls", 1, 1000), maxTokens: integer("maxTokens", 1000, 1e7) };
+}
+
 // src/domain/reasoning.ts
 var POCKET_REASONING_OPTIONS = [
   ["off", "Off \xB7 recommended for texting"],
@@ -27799,10 +27806,16 @@ async function writeRun(host, run, userId) {
 async function runPocketGeneration(host, task, requestId, input, userId, options = {}) {
   const preferences = await host.loadPreferences(userId);
   const info = await inspectPocketGeneration(host, preferences, userId);
-  if (options.connectionId) {
-    const selected = info.connections.find((c) => c.id === options.connectionId);
+  const appPolicy = normalizeAuthoringPolicy(preferences.authoring);
+  const appOverride = (task.startsWith("lumistry-") || input.diagnosticScope === "lumistry") && appPolicy.overrideConnection;
+  const connectionId = options.connectionId || (appOverride ? appPolicy.connectionId : "");
+  const model = appOverride && connectionId ? appPolicy.model : "";
+  if (appOverride && !connectionId)
+    throw new Error("Choose a Lumistry connection or turn off the app connection override.");
+  if (connectionId) {
+    const selected = info.connections.find((c) => c.id === connectionId);
     if (!selected)
-      throw new Error("The selected authoring connection is unavailable.");
+      throw new Error("The selected Lumistry connection is unavailable.");
     info.effective = selected;
   }
   if (!info.effective)
@@ -27816,7 +27829,7 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
     connectionName: info.effective.name,
     usageStatus: "unavailable",
     provider: info.effective.provider,
-    model: !options.connectionId && preferences.generationMode === "sidecar" ? preferences.sidecarModelOverride || info.effective.model : info.effective.model,
+    model: model || (!connectionId && preferences.generationMode === "sidecar" ? preferences.sidecarModelOverride || info.effective.model : info.effective.model),
     status: "started",
     startedAt
   };
@@ -27830,9 +27843,11 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
     const samplers = normalizeSamplerOverrides(preferences.samplerOverrides);
     if (Object.keys(samplers).length)
       request.parameters = { ...request.parameters || {}, ...samplers };
-    if (options.connectionId)
-      request.connection_id = options.connectionId;
-    if (preferences.generationMode === "sidecar" && !options.connectionId) {
+    if (connectionId)
+      request.connection_id = connectionId;
+    if (model)
+      request.parameters = { ...request.parameters || {}, model };
+    if (preferences.generationMode === "sidecar" && !connectionId) {
       request.connection_id = info.effective.id;
       if (preferences.sidecarModelOverride)
         request.parameters = { ...request.parameters || {}, model: preferences.sidecarModelOverride };
@@ -27903,13 +27918,6 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
     host.send({ type: "lumiphone:generation_status", run: failed }, userId);
     throw error;
   }
-}
-
-// src/domain/authoring-policy.ts
-var DEFAULT_AUTHORING_POLICY = { transport: "response", connectionId: "", reasoning: "inherit", outputTokens: 0, timeoutSeconds: 180, sessionCalls: 24, maxCalls: 150, maxTokens: 800000 };
-function normalizeAuthoringPolicy(v) {
-  const integer = (key, min, max) => typeof v?.[key] === "number" && Number.isFinite(v[key]) ? Math.max(min, Math.min(max, Math.round(v[key]))) : Number(DEFAULT_AUTHORING_POLICY[key]);
-  return { transport: v?.transport === "stream" ? "stream" : "response", connectionId: typeof v?.connectionId === "string" ? v.connectionId.trim().slice(0, 180) : "", reasoning: ["off", "low"].includes(v?.reasoning) ? v.reasoning : "inherit", outputTokens: v?.outputTokens === 0 ? 0 : integer("outputTokens", 0, 32768), timeoutSeconds: integer("timeoutSeconds", 15, 900), sessionCalls: integer("sessionCalls", 1, 100), maxCalls: integer("maxCalls", 1, 1000), maxTokens: integer("maxTokens", 1000, 1e7) };
 }
 
 // src/backend/lumistry-run-receipts.ts
@@ -28038,7 +28046,7 @@ async function runCommunityNativeGeneration(host, task, requestId, input, userId
       return value;
     }
   } };
-  const result = await generationDeadline(policy.timeoutSeconds, input.signal, (signal) => runPocketGeneration(safeHost, task, requestId, { ...request, signal }, userId, { automaticRetry: false, connectionId: policy.connectionId || undefined, transport: policy.transport, preservePartial: true, progressRequestId: input.progressRequestId }));
+  const result = await generationDeadline(policy.timeoutSeconds, input.signal, (signal) => runPocketGeneration(safeHost, task, requestId, { ...request, signal }, userId, { automaticRetry: false, transport: policy.transport, preservePartial: true, progressRequestId: input.progressRequestId }));
   const usage = result.usage || {}, receipt = { requestId, usageStatus: usage.total_tokens !== undefined ? "reported" : "unavailable", promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, totalTokens: usage.total_tokens };
   const answer = { content: result.content, finish_reason: result.finish_reason, usage: result.usage ? { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, total_tokens: usage.total_tokens } : undefined };
   attachDiscoveryRun(answer, receipt);
@@ -31052,7 +31060,7 @@ class LumistryDevelopment {
 // src/domain/lumistry-provider-recovery.ts
 function providerExecutionSignature(policy) {
   const p = normalizeAuthoringPolicy(policy);
-  return "provider-stalled:" + JSON.stringify({ connectionId: p.connectionId, transport: p.transport, reasoning: p.reasoning, outputTokens: p.outputTokens, timeoutSeconds: p.timeoutSeconds });
+  return "provider-stalled:" + JSON.stringify({ connectionId: p.overrideConnection ? p.connectionId : "", ...p.overrideConnection && p.model ? { model: p.model } : {}, transport: p.transport, reasoning: p.reasoning, outputTokens: p.outputTokens, timeoutSeconds: p.timeoutSeconds });
 }
 function recoverProviderSlot(slot, policy) {
   if (slot.status !== "failed" || slot.quarantinedProgress || !slot.failureSignature?.startsWith("provider-stalled:") || slot.failureSignature === providerExecutionSignature(policy))

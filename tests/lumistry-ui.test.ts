@@ -305,9 +305,9 @@ test('discovery rendering and navigation never generate; visible Find more dispa
  h.actions.length=0;h.host.state.lumistry!.owner.profiles=[];const empty=h.render();expect(h.actions).toEqual([]);expect([...empty.querySelectorAll('button')].filter(b=>b.textContent==='Find more')).toHaveLength(1);
 }));
 
-test('settings dashboard presents four destinations without the old long form and keeps diagnostics direct',()=>domTest(()=>{
+test('settings dashboard presents five destinations without the old long form and keeps diagnostics direct',()=>domTest(()=>{
  const h=fixture('settings'),page=h.render(),content=page.querySelector('.lumistry-settings')!;
- expect(content.querySelector('h1')?.textContent).toBe('Advanced settings');expect(content.querySelectorAll('.lumistry-settings-destination')).toHaveLength(4);expect(content.querySelectorAll('input,select,textarea')).toHaveLength(0);
+ expect(content.querySelector('h1')?.textContent).toBe('Advanced settings');expect(content.querySelectorAll('.lumistry-settings-destination')).toHaveLength(5);expect(content.querySelectorAll('input,select,textarea')).toHaveLength(0);
  expect(content.textContent).toContain('Guided setup · optional');expect(content.textContent).toContain('Your everyday choices are in Me');const exportButton=[...content.querySelectorAll('button')].find(b=>b.textContent==='Export all Lumistry diagnostics')!;expect(exportButton.closest('details')).toBeNull();expect(h.actions).toEqual([]);
 }));
 

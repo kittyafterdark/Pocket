@@ -121,6 +121,9 @@ export interface DatingHost {
     visible?:boolean;
     openTimeline?(id:string):void;matchNotices?:MatchNotice[];dismissMatchNotices?():void;planDate?(conversationId:string):void;
     creationConfiguration?:unknown;
+    connectionSettings?:import('../../domain/authoring-policy.js').AuthoringPolicy;
+    connections?:Array<{id:string;name:string;model?:string;provider:string}>;
+    saveConnectionSettings?(settings:import('../../domain/authoring-policy.js').AuthoringPolicy):void;
     state: PhoneState;
     owner: string;
     ui: DatingUI;

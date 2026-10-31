@@ -1,3 +1,4 @@
+import {connectionOverrideControls,renderLumistryConnection} from './lumistry-connection.js';
 import {attachSettingsSaveBar} from './lumistry-save-bar.js';
 import {el,button} from '../shared.js';
 import {QUICK_SETUP_IDS,quickSetupAnswers,SETUP_QUESTIONS,SETUP_SECTIONS,APPLY_GROUPS,makeSetupDraft,recommendSetup,assertSetupDraft,setupGroupState,settingsSectionState,type SetupDraft,type ApplyGroup,type SetupQuestion} from '../../domain/lumistry-setup.js';
@@ -77,7 +78,7 @@ export function renderSettingsDashboard(h:DatingHost,d:DatingState,parts:Setting
  const go=(id:string)=>{h.ui.settingsPage=id;h.ui.directBaseline=undefined;h.render();};
  if(page==='home'){
   box.append(el('h1','lp-title','Advanced settings'),el('p','lp-copy',`${d.generationSettings.experience?.tone||'Balanced'} tone · ${d.populationWorld?.kind||'Current'} setting · ${d.worldGuide?.species.length||0} reviewed species · ${d.generationSettings.creation?.readyTarget||5} profiles ready target`),act(d.setupApplied?'Edit my setup':d.setupDraft?'Resume guided setup':'Guided setup · optional',()=>start(h,d,d.setupApplied?0:undefined),true),el('p','lp-copy','Optional tools. Your everyday choices are in Me.'));
-  const destinations=[['experience','My experience','Tone, conversation variety, adult themes and development'],['world','World & people','Setting, species, appearance and occupations'],['discovery','Discovery & performance','Filters, ready profiles, batching and concurrency'],['app','App & integrations','Theme and optional NPC Bank participation']] as const;
+  const destinations=[['experience','My experience','Tone, conversation variety, adult themes and development'],['world','World & people','Setting, species, appearance and occupations'],['discovery','Discovery & performance','Filters, ready profiles, batching and concurrency'],['app','App & integrations','Theme and optional NPC Bank participation'],['connection','Connection','App connection override and authoring controls']] as const;
   const grid=el('div','lumistry-settings-grid');for(const [id,title,description] of destinations){const card=act('',()=>go(id));card.classList.add('lumistry-settings-destination');card.append(el('strong','',title),el('span','lp-copy',description));grid.append(card);}box.append(grid,act('My interests',()=>{h.ui.tab='self';h.ui.selfPage='interests';h.render();}),act('My profile',()=>{h.ui.tab='self';h.render();}),act('Saved setups',()=>{go('presets');h.action('setup_presets_list');}),act('Technical controls & archives',()=>go('technical')));return box;
  }
  box.append(act('Settings dashboard',()=>go('home')));
@@ -86,11 +87,12 @@ export function renderSettingsDashboard(h:DatingHost,d:DatingState,parts:Setting
   for(const p of h.ui.setupPresets||[]){const card=el('section','lp-card lp-stack');card.append(el('h2','lp-title',p.name),el('p','lp-copy',p.updatedAt),act('Load for review',()=>h.action('setup_preset_load',{presetId:p.id,revision:p.revision})),act('Update from current setup',()=>h.action('setup_preset_save',{presetId:p.id,revision:p.revision,name:p.name,answers:(h.ui.setup||d.setupDraft||makeSetupDraft(d)).answers})));if(h.ui.setupDeleteId===p.id)card.append(act('Confirm delete setup',()=>h.action('setup_preset_delete',{presetId:p.id,revision:p.revision})),act('Keep setup',()=>{h.ui.setupDeleteId=undefined;h.render();}));else card.append(act('Delete setup',()=>{h.ui.setupDeleteId=p.id;h.render();}));box.append(card);}
   if(!h.ui.setupPresets?.length)box.append(el('p','lp-copy','No saved setups loaded. Save a named preset from the setup review.'));box.append(act('Open setup review',()=>start(h,d,6)));return box;
  }
+ if(page==='connection'){box.append(renderLumistryConnection(h));return box;}
  if(page==='technical'){box.append(el('h1','lp-title','Technical controls & archives'));if(parts.tools)box.append(unpack(parts.tools));return box;}
  const group=page as ApplyGroup;h.ui.settingsBaselines||={};h.ui.settingsBaselines[group]||=JSON.stringify(settingsSectionState(d,group));h.ui.directBaseline={group,signature:h.ui.settingsBaselines[group]!};
  const generation=h.ui.generationDraft!;
  if(page==='experience'){
-  box.append(el('h1','lp-title','My experience'),unpack(parts.personality));h.ui.contentDraft||=structuredClone(d.experiencePreferences||defaultExperiencePreferences());if(!d.experiencePreferences)box.append(el('p','lp-copy','Adult-content preferences are not configured yet. Changing a control adopts these preferences; untouched controls keep the existing behaviour.'));box.append(experiencePreferencesEditor(h.ui.contentDraft,p=>{h.ui.contentDraft=p;h.ui.contentEdited=true;}),unpack(parts.pipeline),act('Adjust with guided setup',()=>start(h,d,3)));
+  box.append(el('h1','lp-title','My experience'),connectionOverrideControls(h),unpack(parts.personality));h.ui.contentDraft||=structuredClone(d.experiencePreferences||defaultExperiencePreferences());if(!d.experiencePreferences)box.append(el('p','lp-copy','Adult-content preferences are not configured yet. Changing a control adopts these preferences; untouched controls keep the existing behaviour.'));box.append(experiencePreferencesEditor(h.ui.contentDraft,p=>{h.ui.contentDraft=p;h.ui.contentEdited=true;}),unpack(parts.pipeline),act('Adjust with guided setup',()=>start(h,d,3)));
  }else if(page==='world'){
   box.append(el('h1','lp-title','World & people'),parts.world,unpack(parts.people),act('Adjust with guided setup',()=>start(h,d,1)));
  }else if(page==='discovery'){
