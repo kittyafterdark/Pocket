@@ -253,6 +253,8 @@ export interface DevicePreferences {
   chatWallpaper: PocketWallpaper
   /** Desktop-only physical size of the 9:18.4 handset. */
   handsetScale: number
+  desktopPhoneOffset: number
+  freeformRoleplayMessages: number
   desktopDockSide: 'left' | 'right'
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
   uiScale: number
@@ -875,7 +877,7 @@ interface TrackerBase {
 export interface MeterTracker extends TrackerBase { kind: 'meter' }
 export interface CounterTracker extends TrackerBase { kind: 'counter'; step: number }
 export interface TimerTracker extends TrackerBase { kind: 'timer'; direction: 'up' | 'down' }
-export interface StateTracker extends TrackerBase { kind: 'state'; state: string; initialState: string; states: string[] }
+export interface StateTracker extends TrackerBase { kind: 'state'; freeText?: boolean; state: string; initialState: string; states: string[] }
 
 export type PhoneTracker = MeterTracker | CounterTracker | TimerTracker | StateTracker
 

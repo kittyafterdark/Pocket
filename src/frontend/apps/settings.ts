@@ -200,6 +200,7 @@ function appearance(host: SettingsViewHost): HTMLDivElement {
     independent,
     ...(settings.independentUiScale ? [slider('Mobile interface size',settings.mobileUiScale,.7,1.3,.05,value=>`${Math.round(value*100)}%`,value=>commit(next=>{next.mobileUiScale=value})),slider('Desktop interface size',settings.desktopUiScale,.7,1.3,.05,value=>`${Math.round(value*100)}%`,value=>commit(next=>{next.desktopUiScale=value}))] : []),
     ...(settings.independentUiScale?[]:[slider('Interface size', settings.uiScale, .7, 1.3, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.uiScale = value }), 'Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.')]),
+    slider('Desktop phone offset', settings.desktopPhoneOffset, 0, 160, 4, value => `${value}px`, value => commit(next => { next.desktopPhoneOffset = value }, { resize: true }), 'Adds empty space between the desktop phone and its docked edge.'),
     slider('Desktop phone size', settings.handsetScale, .8, 1.25, .05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => { next.handsetScale = value }, { resize: true }), 'Controls only the physical 9:18.4 handset on desktop.'),
   )
   const motion = el('section', 'lp-card lp-settings-section'); motion.append(el('div', 'lp-eyebrow', 'Motion'))
@@ -604,6 +605,7 @@ function contextSettings(host: SettingsViewHost): HTMLDivElement {
   const commit = (key: 'preferFullProfiles' | 'enableLorebooks', value: boolean) => { settings = {...settings, [key]: value}; host.update(settings) }
   content.append(toggle('Prefer full character profiles', settings.preferFullProfiles, value => commit('preferFullProfiles', value), 'Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default.'))
   content.append(toggle('Enable lorebooks', settings.enableLorebooks, value => commit('enableLorebooks', value), 'Requires World Books access. Roleplay uses host-activated lore. Freeform scans constant and literal-keyword entries from global books and books attached to its Persona and participants; host regex/vector and timed activation are unavailable there.'))
+  content.append(slider('Freeform roleplay context', settings.freeformRoleplayMessages, 0, 40, 1, value => value ? `${value} messages` : 'Off', value => { settings = {...settings, freeformRoleplayMessages:value}; host.update(settings) }, 'Let Freeform read this many recent messages from your currently active roleplay chat. Off keeps it independent. Requires Chats and Chat Mutation access; background context only, without changing that chat.'))
   const access = button('Manage lorebook access', 'lp-button lp-button-quiet'); access.onclick = () => host.requestPermissions(); content.append(access)
   const logs=button('Lorebook retrieval log','lp-button'); logs.onclick=()=>host.navigate('lore-log'); content.append(logs)
   const scenario = el('textarea', 'lp-textarea'); scenario.value = host.state.contextScenario || ''; scenario.maxLength = 12000

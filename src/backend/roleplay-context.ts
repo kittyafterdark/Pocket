@@ -128,8 +128,9 @@ export async function assemblePocketContext(options: {
   const includePhoneThread = options.includePhoneThread !== false
   const threadLines = includePhoneThread ? conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message)) : []
   const thread = trimBlock(threadLines, BUDGETS.thread)
-  const wantsRecent = includeRoleplayBackground && (mode === 'recent' || (mode === 'smart' && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote))))
-  const selectedRecent = mode !== 'off' && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : []
+  const wantsRecent = includeRoleplayBackground && (mode === 'recent' || (mode === 'smart' && ((state.chatId.startsWith('_freeform_') && preferences.freeformRoleplayMessages > 0) || conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote))))
+  const recentLimit = state.chatId.startsWith('_freeform_') ? preferences.freeformRoleplayMessages : preferences.recentRoleplayMessages
+  const selectedRecent = mode !== 'off' && wantsRecent && recentLimit > 0 ? hostMessages.slice(-recentLimit) : []
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === 'user'
       ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || 'You'})`

@@ -37,7 +37,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const preview = el('div', 'lp-tracker-preview')
   const error = el('p', 'lp-warning'); error.setAttribute('role', 'alert'); error.hidden = true
   const name = el('input', 'lp-input'); name.value = source.label
-  const kind = choice('Track', [['meter', 'A value'], ['counter', 'A quantity'], ['state', 'A state'], ['timer', 'A timer']], source.kind)
+  const kind = choice('Track', [['meter', 'A value'], ['counter', 'A quantity'], ['state', 'A state'], ['field', 'A field'], ['timer', 'A timer']], source.kind === 'state' && source.freeText ? 'field' : source.kind)
   const targets: TrackerTarget[] = ([
     { type: 'character', id: host.state.characterId, label: host.state.characterName },
     { type: 'persona', id: host.state.pocketPersonaActorId, label: host.state.pocketPersona.displayName || 'You' },
@@ -52,13 +52,15 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const customField = fieldBlock('Target name', custom)
   const value = el('input', 'lp-input'); value.type = 'number'; value.step = 'any'; value.value = String(source.value)
   const states = el('textarea', 'lp-textarea'); states.value = source.kind === 'state' ? source.states.join('\n') : 'Stable\nWounded\nRecovering'
+  const fieldValue = el('textarea', 'lp-textarea'); fieldValue.maxLength = 2000; fieldValue.value = source.kind === 'state' && source.freeText ? source.state : '';
+  const fieldValueBlock = fieldBlock('Field text',fieldValue,'Free text, updated by you or story events.');
   const state = choice('Current state', [], source.kind === 'state' ? source.state : '')
   const mode = choice('Updates', [['manual', 'By hand'], ['model', 'Story events'], ['automatic', 'Elapsed time'], ['jev', 'Tracker judge']], source.updateMode)
   const modeHelp = el('p', 'lp-copy lp-tracker-mode-help')
   modeHelp.setAttribute('aria-live', 'polite')
   mode.field.append(modeHelp)
   const modelPrompt = el('textarea', 'lp-textarea'); modelPrompt.maxLength = 2000; modelPrompt.value = source.modelPrompt || ''; modelPrompt.placeholder = 'Increase by 1 when a clue is discovered. Reset when the mystery is solved.'
-  const promptField = fieldBlock('Tool-calling prompt', modelPrompt, 'Tell the model when and how to update this tracker. Leave blank to use the default story rules.')
+  const promptField = fieldBlock('Instruction', modelPrompt, 'Tell the model when and how to update this tracker. Leave blank to use the default story rules.')
   const jev = sectionBlock('Tracker judge', 'Estimates this value from recent story messages. Uncertain answers keep the current value.')
   const question = el('textarea', 'lp-textarea'); question.maxLength = 240; question.value = source.jev?.question || `What is the current ${source.label.toLowerCase()}?`; question.placeholder = 'Ask one specific question about this target.'
   const confidence = el('input', 'lp-input'); confidence.type = 'number'; confidence.min = '0'; confidence.max = '1'; confidence.step = '.05'; confidence.value = String(source.jev?.minConfidence ?? .65)
@@ -70,7 +72,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const valueField = fieldBlock('Starting value', value)
   const stateFields = el('div', 'lp-tracker-config-fields'); stateFields.append(fieldBlock('Allowed states', states, 'One state per line.'), state.field)
   const basic = sectionBlock('The essentials')
-  basic.body.append(fieldBlock('Name', name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, promptField, visibleField)
+  basic.body.append(fieldBlock('Name', name), belongs.field, customField, kind.field, valueField, stateFields, fieldValueBlock, mode.field, promptField, visibleField)
   const clock = choice('Clock', [['roleplay', 'Story time'], ['real', 'Real time']], source.clock)
   const rate = el('input', 'lp-input'); rate.type = 'number'; rate.step = 'any'; rate.value = String(source.ratePerHour)
   const direction = choice('Direction', [['down', 'Count down'], ['up', 'Count up']], source.kind === 'timer' ? source.direction : 'down')
@@ -109,13 +111,14 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const advanced = disclosure('Fine tuning', presentation.field, range, fieldBlock('Color', color), bands.section, fieldBlock('Stable key', key, 'Used by model tools. New trackers receive a unique key.'))
   const allowed: Record<TrackerKind, string[]> = { meter: ['meter', 'vitals', 'relationship', 'segmented', 'compact'], counter: ['counter', 'compact'], state: ['state', 'compact'], timer: ['timer', 'compact'] }
   const collect = () => {
-    const kindValue = kind.control.value as TrackerKind
+    const isField = kind.control.value === 'field'
+    const kindValue = (isField ? 'state' : kind.control.value) as TrackerKind
     const selected = targets[Number(belongs.control.value)]
     return {
       label: name.value.trim(), key: trackerKey(key.value || name.value), kind: kindValue, presentation: presentation.control.value,
       target: { ...selected, label: selected.type === 'custom' ? custom.value.trim() : selected.label },
       value: Number(value.value), initialValue: Number(initial.value), min: Number(min.value), max: Number(max.value), unit: unit.value,
-      state: state.control.value, initialState: current?.kind === 'state' ? current.initialState : state.control.value,
+      freeText:isField, state: isField ? fieldValue.value : state.control.value, initialState: isField ? (current?.kind === 'state' && current.freeText ? current.initialState : fieldValue.value) : current?.kind === 'state' ? current.initialState : state.control.value,
       states: [...new Set(states.value.split('\n').map(entry => entry.trim()).filter(Boolean))],
       step: Number(step.value), direction: direction.control.value, color: color.value,
       modelPrompt: modelPrompt.value.trim(),
@@ -126,13 +129,15 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     }
   }
   const refreshFields = () => {
-    const kindValue = kind.control.value as TrackerKind
-    promptField.hidden = mode.control.value !== 'model'
+    const isField = kind.control.value === 'field'
+    const kindValue = (isField ? 'state' : kind.control.value) as TrackerKind
+    promptField.hidden = mode.control.value !== 'model' && !isField
+    fieldValueBlock.hidden = !isField
     customField.hidden = targets[Number(belongs.control.value)].type !== 'custom'
-    valueField.hidden = kindValue === 'state'; stateFields.hidden = kindValue !== 'state'; range.hidden = kindValue === 'state'; bands.section.hidden = kindValue === 'state'; stepField.hidden = kindValue !== 'counter'
+    valueField.hidden = kindValue === 'state'; stateFields.hidden = kindValue !== 'state' || isField; range.hidden = kindValue === 'state'; bands.section.hidden = kindValue === 'state'; stepField.hidden = kindValue !== 'counter'
     automatic.section.hidden = mode.control.value !== 'automatic'; direction.field.hidden = kindValue !== 'timer'
     jev.section.hidden = mode.control.value !== 'jev'; levelField.hidden = kindValue === 'state'
-    const jevOption = mode.control.querySelector<HTMLOptionElement>('option[value="jev"]')!; jevOption.disabled = kindValue === 'counter' || kindValue === 'timer'
+    const jevOption = mode.control.querySelector<HTMLOptionElement>('option[value="jev"]')!; jevOption.disabled = isField || kindValue === 'counter' || kindValue === 'timer'
     if (jevOption.disabled && mode.control.value === 'jev') mode.control.value = 'manual'
     const autoOption = mode.control.querySelector<HTMLOptionElement>('option[value="automatic"]')!; autoOption.disabled = kindValue === 'state'
     if (kindValue === 'state' && mode.control.value === 'automatic') mode.control.value = 'manual'

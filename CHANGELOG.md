@@ -2,6 +2,15 @@
 
 ## 0.5.0 — 2026-10-31
 
+### Follow-up improvements
+
+- Added a configurable desktop phone offset under Appearance → Sizing, leaving an empty strip between the handset and its docked edge.
+- Added opt-in Freeform roleplay context: choose up to 40 recent messages from the active roleplay chat. Off by default.
+- Added A field to custom trackers for free text, with multiline instructions, manual or story updates, and reset support.
+- Persona portrait repair now resolves stale bindings and offers matching portrait previews when several Lumiverse Personas share a name. The selected portrait persists across navigation.
+- Moved portrait refresh confirmation below the sidebar buttons.
+- Replaced repeated Twitch thumbnail placeholders with category-specific scenes and proper 16:9 framing.
+
 ### More apps for your Pocket
 
 - Added optional Lumistry, Spotify Share and Screenshots apps to the App Store. Lumistry brings fictional dating profiles, discovery and its own inbox; Spotify Share previews songs and selected lyrics through SpotifyControls; Screenshots shares reviewed excerpts from multiple Pocket apps.

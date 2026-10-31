@@ -548,10 +548,63 @@ test('manual portrait repair updates an older Pocket without replacing its local
     await host.api.userStorage.setJson('phones/portrait-repair__host-character.json',state,{userId:'repair-user'})
     const before=structuredClone(state.pocketPersona),result=await send('refresh_persona_portrait',{...context,deviceOwnerActorId:state.pocketPersonaActorId},'repair-user')
     expect(result.error).toBeUndefined();expect(result.responses.some(p=>p.type==='lumiphone:persona_portrait_refreshed')).toBe(true)
-    expect(result.state.pocketPersona).toEqual({...before,avatarUrl:'/images/repaired-portrait'})
+    expect(result.state.pocketPersona).toEqual({...before,linkedPersonaId:'persona-mika',avatarUrl:'/images/repaired-portrait'})
     expect(JSON.parse(JSON.stringify(result.state.conversations))).toEqual(JSON.parse(JSON.stringify(state.conversations.map((c:any)=>({...c,archived:c.archived??false})))));expect(result.state.notes).toEqual(state.notes)
     expect(host.read('phones/portrait-repair__host-character.json','repair-user').pocketPersona.avatarUrl).toBe('/images/repaired-portrait')
     expect((await send('refresh_persona_portrait',{...context,deviceOwnerActorId:'someone-else'},'repair-user')).error.error).toContain('own phone')
     host.permissions.delete('images');expect((await send('refresh_persona_portrait',context,'repair-user')).error.error).toContain('Images')
   }finally{host.api.images=images;Object.assign(host.personas[1],persona);if(hadImages)host.permissions.add('images');else host.permissions.delete('images')}
+})
+
+
+test('Freeform reads only opted-in recent host context and text fields survive updates and reload',async()=>{
+  const user='context-field-user',messages=host.api.chat.getMessages
+  try{
+    host.api.chat.getMessages=async(chatId:string)=>{host.reads.push(chatId);return Array.from({length:5},(_,i)=>({id:'rp-'+i,role:'assistant',content:'CONTEXT-TURN-'+i}))}
+    const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Context field'},user)
+    const imported=await send('import_contact',{...scope(session.id),kind:'character',sourceId:'host-character'},user),conversationId=imported.state.conversations[0].id
+    const prefs=await host.api.userStorage.getJson(PREFERENCES_PATH,{userId:user}) || (await import('../src/domain/preferences.js')).defaultPreferences()
+    await host.api.userStorage.setJson(PREFERENCES_PATH,{...prefs,freeformRoleplayMessages:2}, {userId:user})
+    const generated=await send('generate_message',{...scope(session.id),conversationId},user)
+    expect(generated.error).toBeUndefined()
+    const prompt=JSON.stringify(host.generations.at(-1));expect(prompt).toContain('CONTEXT-TURN-4');expect(prompt).toContain('CONTEXT-TURN-3');expect(prompt).not.toContain('CONTEXT-TURN-2')
+    const create=await send('action',{...scope(session.id),action:'tracker',payload:{command:'create',label:'Current outfit',target:{type:'persona',id:'persona-fern',label:'Fern'},key:'current_outfit',kind:'state',freeText:true,state:'A coat',initialState:'A coat',states:[],presentation:'state',updateMode:'model',allowModelWrite:true,visibleToModel:true,modelPrompt:'Describe current clothing in a few sentences.'}},user)
+    expect(create.error).toBeUndefined()
+    const tracker=create.state.trackers.find((t:any)=>t.key==='current_outfit'),text='A long description of the outfit. '.repeat(12)
+    const update=await send('action',{...scope(session.id),action:'tracker',payload:{trackerId:tracker.id,operation:'set_state',state:text}},user)
+    expect(update.error).toBeUndefined();expect(update.state.trackers.find((t:any)=>t.id===tracker.id).state).toBe(text.trim())
+    const reopened=await send('freeform_open',{sessionId:session.id},user);expect(reopened.state.trackers.find((t:any)=>t.id===tracker.id).state).toBe(text.trim())
+    const reset=await send('action',{...scope(session.id),action:'tracker',payload:{trackerId:tracker.id,operation:'reset'}},user);expect(reset.state.trackers.find((t:any)=>t.id===tracker.id).state).toBe('A coat')
+  }finally{host.api.chat.getMessages=messages}
+})
+
+test('portrait repair corrects an old binding when the saved Persona name uniquely identifies another profile',async()=>{
+  const images=host.api.images,had=host.permissions.has('images'),persona=structuredClone(host.personas[0])
+  try{
+    host.permissions.add('images');host.personas[0].image_id='fern-right' as any;host.api.images={get:async(id:string)=>({id,url:'/images/'+id})}
+    const context={chatId:'stale-binding',characterId:'host-character'},initial=await send('get_state',context,'stale-user'),state=initial.state
+    state.pocketPersona={...state.pocketPersona,source:'manual',displayName:'Fern',linkedPersonaId:'persona-mika',avatarUrl:'/wrong'}
+    await host.api.userStorage.setJson('phones/stale-binding__host-character.json',state,{userId:'stale-user'})
+    const result=await send('refresh_persona_portrait',context,'stale-user');expect(result.error).toBeUndefined();expect(result.state.pocketPersona.avatarUrl).toBe('/images/fern-right');expect(result.state.pocketPersona.linkedPersonaId).toBe('persona-fern')
+    expect((await send('get_state',context,'stale-user')).state.pocketPersona.avatarUrl).toBe('/images/fern-right')
+  }finally{host.api.images=images;Object.assign(host.personas[0],persona);if(!had)host.permissions.delete('images')}
+})
+
+
+test('duplicate Persona names offer actual portraits without writing until an explicit ID is chosen',async()=>{
+  const images=host.api.images,list=host.api.personas.list,had=host.permissions.has('images'),count=host.personas.length
+  try{
+    host.permissions.add('images');host.api.images={get:async(id:string)=>({id,url:'/images/'+id})}
+    host.personas.push({id:'portrait-one',name:'Same name',description:'First profile',title:'',image_id:'portrait-a' as any,metadata:{}},{id:'portrait-two',name:'Same name',description:'Second profile',title:'',image_id:'portrait-b' as any,metadata:{}})
+    const context={chatId:'duplicate-portrait',characterId:'host-character'},initial=await send('get_state',context,'duplicate-user'),state=initial.state,path='phones/duplicate-portrait__host-character.json'
+    state.pocketPersona={...state.pocketPersona,source:'manual',displayName:'Same name',linkedPersonaId:'persona-mika',avatarUrl:'/old'};await host.api.userStorage.setJson(path,state,{userId:'duplicate-user'})
+    const result=await send('refresh_persona_portrait',context,'duplicate-user');expect(result.error).toBeUndefined();expect(result.responses.some(p=>p.type==='lumiphone:persona_portrait_refreshed')).toBe(false)
+    const choices=result.responses.find(p=>p.type==='lumiphone:persona_portrait_choices').personas
+    expect(choices.map((p:any)=>p.avatarUrl)).toEqual(['/images/portrait-a','/images/portrait-b']);expect(host.read(path,'duplicate-user').pocketPersona.linkedPersonaId).toBe('persona-mika')
+    const selected=await send('refresh_persona_portrait',{...context,personaId:'portrait-two'},'duplicate-user');expect(selected.error).toBeUndefined();expect(selected.state.pocketPersona.avatarUrl).toBe('/images/portrait-b');expect(selected.state.pocketPersona.linkedPersonaId).toBe('portrait-two')
+    expect((await send('get_state',context,'duplicate-user')).state.pocketPersona.avatarUrl).toBe('/images/portrait-b')
+    host.api.personas.list=async()=>({data:[host.personas[count],host.personas[count]],total:2})
+    state.pocketPersona.linkedPersonaId='persona-mika';await host.api.userStorage.setJson(path,state,{userId:'duplicate-user'})
+    const deduped=await send('refresh_persona_portrait',context,'duplicate-user');expect(deduped.error).toBeUndefined();expect(deduped.state.pocketPersona.linkedPersonaId).toBe('portrait-one')
+  }finally{host.api.images=images;host.api.personas.list=list;host.personas.splice(count);if(!had)host.permissions.delete('images')}
 })

@@ -142,6 +142,8 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
     body.append(makeRing(percent, trackerGlyph('vitals'), 'lp-health-ring'), reading())
     card.append(body, makeBars('lp-vital-pulse', 11, Math.max(1, Math.round(percent / 10))))
     card.append(rail())
+  } else if (current.kind === 'state' && current.freeText) {
+    const text = el('p','lp-copy',current.state || 'No text yet'); text.style.whiteSpace='pre-wrap'; text.style.overflowWrap='anywhere'; card.append(text)
   } else if (current.presentation === 'state' && current.kind === 'state') {
     const currentState = el('div', 'lp-state-current')
     currentState.append(el('span', 'lp-state-current-dot'), el('strong', '', current.state))

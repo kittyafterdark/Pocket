@@ -198,6 +198,7 @@ class PocketController {
   private settingsDraft: DevicePreferences | null = null
   private portraitRefreshRequest=''
   private portraitRefreshStatus=''
+  private portraitChoices:Array<{id:string;name:string;description:string;avatarUrl:string}>=[]
   private settingsSaveTimer = 0
   private settingsRevision = 0
   private settingsSaveRevisions = new Map<string,number>()
@@ -672,7 +673,7 @@ class PocketController {
     this.clearActivitySurfaces(true, true)
     this.hideComposerReferencePill()
     this.state = null; this.deviceOwnerActorId = ''; this.selectedConversationId = ''; this.selectedMessageId = ''
-    this.currentApp = 'home'; this.router.reset({ app: 'home' }); this.settingsDraft = null;this.portraitRefreshRequest='';this.portraitRefreshStatus=''
+    this.currentApp = 'home'; this.router.reset({ app: 'home' }); this.settingsDraft = null;this.portraitRefreshRequest='';this.portraitRefreshStatus='';this.portraitChoices=[]
     this.contextPreview = null; this.personaPreview = null
     this.loreLogs=null; this.loreLogRequest=''
     this.operations.clear(); this.messageRequests.clear(); this.selectedSettingsSection = ''
@@ -782,12 +783,24 @@ class PocketController {
       card.appendChild(el('p', 'lumiphone-drawer-copy', 'Pocket is still loading this chat.'))
     }
 
+    if(this.portraitChoices.length){
+      const chooser=el('section','lumiphone-portrait-choices');chooser.setAttribute('aria-label','Choose Persona portrait')
+      chooser.append(el('h3','lumiphone-device-title','Choose the portrait to use'),el('p','lumiphone-device-copy','These are Lumiverse Personas, separate from saved Pocket phone profiles. Compare the pictures and details.'))
+      const portraits=el('div','lumiphone-portrait-grid');chooser.append(portraits)
+      for(const persona of this.portraitChoices){
+        const choice=button('','lumiphone-portrait-option');choice.setAttribute('aria-label','Use portrait from '+persona.name+' ('+persona.id+')')
+        if(persona.avatarUrl){const image=el('img','lumiphone-portrait-preview');image.src=persona.avatarUrl;image.alt='';choice.append(image)}
+        const copy=el('span','lumiphone-portrait-details');copy.append(el('strong','',persona.name),el('small','',persona.description||'No description'),el('small','',persona.id));choice.append(copy)
+        choice.onclick=()=>{this.portraitChoices=[];this.portraitRefreshRequest=this.send('lumiphone:refresh_persona_portrait',{personaId:persona.id,deviceOwnerActorId:pocketPersonaActorId(this.state!)});this.renderDrawerLanding()};portraits.append(choice)
+      }
+      const cancel=button('Cancel portrait selection','lumiphone-device-access');cancel.onclick=()=>{this.portraitChoices=[];this.renderDrawerLanding();this.drawer.root.querySelector<HTMLButtonElement>('[data-refresh-persona-portrait]')?.focus()};chooser.append(cancel);card.append(chooser)
+    }
     const actions = el('div', 'lumiphone-device-footer')
     if(this.state){
       const refresh=button(this.portraitRefreshRequest?'Refreshing portrait…':'Refresh Persona portrait','lumiphone-device-access');refresh.dataset.refreshPersonaPortrait='true';refresh.disabled=Boolean(this.portraitRefreshRequest)
       refresh.onclick=()=>{this.portraitRefreshStatus='';this.portraitRefreshRequest=this.send('lumiphone:refresh_persona_portrait',{deviceOwnerActorId:pocketPersonaActorId(this.state!)});this.renderDrawerLanding()}
       actions.append(refresh)
-      if(this.portraitRefreshStatus){const status=el('p','lumiphone-device-copy',this.portraitRefreshStatus);status.setAttribute('role','status');actions.append(status)}
+      if(this.portraitRefreshStatus){const status=el('p','lumiphone-device-copy lumiphone-portrait-status',this.portraitRefreshStatus);status.setAttribute('role','status');actions.append(status)}
     }
     const permission = button('Manage access', 'lumiphone-device-access')
     permission.addEventListener('click', () => this.requestPermissions())
@@ -813,7 +826,7 @@ class PocketController {
     if (this.dockPanel) return this.dockPanel
     try {
       const dockOptions = {
-        edge: this.preferences.desktopDockSide, title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale),
+        edge: this.preferences.desktopDockSide, title: 'Pocket', size: desktopDockSize(this.preferences.handsetScale) + this.preferences.desktopPhoneOffset,
         minSize: 292, maxSize: 620, resizable: false, startCollapsed: true,
         chromeless: true, centerContent: true, respectRequestedEdge: true,
       }
@@ -869,6 +882,7 @@ class PocketController {
       if (!mobile) return false
       if (this.handsetHost.parentElement !== mobile.root) mobile.root.replaceChildren(this.handsetHost)
       if (this.shell.parentElement !== this.handsetHost) this.handsetHost.replaceChildren(this.shell)
+      this.handsetHost.style.paddingInline = ''; this.handsetHost.style.boxSizing = ''
       this.handsetHost.dataset.fullscreen = 'true'
       applyMobilePhoneSurface(mobile, 1)
       applyVisualViewportSurface(this.handsetHost, pixels => {
@@ -890,10 +904,12 @@ class PocketController {
     this.handsetHost.dataset.fullscreen = 'false'
     clearVisualViewportSurface(this.handsetHost)
     if ('setSize' in panel && typeof panel.setSize === 'function') {
-      panel.setSize(desktopDockSize(this.preferences.handsetScale))
+      panel.setSize(desktopDockSize(this.preferences.handsetScale) + this.preferences.desktopPhoneOffset)
     }
     panel.expand()
     const desktop = calculatePhoneSurface(this.preferences.handsetScale, currentViewport(), false)
+    this.handsetHost.style.boxSizing = 'content-box'
+    this.handsetHost.style.paddingInline = this.preferences.desktopDockSide === 'left' ? `${this.preferences.desktopPhoneOffset}px 0` : `0 ${this.preferences.desktopPhoneOffset}px`
     this.handsetHost.style.width = `${desktop.width}px`
     this.handsetHost.style.height = `${desktop.height}px`
     return true
@@ -1239,6 +1255,10 @@ class PocketController {
   }
 
   private onBackend(payload: BackendPayload): void {
+    if(this.portraitRefreshRequest && payload.requestId===this.portraitRefreshRequest && payload.type==='lumiphone:persona_portrait_choices'){
+      this.portraitRefreshRequest='';this.portraitChoices=payload.personas||[];this.portraitRefreshStatus='';this.renderDrawerLanding()
+      this.drawer.root.querySelector<HTMLButtonElement>('.lumiphone-portrait-choices button')?.focus();return
+    }
     if(this.portraitRefreshRequest&&this.portraitRefreshRequest===payload.requestId&&['lumiphone:persona_portrait_refreshed','lumiphone:error'].includes(payload.type)){
       this.portraitRefreshRequest='';this.portraitRefreshStatus=payload.error||'Persona portrait refreshed.';this.renderDrawerLanding()
       if(document.activeElement===document.body)this.drawer.root.querySelector<HTMLButtonElement>('[data-refresh-persona-portrait]')?.focus({preventScroll:true})

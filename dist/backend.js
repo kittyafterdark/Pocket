@@ -127,11 +127,13 @@ function validateTrackerConfig(value) {
     throw new Error("Choose a display that matches this tracker type.");
   if (value.kind === "state") {
     const states = Array.isArray(value.states) ? value.states.map((entry) => clean2(entry, 80)).filter(Boolean) : [];
-    if (!states.length || !states.includes(String(value.state)))
+    if (value.freeText && !["manual", "model"].includes(String(value.updateMode)))
+      throw new Error("Text fields use manual or story updates.");
+    if (!value.freeText && (!states.length || !states.includes(String(value.state))))
       throw new Error("Choose a current state from the allowed states.");
     if (value.updateMode === "automatic")
       throw new Error("States use manual or story updates.");
-    if (value.initialState && !states.includes(String(value.initialState)))
+    if (!value.freeText && value.initialState && !states.includes(String(value.initialState)))
       throw new Error("Keep the reset state in the allowed states.");
   } else {
     for (const key of ["value", "initialValue", "min", "max", "ratePerHour"]) {
@@ -194,8 +196,8 @@ function normalizeHistory(value) {
     const createdAt = iso(item.createdAt, new Date().toISOString());
     return [{
       id: clean2(item.id, 160) || trackerId("hist"),
-      previous: typeof item.previous === "string" ? clean2(item.previous, 160) : finite(item.previous, 0),
-      next: typeof item.next === "string" ? clean2(item.next, 160) : finite(item.next, 0),
+      previous: typeof item.previous === "string" ? clean2(item.previous, 2000) : finite(item.previous, 0),
+      next: typeof item.next === "string" ? clean2(item.next, 2000) : finite(item.next, 0),
       operation,
       amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
       reason: clean2(item.reason, 300),
@@ -255,6 +257,8 @@ function normalizeTracker(value, context = {}) {
     updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
   };
   if (kind === "state") {
+    if (value.freeText === true)
+      return { ...base, kind, freeText: true, state: clean2(value.state, 2000), initialState: clean2(value.initialState ?? value.state, 2000), states: [], updateMode: updateMode === "model" ? "model" : "manual" };
     const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean2(entry, 80)).filter(Boolean).slice(0, 24);
     const initialState = clean2(value.initialState, 80) || states[0] || "Unknown";
     const state = clean2(value.state, 80) || initialState;
@@ -277,10 +281,10 @@ function applyTrackerOperation(tracker, input) {
   if (tracker.kind === "state") {
     if (input.operation !== "set_state" && input.operation !== "reset")
       throw new Error("State trackers accept set_state or reset.");
-    const next = input.operation === "reset" ? tracker.initialState : clean2(input.state, 80);
-    if (!next)
+    const next = input.operation === "reset" ? tracker.initialState : clean2(input.state, tracker.freeText ? 2000 : 80);
+    if (!next && !tracker.freeText)
       throw new Error("set_state requires a state value.");
-    if (tracker.states.length && !tracker.states.includes(next))
+    if (!tracker.freeText && tracker.states.length && !tracker.states.includes(next))
       throw new Error(`State must be one of: ${tracker.states.join(", ")}`);
     if (next === tracker.state)
       return tracker;
@@ -29939,6 +29943,8 @@ function defaultPreferences() {
     homeWallpaper: defaultWallpaper(),
     chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
+    desktopPhoneOffset: 0,
+    freeformRoleplayMessages: 0,
     desktopDockSide: "left",
     uiScale: 1,
     independentUiScale: false,
@@ -30082,6 +30088,8 @@ function normalizePreferences(value) {
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text8(raw.wallpaperImageUrl, "", 2000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text8(raw.chatWallpaperImageUrl, "", 2000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
+    desktopPhoneOffset: numberIn(raw.desktopPhoneOffset, 0, 0, 160),
+    freeformRoleplayMessages: Math.round(numberIn(raw.freeformRoleplayMessages, 0, 0, 40)),
     desktopDockSide: raw.desktopDockSide === "right" ? "right" : "left",
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     independentUiScale: bool(raw.independentUiScale, false),
@@ -33788,7 +33796,7 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET) {
     const target = `${tracker.target.type}:${tracker.target.label || tracker.target.id || "unassigned"}`;
     const value = tracker.kind === "state" ? tracker.state : `${Number(tracker.value.toFixed(2))}${tracker.unit.slice(0, 40)}`;
     const band = tracker.kind === "state" ? "" : trackerBand(tracker)?.label || "";
-    return `${tracker.label.slice(0, 120)} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}${tracker.updateMode === "model" && tracker.allowModelWrite && tracker.modelPrompt ? ` \xB7 Update guidance: ${JSON.stringify(tracker.modelPrompt.slice(0, 2000))}` : ""}`;
+    return `${tracker.label.slice(0, 120)}${tracker.kind === "state" && tracker.freeText ? " (text field; update with set_state, state = free text)" : ""} [key:${tracker.key}; ${target}] = ${value}${band ? ` (${band})` : ""} \xB7 ${tracker.updateMode === "model" && tracker.allowModelWrite ? "model-writable" : "read-only"}${tracker.updateMode === "model" && tracker.allowModelWrite && tracker.modelPrompt ? ` \xB7 Update guidance: ${JSON.stringify(tracker.modelPrompt.slice(0, 2000))}` : ""}`;
   });
   const upcoming = state.events.filter((event) => !state.conversations.some((c) => c.id === event.source?.conversationId && c.channel === "dating")).filter((event) => !event.completed).sort((a, b) => safeTime(a.start) - safeTime(b.start)).slice(0, 8).map((event) => `${event.whenText || event.start || "Unscheduled"} \u2014 ${event.title.slice(0, 180)}`);
   const publicSocial = (state.social?.posts || []).filter((post) => post.app !== "discord").slice(-6).map((post) => ({
@@ -36561,8 +36569,9 @@ async function assemblePocketContext(options) {
   const includePhoneThread = options.includePhoneThread !== false;
   const threadLines = includePhoneThread ? conversation.messages.slice(-20).map((message) => threadLine(state, conversation, message)) : [];
   const thread = trimBlock(threadLines, BUDGETS.thread);
-  const wantsRecent = includeRoleplayBackground && (mode === "recent" || mode === "smart" && (conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote)));
-  const selectedRecent = mode !== "off" && wantsRecent && preferences.recentRoleplayMessages > 0 ? hostMessages.slice(-preferences.recentRoleplayMessages) : [];
+  const wantsRecent = includeRoleplayBackground && (mode === "recent" || mode === "smart" && (state.chatId.startsWith("_freeform_") && preferences.freeformRoleplayMessages > 0 || conversation.messages.length > 0 || contact.presence.inScene || Boolean(contact.sceneNote)));
+  const recentLimit = state.chatId.startsWith("_freeform_") ? preferences.freeformRoleplayMessages : preferences.recentRoleplayMessages;
+  const selectedRecent = mode !== "off" && wantsRecent && recentLimit > 0 ? hostMessages.slice(-recentLimit) : [];
   const recentLines = selectedRecent.map((message, index) => {
     const role = message.role === "user" ? `Pocket Persona (${state.pocketPersona.displayName?.trim() || "You"})` : message.role === "assistant" ? `Active RP Character (${state.characterName || "Character"})` : "System";
     const anchor = clean14(message.id, 180);
@@ -37524,6 +37533,17 @@ var nativeApps = new NativeAppsRuntime({
 });
 async function pocketHostMessages(chatId) {
   return isFreeformChat(chatId) ? [] : spindle.chat.getMessages(chatId);
+}
+async function freeformContextMessages(chatId, userId) {
+  if (!isFreeformChat(chatId))
+    return pocketHostMessages(chatId);
+  const prefs = await loadPreferences(userId);
+  if (!prefs.freeformRoleplayMessages || !spindle.permissions.has("chats") || !spindle.permissions.has("chat_mutation"))
+    return [];
+  const active = await spindle.chats.getActive(userId);
+  if (!active?.id || isFreeformChat(active.id))
+    return [];
+  return (await spindle.chat.getMessages(active.id)).slice(-prefs.freeformRoleplayMessages);
 }
 async function freeformDirectory(userId) {
   const sessions = await freeformSessions.list(userId);
@@ -40223,7 +40243,7 @@ function normalizeNarrativeTrackerDeltas(value) {
     if (!key || !operation)
       return [];
     const amount = Number(entry.amount);
-    const state = text9(entry.state, 80);
+    const state = text9(entry.state, 2000);
     if ((operation === "set" || operation === "add" || operation === "subtract") && !Number.isFinite(amount))
       return [];
     if (operation === "set_state" && !state)
@@ -40920,7 +40940,8 @@ async function refreshNarrativeSeed(chatId, characterId, userId, options = {}) {
       value: tracker.kind === "state" ? tracker.state : tracker.value,
       min: tracker.kind === "state" ? undefined : tracker.min,
       max: tracker.kind === "state" ? undefined : tracker.max,
-      states: tracker.kind === "state" ? tracker.states : undefined,
+      states: tracker.kind === "state" && !tracker.freeText ? tracker.states : undefined,
+      fieldInstruction: tracker.kind === "state" && tracker.freeText ? `Free text field: use set_state with up to 2000 characters. ${tracker.modelPrompt || ""}` : undefined,
       target: tracker.target.label || tracker.target.id || tracker.target.type
     }));
     const currentStateAdvisory = {
@@ -41153,9 +41174,9 @@ ${knownIdentity || "No full profile is registered; use only the name and current
       preferences,
       actorIdentity: compactIdentity,
       extraContext: conversation.channel === "dating" ? "" : await extraPhoneContext(generationState, contextConversation, userId),
-      getMessages: spindle.permissions.has("chat_mutation") ? () => pocketHostMessages(context.chatId) : undefined,
+      getMessages: spindle.permissions.has("chat_mutation") ? () => freeformContextMessages(context.chatId, userId) : undefined,
       includePhoneThread: conversation.kind !== "direct",
-      includeRoleplayBackground: false
+      includeRoleplayBackground: isFreeformChat(context.chatId) && preferences.freeformRoleplayMessages > 0
     });
     const requestedInstruction = text9(input.instruction, 2000);
     const hasPhoneHistory = contextConversation.messages.length > 0;
@@ -41272,7 +41293,7 @@ Generate ${profile.name}'s phone text TO the Pocket Persona named above. Other a
         generationMessages.unshift({ role: "system", content: LUMISTRY_CAPTURE_GUIDANCE.replaceAll("Lumistry", "Pocket") });
     }
     if (isFreeformChat(context.chatId))
-      generationMessages.unshift({ role: "system", content: "FREEFORM SESSION: This phone is independent of any roleplay chat. Use only this session\u2019s persona, contacts, phone conversations, and app state. Keep the channel remote; there is no external scene or roleplay handoff. Never assume events from the host\u2019s active chat." });
+      generationMessages.unshift({ role: "system", content: "FREEFORM SESSION: This phone is independent of any roleplay chat. Use this session\u2019s persona, contacts, phone conversations, and app state. If explicitly provided, recent roleplay messages are background reference only. Keep the channel remote; there is no external scene or roleplay handoff. Never invent external events or assume background events are a phone exchange." });
     const generationRequest = {
       signal: input.signal,
       type: "quiet",
@@ -41485,8 +41506,8 @@ ${profileContext(contact, profile, preferences, pocketContactPhoneBrief(contact,
 
 `).slice(0, preferences.preferFullProfiles || profiles.some(({ contact }) => fullProfile(contact, preferences)) ? 32000 : 3600),
       extraContext: await extraPhoneContext(state, projectedConversation, userId),
-      getMessages: spindle.permissions.has("chat_mutation") ? () => pocketHostMessages(context.chatId) : undefined,
-      includeRoleplayBackground: false
+      getMessages: spindle.permissions.has("chat_mutation") ? () => freeformContextMessages(context.chatId, userId) : undefined,
+      includeRoleplayBackground: isFreeformChat(context.chatId) && preferences.freeformRoleplayMessages > 0
     });
     const groupContinuityText = preferences.roleplayContextMode === "off" ? "" : narrativeSeedContext(groupContinuitySeed, "", profiles.map(({ actor }) => actor.name));
     const groupMemoryText = groupActorPhoneMemoryContext(state.actorMemories, profiles.map(({ actor, contact }) => ({
@@ -42984,7 +43005,7 @@ async function applyAction(input, userId, source = "model") {
         next = applyTrackerOperation(existing, {
           operation,
           amount: numberValue(payload.amount ?? payload.value, 0),
-          state: text9(payload.state ?? payload.value, 80),
+          state: text9(payload.state ?? payload.value, existing.kind === "state" && existing.freeText ? 2000 : 80),
           reason: text9(payload.reason, 300),
           source,
           roleplayNow: state.roleplayNow
@@ -43917,6 +43938,7 @@ async function handleFrontend(payload, userId) {
         break;
       }
       case "lumiphone:refresh_persona_portrait": {
+        let choosing = false;
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
           if (payload.deviceOwnerActorId && payload.deviceOwnerActorId !== pocketPersonaActorId(state))
@@ -43924,15 +43946,35 @@ async function handleFrontend(payload, userId) {
           if (!spindle.permissions.has("personas") || !spindle.permissions.has("images"))
             throw new Error("Enable Personas and Images access to refresh the portrait.");
           const session = isFreeformChat(context.chatId) ? await freeformSessions.get(context.chatId, userId) : null;
-          const linked = session?.personaId || state.pocketPersona.linkedPersonaId;
-          const persona = linked ? await spindle.personas.get(linked, userId) : await spindle.personas.getActive(userId);
+          const requested = text9(payload.personaId, 180);
+          if (session && requested && requested !== session.personaId)
+            throw new Error("Freeform portraits follow the session\u2019s chosen Persona.");
+          const linked = requested || session?.personaId || state.pocketPersona.linkedPersonaId;
+          let persona = linked ? await spindle.personas.get(linked, userId) : await spindle.personas.getActive(userId);
+          if (!requested && !session && persona?.name?.trim().toLocaleLowerCase() !== state.pocketPersona.displayName.trim().toLocaleLowerCase()) {
+            const directory = await spindle.personas.list({ limit: 1000, userId });
+            const matches = [...new Map(directory.data.map((p) => [p.id, p])).values()].filter((p) => p.name.trim().toLocaleLowerCase() === state.pocketPersona.displayName.trim().toLocaleLowerCase());
+            if (matches.length === 1)
+              persona = matches[0];
+            else if (matches.length > 1) {
+              const personas = await Promise.all(matches.map(async (p) => ({ id: p.id, name: p.name, description: text9(p.description, 240), avatarUrl: await personaPortrait(p, userId) })));
+              send({ type: "lumiphone:persona_portrait_choices", requestId, ...context, personas }, userId);
+              choosing = true;
+              return;
+            }
+          }
           if (!persona)
             throw new Error("No linked Persona is available to refresh.");
-          state.pocketPersona.avatarUrl = await personaPortrait(persona, userId);
+          const portrait = await personaPortrait(persona, userId);
+          if (!portrait)
+            throw new Error("This Persona has no available portrait. Check its image in Lumiverse.");
+          state.pocketPersona.linkedPersonaId = persona.id;
+          state.pocketPersona.avatarUrl = portrait;
           await saveState(state, userId);
           await sendState(state, userId, "persona_portrait");
         });
-        send({ type: "lumiphone:persona_portrait_refreshed", requestId, ...context }, userId);
+        if (!choosing)
+          send({ type: "lumiphone:persona_portrait_refreshed", requestId, ...context }, userId);
         break;
       }
       case "lumiphone:save_pocket_persona": {
@@ -44121,7 +44163,7 @@ ${messages.slice(-18).map((message) => `${message.role}: ${sanitizeNarrativeCont
           preferences: await loadPreferences(userId),
           actorIdentity: profileContext(contact, profile, await loadPreferences(userId), contact.identityBrief || profile.description),
           extraContext: await extraPhoneContext(state, projectedConversation, userId),
-          getMessages: spindle.permissions.has("chat_mutation") ? () => pocketHostMessages(context.chatId) : undefined
+          getMessages: spindle.permissions.has("chat_mutation") ? () => freeformContextMessages(context.chatId, userId) : undefined
         });
         send({ type: "lumiphone:context_preview", requestId, conversationId: conversation.id, diagnostics: assembled.diagnostics }, userId);
         break;

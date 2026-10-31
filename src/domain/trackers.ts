@@ -47,9 +47,10 @@ export function validateTrackerConfig(value: RecordValue): void {
   if (!allowed.includes(String(value.presentation))) throw new Error('Choose a display that matches this tracker type.')
   if (value.kind === 'state') {
     const states = Array.isArray(value.states) ? value.states.map(entry => clean(entry, 80)).filter(Boolean) : []
-    if (!states.length || !states.includes(String(value.state))) throw new Error('Choose a current state from the allowed states.')
+    if (value.freeText && !['manual','model'].includes(String(value.updateMode))) throw new Error('Text fields use manual or story updates.')
+    if (!value.freeText && (!states.length || !states.includes(String(value.state)))) throw new Error('Choose a current state from the allowed states.')
     if (value.updateMode === 'automatic') throw new Error('States use manual or story updates.')
-    if (value.initialState && !states.includes(String(value.initialState))) throw new Error('Keep the reset state in the allowed states.')
+    if (!value.freeText && value.initialState && !states.includes(String(value.initialState))) throw new Error('Keep the reset state in the allowed states.')
   } else {
     for (const key of ['value', 'initialValue', 'min', 'max', 'ratePerHour']) {
       if (!Number.isFinite(Number(value[key]))) throw new Error('Tracker numbers must be finite.')
@@ -100,8 +101,8 @@ function normalizeHistory(value: unknown): TrackerHistoryEntry[] {
     const createdAt = iso(item.createdAt, new Date().toISOString())
     return [{
       id: clean(item.id, 160) || trackerId('hist'),
-      previous: typeof item.previous === 'string' ? clean(item.previous, 160) : finite(item.previous, 0),
-      next: typeof item.next === 'string' ? clean(item.next, 160) : finite(item.next, 0),
+      previous: typeof item.previous === 'string' ? clean(item.previous, 2000) : finite(item.previous, 0),
+      next: typeof item.next === 'string' ? clean(item.next, 2000) : finite(item.next, 0),
       operation,
       amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
       reason: clean(item.reason, 300),
@@ -151,6 +152,7 @@ export function normalizeTracker(value: unknown, context: NormalizeTrackerContex
     createdAt: iso(value.createdAt, now), updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now)),
   }
   if (kind === 'state') {
+    if (value.freeText === true) return {...base, kind, freeText:true, state:clean(value.state,2000), initialState:clean(value.initialState ?? value.state,2000), states:[], updateMode:updateMode === 'model' ? 'model' : 'manual'}
     const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean(entry, 80)).filter(Boolean).slice(0, 24)
     const initialState = clean(value.initialState, 80) || states[0] || 'Unknown'
     const state = clean(value.state, 80) || initialState
@@ -194,9 +196,9 @@ export function applyTrackerOperation(tracker: PhoneTracker, input: ApplyTracker
   const now = input.now || new Date().toISOString()
   if (tracker.kind === 'state') {
     if (input.operation !== 'set_state' && input.operation !== 'reset') throw new Error('State trackers accept set_state or reset.')
-    const next = input.operation === 'reset' ? tracker.initialState : clean(input.state, 80)
-    if (!next) throw new Error('set_state requires a state value.')
-    if (tracker.states.length && !tracker.states.includes(next)) throw new Error(`State must be one of: ${tracker.states.join(', ')}`)
+    const next = input.operation === 'reset' ? tracker.initialState : clean(input.state, tracker.freeText ? 2000 : 80)
+    if (!next && !tracker.freeText) throw new Error('set_state requires a state value.')
+    if (!tracker.freeText && tracker.states.length && !tracker.states.includes(next)) throw new Error(`State must be one of: ${tracker.states.join(', ')}`)
     if (next === tracker.state) return tracker
     return addHistory({ ...tracker, state: next, updatedAt: now } as PhoneTracker, {
       previous: tracker.state, next, operation: input.operation, reason: clean(input.reason, 300), source: input.source,

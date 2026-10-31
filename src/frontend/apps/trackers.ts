@@ -124,7 +124,12 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
   operations.appendChild(el('div', 'lp-eyebrow', host.pending ? 'Updating…' : tracker.kind === 'counter' ? 'Inventory' : tracker.kind === 'timer' ? 'Clock controls' : tracker.kind === 'state' ? 'Choose a state' : 'Adjust value'))
   operations.setAttribute('aria-busy', String(host.pending))
   const change = (payload: Record<string, unknown>) => host.send('lumiphone:action', { action: 'tracker', payload: { trackerId: tracker.id, reason: 'Changed in Pocket', ...payload } })
-  if (tracker.kind === 'state') {
+  if (tracker.kind === 'state' && tracker.freeText) {
+    const text=el('textarea','lp-textarea'); text.value=tracker.state; text.maxLength=2000; text.setAttribute('aria-label','Field text');
+    const save=button('Save text','lp-button'); save.disabled=host.pending; save.onclick=()=>change({operation:'set_state',state:text.value});
+    const reset=button('Reset text','lp-button lp-button-quiet');reset.disabled=host.pending;reset.onclick=()=>change({operation:'reset'});
+    operations.append(text,save,reset)
+  } else if (tracker.kind === 'state') {
     const choices = el('div', 'lp-state-choices')
     for (const state of tracker.states) {
       const choice = button(state, 'lp-chip'); choice.setAttribute('aria-pressed', String(state === tracker.state)); choice.disabled = host.pending || state === tracker.state

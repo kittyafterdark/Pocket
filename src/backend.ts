@@ -192,6 +192,15 @@ async function pocketHostMessages(chatId: string): Promise<any[]> {
   return isFreeformChat(chatId) ? [] : spindle.chat.getMessages(chatId)
 }
 
+async function freeformContextMessages(chatId: string, userId?: string): Promise<any[]> {
+  if (!isFreeformChat(chatId)) return pocketHostMessages(chatId)
+  const prefs = await loadPreferences(userId)
+  if (!prefs.freeformRoleplayMessages || !spindle.permissions.has('chats') || !spindle.permissions.has('chat_mutation')) return []
+  const active = await spindle.chats.getActive(userId)
+  if (!active?.id || isFreeformChat(active.id)) return []
+  return (await spindle.chat.getMessages(active.id)).slice(-prefs.freeformRoleplayMessages)
+}
+
 async function freeformDirectory(userId?: string): Promise<FreeformDirectory> {
   const sessions = await freeformSessions.list(userId)
   const personas: FreeformDirectory['personas'] = []
@@ -2653,7 +2662,7 @@ function normalizeNarrativeTrackerDeltas(value: unknown): NarrativeTrackerDelta[
       ? entry.operation : ''
     if (!key || !operation) return []
     const amount = Number(entry.amount)
-    const state = text(entry.state, 80)
+    const state = text(entry.state, 2000)
     if ((operation === 'set' || operation === 'add' || operation === 'subtract') && !Number.isFinite(amount)) return []
     if (operation === 'set_state' && !state) return []
     return [{
@@ -3394,7 +3403,8 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
         value: tracker.kind === 'state' ? tracker.state : tracker.value,
         min: tracker.kind === 'state' ? undefined : tracker.min,
         max: tracker.kind === 'state' ? undefined : tracker.max,
-        states: tracker.kind === 'state' ? tracker.states : undefined,
+        states: tracker.kind === 'state' && !tracker.freeText ? tracker.states : undefined,
+        fieldInstruction: tracker.kind === 'state' && tracker.freeText ? `Free text field: use set_state with up to 2000 characters. ${tracker.modelPrompt || ''}` : undefined,
         target: tracker.target.label || tracker.target.id || tracker.target.type,
       }))
     const currentStateAdvisory = {
@@ -3615,9 +3625,9 @@ async function generateMessageJob(input: AnyRecord & { signal: AbortSignal }, us
       state: generationState, contact, conversation: contextConversation, preferences,
       actorIdentity: compactIdentity,
       extraContext: conversation.channel==='dating'?'':await extraPhoneContext(generationState, contextConversation, userId),
-      getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
+      getMessages: spindle.permissions.has('chat_mutation') ? () => freeformContextMessages(context.chatId, userId) : undefined,
       includePhoneThread: conversation.kind !== 'direct',
-      includeRoleplayBackground: false,
+      includeRoleplayBackground: isFreeformChat(context.chatId) && preferences.freeformRoleplayMessages > 0,
     })
     const requestedInstruction = text(input.instruction, 2_000)
     const hasPhoneHistory = contextConversation.messages.length > 0
@@ -3720,7 +3730,7 @@ Use arriving while traveling toward the physical scene, local only when the mess
     input.signal?.throwIfAborted()
     if(contextConversation.messages.some(m=>m.sharedCapture))generationMessages.unshift({role:'system',content:LUMISTRY_CAPTURE_GUIDANCE.replaceAll('Lumistry','Pocket')})
     if(conversation.channel==='dating'){generationMessages.splice(0,generationMessages.length,...datingReplyMessages(state,conversation,instruction));generationMessages.unshift({role:'system',content:PHONE_TEXT_STYLE});if(conversation.messages.some(m=>m.sharedCapture))generationMessages.unshift({role:'system',content:LUMISTRY_CAPTURE_GUIDANCE.replaceAll('Lumistry','Pocket')})}
-    if (isFreeformChat(context.chatId)) generationMessages.unshift({ role: 'system', content: 'FREEFORM SESSION: This phone is independent of any roleplay chat. Use only this session’s persona, contacts, phone conversations, and app state. Keep the channel remote; there is no external scene or roleplay handoff. Never assume events from the host’s active chat.' })
+    if (isFreeformChat(context.chatId)) generationMessages.unshift({ role: 'system', content: 'FREEFORM SESSION: This phone is independent of any roleplay chat. Use this session’s persona, contacts, phone conversations, and app state. If explicitly provided, recent roleplay messages are background reference only. Keep the channel remote; there is no external scene or roleplay handoff. Never invent external events or assume background events are a phone exchange.' })
     const generationRequest: AnyRecord = {
       signal: input.signal,
       type: 'quiet',
@@ -3898,8 +3908,8 @@ async function generateGroupBatchJob(input: AnyRecord & { signal: AbortSignal },
       fullProfiles: profiles.some(({contact}) => fullProfile(contact, preferences)),
       actorIdentity: profiles.map(({ actor, contact, profile }) => `${actor.name} (${actor.actorId}, ${actor.relationship})\n${profileContext(contact, profile, preferences, pocketContactPhoneBrief(contact, profile)) || 'No profile; infer only from the live exchange.'}`.slice(0, fullProfile(contact, preferences) ? 24000 : 900)).join('\n\n').slice(0, preferences.preferFullProfiles || profiles.some(({contact}) => fullProfile(contact, preferences)) ? 32000 : 3600),
       extraContext: await extraPhoneContext(state, projectedConversation, userId),
-      getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
-      includeRoleplayBackground: false,
+      getMessages: spindle.permissions.has('chat_mutation') ? () => freeformContextMessages(context.chatId, userId) : undefined,
+      includeRoleplayBackground: isFreeformChat(context.chatId) && preferences.freeformRoleplayMessages > 0,
     })
     const groupContinuityText = preferences.roleplayContextMode === 'off' ? '' : narrativeSeedContext(groupContinuitySeed, '', profiles.map(({ actor }) => actor.name))
     const groupMemoryText = groupActorPhoneMemoryContext(
@@ -5149,7 +5159,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         next = setTrackerClockPaused(existing, payload.clockAction === 'pause', state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? '' : state.roleplayNow)
       } else if (existing && operation) {
         next = applyTrackerOperation(existing, {
-          operation, amount: numberValue(payload.amount ?? payload.value, 0), state: text(payload.state ?? payload.value, 80),
+          operation, amount: numberValue(payload.amount ?? payload.value, 0), state: text(payload.state ?? payload.value, existing.kind === 'state' && existing.freeText ? 2000 : 80),
           reason: text(payload.reason, 300), source, roleplayNow: state.roleplayNow,
         })
       } else {
@@ -5887,18 +5897,34 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         break
       }
       case 'lumiphone:refresh_persona_portrait': {
+        let choosing=false
         await withStateLock(stateKey(context.chatId,context.characterId),async()=>{
           const state=await loadState(context.chatId,context.characterId,userId)
           if(payload.deviceOwnerActorId&&payload.deviceOwnerActorId!==pocketPersonaActorId(state))throw new Error('Refresh the Persona portrait from your own phone.')
           if(!spindle.permissions.has('personas')||!spindle.permissions.has('images'))throw new Error('Enable Personas and Images access to refresh the portrait.')
           const session=isFreeformChat(context.chatId)?await freeformSessions.get(context.chatId,userId):null
-          const linked=session?.personaId||state.pocketPersona.linkedPersonaId
-          const persona=linked?await spindle.personas.get(linked,userId):await spindle.personas.getActive(userId)
+          const requested=text(payload.personaId,180)
+          if(session && requested && requested!==session.personaId)throw new Error('Freeform portraits follow the session’s chosen Persona.')
+          const linked=requested||session?.personaId||state.pocketPersona.linkedPersonaId
+          let persona=linked?await spindle.personas.get(linked,userId):await spindle.personas.getActive(userId)
+          // Older saved identities may have the right name but a stale binding to another Persona.
+          if(!requested && !session && persona?.name?.trim().toLocaleLowerCase()!==state.pocketPersona.displayName.trim().toLocaleLowerCase()){
+            const directory=await spindle.personas.list({limit:1000,userId})
+            const matches=[...new Map(directory.data.map(p=>[p.id,p])).values()].filter(p=>p.name.trim().toLocaleLowerCase()===state.pocketPersona.displayName.trim().toLocaleLowerCase())
+            if(matches.length===1)persona=matches[0]
+            else if(matches.length>1){
+              const personas=await Promise.all(matches.map(async p=>({id:p.id,name:p.name,description:text(p.description,240),avatarUrl:await personaPortrait(p,userId)})))
+              send({type:'lumiphone:persona_portrait_choices',requestId,...context,personas},userId);choosing=true;return
+            }
+          }
           if(!persona)throw new Error('No linked Persona is available to refresh.')
-          state.pocketPersona.avatarUrl=await personaPortrait(persona,userId)
+          const portrait=await personaPortrait(persona,userId)
+          if(!portrait)throw new Error('This Persona has no available portrait. Check its image in Lumiverse.')
+          state.pocketPersona.linkedPersonaId=persona.id
+          state.pocketPersona.avatarUrl=portrait
           await saveState(state,userId);await sendState(state,userId,'persona_portrait')
         })
-        send({type:'lumiphone:persona_portrait_refreshed',requestId,...context},userId);break
+        if(!choosing)send({type:'lumiphone:persona_portrait_refreshed',requestId,...context},userId);break
       }
       case 'lumiphone:save_pocket_persona': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
@@ -6062,7 +6088,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           state, contact, conversation: projectedConversation, preferences: await loadPreferences(userId),
           actorIdentity: profileContext(contact, profile, await loadPreferences(userId), contact.identityBrief || profile.description),
           extraContext: await extraPhoneContext(state, projectedConversation, userId),
-          getMessages: spindle.permissions.has('chat_mutation') ? () => pocketHostMessages(context.chatId) : undefined,
+          getMessages: spindle.permissions.has('chat_mutation') ? () => freeformContextMessages(context.chatId, userId) : undefined,
         })
         send({ type: 'lumiphone:context_preview', requestId, conversationId: conversation.id, diagnostics: assembled.diagnostics }, userId)
         break

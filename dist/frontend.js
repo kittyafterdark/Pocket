@@ -25406,11 +25406,13 @@ function validateTrackerConfig(value) {
     throw new Error("Choose a display that matches this tracker type.");
   if (value.kind === "state") {
     const states = Array.isArray(value.states) ? value.states.map((entry) => clean4(entry, 80)).filter(Boolean) : [];
-    if (!states.length || !states.includes(String(value.state)))
+    if (value.freeText && !["manual", "model"].includes(String(value.updateMode)))
+      throw new Error("Text fields use manual or story updates.");
+    if (!value.freeText && (!states.length || !states.includes(String(value.state))))
       throw new Error("Choose a current state from the allowed states.");
     if (value.updateMode === "automatic")
       throw new Error("States use manual or story updates.");
-    if (value.initialState && !states.includes(String(value.initialState)))
+    if (!value.freeText && value.initialState && !states.includes(String(value.initialState)))
       throw new Error("Keep the reset state in the allowed states.");
   } else {
     for (const key of ["value", "initialValue", "min", "max", "ratePerHour"]) {
@@ -25473,8 +25475,8 @@ function normalizeHistory(value) {
     const createdAt = iso(item.createdAt, new Date().toISOString());
     return [{
       id: clean4(item.id, 160) || trackerId("hist"),
-      previous: typeof item.previous === "string" ? clean4(item.previous, 160) : finite(item.previous, 0),
-      next: typeof item.next === "string" ? clean4(item.next, 160) : finite(item.next, 0),
+      previous: typeof item.previous === "string" ? clean4(item.previous, 2000) : finite(item.previous, 0),
+      next: typeof item.next === "string" ? clean4(item.next, 2000) : finite(item.next, 0),
       operation,
       amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : undefined,
       reason: clean4(item.reason, 300),
@@ -25534,6 +25536,8 @@ function normalizeTracker(value, context = {}) {
     updatedAt: iso(value.updatedAt, iso(value.lastUpdated, now))
   };
   if (kind === "state") {
+    if (value.freeText === true)
+      return { ...base, kind, freeText: true, state: clean4(value.state, 2000), initialState: clean4(value.initialState ?? value.state, 2000), states: [], updateMode: updateMode === "model" ? "model" : "manual" };
     const states = (Array.isArray(value.states) ? value.states : []).map((entry) => clean4(entry, 80)).filter(Boolean).slice(0, 24);
     const initialState = clean4(value.initialState, 80) || states[0] || "Unknown";
     const state = clean4(value.state, 80) || initialState;
@@ -25846,6 +25850,8 @@ function defaultPreferences() {
     homeWallpaper: defaultWallpaper(),
     chatWallpaper: defaultWallpaper(),
     handsetScale: 1,
+    desktopPhoneOffset: 0,
+    freeformRoleplayMessages: 0,
     desktopDockSide: "left",
     uiScale: 1,
     independentUiScale: false,
@@ -25989,6 +25995,8 @@ function normalizePreferences(value) {
     homeWallpaper: normalizeWallpaper(raw.homeWallpaper, text7(raw.wallpaperImageUrl, "", 2000)),
     chatWallpaper: normalizeWallpaper(raw.chatWallpaper, text7(raw.chatWallpaperImageUrl, "", 2000)),
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
+    desktopPhoneOffset: numberIn(raw.desktopPhoneOffset, 0, 0, 160),
+    freeformRoleplayMessages: Math.round(numberIn(raw.freeformRoleplayMessages, 0, 0, 40)),
     desktopDockSide: raw.desktopDockSide === "right" ? "right" : "left",
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
     independentUiScale: bool(raw.independentUiScale, false),
@@ -32902,7 +32910,9 @@ function appearance(host) {
     next.desktopUiScale = value;
   }))] : [], ...settings.independentUiScale ? [] : [slider("Interface size", settings.uiScale, 0.7, 1.3, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
     next.uiScale = value;
-  }), "Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.")], slider("Desktop phone size", settings.handsetScale, 0.8, 1.25, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
+  }), "Scales Pocket primitives and density on desktop and mobile. It never shrinks the mobile viewport.")], slider("Desktop phone offset", settings.desktopPhoneOffset, 0, 160, 4, (value) => `${value}px`, (value) => commit((next) => {
+    next.desktopPhoneOffset = value;
+  }, { resize: true }), "Adds empty space between the desktop phone and its docked edge."), slider("Desktop phone size", settings.handsetScale, 0.8, 1.25, 0.05, (value) => `${Math.round(value * 100)}%`, (value) => commit((next) => {
     next.handsetScale = value;
   }, { resize: true }), "Controls only the physical 9:18.4 handset on desktop."));
   const motion = el("section", "lp-card lp-settings-section");
@@ -33767,6 +33777,10 @@ function contextSettings(host) {
   };
   content.append(toggle2("Prefer full character profiles", settings.preferFullProfiles, (value) => commit("preferFullProfiles", value), "Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default."));
   content.append(toggle2("Enable lorebooks", settings.enableLorebooks, (value) => commit("enableLorebooks", value), "Requires World Books access. Roleplay uses host-activated lore. Freeform scans constant and literal-keyword entries from global books and books attached to its Persona and participants; host regex/vector and timed activation are unavailable there."));
+  content.append(slider("Freeform roleplay context", settings.freeformRoleplayMessages, 0, 40, 1, (value) => value ? `${value} messages` : "Off", (value) => {
+    settings = { ...settings, freeformRoleplayMessages: value };
+    host.update(settings);
+  }, "Let Freeform read this many recent messages from your currently active roleplay chat. Off keeps it independent. Requires Chats and Chat Mutation access; background context only, without changing that chat."));
   const access = button("Manage lorebook access", "lp-button lp-button-quiet");
   access.onclick = () => host.requestPermissions();
   content.append(access);
@@ -34017,6 +34031,11 @@ function trackerDisplay(tracker, state) {
     body.append(makeRing(percent, trackerGlyph("vitals"), "lp-health-ring"), reading());
     card.append(body, makeBars("lp-vital-pulse", 11, Math.max(1, Math.round(percent / 10))));
     card.append(rail());
+  } else if (current.kind === "state" && current.freeText) {
+    const text = el("p", "lp-copy", current.state || "No text yet");
+    text.style.whiteSpace = "pre-wrap";
+    text.style.overflowWrap = "anywhere";
+    card.append(text);
   } else if (current.presentation === "state" && current.kind === "state") {
     const currentState = el("div", "lp-state-current");
     currentState.append(el("span", "lp-state-current-dot"), el("strong", "", current.state));
@@ -34158,7 +34177,7 @@ function trackerEditor(host, current, templateIndex = 9) {
   error.hidden = true;
   const name = el("input", "lp-input");
   name.value = source.label;
-  const kind = choice("Track", [["meter", "A value"], ["counter", "A quantity"], ["state", "A state"], ["timer", "A timer"]], source.kind);
+  const kind = choice("Track", [["meter", "A value"], ["counter", "A quantity"], ["state", "A state"], ["field", "A field"], ["timer", "A timer"]], source.kind === "state" && source.freeText ? "field" : source.kind);
   const targets = [
     { type: "character", id: host.state.characterId, label: host.state.characterName },
     { type: "persona", id: host.state.pocketPersonaActorId, label: host.state.pocketPersona.displayName || "You" },
@@ -34185,6 +34204,10 @@ function trackerEditor(host, current, templateIndex = 9) {
 `) : `Stable
 Wounded
 Recovering`;
+  const fieldValue = el("textarea", "lp-textarea");
+  fieldValue.maxLength = 2000;
+  fieldValue.value = source.kind === "state" && source.freeText ? source.state : "";
+  const fieldValueBlock = fieldBlock("Field text", fieldValue, "Free text, updated by you or story events.");
   const state = choice("Current state", [], source.kind === "state" ? source.state : "");
   const mode = choice("Updates", [["manual", "By hand"], ["model", "Story events"], ["automatic", "Elapsed time"], ["jev", "Tracker judge"]], source.updateMode);
   const modeHelp = el("p", "lp-copy lp-tracker-mode-help");
@@ -34194,7 +34217,7 @@ Recovering`;
   modelPrompt.maxLength = 2000;
   modelPrompt.value = source.modelPrompt || "";
   modelPrompt.placeholder = "Increase by 1 when a clue is discovered. Reset when the mystery is solved.";
-  const promptField = fieldBlock("Tool-calling prompt", modelPrompt, "Tell the model when and how to update this tracker. Leave blank to use the default story rules.");
+  const promptField = fieldBlock("Instruction", modelPrompt, "Tell the model when and how to update this tracker. Leave blank to use the default story rules.");
   const jev = sectionBlock("Tracker judge", "Estimates this value from recent story messages. Uncertain answers keep the current value.");
   const question = el("textarea", "lp-textarea");
   question.maxLength = 240;
@@ -34219,7 +34242,7 @@ Recovering`;
   const stateFields = el("div", "lp-tracker-config-fields");
   stateFields.append(fieldBlock("Allowed states", states, "One state per line."), state.field);
   const basic = sectionBlock("The essentials");
-  basic.body.append(fieldBlock("Name", name), belongs.field, customField, kind.field, valueField, stateFields, mode.field, promptField, visibleField);
+  basic.body.append(fieldBlock("Name", name), belongs.field, customField, kind.field, valueField, stateFields, fieldValueBlock, mode.field, promptField, visibleField);
   const clock = choice("Clock", [["roleplay", "Story time"], ["real", "Real time"]], source.clock);
   const rate = el("input", "lp-input");
   rate.type = "number";
@@ -34303,7 +34326,8 @@ Recovering`;
   const advanced = disclosure("Fine tuning", presentation.field, range, fieldBlock("Color", color), bands.section, fieldBlock("Stable key", key, "Used by model tools. New trackers receive a unique key."));
   const allowed = { meter: ["meter", "vitals", "relationship", "segmented", "compact"], counter: ["counter", "compact"], state: ["state", "compact"], timer: ["timer", "compact"] };
   const collect = () => {
-    const kindValue = kind.control.value;
+    const isField = kind.control.value === "field";
+    const kindValue = isField ? "state" : kind.control.value;
     const selected = targets[Number(belongs.control.value)];
     return {
       label: name.value.trim(),
@@ -34316,8 +34340,9 @@ Recovering`;
       min: Number(min.value),
       max: Number(max.value),
       unit: unit.value,
-      state: state.control.value,
-      initialState: current?.kind === "state" ? current.initialState : state.control.value,
+      freeText: isField,
+      state: isField ? fieldValue.value : state.control.value,
+      initialState: isField ? current?.kind === "state" && current.freeText ? current.initialState : fieldValue.value : current?.kind === "state" ? current.initialState : state.control.value,
       states: [...new Set(states.value.split(`
 `).map((entry) => entry.trim()).filter(Boolean))],
       step: Number(step.value),
@@ -34338,11 +34363,13 @@ Recovering`;
     };
   };
   const refreshFields = () => {
-    const kindValue = kind.control.value;
-    promptField.hidden = mode.control.value !== "model";
+    const isField = kind.control.value === "field";
+    const kindValue = isField ? "state" : kind.control.value;
+    promptField.hidden = mode.control.value !== "model" && !isField;
+    fieldValueBlock.hidden = !isField;
     customField.hidden = targets[Number(belongs.control.value)].type !== "custom";
     valueField.hidden = kindValue === "state";
-    stateFields.hidden = kindValue !== "state";
+    stateFields.hidden = kindValue !== "state" || isField;
     range.hidden = kindValue === "state";
     bands.section.hidden = kindValue === "state";
     stepField.hidden = kindValue !== "counter";
@@ -34351,7 +34378,7 @@ Recovering`;
     jev.section.hidden = mode.control.value !== "jev";
     levelField.hidden = kindValue === "state";
     const jevOption = mode.control.querySelector('option[value="jev"]');
-    jevOption.disabled = kindValue === "counter" || kindValue === "timer";
+    jevOption.disabled = isField || kindValue === "counter" || kindValue === "timer";
     if (jevOption.disabled && mode.control.value === "jev")
       mode.control.value = "manual";
     const autoOption = mode.control.querySelector('option[value="automatic"]');
@@ -34501,7 +34528,19 @@ function detail(host, tracker) {
   operations.appendChild(el("div", "lp-eyebrow", host.pending ? "Updating…" : tracker.kind === "counter" ? "Inventory" : tracker.kind === "timer" ? "Clock controls" : tracker.kind === "state" ? "Choose a state" : "Adjust value"));
   operations.setAttribute("aria-busy", String(host.pending));
   const change = (payload) => host.send("lumiphone:action", { action: "tracker", payload: { trackerId: tracker.id, reason: "Changed in Pocket", ...payload } });
-  if (tracker.kind === "state") {
+  if (tracker.kind === "state" && tracker.freeText) {
+    const text = el("textarea", "lp-textarea");
+    text.value = tracker.state;
+    text.maxLength = 2000;
+    text.setAttribute("aria-label", "Field text");
+    const save = button("Save text", "lp-button");
+    save.disabled = host.pending;
+    save.onclick = () => change({ operation: "set_state", state: text.value });
+    const reset = button("Reset text", "lp-button lp-button-quiet");
+    reset.disabled = host.pending;
+    reset.onclick = () => change({ operation: "reset" });
+    operations.append(text, save, reset);
+  } else if (tracker.kind === "state") {
     const choices = el("div", "lp-state-choices");
     for (const state of tracker.states) {
       const choice = button(state, "lp-chip");
@@ -39022,7 +39061,7 @@ function renderPocketPortal(view, navigate, content) {
 var POCKET_PORTAL_STYLES = `
 ${SESSION_MANAGER_STYLES}
 .pocket-portal{--pocket-text:var(--lumiverse-text,#eceaf1);--pocket-muted:var(--lumiverse-text-muted,#a7a3b2);--pocket-accent:var(--lumiverse-primary,#b5a5f5);--pocket-border:var(--lumiverse-border,#ffffff16);--pocket-surface:var(--lumiverse-fill-subtle,#ffffff06);--pocket-hover:var(--lumiverse-fill,#ffffff0c);box-sizing:border-box;width:100%;min-width:0;min-height:100%;padding:24px 20px 32px;color:var(--pocket-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--pocket-accent) 9%,transparent),transparent 55%)}
-.pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-device-access{flex:1;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
+.pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-portrait-choices{margin-block:20px}.pocket-portal .lumiphone-portrait-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-block:14px}.pocket-portal .lumiphone-portrait-option{display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 10px;min-width:0;border:1px solid var(--pocket-border);border-radius:12px;background:var(--pocket-surface);color:inherit;text-align:center}.pocket-portal .lumiphone-portrait-preview{width:80px;height:80px;object-fit:cover;border-radius:14px}.pocket-portal .lumiphone-portrait-details{display:grid;gap:5px;max-width:100%;overflow-wrap:anywhere;font-size:12px}.pocket-portal .lumiphone-portrait-details small{font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-portrait-status{flex-basis:100%;order:2;margin:4px 0 0}.pocket-portal .lumiphone-device-access{flex:1 1 110px;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
 @media(max-width:420px){.pocket-portal{padding:18px 16px 28px}.pocket-portal-nav{padding-bottom:24px}.pocket-portal h2{font-size:28px}.pocket-portal-destination{padding:20px 16px 26px}}
 .pocket-freeform-confirm{--lp-accent:var(--lumiverse-primary,#b6a5ee);font:400 13px/1.6 Inter,ui-sans-serif,system-ui,sans-serif}.pocket-freeform-confirm *{box-sizing:border-box}.pocket-freeform-confirm .lp-settings-section{gap:14px}.pocket-freeform-confirm .lp-copy{font:inherit;margin:0 0 6px;color:var(--lp-muted,#b9b5c5)}.pocket-freeform-confirm .lp-button{min-height:44px;padding:12px 14px;font:600 13px/1.4 Inter,ui-sans-serif,system-ui,sans-serif;white-space:normal;border:1px solid var(--lp-border,#ffffff22);border-radius:10px}.pocket-freeform-confirm .lp-button[data-primary=true]{background:var(--lp-accent);color:#17151e}.pocket-freeform-confirm button:focus-visible{outline:2px solid var(--lp-accent);outline-offset:3px}
 @media(prefers-reduced-motion:reduce){.pocket-portal-destination{transition:none}}
@@ -43095,6 +43134,7 @@ class PocketController {
   settingsDraft = null;
   portraitRefreshRequest = "";
   portraitRefreshStatus = "";
+  portraitChoices = [];
   settingsSaveTimer = 0;
   settingsRevision = 0;
   settingsSaveRevisions = new Map;
@@ -43611,6 +43651,7 @@ class PocketController {
     this.settingsDraft = null;
     this.portraitRefreshRequest = "";
     this.portraitRefreshStatus = "";
+    this.portraitChoices = [];
     this.contextPreview = null;
     this.personaPreview = null;
     this.loreLogs = null;
@@ -43800,6 +43841,40 @@ class PocketController {
     } else {
       card.appendChild(el("p", "lumiphone-drawer-copy", "Pocket is still loading this chat."));
     }
+    if (this.portraitChoices.length) {
+      const chooser = el("section", "lumiphone-portrait-choices");
+      chooser.setAttribute("aria-label", "Choose Persona portrait");
+      chooser.append(el("h3", "lumiphone-device-title", "Choose the portrait to use"), el("p", "lumiphone-device-copy", "These are Lumiverse Personas, separate from saved Pocket phone profiles. Compare the pictures and details."));
+      const portraits = el("div", "lumiphone-portrait-grid");
+      chooser.append(portraits);
+      for (const persona of this.portraitChoices) {
+        const choice = button("", "lumiphone-portrait-option");
+        choice.setAttribute("aria-label", "Use portrait from " + persona.name + " (" + persona.id + ")");
+        if (persona.avatarUrl) {
+          const image = el("img", "lumiphone-portrait-preview");
+          image.src = persona.avatarUrl;
+          image.alt = "";
+          choice.append(image);
+        }
+        const copy = el("span", "lumiphone-portrait-details");
+        copy.append(el("strong", "", persona.name), el("small", "", persona.description || "No description"), el("small", "", persona.id));
+        choice.append(copy);
+        choice.onclick = () => {
+          this.portraitChoices = [];
+          this.portraitRefreshRequest = this.send("lumiphone:refresh_persona_portrait", { personaId: persona.id, deviceOwnerActorId: pocketPersonaActorId(this.state) });
+          this.renderDrawerLanding();
+        };
+        portraits.append(choice);
+      }
+      const cancel = button("Cancel portrait selection", "lumiphone-device-access");
+      cancel.onclick = () => {
+        this.portraitChoices = [];
+        this.renderDrawerLanding();
+        this.drawer.root.querySelector("[data-refresh-persona-portrait]")?.focus();
+      };
+      chooser.append(cancel);
+      card.append(chooser);
+    }
     const actions = el("div", "lumiphone-device-footer");
     if (this.state) {
       const refresh = button(this.portraitRefreshRequest ? "Refreshing portrait…" : "Refresh Persona portrait", "lumiphone-device-access");
@@ -43812,7 +43887,7 @@ class PocketController {
       };
       actions.append(refresh);
       if (this.portraitRefreshStatus) {
-        const status = el("p", "lumiphone-device-copy", this.portraitRefreshStatus);
+        const status = el("p", "lumiphone-device-copy lumiphone-portrait-status", this.portraitRefreshStatus);
         status.setAttribute("role", "status");
         actions.append(status);
       }
@@ -43845,7 +43920,7 @@ class PocketController {
       const dockOptions = {
         edge: this.preferences.desktopDockSide,
         title: "Pocket",
-        size: desktopDockSize(this.preferences.handsetScale),
+        size: desktopDockSize(this.preferences.handsetScale) + this.preferences.desktopPhoneOffset,
         minSize: 292,
         maxSize: 620,
         resizable: false,
@@ -43916,6 +43991,8 @@ class PocketController {
         mobile.root.replaceChildren(this.handsetHost);
       if (this.shell.parentElement !== this.handsetHost)
         this.handsetHost.replaceChildren(this.shell);
+      this.handsetHost.style.paddingInline = "";
+      this.handsetHost.style.boxSizing = "";
       this.handsetHost.dataset.fullscreen = "true";
       applyMobilePhoneSurface(mobile, 1);
       applyVisualViewportSurface(this.handsetHost, (pixels) => {
@@ -43942,10 +44019,12 @@ class PocketController {
     this.handsetHost.dataset.fullscreen = "false";
     clearVisualViewportSurface(this.handsetHost);
     if ("setSize" in panel && typeof panel.setSize === "function") {
-      panel.setSize(desktopDockSize(this.preferences.handsetScale));
+      panel.setSize(desktopDockSize(this.preferences.handsetScale) + this.preferences.desktopPhoneOffset);
     }
     panel.expand();
     const desktop = calculatePhoneSurface(this.preferences.handsetScale, currentViewport(), false);
+    this.handsetHost.style.boxSizing = "content-box";
+    this.handsetHost.style.paddingInline = this.preferences.desktopDockSide === "left" ? `${this.preferences.desktopPhoneOffset}px 0` : `0 ${this.preferences.desktopPhoneOffset}px`;
     this.handsetHost.style.width = `${desktop.width}px`;
     this.handsetHost.style.height = `${desktop.height}px`;
     return true;
@@ -44280,6 +44359,14 @@ class PocketController {
     return { key, ui };
   }
   onBackend(payload) {
+    if (this.portraitRefreshRequest && payload.requestId === this.portraitRefreshRequest && payload.type === "lumiphone:persona_portrait_choices") {
+      this.portraitRefreshRequest = "";
+      this.portraitChoices = payload.personas || [];
+      this.portraitRefreshStatus = "";
+      this.renderDrawerLanding();
+      this.drawer.root.querySelector(".lumiphone-portrait-choices button")?.focus();
+      return;
+    }
     if (this.portraitRefreshRequest && this.portraitRefreshRequest === payload.requestId && ["lumiphone:persona_portrait_refreshed", "lumiphone:error"].includes(payload.type)) {
       this.portraitRefreshRequest = "";
       this.portraitRefreshStatus = payload.error || "Persona portrait refreshed.";
