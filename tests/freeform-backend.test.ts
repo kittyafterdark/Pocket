@@ -639,3 +639,87 @@ test('Freeform isolation suppresses RP tools and prompt context while keeping ph
  const reopened=await send('freeform_open',{sessionId:session.id});expect(reopened.error).toBeUndefined();expect(host.read(PREFERENCES_PATH).suppressRoleplayTools).toBe(true);
  const disabled=await send('save_preferences',{...context,preferences:{suppressRoleplayTools:false}});expect(disabled.error).toBeUndefined();expect(host.tools.has('phone_action')).toBe(true);
 });
+
+test('Freeform cadence consolidates committed phone turns into durable journal, timeline and writable trackers', async () => {
+  const savedPrefs = host.read(PREFERENCES_PATH)
+  const originalGenerate = host.api.generate.quiet
+  try {
+    const { session } = await send('freeform_create', { personaId:'persona-fern', name:'Consolidation cadence' })
+    const imported = await send('import_contact', { ...scope(session.id), kind:'character', sourceId:'host-character' })
+    const conversationId = imported.responses.find(p => p.type === 'lumiphone:contact_created').conversationId
+    const tracker = await send('action', {
+      ...scope(session.id), action:'tracker', payload:{
+        command:'create', key:'trust', label:'Trust', kind:'meter', presentation:'meter', value:10, initialValue:10,
+        min:0, max:100, unit:'%', ratePerHour:0, updateMode:'model', allowModelWrite:true, clock:'roleplay',
+        target:{type:'relationship', id:'alex-fern', label:'Alex ↔ Fern'}, bands:[], color:'#8b7dff',
+      },
+    })
+    expect(tracker.error).toBeUndefined()
+    const opened = await send('freeform_open', { sessionId:session.id })
+    const packet = opened.responses.find(p => p.type === 'lumiphone:state')
+    const prefs = structuredClone(packet.preferences)
+    prefs.freeformAutoConsolidate = true; prefs.freeformConsolidateTurns = 1
+    await send('save_preferences', { ...scope(session.id), preferences:prefs })
+
+    host.api.generate.quiet = async (request: any) => {
+      if (JSON.stringify(request).includes('Consolidate a bounded batch of committed Freeform Pocket conversations')) {
+        host.generations.push(structuredClone({ ...request, signal:undefined }))
+        return { content: JSON.stringify({
+          journal:{title:'Moon library plan', body:'Fern and Alex committed to visiting the moon library tomorrow and the exchange strengthened their trust.', mood:'planning'},
+          timeline:[{title:'Visit the moon library', description:'Fern and Alex plan to go together.', whenKind:'relative', whenText:'tomorrow', participants:['Fern','Alex']}],
+          trackerOps:[{key:'trust', operation:'add', amount:2, state:'', reason:'They explicitly reaffirmed trust.'}],
+        }) }
+      }
+      return originalGenerate(request)
+    }
+
+    await send('action', { ...scope(session.id), action:'message', payload:{conversationId, text:'Alex, we agreed to go to the moon library tomorrow. I trust you more after tonight.'} })
+    const generated = await send('generate_message', { ...scope(session.id), conversationId })
+    expect(generated.error).toBeUndefined()
+    for (let attempt=0; attempt<50; attempt++) {
+      const persisted = host.read(`phones/${session.id}___none.json`)
+      if (persisted?.freeformConsolidation?.lastConsolidatedAt) break
+      await new Promise(resolve => setTimeout(resolve, 2))
+    }
+    const state = (await send('freeform_open', { sessionId:session.id })).state
+    expect(state.freeformConsolidation.status).toBe('idle')
+    expect(state.freeformConsolidation.pendingTurns).toBe(0)
+    expect(state.notes.some((note:any) => note.title === 'Moon library plan')).toBe(true)
+    expect(state.events.some((event:any) => event.title === 'Visit the moon library' && event.lane === 'Freeform')).toBe(true)
+    expect(state.trackers.find((item:any) => item.key === 'trust').value).toBe(12)
+  } finally {
+    host.api.generate.quiet = originalGenerate
+    await host.api.userStorage.setJson(PREFERENCES_PATH, savedPrefs)
+  }
+})
+
+test('failed Freeform consolidation keeps its checkpoint pending for a later retry', async () => {
+  const savedPrefs = host.read(PREFERENCES_PATH)
+  const originalGenerate = host.api.generate.quiet
+  try {
+    const { session } = await send('freeform_create', { personaId:'persona-fern', name:'Consolidation retry' })
+    const imported = await send('import_contact', { ...scope(session.id), kind:'character', sourceId:'host-character' })
+    const conversationId = imported.responses.find(p => p.type === 'lumiphone:contact_created').conversationId
+    const opened = await send('freeform_open', { sessionId:session.id })
+    const prefs = structuredClone(opened.responses.find(p => p.type === 'lumiphone:state').preferences)
+    prefs.freeformAutoConsolidate = false
+    await send('save_preferences', { ...scope(session.id), preferences:prefs })
+    await send('action', { ...scope(session.id), action:'message', payload:{conversationId, text:'Remember that we decided to meet tomorrow.'} })
+    expect((await send('generate_message', { ...scope(session.id), conversationId })).error).toBeUndefined()
+
+    host.api.generate.quiet = async (request: any) => {
+      if (JSON.stringify(request).includes('Consolidate a bounded batch of committed Freeform Pocket conversations')) throw new Error('fixture consolidation failed')
+      return originalGenerate(request)
+    }
+    const failed = await send('freeform_consolidate', scope(session.id))
+    expect(failed.error?.error).toContain('fixture consolidation failed')
+    const persisted = host.read(`phones/${session.id}___none.json`)
+    expect(persisted.freeformConsolidation.status).toBe('error')
+    expect(persisted.freeformConsolidation.lastMessageId).toBeUndefined()
+    const reopened = await send('freeform_open', { sessionId:session.id })
+    expect(reopened.state.freeformConsolidation.pendingTurns).toBe(1)
+  } finally {
+    host.api.generate.quiet = originalGenerate
+    await host.api.userStorage.setJson(PREFERENCES_PATH, savedPrefs)
+  }
+})

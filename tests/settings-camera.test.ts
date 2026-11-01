@@ -86,6 +86,11 @@ test('camera defaults bind image pickers, persist together and clear without los
   click('Follow Lumiverse defaults')
   expect(updates.at(-1).value.manualVisualProfile).toMatchObject({ connectionId: '', model: '', loras: [{ name: 'ink', weight: .7 }] })
   expect(view.textContent).toContain('swarm_loras · 18 chars')
+  expect(view.textContent).toContain('Generation diagnostics')
+  const positiveBase = view.querySelector<HTMLButtonElement>('button[aria-label="Include character positive base"]')!
+  expect(positiveBase.getAttribute('aria-pressed')).toBe('true')
+  positiveBase.click()
+  expect(updates.at(-1).value.includeStudioCharacterPositive).toBe(false)
   click('Lumiverse image settings')
   expect(sends.at(-1)).toBe('lumiphone:open_native_image_settings')
   dom.window.close()
@@ -134,4 +139,37 @@ test('generation retry toggle saves manual mode and renders it again', () => {
     expect(draft.automaticGenerationRetry).toBe(false)
     expect(render().querySelector('button[aria-label="Automatic retry"]')?.getAttribute('aria-pressed')).toBe('false')
   } finally { globalThis.document = previous; dom.window.close() }
+})
+
+
+test('image diagnostics page renders sanitized trace entries and exposes refresh, copy and clear controls', () => {
+  const dom = new JSDOM('<!doctype html><body></body>')
+  const previousDocument = globalThis.document, previousNavigator = globalThis.navigator
+  try {
+    globalThis.document = dom.window.document
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async () => {} } } })
+    const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
+    let refreshed = 0, cleared = 0
+    const view = renderSettingsView({
+      draft: defaultPreferences(), section: 'image-diagnostics', page: () => ({ page, content }),
+      imageDiagnostics: [{
+        id: 'diag-1', createdAt: '2026-11-01T12:00:00.000Z', requestId: 'photo-1', source: 'camera:message',
+        stage: 'provider_error', status: 'error', message: 'Invalid value for parameter sampler',
+        payload: { parameters: { sampler: 'bad-value' }, authorization: '<redacted>' },
+      }],
+      loadImageDiagnostics: () => { refreshed += 1 }, clearImageDiagnostics: () => { cleared += 1 },
+    } as any)
+    document.body.append(view)
+    expect(view.textContent).toContain('Image diagnostics')
+    expect(view.textContent).toContain('provider error · ERROR')
+    expect(view.textContent).toContain('Invalid value for parameter sampler')
+    expect(view.querySelector('pre')?.textContent).toContain('bad-value')
+    const buttonByText = (label: string) => [...view.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === label)!
+    buttonByText('Refresh').click(); buttonByText('Clear').click()
+    expect(refreshed).toBe(1); expect(cleared).toBe(1)
+  } finally {
+    globalThis.document = previousDocument
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: previousNavigator })
+    dom.window.close()
+  }
 })

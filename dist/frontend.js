@@ -25955,6 +25955,9 @@ function defaultPreferences() {
     handsetScale: 1,
     desktopPhoneOffset: 0,
     freeformRoleplayMessages: 0,
+    freeformAutoConsolidate: true,
+    freeformConsolidateTurns: 5,
+    freeformConsolidateOnClose: true,
     suppressRoleplayTools: false,
     desktopDockSide: "left",
     uiScale: 1,
@@ -25975,6 +25978,7 @@ function defaultPreferences() {
     inlineAppearance: "cards",
     pushNotifications: false,
     useSwarmProfile: true,
+    includeStudioCharacterPositive: true,
     sceneEnhancer: true,
     jev: normalizeJevSettings(null),
     generationMode: "roleplay",
@@ -26032,7 +26036,7 @@ function normalizePreferences(value) {
     const item = record2(entry);
     const requestId = text7(item.requestId, "", 180);
     const task = text7(item.task, "", 40);
-    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge", "social-feed"]);
+    const tasks = new Set(["npc-contact", "profile-refresh", "scene-sync", "persona-profile", "message-reply", "message-retry", "group-reply", "reply-decision", "ambient-decision", "freeform-consolidation", "continuity-seed", "post-turn-audit", "scene-planner", "connection-test", "weather-week", "timeline-review", "tracker-judge", "social-feed"]);
     if (!requestId || !tasks.has(task) && !/^lumistry-[a-z_]+$/.test(task) && !/^native-(bank|birthdays|browser|maps|twitch|stickers)$/.test(task))
       return [];
     const status = item.status === "completed" || item.status === "failed" ? item.status : "started";
@@ -26101,6 +26105,9 @@ function normalizePreferences(value) {
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     desktopPhoneOffset: numberIn(raw.desktopPhoneOffset, 0, 0, 160),
     freeformRoleplayMessages: Math.round(numberIn(raw.freeformRoleplayMessages, 0, 0, 40)),
+    freeformAutoConsolidate: bool(raw.freeformAutoConsolidate, fallback.freeformAutoConsolidate),
+    freeformConsolidateTurns: Math.round(numberIn(raw.freeformConsolidateTurns, fallback.freeformConsolidateTurns, 1, 20)),
+    freeformConsolidateOnClose: bool(raw.freeformConsolidateOnClose, fallback.freeformConsolidateOnClose),
     suppressRoleplayTools: raw.suppressRoleplayTools === true,
     desktopDockSide: raw.desktopDockSide === "right" ? "right" : "left",
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
@@ -26121,6 +26128,7 @@ function normalizePreferences(value) {
     inlineAppearance: raw.inlineAppearance === "phone" ? "phone" : "cards",
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
+    includeStudioCharacterPositive: bool(raw.includeStudioCharacterPositive, fallback.includeStudioCharacterPositive),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
@@ -32915,7 +32923,7 @@ function categories2(host) {
   const { page, content } = host.page("Settings", "Device-wide preferences");
   content.classList.add("lp-settings-list");
   const entries = [
-    ...host.freeformSession ? [["freeform", "Freeform session", "Name, switch sessions, or start a separate roleplay chat"]] : [],
+    ...host.freeformSession ? [["freeform", "Freeform", "State consolidation, roleplay background, and session controls"]] : [],
     ["personalization", "Personalization", "Theme, wallpapers, and your Persona"],
     ["messages", "Messages", "Replies, ambient texts, roleplay context"],
     ["context", "Context", "Character profiles, lorebooks, and this session’s scenario"],
@@ -33591,6 +33599,10 @@ function camera(host) {
     host.update(next, { persist: false });
     host.send("lumiphone:save_preferences", { preferences: next });
   }));
+  const characterPositive = toggle2("Include character positive base", settings.includeStudioCharacterPositive, (value) => commit((next) => {
+    next.includeStudioCharacterPositive = value;
+  }));
+  const characterPositiveHelp = el("p", "lp-copy", "Pocket only. Adds the bound Studio character positive prompt to character-bearing Pocket photos without changing Studio’s own auto-print setting.");
   const status = el("p", "lp-copy", host.swarmProfile?.status === "connected" ? `Connected · ${host.swarmProfile.checkpoint || "profile macros resolved"}` : host.swarmProfile?.status === "error" ? `Error · ${host.swarmProfile.error}` : host.swarmProfile?.status === "disabled" ? "Swarm profile sync is disabled." : "Swarm Studio macros were not detected for this character/persona.");
   status.dataset.pocketSwarmStatus = "true";
   status.dataset.status = host.swarmProfile?.status || "not-detected";
@@ -33607,7 +33619,9 @@ function camera(host) {
     row.dataset.pocketSwarmMacro = name;
     diagnostics.appendChild(row);
   }
-  swarm.append(status, refresh, diagnostics);
+  const diagnosticLog = button("Generation diagnostics", "lp-button lp-button-quiet");
+  diagnosticLog.addEventListener("click", () => host.navigate("image-diagnostics"));
+  swarm.append(characterPositive, characterPositiveHelp, status, refresh, diagnostics, diagnosticLog);
   const defaults = el("section", "lp-card lp-settings-section");
   defaults.append(el("div", "lp-eyebrow", "Camera defaults"), el("p", "lp-copy", "Leave connection and checkpoint blank to use Lumiverse’s native presets, workflow and LoRA stack. Saved overrides apply to every Pocket photo unless changed in Camera."));
   const native = button("Lumiverse image settings", "lp-button lp-button-quiet");
@@ -33862,8 +33876,42 @@ function data(host) {
 }
 function freeformSettings(host) {
   const session = host.freeformSession;
-  const { page, content } = host.page("Freeform session", session.personaName);
-  const card = el("section", "lp-card lp-settings-section");
+  let settings = clone(host.draft);
+  const commit = (mutate) => {
+    const next = clone(settings);
+    mutate(next);
+    settings = normalizePreferences(next);
+    host.update(settings);
+  };
+  const { page, content } = host.page("Freeform", session.personaName);
+  const stateCard = el("section", "lp-card lp-settings-section");
+  stateCard.append(el("div", "lp-eyebrow", "State consolidation"), el("p", "lp-copy", "Freeform has no host story-turn sync, so Pocket periodically folds committed phone conversations into durable Journal, Timeline, and model-writable tracker state. Ordinary chatter is ignored."));
+  stateCard.append(toggle2("Auto-consolidate Freeform state", settings.freeformAutoConsolidate, (value) => commit((next) => {
+    next.freeformAutoConsolidate = value;
+  }), "Runs only in Freeform. Normal roleplay keeps its existing post-turn reconciliation."));
+  stateCard.append(slider("Consolidate every", settings.freeformConsolidateTurns, 1, 20, 1, (value) => `${value} completed turn${value === 1 ? "" : "s"}`, (value) => commit((next) => {
+    next.freeformConsolidateTurns = value;
+  }), "Counts completed generated reply requests, not raw bubbles, so a group burst still counts as one turn."));
+  stateCard.append(toggle2("Consolidate when leaving Freeform", settings.freeformConsolidateOnClose, (value) => commit((next) => {
+    next.freeformConsolidateOnClose = value;
+  }), "Flushes pending committed messages when the Pocket surface closes or leaves this Freeform session."));
+  const checkpoint = host.state.freeformConsolidation;
+  const pending = checkpoint?.pendingTurns || 0;
+  const status = checkpoint?.status === "working" ? "Consolidating now…" : checkpoint?.status === "error" ? `Last consolidation failed: ${checkpoint.lastError || "unknown error"}` : `${pending} completed turn${pending === 1 ? "" : "s"} pending${checkpoint?.lastConsolidatedAt ? ` · Last consolidated ${new Date(checkpoint.lastConsolidatedAt).toLocaleString()}` : " · Never consolidated"}`;
+  stateCard.append(el("p", checkpoint?.status === "error" ? "lp-warning" : "lp-copy", status));
+  if (checkpoint?.lastSummary)
+    stateCard.append(el("p", "lp-copy", `Last result: ${checkpoint.lastSummary}`));
+  const consolidate = button(checkpoint?.status === "working" ? "Consolidating…" : "Consolidate now", "lp-button");
+  consolidate.disabled = checkpoint?.status === "working" || pending === 0;
+  consolidate.onclick = () => host.send("lumiphone:freeform_consolidate");
+  stateCard.append(consolidate);
+  const contextCard = el("section", "lp-card lp-settings-section");
+  contextCard.append(el("div", "lp-eyebrow", "Roleplay background"));
+  contextCard.append(slider("Freeform roleplay context", settings.freeformRoleplayMessages, 0, 40, 1, (value) => value ? `${value} messages` : "Off", (value) => commit((next) => {
+    next.freeformRoleplayMessages = value;
+  }), "Let this Freeform session read recent messages from your currently active Lumiverse roleplay chat. Off keeps Freeform independent. Requires Chats and Chat Mutation access; background context only, without changing that chat."));
+  const sessionCard = el("section", "lp-card lp-settings-section");
+  sessionCard.append(el("div", "lp-eyebrow", "Session"));
   const name = el("input", "lp-input");
   name.value = session.name;
   name.maxLength = 80;
@@ -33877,13 +33925,58 @@ function freeformSettings(host) {
   };
   const change = button("Lock & switch session", "lp-button lp-button-quiet");
   change.onclick = () => host.chooseFreeform?.();
-  card.append(fieldBlock("Session name", name), rename, change);
+  sessionCard.append(fieldBlock("Session name", name), rename, change);
   const start = el("section", "lp-card lp-settings-section");
   start.append(el("h3", "lp-title", "Take it into the story"), el("p", "lp-copy", "Create or open a chat in Lumiverse, then copy this Pocket into that chat. Your Freeform session and the chat keep separate histories from here on. You will choose whether to keep or replace that chat’s base Pocket."));
   const copy = button("Start a chat from this session", "lp-button");
   copy.onclick = () => host.copyFreeformToChat?.();
   start.append(copy);
-  content.append(card, start);
+  content.append(stateCard, contextCard, sessionCard, start);
+  return page;
+}
+function imageDiagnostics(host) {
+  const { page, content } = host.page("Image diagnostics", "Recent Pocket image requests");
+  const controls = el("div", "lp-row lp-image-diagnostic-actions");
+  const refresh = button("Refresh", "lp-button");
+  refresh.onclick = () => host.loadImageDiagnostics?.();
+  const copyAll = button("Copy all", "lp-button lp-button-quiet");
+  copyAll.onclick = () => {
+    const text = JSON.stringify(host.imageDiagnostics || [], null, 2);
+    navigator.clipboard?.writeText(text).catch(() => {});
+  };
+  const clear = button("Clear", "lp-button lp-button-quiet");
+  clear.onclick = () => host.clearImageDiagnostics?.();
+  controls.append(refresh, copyAll, clear);
+  content.append(controls);
+  content.append(el("p", "lp-copy", "Runtime-only diagnostics. Pocket records bridge resolution, the exact sanitized provider payload it sent, completion results, and provider errors. Tokens, cookies, API keys, and huge image blobs are redacted."));
+  if (host.imageDiagnostics == null) {
+    content.append(el("p", "lp-copy", "Loading image diagnostics…"));
+    return page;
+  }
+  if (!host.imageDiagnostics.length) {
+    content.append(el("p", "lp-copy", "No image requests logged yet. Generate or retry a photo, then refresh this screen."));
+    return page;
+  }
+  for (const entry of host.imageDiagnostics) {
+    const detail = el("details", "lp-card lp-image-diagnostic-entry");
+    detail.dataset.status = entry.status;
+    const time = entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+    const summary = el("summary", "");
+    summary.append(el("strong", "", `${entry.stage.replace(/_/g, " ")}${entry.status === "error" ? " · ERROR" : ""}`), el("span", "lp-copy", `${time}${entry.source ? ` · ${entry.source}` : ""}`));
+    detail.append(summary, el("p", entry.status === "error" ? "lp-warning" : "lp-copy", entry.message || ""));
+    if (entry.requestId)
+      detail.append(el("p", "lp-copy", `Request: ${entry.requestId}`));
+    if (entry.payload !== undefined) {
+      const json = JSON.stringify(entry.payload, null, 2);
+      const pre = el("pre", "lp-image-diagnostic-json", json);
+      const copy = button("Copy payload", "lp-button lp-button-quiet");
+      copy.onclick = () => {
+        navigator.clipboard?.writeText(json).catch(() => {});
+      };
+      detail.append(copy, pre);
+    }
+    content.append(detail);
+  }
   return page;
 }
 function contextSettings(host) {
@@ -33895,10 +33988,6 @@ function contextSettings(host) {
   };
   content.append(toggle2("Prefer full character profiles", settings.preferFullProfiles, (value) => commit("preferFullProfiles", value), "Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default."));
   content.append(toggle2("Enable lorebooks", settings.enableLorebooks, (value) => commit("enableLorebooks", value), "Requires World Books access. Roleplay uses host-activated lore. Freeform scans constant and literal-keyword entries from global books and books attached to its Persona and participants; host regex/vector and timed activation are unavailable there."));
-  content.append(slider("Freeform roleplay context", settings.freeformRoleplayMessages, 0, 40, 1, (value) => value ? `${value} messages` : "Off", (value) => {
-    settings = { ...settings, freeformRoleplayMessages: value };
-    host.update(settings);
-  }, "Let Freeform read this many recent messages from your currently active roleplay chat. Off keeps it independent. Requires Chats and Chat Mutation access; background context only, without changing that chat."));
   const access = button("Manage lorebook access", "lp-button lp-button-quiet");
   access.onclick = () => host.requestPermissions();
   content.append(access);
@@ -33939,6 +34028,8 @@ function renderSettingsView(host) {
     }
     return page;
   }
+  if (host.section === "image-diagnostics")
+    return imageDiagnostics(host);
   if (host.section === "context")
     return contextSettings(host);
   if (host.section === "freeform" && host.freeformSession)
@@ -35347,9 +35438,14 @@ function renderMessagesView(host) {
       bubble.prepend(photo);
     }
     if (message.photo && message.photo.status !== "ready") {
-      const status = el("div", "lp-message-photo-status", message.photo.status === "pending" ? "Making a photo…" : message.photo.error || "Photo stopped.");
+      const pending = message.photo.status === "pending", status = el("div", `lp-message-photo-status ${pending ? "is-pending" : "is-failed"}`);
+      const indicator = el("span", "lp-message-photo-indicator");
+      indicator.setAttribute("aria-hidden", "true");
+      const copy = el("span", "lp-message-photo-copy");
+      copy.append(el("strong", "", pending ? "Developing photo…" : "Photo interrupted"), el("span", "", pending ? "Rendering the shot" : message.photo.error || "Photo generation stopped."));
+      status.append(indicator, copy);
       if (!host.readOnlyDevice) {
-        const action = message.photo.status === "pending" ? "stop" : "retry", control = button(action === "stop" ? "Stop photo" : "Retry photo", "lp-bubble-action");
+        const action = pending ? "stop" : "retry", control = button(action === "stop" ? "Stop" : "Retry", "lp-message-photo-control");
         control.type = "button";
         control.setAttribute("aria-label", `${action === "stop" ? "Stop" : "Retry"} photo from ${message.senderName}`);
         control.onclick = () => host.send("lumiphone:message_photo_control", { conversationId: conversation.id, messageId: message.id, action });
@@ -37133,1010 +37229,1010 @@ function buildPhoneScreen(activity, openRoute, options) {
 }
 
 // src/frontend/components/pocket-inline-redesign.css
-var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappers too; a transformed parent distorts the whole device. */\r
-.pocket-artifact-stack[data-pocket-ui="true"],\r
-.pocket-inline-anchor[data-pocket-host="true"],\r
-.pocket-receipt-host[data-pocket-host="true"] {\r
-  all: revert;\r
-  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\r
-  text-transform: none;\r
-  text-shadow: none;\r
-  letter-spacing: normal;\r
-  color: #f5f2fb;\r
-  display: grid;\r
-  gap: 5px;\r
-  min-width: 0;\r
-  width: 100%;\r
-  box-sizing: border-box;\r
-  position: static;\r
-  transform: none;\r
-  padding: 0;\r
-  border: 0;\r
-  background: none;\r
-}\r
-.pocket-inline-anchor[data-pocket-host="true"] { margin: 12px 0; }\r
-.pocket-receipt-host[data-pocket-host="true"] { margin: 8px 0 2px; max-width: min(100%,460px); }\r
-.pocket-artifact-stack[data-pocket-ui="true"]::before,\r
-.pocket-artifact-stack[data-pocket-ui="true"]::after,\r
-.pocket-inline-anchor[data-pocket-host="true"]::before,\r
-.pocket-inline-anchor[data-pocket-host="true"]::after,\r
-.pocket-receipt-host[data-pocket-host="true"]::before,\r
-.pocket-receipt-host[data-pocket-host="true"]::after { content: none; }\r
-.pocket-artifact-stack[data-pocket-ui="true"] > .pocket-inline-frame[data-pocket-ui="true"] { margin-inline: auto; }\r
-\r
-/* Pocket owns its inline UI; host prose/theme rules must not become phone chrome. */\r
-.pocket-inline-frame[data-pocket-ui="true"] {\r
-  all: revert;\r
-  display: block;\r
-  isolation: isolate;\r
-  color-scheme: dark;\r
-  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\r
-  color: var(--pocket-inline-text, #f5f2fb);\r
-  text-align: left;\r
-  text-transform: none;\r
-  letter-spacing: normal;\r
-  text-shadow: none;\r
-  white-space: normal;\r
-  word-break: normal;\r
-  overflow-wrap: anywhere;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] :where(div, span, strong, button, input, textarea, img, time) {\r
-  all: revert;\r
-  margin: 0;\r
-  padding: 0;\r
-  border: 0;\r
-  background: none;\r
-  font: inherit;\r
-  color: inherit;\r
-  letter-spacing: inherit;\r
-  text-transform: none;\r
-  text-shadow: none;\r
-  text-align: inherit;\r
-  white-space: normal;\r
-  overflow-wrap: inherit;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"],\r
-.pocket-inline-frame[data-pocket-ui="true"] *,\r
-.pocket-inline-frame[data-pocket-ui="true"] *::before,\r
-.pocket-inline-frame[data-pocket-ui="true"] *::after {\r
-  box-sizing: border-box;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"]::before,\r
-.pocket-inline-frame[data-pocket-ui="true"]::after,\r
-.pocket-inline-frame[data-pocket-ui="true"] *::before,\r
-.pocket-inline-frame[data-pocket-ui="true"] *::after {\r
-  all: revert;\r
-  content: none;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] :where(button, input, textarea) {\r
-  appearance: none;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] :where(svg) {\r
-  display: inline-block;\r
-  position: static;\r
-  margin: 0;\r
-  padding: 0;\r
-  border: 0;\r
-  background: none;\r
-  filter: none;\r
-  text-transform: none;\r
-  letter-spacing: inherit;\r
-  text-shadow: none;\r
-  transform: none;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] {\r
-  --pocket-inline-accent: #8b7dff;\r
-  --pocket-inline-text: #f5f2fb;\r
-  --pocket-inline-muted: #a8a2b3;\r
-  --pocket-inline-surface: #242129;\r
-  --pocket-inline-surface-2: #2b2731;\r
-  --pocket-inline-surface-3: #17151c;\r
-  --pocket-inline-border: rgba(255, 255, 255, .075);\r
-  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);\r
-}\r
-\r
-.pocket-artifact-stack,\r
-.pocket-inline-frame[data-pocket-ui="true"] {\r
-  box-sizing: border-box;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {\r
-  width: min(100%, 470px);\r
-  color: var(--pocket-inline-text);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-artifact,\r
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-batch {\r
-  width: 100%;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {\r
-  box-sizing: border-box;\r
-  display: flex;\r
-  flex-direction: column;\r
-  gap: 10px;\r
-  width: 100%;\r
-  min-width: 0;\r
-  padding: 16px 18px;\r
-  color: var(--pocket-inline-text);\r
-  text-align: left;\r
-  font: inherit;\r
-  background:\r
-    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),\r
-    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);\r
-  border: 1px solid var(--pocket-inline-border);\r
-  border-radius: 18px;\r
-  box-shadow: var(--pocket-inline-shadow);\r
-  cursor: pointer;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:hover {\r
-  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:focus-visible,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more:focus-visible,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device button:focus-visible {\r
-  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);\r
-  outline-offset: 3px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-device {\r
-  display: block;\r
-  margin-bottom: -2px;\r
-  color: #8f8998;\r
-  font-size: 11px;\r
-  font-weight: 650;\r
-  letter-spacing: .015em;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {\r
-  min-width: 0;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header {\r
-  display: flex;\r
-  flex-direction: column;\r
-  gap: 7px;\r
-  padding-bottom: 10px;\r
-  border-bottom: 1px solid rgba(255,255,255,.055);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {\r
-  display: flex;\r
-  align-items: center;\r
-  justify-content: space-between;\r
-  gap: 12px;\r
-  color: #a9a3b2;\r
-  font-size: 11px;\r
-  font-weight: 650;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app {\r
-  display: inline-flex;\r
-  align-items: center;\r
-  gap: 6px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app svg {\r
-  width: 14px;\r
-  height: 14px;\r
-  color: var(--pocket-inline-accent);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-state,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {\r
-  color: #8e8897;\r
-  font-size: 10px;\r
-  font-weight: 560;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {\r
-  align-self: flex-end;\r
-  margin-top: -24px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-body {\r
-  display: grid;\r
-  grid-template-columns: 34px minmax(0, 1fr);\r
-  gap: 11px;\r
-  align-items: start;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-content,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-content,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-details {\r
-  display: flex;\r
-  min-width: 0;\r
-  flex-direction: column;\r
-  gap: 5px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {\r
-  display: inline-grid;\r
-  place-items: center;\r
-  flex: 0 0 auto;\r
-  overflow: hidden;\r
-  color: white;\r
-  font-weight: 720;\r
-  background:\r
-    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar {\r
-  width: 34px;\r
-  height: 34px;\r
-  border-radius: 50%;\r
-  font-size: 13px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar img,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar img {\r
-  width: 100%;\r
-  height: 100%;\r
-  object-fit: cover;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {\r
-  color: #fbf9ff;\r
-  font-weight: 760;\r
-  letter-spacing: -.01em;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors {\r
-  font-size: 14px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-copy {\r
-  color: #e5e1ea;\r
-  font-size: 13px;\r
-  line-height: 1.46;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {\r
-  border: 1px solid rgba(255,255,255,.035);\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble {\r
-  align-self: flex-end;\r
-  max-width: 82%;\r
-  padding: 9px 13px;\r
-  border-radius: 15px 15px 5px 15px;\r
-  color: white;\r
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {\r
-  align-items: center;\r
-  min-height: 180px;\r
-  justify-content: center;\r
-  text-align: center;\r
-  background:\r
-    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),\r
-    linear-gradient(160deg, #28252e, #1d1b22);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-identity {\r
-  display: flex;\r
-  flex-direction: column;\r
-  align-items: center;\r
-  gap: 9px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-avatar {\r
-  width: 46px;\r
-  height: 46px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-artifact-chrome {\r
-  justify-content: center;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol {\r
-  display: inline-grid;\r
-  place-items: center;\r
-  width: 38px;\r
-  height: 38px;\r
-  margin-top: 4px;\r
-  color: #fff;\r
-  background: linear-gradient(145deg, #bd5d69, #974552);\r
-  border: 1px solid rgba(255,255,255,.1);\r
-  border-radius: 50%;\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol svg {\r
-  width: 18px;\r
-  height: 18px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {\r
-  font-size: 15px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript {\r
-  display: flex;\r
-  flex-direction: column;\r
-  gap: 14px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row {\r
-  display: grid;\r
-  grid-template-columns: 28px minmax(0, 1fr);\r
-  gap: 10px;\r
-  align-items: start;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {\r
-  visibility: hidden;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row .pocket-inline-avatar {\r
-  width: 28px;\r
-  height: 28px;\r
-  font-size: 11px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-sender {\r
-  color: #938d9b;\r
-  font-size: 10px;\r
-  font-weight: 700;\r
-  letter-spacing: .01em;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {\r
-  align-self: flex-start;\r
-  max-width: 90%;\r
-  padding: 9px 12px;\r
-  color: #f0edf5;\r
-  font-size: 12px;\r
-  line-height: 1.42;\r
-  background: linear-gradient(145deg, #2c2933, #27242d);\r
-  border-radius: 5px 13px 13px 13px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {\r
-  color: #fff;\r
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {\r
-  border-radius: 18px;\r
-  overflow: hidden;\r
-  background: #1e1c23;\r
-  border: 1px solid var(--pocket-inline-border);\r
-  box-shadow: var(--pocket-inline-shadow);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch .pocket-inline-artifact {\r
-  border: 0;\r
-  border-radius: 0;\r
-  box-shadow: none;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more {\r
-  width: 100%;\r
-  padding: 11px 14px;\r
-  color: #a8a2b2;\r
-  font: inherit;\r
-  font-size: 11px;\r
-  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));\r
-  border: 0;\r
-  border-top: 1px solid rgba(255,255,255,.055);\r
-  cursor: pointer;\r
-}\r
-\r
-/* Full-phone renderer */\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {\r
-  box-sizing: border-box;\r
-  width: min(360px, 92vw);\r
-  aspect-ratio: 9 / 18.4;\r
-  padding: 5px;\r
-  color: var(--pocket-inline-text);\r
-  background:\r
-    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);\r
-  border: 1px solid rgba(255,255,255,.12);\r
-  border-radius: 42px;\r
-  box-shadow:\r
-    0 32px 70px rgba(0,0,0,.48),\r
-    0 8px 24px rgba(0,0,0,.3),\r
-    inset 0 1px 0 rgba(255,255,255,.18),\r
-    inset 0 -1px 0 rgba(255,255,255,.04);\r
-  overflow: hidden;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-screen {\r
-  position: relative;\r
-  display: flex;\r
-  flex-direction: column;\r
-  width: 100%;\r
-  height: 100%;\r
-  min-height: 0;\r
-  overflow: hidden;\r
-  color: #f7f5fb;\r
-  background:\r
-    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),\r
-    linear-gradient(180deg, #15131a 0%, #100f14 100%);\r
-  border-radius: 36px;\r
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status {\r
-  position: relative;\r
-  z-index: 5;\r
-  display: grid;\r
-  grid-template-columns: 1fr auto 1fr;\r
-  align-items: center;\r
-  flex: 0 0 35px;\r
-  padding: 0 17px;\r
-  color: rgba(255,255,255,.92);\r
-  font-size: 10px;\r
-  font-weight: 720;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status-time {\r
-  justify-self: start;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island {\r
-  width: 76px;\r
-  height: 20px;\r
-  border-radius: 999px;\r
-  background: rgba(0,0,0,.82);\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators {\r
-  display: flex;\r
-  align-items: center;\r
-  justify-self: end;\r
-  gap: 5px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg {\r
-  width: 13px;\r
-  height: 13px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg:last-child {\r
-  width: 18px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-home-indicator {\r
-  position: absolute;\r
-  left: 50%;\r
-  bottom: 7px;\r
-  width: 92px;\r
-  height: 4px;\r
-  transform: translateX(-50%);\r
-  border-radius: 999px;\r
-  background: rgba(255,255,255,.64);\r
-  box-shadow: 0 1px 4px rgba(0,0,0,.25);\r
-}\r
-\r
-/* Lock screen */\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {\r
-  background:\r
-    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),\r
-    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),\r
-    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {\r
-  content: '';\r
-  position: absolute;\r
-  inset: 35px 0 0;\r
-  pointer-events: none;\r
-  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-hero {\r
-  position: relative;\r
-  z-index: 1;\r
-  display: flex;\r
-  flex-direction: column;\r
-  align-items: center;\r
-  gap: 5px;\r
-  padding: 40px 18px 26px;\r
-  text-shadow: 0 2px 14px rgba(0,0,0,.28);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-label {\r
-  color: rgba(255,255,255,.64);\r
-  font-size: 11px;\r
-  font-weight: 580;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock {\r
-  color: #fff;\r
-  font-size: 54px;\r
-  font-weight: 280;\r
-  line-height: 1;\r
-  letter-spacing: -.045em;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {\r
-  color: rgba(255,255,255,.74);\r
-  font-size: 12px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification {\r
-  position: relative;\r
-  z-index: 2;\r
-  display: flex;\r
-  flex-direction: column;\r
-  gap: 10px;\r
-  width: calc(100% - 28px);\r
-  margin: 0 14px;\r
-  padding: 13px 14px 14px;\r
-  color: #f7f4fb;\r
-  text-align: left;\r
-  font: inherit;\r
-  background:\r
-    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),\r
-    rgba(28,25,34,.86);\r
-  border: 1px solid rgba(255,255,255,.11);\r
-  border-radius: 18px;\r
-  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);\r
-  backdrop-filter: blur(14px);\r
-  cursor: pointer;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app {\r
-  display: flex;\r
-  align-items: center;\r
-  gap: 6px;\r
-  color: rgba(255,255,255,.68);\r
-  font-size: 10px;\r
-  font-weight: 650;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app svg {\r
-  width: 14px;\r
-  height: 14px;\r
-  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-body {\r
-  display: grid;\r
-  grid-template-columns: 34px minmax(0,1fr);\r
-  gap: 10px;\r
-  align-items: start;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-content {\r
-  display: flex;\r
-  min-width: 0;\r
-  flex-direction: column;\r
-  gap: 4px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {\r
-  width: 34px;\r
-  height: 34px;\r
-  border-radius: 50%;\r
-  font-size: 12px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-sender {\r
-  font-size: 13px;\r
-  font-weight: 760;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-copy {\r
-  display: -webkit-box;\r
-  overflow: hidden;\r
-  color: rgba(255,255,255,.9);\r
-  font-size: 12px;\r
-  line-height: 1.4;\r
-  -webkit-box-orient: vertical;\r
-  -webkit-line-clamp: 4;\r
-}\r
-\r
-/* Open chat */\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-chat {\r
-  background:\r
-    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),\r
-    #0c0b0f;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-app-header {\r
-  position: relative;\r
-  z-index: 2;\r
-  display: grid;\r
-  grid-template-columns: 36px minmax(0,1fr) 36px;\r
-  align-items: center;\r
-  flex: 0 0 72px;\r
-  width: 100%;\r
-  padding: 7px 12px 9px;\r
-  color: inherit;\r
-  text-align: center;\r
-  font: inherit;\r
-  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));\r
-  border: 0;\r
-  border-bottom: 1px solid rgba(255,255,255,.065);\r
-  box-shadow: 0 9px 18px rgba(0,0,0,.12);\r
-  cursor: pointer;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {\r
-  display: grid;\r
-  place-items: center;\r
-  width: 32px;\r
-  height: 32px;\r
-  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);\r
-  border-radius: 50%;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back svg,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action svg {\r
-  width: 20px;\r
-  height: 20px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {\r
-  background: rgba(255,255,255,.055);\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity {\r
-  display: grid;\r
-  grid-template-columns: 34px minmax(0,1fr);\r
-  grid-template-rows: auto auto;\r
-  align-items: center;\r
-  justify-self: center;\r
-  column-gap: 8px;\r
-  min-width: 0;\r
-  text-align: left;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pocket-phone-avatar {\r
-  grid-row: 1 / 3;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-conversation-title {\r
-  overflow: hidden;\r
-  font-size: 13px;\r
-  font-weight: 760;\r
-  line-height: 1.2;\r
-  text-overflow: ellipsis;\r
-  white-space: nowrap;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-subtitle {\r
-  color: #918b99;\r
-  font-size: 9px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread {\r
-  display: flex;\r
-  flex: 1 1 auto;\r
-  min-height: 0;\r
-  overflow: auto;\r
-  flex-direction: column;\r
-  gap: 12px;\r
-  padding: 16px 13px 20px;\r
-  scrollbar-color: rgba(255,255,255,.12) transparent;\r
-  scrollbar-width: thin;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar {\r
-  width: 6px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-thumb {\r
-  background: rgba(255,255,255,.12);\r
-  border-radius: 999px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-track {\r
-  background: transparent;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message {\r
-  display: flex;\r
-  align-items: flex-end;\r
-  gap: 8px;\r
-  width: 100%;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="false"] {\r
-  margin-top: 4px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] {\r
-  justify-content: flex-end;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar {\r
-  visibility: hidden;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message-content {\r
-  display: flex;\r
-  max-width: 76%;\r
-  min-width: 0;\r
-  flex-direction: column;\r
-  gap: 4px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-sender {\r
-  margin-left: 4px;\r
-  color: #878190;\r
-  font-size: 9px;\r
-  font-weight: 680;\r
-  letter-spacing: .01em;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-bubble {\r
-  display: block;\r
-  padding: 10px 12px;\r
-  color: #f3eff7;\r
-  font-size: 12px;\r
-  line-height: 1.42;\r
-  background: linear-gradient(145deg, #2b2731, #232029);\r
-  border: 1px solid rgba(255,255,255,.045);\r
-  border-radius: 6px 15px 15px 15px;\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {\r
-  color: #fff;\r
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));\r
-  border-radius: 15px 15px 5px 15px;\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-delivery {\r
-  align-self: flex-end;\r
-  margin: -3px 3px 0 0;\r
-  color: #77727f;\r
-  font-size: 8px;\r
-  font-weight: 680;\r
-  text-transform: uppercase;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer {\r
-  display: grid;\r
-  grid-template-columns: 34px minmax(0,1fr) 32px;\r
-  align-items: center;\r
-  flex: 0 0 58px;\r
-  gap: 7px;\r
-  padding: 8px 10px 13px;\r
-  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));\r
-  border-top: 1px solid rgba(255,255,255,.065);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {\r
-  display: grid;\r
-  place-items: center;\r
-  width: 30px;\r
-  height: 30px;\r
-  color: #aaa4b3;\r
-  background: #24212a;\r
-  border: 1px solid rgba(255,255,255,.055);\r
-  border-radius: 50%;\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {\r
-  color: #fff;\r
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action svg,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send svg {\r
-  width: 16px;\r
-  height: 16px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-field {\r
-  display: flex;\r
-  align-items: center;\r
-  min-width: 0;\r
-  height: 34px;\r
-  padding: 0 12px;\r
-  color: #797480;\r
-  font-size: 11px;\r
-  background: #131117;\r
-  border: 1px solid rgba(255,255,255,.12);\r
-  border-radius: 999px;\r
-  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);\r
-}\r
-\r
-/* Dedicated call screen */\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {\r
-  background:\r
-    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),\r
-    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),\r
-    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header {\r
-  grid-template-columns: 36px 1fr;\r
-  justify-items: start;\r
-  flex-basis: 54px;\r
-  background: transparent;\r
-  border-bottom: 0;\r
-  box-shadow: none;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header .pocket-phone-app-label {\r
-  color: #aaa4b3;\r
-  font-size: 11px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity {\r
-  display: flex;\r
-  flex: 1 1 auto;\r
-  min-height: 0;\r
-  flex-direction: column;\r
-  align-items: center;\r
-  justify-content: center;\r
-  gap: 9px;\r
-  padding: 0 24px 40px;\r
-  text-align: center;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity .pocket-phone-avatar {\r
-  width: 86px;\r
-  height: 86px;\r
-  margin-bottom: 9px;\r
-  font-size: 28px;\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-name {\r
-  font-size: 20px;\r
-  font-weight: 760;\r
-  letter-spacing: -.025em;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-status {\r
-  color: #a39dab;\r
-  font-size: 12px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-controls {\r
-  display: grid;\r
-  grid-template-columns: repeat(4, 1fr);\r
-  gap: 9px;\r
-  flex: 0 0 auto;\r
-  padding: 0 18px 36px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control {\r
-  display: flex;\r
-  min-width: 0;\r
-  flex-direction: column;\r
-  align-items: center;\r
-  gap: 7px;\r
-  color: #aaa4b3;\r
-  font-size: 9px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon {\r
-  display: grid;\r
-  place-items: center;\r
-  width: 48px;\r
-  height: 48px;\r
-  color: #f8f6fb;\r
-  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));\r
-  border: 1px solid rgba(255,255,255,.09);\r
-  border-radius: 50%;\r
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon > svg,\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol svg {\r
-  width: 19px;\r
-  height: 19px;\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control.pocket-phone-call-danger .pocket-phone-call-control-icon {\r
-  background: linear-gradient(145deg, #c35d69, #984651);\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol {\r
-  width: 100%;\r
-  height: 100%;\r
-  margin: 0;\r
-  background: transparent;\r
-  border: 0;\r
-  box-shadow: none;\r
-}\r
-\r
-@media (max-width: 560px) {\r
-  .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {\r
-    width: 100%;\r
-  }\r
-\r
-  .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {\r
-    padding: 14px;\r
-    border-radius: 16px;\r
-  }\r
-\r
-  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {\r
-    width: min(340px, 94vw);\r
-  }\r
-}\r
-\r
-.pocket-inline-frame[data-pocket-ui="true"] [hidden] { display: none; }\r
-\r
-/* Between-turn connectors stay compact even when prose artifacts use Full Phone. */\r
-.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] { width:100%; max-width:none; margin:8px 0; }\r
-.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] { display:none; }\r
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] { width:100%; }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector { display:grid; gap:0; border:1px solid var(--pocket-inline-border); border-radius:12px; background:var(--pocket-inline-surface,#201e25); overflow:hidden; box-shadow:0 3px 12px #0002; }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading { display:block; width:100%; padding:9px 12px; text-align:left; color:var(--pocket-inline-text); font-size:11px; font-weight:650; border-bottom:1px solid var(--pocket-inline-border); cursor:pointer; opacity:.8; }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row { display:grid; position:relative; grid-template-columns:minmax(0,1fr); gap:3px; width:100%; padding:10px 12px; text-align:left; cursor:pointer; }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row { border-top:1px solid var(--pocket-inline-border); }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] { text-align:right; border-right:2px solid var(--pocket-inline-accent); }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender { font-size:10px; font-weight:650; opacity:.65; }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy { font-size:13px; line-height:1.45; white-space:pre-wrap; }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,\r
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notifications {\r
-  position: relative;\r
-  z-index: 2;\r
-  display: grid;\r
-  align-content: start;\r
-  gap: 10px;\r
-  min-height: 0;\r
-  overflow-y: auto;\r
-  flex: 1;\r
-  padding: 0 0 12px;\r
-}\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback {\r
-  position: relative;\r
-  z-index: 2;\r
-  display: flex;\r
-  justify-content: center;\r
-  gap: 12px;\r
-  flex-shrink: 0;\r
-  padding: 8px 14px 26px;\r
-}\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback button {\r
-  color: #ded9ef;\r
-  background: #27232f;\r
-  border: 1px solid #51495f;\r
-  border-radius: 12px;\r
-  padding: 6px 12px;\r
-  font: inherit;\r
-  font-size: 11px;\r
-  cursor: pointer;\r
-}\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step {\r
-  animation: pocket-phone-arrival .35s ease-out var(--pocket-step-delay, 0s) both;\r
-}\r
-@keyframes pocket-phone-arrival {\r
-  from { opacity: 0; visibility: hidden; transform: translateY(-8px); }\r
-  to { opacity: 1; visibility: visible; transform: translateY(0); }\r
-}\r
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] .pocket-phone-step { animation: none; }\r
-@media (prefers-reduced-motion: reduce) {\r
-  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step { animation: none; }\r
-}\r
+var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappers too; a transformed parent distorts the whole device. */
+.pocket-artifact-stack[data-pocket-ui="true"],
+.pocket-inline-anchor[data-pocket-host="true"],
+.pocket-receipt-host[data-pocket-host="true"] {
+  all: revert;
+  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-transform: none;
+  text-shadow: none;
+  letter-spacing: normal;
+  color: #f5f2fb;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  position: static;
+  transform: none;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.pocket-inline-anchor[data-pocket-host="true"] { margin: 12px 0; }
+.pocket-receipt-host[data-pocket-host="true"] { margin: 8px 0 2px; max-width: min(100%,460px); }
+.pocket-artifact-stack[data-pocket-ui="true"]::before,
+.pocket-artifact-stack[data-pocket-ui="true"]::after,
+.pocket-inline-anchor[data-pocket-host="true"]::before,
+.pocket-inline-anchor[data-pocket-host="true"]::after,
+.pocket-receipt-host[data-pocket-host="true"]::before,
+.pocket-receipt-host[data-pocket-host="true"]::after { content: none; }
+.pocket-artifact-stack[data-pocket-ui="true"] > .pocket-inline-frame[data-pocket-ui="true"] { margin-inline: auto; }
+
+/* Pocket owns its inline UI; host prose/theme rules must not become phone chrome. */
+.pocket-inline-frame[data-pocket-ui="true"] {
+  all: revert;
+  display: block;
+  isolation: isolate;
+  color-scheme: dark;
+  font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--pocket-inline-text, #f5f2fb);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  text-shadow: none;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] :where(div, span, strong, button, input, textarea, img, time) {
+  all: revert;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  text-shadow: none;
+  text-align: inherit;
+  white-space: normal;
+  overflow-wrap: inherit;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"],
+.pocket-inline-frame[data-pocket-ui="true"] *,
+.pocket-inline-frame[data-pocket-ui="true"] *::before,
+.pocket-inline-frame[data-pocket-ui="true"] *::after {
+  box-sizing: border-box;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"]::before,
+.pocket-inline-frame[data-pocket-ui="true"]::after,
+.pocket-inline-frame[data-pocket-ui="true"] *::before,
+.pocket-inline-frame[data-pocket-ui="true"] *::after {
+  all: revert;
+  content: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] :where(button, input, textarea) {
+  appearance: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] :where(svg) {
+  display: inline-block;
+  position: static;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  filter: none;
+  text-transform: none;
+  letter-spacing: inherit;
+  text-shadow: none;
+  transform: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] {
+  --pocket-inline-accent: #8b7dff;
+  --pocket-inline-text: #f5f2fb;
+  --pocket-inline-muted: #a8a2b3;
+  --pocket-inline-surface: #242129;
+  --pocket-inline-surface-2: #2b2731;
+  --pocket-inline-surface-3: #17151c;
+  --pocket-inline-border: rgba(255, 255, 255, .075);
+  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+
+.pocket-artifact-stack,
+.pocket-inline-frame[data-pocket-ui="true"] {
+  box-sizing: border-box;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
+  width: min(100%, 470px);
+  color: var(--pocket-inline-text);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-artifact,
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-batch {
+  width: 100%;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  color: var(--pocket-inline-text);
+  text-align: left;
+  font: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),
+    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);
+  border: 1px solid var(--pocket-inline-border);
+  border-radius: 18px;
+  box-shadow: var(--pocket-inline-shadow);
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:hover {
+  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:focus-visible,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more:focus-visible,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);
+  outline-offset: 3px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-device {
+  display: block;
+  margin-bottom: -2px;
+  color: #8f8998;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .015em;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {
+  min-width: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #a9a3b2;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app svg {
+  width: 14px;
+  height: 14px;
+  color: var(--pocket-inline-accent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-state,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {
+  color: #8e8897;
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {
+  align-self: flex-end;
+  margin-top: -24px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-body {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-content,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-content,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: white;
+  font-weight: 720;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 13px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar img,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {
+  color: #fbf9ff;
+  font-weight: 760;
+  letter-spacing: -.01em;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors {
+  font-size: 14px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-copy {
+  color: #e5e1ea;
+  font-size: 13px;
+  line-height: 1.46;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {
+  border: 1px solid rgba(255,255,255,.035);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble {
+  align-self: flex-end;
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 15px 15px 5px 15px;
+  color: white;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {
+  align-items: center;
+  min-height: 180px;
+  justify-content: center;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),
+    linear-gradient(160deg, #28252e, #1d1b22);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-avatar {
+  width: 46px;
+  height: 46px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-artifact-chrome {
+  justify-content: center;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-top: 4px;
+  color: #fff;
+  background: linear-gradient(145deg, #bd5d69, #974552);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {
+  font-size: 15px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {
+  visibility: hidden;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row .pocket-inline-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-sender {
+  color: #938d9b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {
+  align-self: flex-start;
+  max-width: 90%;
+  padding: 9px 12px;
+  color: #f0edf5;
+  font-size: 12px;
+  line-height: 1.42;
+  background: linear-gradient(145deg, #2c2933, #27242d);
+  border-radius: 5px 13px 13px 13px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {
+  border-radius: 18px;
+  overflow: hidden;
+  background: #1e1c23;
+  border: 1px solid var(--pocket-inline-border);
+  box-shadow: var(--pocket-inline-shadow);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch .pocket-inline-artifact {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more {
+  width: 100%;
+  padding: 11px 14px;
+  color: #a8a2b2;
+  font: inherit;
+  font-size: 11px;
+  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));
+  border: 0;
+  border-top: 1px solid rgba(255,255,255,.055);
+  cursor: pointer;
+}
+
+/* Full-phone renderer */
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {
+  box-sizing: border-box;
+  width: min(360px, 92vw);
+  aspect-ratio: 9 / 18.4;
+  padding: 5px;
+  color: var(--pocket-inline-text);
+  background:
+    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 42px;
+  box-shadow:
+    0 32px 70px rgba(0,0,0,.48),
+    0 8px 24px rgba(0,0,0,.3),
+    inset 0 1px 0 rgba(255,255,255,.18),
+    inset 0 -1px 0 rgba(255,255,255,.04);
+  overflow: hidden;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-screen {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: #f7f5fb;
+  background:
+    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),
+    linear-gradient(180deg, #15131a 0%, #100f14 100%);
+  border-radius: 36px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  flex: 0 0 35px;
+  padding: 0 17px;
+  color: rgba(255,255,255,.92);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status-time {
+  justify-self: start;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island {
+  width: 76px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.82);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 5px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators svg:last-child {
+  width: 18px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-home-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  width: 92px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(255,255,255,.64);
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+
+/* Lock screen */
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {
+  background:
+    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),
+    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),
+    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {
+  content: '';
+  position: absolute;
+  inset: 35px 0 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 40px 18px 26px;
+  text-shadow: 0 2px 14px rgba(0,0,0,.28);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-label {
+  color: rgba(255,255,255,.64);
+  font-size: 11px;
+  font-weight: 580;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock {
+  color: #fff;
+  font-size: 54px;
+  font-weight: 280;
+  line-height: 1;
+  letter-spacing: -.045em;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {
+  color: rgba(255,255,255,.74);
+  font-size: 12px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: calc(100% - 28px);
+  margin: 0 14px;
+  padding: 13px 14px 14px;
+  color: #f7f4fb;
+  text-align: left;
+  font: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),
+    rgba(28,25,34,.86);
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 18px;
+  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,.68);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app svg {
+  width: 14px;
+  height: 14px;
+  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-body {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 12px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-sender {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-copy {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(255,255,255,.9);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+/* Open chat */
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-chat {
+  background:
+    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),
+    #0c0b0f;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-app-header {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 36px minmax(0,1fr) 36px;
+  align-items: center;
+  flex: 0 0 72px;
+  width: 100%;
+  padding: 7px 12px 9px;
+  color: inherit;
+  text-align: center;
+  font: inherit;
+  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.065);
+  box-shadow: 0 9px 18px rgba(0,0,0,.12);
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);
+  border-radius: 50%;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back svg,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action svg {
+  width: 20px;
+  height: 20px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {
+  background: rgba(255,255,255,.055);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-self: center;
+  column-gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pocket-phone-avatar {
+  grid-row: 1 / 3;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-conversation-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-subtitle {
+  color: #918b99;
+  font-size: 9px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 13px 20px;
+  scrollbar-color: rgba(255,255,255,.12) transparent;
+  scrollbar-width: thin;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.12);
+  border-radius: 999px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="false"] {
+  margin-top: 4px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] {
+  justify-content: flex-end;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-continuation="true"] .pocket-phone-avatar {
+  visibility: hidden;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message-content {
+  display: flex;
+  max-width: 76%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-sender {
+  margin-left: 4px;
+  color: #878190;
+  font-size: 9px;
+  font-weight: 680;
+  letter-spacing: .01em;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-bubble {
+  display: block;
+  padding: 10px 12px;
+  color: #f3eff7;
+  font-size: 12px;
+  line-height: 1.42;
+  background: linear-gradient(145deg, #2b2731, #232029);
+  border: 1px solid rgba(255,255,255,.045);
+  border-radius: 6px 15px 15px 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));
+  border-radius: 15px 15px 5px 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-delivery {
+  align-self: flex-end;
+  margin: -3px 3px 0 0;
+  color: #77727f;
+  font-size: 8px;
+  font-weight: 680;
+  text-transform: uppercase;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr) 32px;
+  align-items: center;
+  flex: 0 0 58px;
+  gap: 7px;
+  padding: 8px 10px 13px;
+  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));
+  border-top: 1px solid rgba(255,255,255,.065);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #aaa4b3;
+  background: #24212a;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action svg,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send svg {
+  width: 16px;
+  height: 16px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-field {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  color: #797480;
+  font-size: 11px;
+  background: #131117;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);
+}
+
+/* Dedicated call screen */
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {
+  background:
+    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
+    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),
+    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header {
+  grid-template-columns: 36px 1fr;
+  justify-items: start;
+  flex-basis: 54px;
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header .pocket-phone-app-label {
+  color: #aaa4b3;
+  font-size: 11px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 24px 40px;
+  text-align: center;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity .pocket-phone-avatar {
+  width: 86px;
+  height: 86px;
+  margin-bottom: 9px;
+  font-size: 28px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-name {
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: -.025em;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-status {
+  color: #a39dab;
+  font-size: 12px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+  flex: 0 0 auto;
+  padding: 0 18px 36px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #aaa4b3;
+  font-size: 9px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: #f8f6fb;
+  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon > svg,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol svg {
+  width: 19px;
+  height: 19px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control.pocket-phone-call-danger .pocket-phone-call-control-icon {
+  background: linear-gradient(145deg, #c35d69, #984651);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 560px) {
+  .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
+    width: 100%;
+  }
+
+  .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {
+    width: min(340px, 94vw);
+  }
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] [hidden] { display: none; }
+
+/* Between-turn connectors stay compact even when prose artifacts use Full Phone. */
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] { width:100%; max-width:none; margin:8px 0; }
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] { display:none; }
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] { width:100%; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector { display:grid; gap:0; border:1px solid var(--pocket-inline-border); border-radius:12px; background:var(--pocket-inline-surface,#201e25); overflow:hidden; box-shadow:0 3px 12px #0002; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading { display:block; width:100%; padding:9px 12px; text-align:left; color:var(--pocket-inline-text); font-size:11px; font-weight:650; border-bottom:1px solid var(--pocket-inline-border); cursor:pointer; opacity:.8; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row { display:grid; position:relative; grid-template-columns:minmax(0,1fr); gap:3px; width:100%; padding:10px 12px; text-align:left; cursor:pointer; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row { border-top:1px solid var(--pocket-inline-border); }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] { text-align:right; border-right:2px solid var(--pocket-inline-accent); }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender { font-size:10px; font-weight:650; opacity:.65; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy { font-size:13px; line-height:1.45; white-space:pre-wrap; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notifications {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 0 12px;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 14px 26px;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback button {
+  color: #ded9ef;
+  background: #27232f;
+  border: 1px solid #51495f;
+  border-radius: 12px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step {
+  animation: pocket-phone-arrival .35s ease-out var(--pocket-step-delay, 0s) both;
+}
+@keyframes pocket-phone-arrival {
+  from { opacity: 0; visibility: hidden; transform: translateY(-8px); }
+  to { opacity: 1; visibility: visible; transform: translateY(0); }
+}
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] .pocket-phone-step { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step { animation: none; }
+}
 `;
 
 // src/frontend/components/inline-styles.ts
@@ -41452,6 +41548,86 @@ that’s it. that’s the post.`, tags: ["little things", "a very small list"] }
   return rows.map((row, index) => ({ ...row, id: `preview:${app}:${index}`, app, account: { id: `preview:${row.handle}`, name: row.name, handle: row.handle }, text: row.text, createdAt: "", likedBy: [] }));
 }
 
+// src/domain/social-mentions.ts
+function socialMentionToken(text, caret = text.length) {
+  const end = Math.max(0, Math.min(text.length, Math.trunc(caret)));
+  const before = text.slice(0, end);
+  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_.-]*)$/u);
+  if (!match)
+    return;
+  const handle = match[1] || "";
+  const at = end - handle.length - 1;
+  return { start: at, end, query: handle.toLocaleLowerCase() };
+}
+function insertSocialMention(text, token, handle, maxLength = Number.MAX_SAFE_INTEGER) {
+  const mention = `@${handle.replace(/^@/, "")} `;
+  const value = text.slice(0, token.start) + mention + text.slice(token.end);
+  if (value.length > maxLength)
+    return;
+  return { value, caret: token.start + mention.length };
+}
+function socialMentionCandidates(state, owner, app, npcBank = [], posts) {
+  const world = normalizeSocialState(state.social);
+  const platformPosts = (posts || world.posts).filter((post) => post.app === app);
+  const settings = socialAppSettings(world, owner, app);
+  const result = [];
+  const seen = new Set;
+  const identityKey = (person) => person.actorId ? `actor:${person.actorId}` : person.bankId ? `bank:${person.bankId}` : `account:${person.id}`;
+  const add = (person, source) => {
+    if (!person || person.id === owner || person.actorId === owner || person.actorId === state.pocketPersonaActorId)
+      return;
+    const key = identityKey(person);
+    if (seen.has(key))
+      return;
+    seen.add(key);
+    result.push({ ...person, mentionSource: source });
+  };
+  const publishedById = (id) => platformPosts.find((post) => post.account.id === id || post.account.actorId === id)?.account;
+  const publishedBank = (id) => platformPosts.find((post) => post.account.bankId === id || post.account.id === `bank:${id}`)?.account;
+  const directById = (id) => world.dmThreads?.find((thread) => (thread.app || "instagram") === app && (thread.account.id === id || thread.account.actorId === id))?.account;
+  const actorAccount = (id) => {
+    try {
+      return socialOwner(state, id, app);
+    } catch {
+      return;
+    }
+  };
+  for (const id of socialFollowing(world, owner, app))
+    add(publishedById(id) || directById(id) || actorAccount(id), "following");
+  for (const id of settings.friendEntryIds) {
+    if (id.startsWith("actor:"))
+      add(publishedById(id.slice(6)) || actorAccount(id.slice(6)), "friend");
+    else {
+      const entry = npcBank.find((item) => item.id === id);
+      if (entry)
+        add(publishedBank(entry.id) || { id: `bank:${entry.id}`, bankId: entry.id, name: entry.name, handle: generatedSocialHandle(app, entry.name, undefined, entry.id), avatarUrl: entry.avatarUrl }, "friend");
+    }
+  }
+  for (const entry of npcBank)
+    add(publishedBank(entry.id) || { id: `bank:${entry.id}`, bankId: entry.id, name: entry.name, handle: generatedSocialHandle(app, entry.name, undefined, entry.id), avatarUrl: entry.avatarUrl }, "npc-bank");
+  return result;
+}
+function filterSocialMentions(candidates, query, limit = 8) {
+  const needle = query.trim().replace(/^@/, "").toLocaleLowerCase();
+  const score = (person) => {
+    const handle = person.handle.toLocaleLowerCase(), name = person.name.toLocaleLowerCase();
+    if (!needle)
+      return 0;
+    if (handle === needle)
+      return 0;
+    if (handle.startsWith(needle))
+      return 1;
+    if (name.startsWith(needle))
+      return 2;
+    if (handle.includes(needle))
+      return 3;
+    if (name.includes(needle))
+      return 4;
+    return 99;
+  };
+  return candidates.filter((person) => score(person) < 99).sort((a, b) => score(a) - score(b)).slice(0, Math.max(1, limit));
+}
+
 // src/frontend/apps/social.ts
 function renderSocial(host) {
   const { state, app, ui, owner } = host, world = normalizeSocialState(state.social), account = socialOwner(state, owner, app);
@@ -42107,6 +42283,7 @@ function renderSocial(host) {
   const showingPreviews = app !== "discord" && !actualPlatformPosts.length && !ui.hidePreviews;
   const platformPosts = showingPreviews ? socialPreviewPosts(app) : actualPlatformPosts;
   const following = socialFollowing(world, owner, app);
+  const mentionCandidates = socialMentionCandidates(state, owner, app, host.npcBank || [], actualPlatformPosts);
   if (app === "tumblr") {
     const palette = el("details", "lp-tumblr-palettes"), summary = el("summary", "", "Palette");
     palette.open = Boolean(ui.paletteOpen);
@@ -42329,7 +42506,7 @@ function renderSocial(host) {
     title.dataset.socialFocus = "Post title";
     compose.append(titleLabel);
   }
-  const textLabel = el("label", "lp-social-field lp-social-post-text-field"), text = el("textarea", "lp-input");
+  const textLabel = el("label", "lp-social-field lp-social-post-text-field"), text = el("textarea", "lp-input"), mentionAnchor = el("div", "lp-social-mention-anchor"), mentionPopover = el("div", "lp-social-mention-popover");
   textLabel.append(el("span", "", reply ? app === "tumblr" ? "Your comment" : "Your reply" : app === "instagram" ? "Caption" : app === "discord" ? "Message" : "Your post"), text);
   text.value = ui.draft || "";
   text.rows = reply ? app === "twitter" ? 2 : 1 : app === "tumblr" ? 4 : 2;
@@ -42337,10 +42514,27 @@ function renderSocial(host) {
   text.placeholder = reply ? app === "tumblr" ? "Add a comment" : "Post your reply" : reblog && app === "twitter" ? "Add a comment" : app === "twitter" ? "What’s happening in your world?" : app === "tumblr" ? "Go on. Make a little post." : app === "discord" ? "Say something to the channel…" : "A little moment, a little caption…";
   text.dataset.socialFocus = "Social composer";
   text.disabled = Boolean(ui.pending);
+  mentionPopover.id = requestId("social_mentions");
+  mentionPopover.hidden = true;
+  mentionPopover.setAttribute("role", "listbox");
+  mentionPopover.setAttribute("aria-label", "Mention someone");
+  text.setAttribute("aria-controls", mentionPopover.id);
+  text.setAttribute("aria-autocomplete", "list");
+  text.setAttribute("aria-expanded", "false");
   const footer = el("div", "lp-social-compose-footer"), count = el("span", "lp-social-count", `${text.value.length}/${text.maxLength}`), submit = button(app === "discord" ? "Send" : reply ? app === "tumblr" ? "Comment" : app === "instagram" ? "Post" : "Reply" : reblog ? app === "twitter" ? "Quote" : "Reblog" : "Post", "lp-social-primary");
   submit.type = "submit";
   let updateEmotePreview = () => {};
   let updatePhotoTools = () => {};
+  let activeMentionToken, activeMentionMatches = [], activeMentionIndex = 0;
+  const closeMentions = () => {
+    activeMentionToken = undefined;
+    activeMentionMatches = [];
+    activeMentionIndex = 0;
+    mentionPopover.hidden = true;
+    mentionPopover.replaceChildren();
+    text.setAttribute("aria-expanded", "false");
+    text.removeAttribute("aria-activedescendant");
+  };
   const updateSubmit = () => {
     count.textContent = `${text.value.length}/${text.maxLength}`;
     submit.disabled = Boolean(ui.pending || ui.imageBusy) || app === "discord" && !ui.channelId || !(text.value.trim() || ui.photo?.trim() || ui.imageId || ui.gif || reblog);
@@ -42348,12 +42542,94 @@ function renderSocial(host) {
       submit.disabled = true;
     updatePhotoTools();
   };
+  const chooseMention = (person) => {
+    if (!activeMentionToken)
+      return;
+    const inserted = insertSocialMention(text.value, activeMentionToken, person.handle, text.maxLength);
+    if (!inserted)
+      return;
+    text.value = inserted.value;
+    ui.draft = text.value;
+    closeMentions();
+    updateSubmit();
+    updateEmotePreview();
+    text.focus({ preventScroll: true });
+    text.setSelectionRange(inserted.caret, inserted.caret);
+  };
+  const renderMentionMatches = () => {
+    mentionPopover.replaceChildren();
+    if (!activeMentionToken || !activeMentionMatches.length) {
+      closeMentions();
+      return;
+    }
+    activeMentionIndex = Math.max(0, Math.min(activeMentionIndex, activeMentionMatches.length - 1));
+    for (const [index, person] of activeMentionMatches.entries()) {
+      const option = button("", "lp-social-mention-option"), optionId = `${mentionPopover.id}_${index}`, identity = el("span", "lp-social-mention-identity"), source = el("span", "lp-social-mention-source", person.mentionSource === "following" ? "Following" : person.mentionSource === "friend" ? "Friend" : "NPC Bank");
+      option.id = optionId;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(index === activeMentionIndex));
+      option.dataset.mentionIndex = String(index);
+      identity.append(el("strong", "", person.name), el("small", "", `@${person.handle}`));
+      option.append(accountAvatar(person.name, person.actorId, person.avatarUrl), identity, source);
+      option.onmousedown = (event) => event.preventDefault();
+      option.onclick = () => chooseMention(person);
+      mentionPopover.append(option);
+    }
+    const selected = mentionPopover.querySelector(`[data-mention-index="${activeMentionIndex}"]`);
+    if (selected)
+      text.setAttribute("aria-activedescendant", selected.id);
+  };
+  const refreshMentions = () => {
+    const token = socialMentionToken(text.value, text.selectionStart ?? text.value.length);
+    if (!token) {
+      closeMentions();
+      return;
+    }
+    const matches = filterSocialMentions(mentionCandidates, token.query, 8);
+    if (!matches.length) {
+      closeMentions();
+      return;
+    }
+    activeMentionToken = token;
+    activeMentionMatches = matches;
+    activeMentionIndex = Math.min(activeMentionIndex, matches.length - 1);
+    mentionPopover.hidden = false;
+    text.setAttribute("aria-expanded", "true");
+    renderMentionMatches();
+  };
+  const handleMentionKey = (event) => {
+    if (mentionPopover.hidden || !activeMentionMatches.length)
+      return false;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      activeMentionIndex = (activeMentionIndex + (event.key === "ArrowDown" ? 1 : -1) + activeMentionMatches.length) % activeMentionMatches.length;
+      renderMentionMatches();
+      mentionPopover.querySelector(`[data-mention-index="${activeMentionIndex}"]`)?.scrollIntoView({ block: "nearest" });
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      chooseMention(activeMentionMatches[activeMentionIndex]);
+      return true;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMentions();
+      return true;
+    }
+    return false;
+  };
   text.oninput = () => {
     ui.draft = text.value;
     updateSubmit();
     updateEmotePreview();
+    refreshMentions();
   };
-  compose.append(textLabel);
+  text.onclick = refreshMentions;
+  text.onfocus = refreshMentions;
+  text.onblur = () => closeMentions();
+  mentionAnchor.append(textLabel, mentionPopover);
+  compose.append(mentionAnchor);
   if (app !== "discord" && !reply) {
     const media = el("details", "lp-social-media"), summary = el("summary", "", ui.imageId ? "Photo attached" : "Add a photo or description");
     media.open = Boolean(ui.mediaOpen || ui.photosOpen || ui.photo || ui.imageId);
@@ -42532,14 +42808,15 @@ function renderSocial(host) {
     compose.append(preview);
     updateEmotePreview();
   }
-  if (app === "discord")
-    text.onkeydown = (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-        event.preventDefault();
-        if (!submit.disabled)
-          compose.requestSubmit();
-      }
-    };
+  text.onkeydown = (event) => {
+    if (handleMentionKey(event))
+      return;
+    if (app === "discord" && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      if (!submit.disabled)
+        compose.requestSubmit();
+    }
+  };
   updateSubmit();
   footer.append(count, submit);
   compose.append(footer);
@@ -42547,7 +42824,7 @@ function renderSocial(host) {
     submit.setAttribute("aria-label", "Send");
     submit.replaceChildren(socialIcon("send"));
     const bar = el("div", "lp-discord-composer-bar");
-    bar.append(textLabel, footer);
+    bar.append(mentionAnchor, footer);
     compose.append(bar);
   }
   compose.onsubmit = (event) => {
@@ -43247,6 +43524,8 @@ class PocketController {
   sessionNameDrafts = new Map;
   freeformError = "";
   loreLogs = null;
+  imageDiagnostics = null;
+  imageDiagnosticsRequest = "";
   loreLogRequest = "";
   state = null;
   preferences = defaultPreferences();
@@ -44706,6 +44985,13 @@ class PocketController {
         this.render(false);
       return;
     }
+    if (payload.type === "lumiphone:image_diagnostics" && (!this.imageDiagnosticsRequest || payload.requestId === this.imageDiagnosticsRequest)) {
+      this.imageDiagnostics = Array.isArray(payload.entries) ? payload.entries : [];
+      this.imageDiagnosticsRequest = "";
+      if (this.currentApp === "settings" && this.selectedSettingsSection === "image-diagnostics")
+        this.render(false);
+      return;
+    }
     if (payload.type === "lumiphone:freeform_directory" && payload.requestId === this.freeformListRequest) {
       this.freeformListRequest = "";
       this.freeformDirectory = payload.directory;
@@ -46079,6 +46365,10 @@ class PocketController {
       this.settingsDraft ||= structuredClone(this.preferences);
       if (this.selectedSettingsSection === "camera")
         this.send("lumiphone:image_options", {});
+      if (this.selectedSettingsSection === "image-diagnostics") {
+        this.imageDiagnostics = null;
+        this.imageDiagnosticsRequest = this.send("lumiphone:get_image_diagnostics");
+      }
       this.send("lumiphone:mark_read", { app: "settings" });
     } else if (route.app !== "home") {
       this.send("lumiphone:mark_read", { app: route.app });
@@ -47892,7 +48182,8 @@ ${body}`;
     const nav = el("header", "lp-nav");
     const back = button("‹ Back", "lp-nav-action");
     back.addEventListener("click", () => this.back());
-    const profileLabel = this.swarmProfile?.available ? "Lumiverse + Swarm profile" : "Lumiverse image settings";
+    const studioConnected = this.swarmProfile?.source === "swarm_studio" && this.swarmProfile.status === "connected";
+    const profileLabel = studioConnected ? "Swarm Studio profile" : "Lumiverse image settings";
     const title = el("div", "lp-nav-title", this.cameraContactId ? "Quick Generate" : "Camera");
     title.appendChild(el("span", "lp-nav-subtitle", subject ? `${subject.name} · Contact photo` : profileLabel));
     const gallery = button("Gallery", "lp-nav-action");
@@ -47940,7 +48231,7 @@ ${body}`;
     enhanceLabel.append(enhance, el("span", "lp-copy", "Enhance scene description"));
     const source = el("div", "lp-camera-profile-status");
     source.append(el("strong", "", this.swarmProfile?.source === "swarm_studio" ? `Swarm Studio · ${this.swarmProfile.status}` : "Lumiverse image settings"));
-    source.append(el("small", "", subject ? `Portrait subject: ${subject.name}. ${this.swarmProfile?.source === "swarm_studio" ? `Image settings inherited from ${this.state.characterName}; portrait identity stays ${subject.name}.` : "Uses the portrait description below."}` : "Uses your active image profile."));
+    source.append(el("small", "", subject ? `Portrait subject: ${subject.name}. ${studioConnected ? `Studio's generation recipe is used, but the active RP character identity is excluded; portrait identity stays ${subject.name}.` : "Uses the portrait description below."}` : studioConnected ? "Uses the active Swarm Studio generation profile." : "Uses your active image profile."));
     optionRow.append(enhanceLabel, source);
     const makeChoice = (label, values, value, update) => {
       const select = el("select", "lp-select");
@@ -47953,7 +48244,7 @@ ${body}`;
       select.addEventListener("change", () => update(select.value));
       return fieldBlock(label, select);
     };
-    const purpose = makeChoice("Subject", this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || "Contact"]] : [["scene", "Scene · character and persona"], ["character", this.state.characterName], ["persona", this.state.pocketPersona.displayName || "Persona"]], this.cameraOptions.purpose, (value) => {
+    const purpose = makeChoice("Subject", this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || "Contact"]] : [["scene", studioConnected ? "Scene · active character" : "Scene · character and persona"], ["character", this.state.characterName], ["persona", this.state.pocketPersona.displayName || "Persona"]], this.cameraOptions.purpose, (value) => {
       this.cameraOptions.purpose = value;
     });
     const aspect = makeChoice("Framing", [["", "Profile default"], ["1:1", "Square · avatar"], ["3:4", "Portrait"], ["4:3", "Landscape"], ["9:16", "Tall"], ["16:9", "Wide"]], this.cameraOptions.aspect, (value) => {
@@ -47965,7 +48256,7 @@ ${body}`;
     const model = el("div", "lp-model-combobox");
     const mountModel = () => {
       modelHandle?.destroy();
-      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: "image", id: this.cameraOptions.connectionId || this.preferences.manualVisualProfile.connectionId || undefined }, placeholder: "Use native checkpoint", onChange: (value) => {
+      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: "image", id: this.cameraOptions.connectionId || (!studioConnected ? this.preferences.manualVisualProfile.connectionId : "") || undefined }, placeholder: studioConnected ? "Use Studio checkpoint" : "Use native checkpoint", onChange: (value) => {
         this.cameraOptions.model = value;
       } });
     };
@@ -47975,13 +48266,13 @@ ${body}`;
       this.cameraOptions.model = "";
       mountModel();
     });
-    const nativeSettings = button("Lumiverse image settings", "lp-button lp-button-quiet");
+    const nativeSettings = button(studioConnected ? "Lumiverse image settings (native mode)" : "Lumiverse image settings", "lp-button lp-button-quiet");
     nativeSettings.addEventListener("click", () => {
       nativeSettings.closest("dialog")?.close();
       this.close();
       this.send("lumiphone:open_native_image_settings", {});
     });
-    const pipelineCopy = el("p", "lp-copy", "Without saved or per-photo overrides, use Lumiverse presets, workflow and LoRA stack. Connection/checkpoint overrides use direct generation. Set saved defaults in Pocket Settings.");
+    const pipelineCopy = el("p", "lp-copy", studioConnected ? "Studio owns this request: connection, checkpoint, recipe, reference conditioning and LoRA stack come from the active Studio profile. Per-photo controls are explicit overrides; Pocket manual defaults and Lumiverse native LoRAs are not mixed in." : "Without saved or per-photo overrides, use Lumiverse presets, workflow and LoRA stack. Connection/checkpoint overrides use direct generation. Set saved defaults in Pocket Settings.");
     const shutterRow = el("div", "lp-shutter-row");
     const shutterAction = el("div", "lp-camera-shutter-action");
     const shutter = el("button", "lp-shutter");
@@ -48008,7 +48299,7 @@ ${body}`;
     const optionFields = el("div", "lp-camera-sheet-fields");
     const modelRow = el("div", "lp-field");
     modelRow.append(el("div", "lp-label", "Checkpoint override"), model);
-    const profileDetail = el("p", "lp-copy lp-camera-profile-detail", this.swarmProfile?.checkpoint ? `Profile checkpoint: ${this.swarmProfile.checkpoint}` : "The active Lumiverse workflow chooses the checkpoint.");
+    const profileDetail = el("p", "lp-copy lp-camera-profile-detail", studioConnected ? this.swarmProfile?.checkpoint ? `Studio checkpoint: ${this.swarmProfile.checkpoint}` : "Studio chooses the checkpoint when the request is resolved." : this.swarmProfile?.checkpoint ? `Profile checkpoint: ${this.swarmProfile.checkpoint}` : "The active Lumiverse workflow chooses the checkpoint.");
     const advanced = disclosure("Advanced image settings", connection, modelRow, profileDetail, pipelineCopy, nativeSettings);
     advanced.classList.add("lp-camera-advanced");
     optionFields.append(purpose, aspect, optionRow, advanced);
@@ -48868,6 +49159,13 @@ ${body}`;
       chooseIconPack: (scope) => this.showIconPacks(scope),
       appearanceBases: this.freeformDirectory?.personas,
       loreLogs: this.loreLogs,
+      imageDiagnostics: this.imageDiagnostics,
+      loadImageDiagnostics: () => {
+        this.imageDiagnosticsRequest = this.send("lumiphone:get_image_diagnostics");
+      },
+      clearImageDiagnostics: () => {
+        this.imageDiagnosticsRequest = this.send("lumiphone:clear_image_diagnostics");
+      },
       loadLoreLogs: () => {
         this.loreLogRequest = this.send("lumiphone:get_lore_log");
       },
@@ -51571,6 +51869,18 @@ var SOCIAL_STYLES = `
   .lp-social-field { display:grid; gap:5px; min-width:0; font-size:11px; color:var(--social-muted); }
   .lumiphone-shell .lp-social-page .lp-social-field :is(input,textarea,select) { width:100%; min-width:0; min-height:38px; padding:9px 10px; border-radius:6px; font-size:13px; border:1px solid var(--social-border); background:var(--social-bg); color:var(--social-text); }
   .lp-social-field textarea { resize:vertical; min-height:70px; line-height:1.5; }
+  .lp-social-mention-anchor { position:relative; min-width:0; }
+  .lp-social-mention-popover { position:absolute; z-index:60; top:calc(100% + 6px); left:0; right:0; max-height:236px; overflow:auto; padding:5px; border:1px solid var(--social-border); border-radius:12px; background:color-mix(in srgb,var(--social-surface) 96%,#000); box-shadow:0 12px 30px #0008; }
+  .lp-social-mention-popover[hidden] { display:none; }
+  .lp-social-mention-option { width:100%; min-height:48px; display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center; gap:9px; padding:6px 8px; border:0; border-radius:9px; background:transparent; color:var(--social-text); text-align:left; cursor:pointer; }
+  .lp-social-mention-option:hover,.lp-social-mention-option[aria-selected="true"] { background:color-mix(in srgb,var(--social-accent) 15%,transparent); }
+  .lp-social-mention-option .lp-social-avatar { width:32px; height:32px; }
+  .lp-social-mention-identity { display:grid; min-width:0; gap:1px; }
+  .lp-social-mention-identity strong,.lp-social-mention-identity small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-social-mention-identity strong { font-size:12px; }
+  .lp-social-mention-identity small { color:var(--social-muted); font-size:10px; }
+  .lp-social-mention-source { align-self:center; padding:3px 6px; border-radius:999px; background:color-mix(in srgb,var(--social-accent) 10%,transparent); color:var(--social-muted); font-size:8px; white-space:nowrap; }
+  .lp-social-mention { color:var(--social-accent); font-weight:650; }
   .lp-social-compose-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .lp-social-count { font-size:10px; color:var(--social-muted); }
   .lp-social-primary { min-width:66px; min-height:35px; border-radius:20px; background:var(--social-accent); color:#fff; font-weight:700; }
@@ -52704,6 +53014,11 @@ ${INLINE_BASE_STYLES}
   .lp-swarm-macro p { margin:5px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
   .lp-swarm-diagnostics[open] { max-height:280px; overflow-y:auto; }
   .lp-swarm-diagnostics summary { padding:8px 0; }
+  .lp-image-diagnostic-actions { display:flex; flex-wrap:wrap; gap:8px; }
+  .lp-image-diagnostic-entry { min-width:0; overflow:hidden; }
+  .lp-image-diagnostic-entry > summary { display:grid; gap:2px; cursor:pointer; }
+  .lp-image-diagnostic-entry[data-status=error] { border-color:color-mix(in srgb,var(--lp-danger,#e85c69) 44%,var(--lp-border)); }
+  .lp-image-diagnostic-json { max-height:340px; margin:8px 0 0; padding:10px; overflow:auto; border-radius:10px; background:rgba(0,0,0,.22); color:var(--lp-text); font:var(--pocket-font-xs)/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
   .lp-settings-section { min-width:0; }
   .lp-settings-section > .lp-copy { overflow-wrap:anywhere; }
   .lp-event-strip { min-width:0; flex:none; border-bottom:1px solid var(--lp-border); background:var(--lp-surface); }
@@ -52729,7 +53044,21 @@ ${INLINE_BASE_STYLES}
   .lp-compose-attach:focus-visible { outline:2px solid var(--lp-accent); outline-offset:1px; }
   .lp-message-photo { display:block; width:100%; border:0; padding:0; margin:0 0 7px; border-radius:10px; overflow:hidden; background:transparent; cursor:pointer; }
   .lp-message-photo img { display:block; width:100%; max-height:300px; object-fit:contain; }
-  .lp-message-photo-status { margin-top:7px; font-size:10px; opacity:.85; }
+  .lp-message-photo-status { margin-top:9px; padding:8px 0 1px; display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:8px; border-top:1px solid color-mix(in srgb,currentColor 12%,transparent); font-size:var(--pocket-font-xs); opacity:.92; }
+  .lp-message-photo-indicator { position:relative; width:28px; height:28px; overflow:hidden; border:1px solid color-mix(in srgb,var(--lp-accent) 34%,transparent); border-radius:8px; background:color-mix(in srgb,var(--lp-accent) 10%,transparent); color:var(--lp-accent); }
+  .lp-message-photo-indicator::before { content:""; position:absolute; inset:-55% -80%; background:linear-gradient(110deg,transparent 34%,color-mix(in srgb,var(--lp-accent) 32%,transparent) 48%,transparent 62%); transform:translateX(-45%); animation:lp-photo-develop 1.7s ease-in-out infinite; }
+  .lp-message-photo-indicator::after { content:"✦"; position:absolute; inset:0; display:grid; place-items:center; font-size:14px; line-height:1; }
+  .lp-message-photo-status.is-failed .lp-message-photo-indicator { border-color:color-mix(in srgb,var(--lp-danger,#e85c69) 35%,transparent); background:color-mix(in srgb,var(--lp-danger,#e85c69) 10%,transparent); color:var(--lp-danger,#e85c69); }
+  .lp-message-photo-status.is-failed .lp-message-photo-indicator::before { display:none; }
+  .lp-message-photo-status.is-failed .lp-message-photo-indicator::after { content:"!"; font-weight:800; }
+  .lp-message-photo-copy { min-width:0; display:grid; gap:1px; line-height:1.25; }
+  .lp-message-photo-copy strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:inherit; font-size:var(--pocket-font-xs); font-weight:650; }
+  .lp-message-photo-copy > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.58; font-size:var(--pocket-font-xs); }
+  .lp-message-photo-control { appearance:none; min-width:0; min-height:27px; padding:4px 8px; border:1px solid color-mix(in srgb,currentColor 18%,transparent); border-radius:999px; background:color-mix(in srgb,currentColor 6%,transparent); color:inherit; font:inherit; font-size:calc(var(--pocket-font-xs) * .95); line-height:1; white-space:nowrap; cursor:pointer; opacity:.72; }
+  .lp-message-photo-control:hover { opacity:1; background:color-mix(in srgb,currentColor 11%,transparent); }
+  .lp-message-photo-control:focus-visible { outline:2px solid var(--lp-accent); outline-offset:2px; }
+  @keyframes lp-photo-develop { 0%,18% { transform:translateX(-55%); opacity:0; } 42% { opacity:1; } 76%,100% { transform:translateX(55%); opacity:0; } }
+  @media (prefers-reduced-motion:reduce) { .lp-message-photo-indicator::before { animation:none; opacity:.55; transform:none; } }
   .lp-compose-input:focus-within { border-color:var(--lp-accent); box-shadow:0 0 0 1px var(--lp-accent); }
   .lumiphone-shell .lp-compose-input .lp-textarea { flex:1; min-width:0; min-height:calc(32px * var(--pocket-ui-scale)); border:0; outline:0; resize:none; background:transparent; box-shadow:none; padding:7px 9px; }
   .lumiphone-shell .lp-compose-input .lp-button-icon { flex:none; width:calc(30px * var(--pocket-ui-scale)); height:calc(30px * var(--pocket-ui-scale)); min-height:calc(30px * var(--pocket-ui-scale)); border:0; border-radius:50%; background:var(--lp-accent); color:var(--lp-bg); }

@@ -29,6 +29,7 @@ import type {
   PocketContextDiagnostics,
   ChatPocketPersona,
   PocketOperationProgress,
+  PocketImageDiagnosticEntry,
   PocketContactSourceOption,
   PocketContactDraft,
   PhoneEventSuggestion,
@@ -193,6 +194,8 @@ class PocketController {
   private sessionNameDrafts=new Map<string,string>()
   private freeformError = ''
   private loreLogs: import('../types.js').PocketLoreRetrievalLog[] | null = null
+  private imageDiagnostics: PocketImageDiagnosticEntry[] | null = null
+  private imageDiagnosticsRequest = ''
   private loreLogRequest = ''
   private state: PhoneState | null = null
   private preferences: DevicePreferences = defaultPreferences()
@@ -1356,6 +1359,12 @@ class PocketController {
       if(this.currentApp==='settings' && this.selectedSettingsSection==='lore-log')this.render(false)
       return
     }
+    if (payload.type === 'lumiphone:image_diagnostics' && (!this.imageDiagnosticsRequest || payload.requestId === this.imageDiagnosticsRequest)) {
+      this.imageDiagnostics = Array.isArray(payload.entries) ? payload.entries : []
+      this.imageDiagnosticsRequest = ''
+      if (this.currentApp === 'settings' && this.selectedSettingsSection === 'image-diagnostics') this.render(false)
+      return
+    }
     if (payload.type === 'lumiphone:freeform_directory' && payload.requestId === this.freeformListRequest) {
       this.freeformListRequest = ''; this.freeformDirectory = payload.directory; this.freeformError = ''
       if(this.settingsRevision===this.freeformListPreferenceRevision&&typeof payload.suppressRoleplayTools==='boolean')this.preferences.suppressRoleplayTools=payload.suppressRoleplayTools
@@ -2310,6 +2319,7 @@ class PocketController {
       this.selectedSettingsSection = route.section || ''
       this.settingsDraft ||= structuredClone(this.preferences)
       if (this.selectedSettingsSection === 'camera') this.send('lumiphone:image_options', {})
+      if (this.selectedSettingsSection === 'image-diagnostics') { this.imageDiagnostics = null; this.imageDiagnosticsRequest = this.send('lumiphone:get_image_diagnostics') }
       this.send('lumiphone:mark_read', { app: 'settings' })
     } else if (route.app !== 'home') {
       this.send('lumiphone:mark_read', { app: route.app })
@@ -3595,7 +3605,8 @@ class PocketController {
     const nav = el('header', 'lp-nav')
     const back = button('‹ Back', 'lp-nav-action')
     back.addEventListener('click', () => this.back())
-    const profileLabel = this.swarmProfile?.available ? 'Lumiverse + Swarm profile' : 'Lumiverse image settings'
+    const studioConnected = this.swarmProfile?.source === 'swarm_studio' && this.swarmProfile.status === 'connected'
+    const profileLabel = studioConnected ? 'Swarm Studio profile' : 'Lumiverse image settings'
     const title = el('div', 'lp-nav-title', this.cameraContactId ? 'Quick Generate' : 'Camera')
     title.appendChild(el('span', 'lp-nav-subtitle', subject ? `${subject.name} · Contact photo` : profileLabel))
     const gallery = button('Gallery', 'lp-nav-action')
@@ -3639,7 +3650,7 @@ class PocketController {
     enhanceLabel.append(enhance, el('span', 'lp-copy', 'Enhance scene description'))
     const source = el('div', 'lp-camera-profile-status')
     source.append(el('strong', '', this.swarmProfile?.source === 'swarm_studio' ? `Swarm Studio · ${this.swarmProfile.status}` : 'Lumiverse image settings'))
-    source.append(el('small', '', subject ? `Portrait subject: ${subject.name}. ${this.swarmProfile?.source === 'swarm_studio' ? `Image settings inherited from ${this.state!.characterName}; portrait identity stays ${subject.name}.` : 'Uses the portrait description below.'}` : 'Uses your active image profile.'))
+    source.append(el('small', '', subject ? `Portrait subject: ${subject.name}. ${studioConnected ? `Studio's generation recipe is used, but the active RP character identity is excluded; portrait identity stays ${subject.name}.` : 'Uses the portrait description below.'}` : studioConnected ? 'Uses the active Swarm Studio generation profile.' : 'Uses your active image profile.'))
     optionRow.append(enhanceLabel, source)
     const makeChoice = (label: string, values: Array<[string, string]>, value: string, update: (value: string) => void) => {
       const select = el('select', 'lp-select')
@@ -3647,20 +3658,20 @@ class PocketController {
       select.addEventListener('change', () => update(select.value))
       return fieldBlock(label, select)
     }
-    const purpose = makeChoice('Subject', this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || 'Contact']] : [['scene', 'Scene · character and persona'], ['character', this.state!.characterName], ['persona', this.state!.pocketPersona.displayName || 'Persona']], this.cameraOptions.purpose, value => { this.cameraOptions.purpose = value })
+    const purpose = makeChoice('Subject', this.cameraContactId ? [[this.cameraOptions.purpose, subject?.name || 'Contact']] : [['scene', studioConnected ? 'Scene · active character' : 'Scene · character and persona'], ['character', this.state!.characterName], ['persona', this.state!.pocketPersona.displayName || 'Persona']], this.cameraOptions.purpose, value => { this.cameraOptions.purpose = value })
     const aspect = makeChoice('Framing', [['', 'Profile default'], ['1:1', 'Square · avatar'], ['3:4', 'Portrait'], ['4:3', 'Landscape'], ['9:16', 'Tall'], ['16:9', 'Wide']], this.cameraOptions.aspect, value => { this.cameraOptions.aspect = value })
     const connection = makeChoice('Image connection', [['', 'Profile default'], ...this.imageConnections.map(entry => [entry.id, entry.name] as [string, string])], this.cameraOptions.connectionId, value => { this.cameraOptions.connectionId = value })
     const model = el('div', 'lp-model-combobox')
     const mountModel = () => {
       modelHandle?.destroy()
-      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: 'image', id: this.cameraOptions.connectionId || this.preferences.manualVisualProfile.connectionId || undefined }, placeholder: 'Use native checkpoint', onChange: value => { this.cameraOptions.model = value } })
+      modelHandle = this.ctx.components.mountModelCombobox(model, { value: this.cameraOptions.model, connection: { kind: 'image', id: this.cameraOptions.connectionId || (!studioConnected ? this.preferences.manualVisualProfile.connectionId : '') || undefined }, placeholder: studioConnected ? 'Use Studio checkpoint' : 'Use native checkpoint', onChange: value => { this.cameraOptions.model = value } })
     }
     let modelHandle: ReturnType<typeof this.ctx.components.mountModelCombobox> | undefined
     this.viewCleanups.push(() => modelHandle?.destroy())
     connection.querySelector('select')?.addEventListener('change', () => { this.cameraOptions.model = ''; mountModel() })
-    const nativeSettings = button('Lumiverse image settings', 'lp-button lp-button-quiet')
+    const nativeSettings = button(studioConnected ? 'Lumiverse image settings (native mode)' : 'Lumiverse image settings', 'lp-button lp-button-quiet')
     nativeSettings.addEventListener('click', () => { nativeSettings.closest('dialog')?.close(); this.close(); this.send('lumiphone:open_native_image_settings', {}) })
-    const pipelineCopy = el('p', 'lp-copy', 'Without saved or per-photo overrides, use Lumiverse presets, workflow and LoRA stack. Connection/checkpoint overrides use direct generation. Set saved defaults in Pocket Settings.')
+    const pipelineCopy = el('p', 'lp-copy', studioConnected ? 'Studio owns this request: connection, checkpoint, recipe, reference conditioning and LoRA stack come from the active Studio profile. Per-photo controls are explicit overrides; Pocket manual defaults and Lumiverse native LoRAs are not mixed in.' : 'Without saved or per-photo overrides, use Lumiverse presets, workflow and LoRA stack. Connection/checkpoint overrides use direct generation. Set saved defaults in Pocket Settings.')
     const shutterRow = el('div', 'lp-shutter-row')
     const shutterAction = el('div', 'lp-camera-shutter-action')
     const shutter = el('button', 'lp-shutter')
@@ -3680,7 +3691,7 @@ class PocketController {
     const optionsDrawer = button('Camera options', 'lp-camera-options-chip')
     const optionFields = el('div', 'lp-camera-sheet-fields')
     const modelRow = el('div', 'lp-field'); modelRow.append(el('div', 'lp-label', 'Checkpoint override'), model)
-    const profileDetail = el('p', 'lp-copy lp-camera-profile-detail', this.swarmProfile?.checkpoint ? `Profile checkpoint: ${this.swarmProfile.checkpoint}` : 'The active Lumiverse workflow chooses the checkpoint.')
+    const profileDetail = el('p', 'lp-copy lp-camera-profile-detail', studioConnected ? (this.swarmProfile?.checkpoint ? `Studio checkpoint: ${this.swarmProfile.checkpoint}` : 'Studio chooses the checkpoint when the request is resolved.') : (this.swarmProfile?.checkpoint ? `Profile checkpoint: ${this.swarmProfile.checkpoint}` : 'The active Lumiverse workflow chooses the checkpoint.'))
     const advanced = disclosure('Advanced image settings', connection, modelRow, profileDetail, pipelineCopy, nativeSettings)
     advanced.classList.add('lp-camera-advanced')
     optionFields.append(purpose, aspect, optionRow, advanced)
@@ -4214,6 +4225,9 @@ class PocketController {
       chooseIconPack:scope=>this.showIconPacks(scope),
       appearanceBases:this.freeformDirectory?.personas,
       loreLogs:this.loreLogs,
+      imageDiagnostics: this.imageDiagnostics,
+      loadImageDiagnostics: () => { this.imageDiagnosticsRequest = this.send('lumiphone:get_image_diagnostics') },
+      clearImageDiagnostics: () => { this.imageDiagnosticsRequest = this.send('lumiphone:clear_image_diagnostics') },
       loadLoreLogs:()=>{this.loreLogRequest=this.send('lumiphone:get_lore_log')},
       renameFreeform: name => { this.send('lumiphone:freeform_rename', { name }) },
       chooseFreeform: () => { this.close(); this.navigatePortal('freeform'); this.drawer.activate() },

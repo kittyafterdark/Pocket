@@ -4,6 +4,12 @@
 
 ### Follow-up improvements
 
+- Added Freeform-only state consolidation with an adjustable completed-turn cadence, close flush, manual consolidation, incremental checkpoints, and visible pending/error status. Freeform can now promote meaningful phone developments into Journal, Timeline, and model-writable trackers without relying on host story-turn sync.
+- Moved Freeform roleplay-background context controls into the dedicated Freeform settings page alongside consolidation and session controls.
+- Added runtime-only image generation diagnostics under Camera & Swarm Studio settings, logging sanitized Studio bridge requests/results, exact provider payloads, provider errors, and final Pocket attachment results with copy/clear controls.
+- Added social @mention autocomplete across post and reply composers, prioritizing followed accounts, selected friends, then NPC Bank people; selection replaces only the active @ token and supports keyboard navigation.
+- Improved the Swarm Studio bridge failure message to identify the required Macro Interceptor permission instead of generically blaming the Studio version.
+- Fixed Swarm Studio image sync to use the authoritative visual-request bridge as an exclusive generation profile, preventing Studio LoRAs/checkpoints from being layered over Lumiverse native image settings.
 - Added Screenshots attachments for the next roleplay turn, using the existing composer reference pill with a saved excerpt preview and removal. No Pocket conversation target is required.
 - Added “Suppress Pocket tools in roleplay” to the Freeform sidebar. The saved toggle disables Pocket tools, automatic RP context, fallback actions and post-turn phone audits while direct Freeform phone actions remain available.
 - Restored Lumistry’s Connection page and app connection override toggle, with connection/model selection and separate authoring controls.

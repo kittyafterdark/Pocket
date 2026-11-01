@@ -16,6 +16,7 @@ import { activityClock } from '../../domain/activity-clock.js'
 import { socialPortrait, socialPreviewPosts, SOCIAL_PREVIEW_STORIES } from '../components/social-previews.js'
 import { sectionBlock } from '../components/ui.js'
 import { showPocketSheet } from '../components/ui.js'
+import { filterSocialMentions, insertSocialMention, socialMentionCandidates, socialMentionToken, type SocialMentionCandidate, type SocialMentionToken } from '../../domain/social-mentions.js'
 
 export interface SocialSession extends TumblrSession {
   emotePack?:string; emoteQuery?:string; discordBottom?: boolean; gif?: SocialGif
@@ -278,6 +279,7 @@ export function renderSocial(host: SocialViewHost): HTMLDivElement {
   const showingPreviews = app !== 'discord' && !actualPlatformPosts.length && !ui.hidePreviews
   const platformPosts = showingPreviews ? socialPreviewPosts(app) : actualPlatformPosts
   const following = socialFollowing(world, owner, app)
+  const mentionCandidates = socialMentionCandidates(state, owner, app, host.npcBank || [], actualPlatformPosts)
   if (app === 'tumblr') {
     const palette = el('details', 'lp-tumblr-palettes'), summary = el('summary', '', 'Palette'); palette.open = Boolean(ui.paletteOpen); summary.onclick = () => { ui.paletteOpen = !palette.open }
     const options = el('div', 'lp-tumblr-palette-options'); options.setAttribute('role', 'group'); options.setAttribute('aria-label', 'Tumblr palette')
@@ -355,15 +357,52 @@ export function renderSocial(host: SocialViewHost): HTMLDivElement {
   if (app === 'tumblr' && !reply) {
     const titleLabel = el('label', 'lp-social-field lp-social-post-title-field'), title = el('input', 'lp-input'); titleLabel.append(el('span', '', 'Title (optional)'), title); title.placeholder = 'Title'; title.value = ui.title || ''; title.maxLength = 160; title.disabled = Boolean(ui.pending); title.oninput = () => { ui.title = title.value }; title.dataset.socialFocus = 'Post title'; compose.append(titleLabel)
   }
-  const textLabel = el('label', 'lp-social-field lp-social-post-text-field'), text = el('textarea', 'lp-input')
+  const textLabel = el('label', 'lp-social-field lp-social-post-text-field'), text = el('textarea', 'lp-input'), mentionAnchor = el('div', 'lp-social-mention-anchor'), mentionPopover = el('div', 'lp-social-mention-popover')
   textLabel.append(el('span', '', reply ? app === 'tumblr' ? 'Your comment' : 'Your reply' : app === 'instagram' ? 'Caption' : app === 'discord' ? 'Message' : 'Your post'), text)
   text.value = ui.draft || ''; text.rows = reply ? (app === 'twitter' ? 2 : 1) : app === 'tumblr' ? 4 : 2; text.maxLength = app === 'twitter' ? 280 : 6000; text.placeholder = reply ? app === 'tumblr' ? 'Add a comment' : 'Post your reply' : reblog && app === 'twitter' ? 'Add a comment' : app === 'twitter' ? 'What’s happening in your world?' : app === 'tumblr' ? 'Go on. Make a little post.' : app === 'discord' ? 'Say something to the channel…' : 'A little moment, a little caption…'; text.dataset.socialFocus = 'Social composer'; text.disabled = Boolean(ui.pending)
+  mentionPopover.id = requestId('social_mentions'); mentionPopover.hidden = true; mentionPopover.setAttribute('role', 'listbox'); mentionPopover.setAttribute('aria-label', 'Mention someone')
+  text.setAttribute('aria-controls', mentionPopover.id); text.setAttribute('aria-autocomplete', 'list'); text.setAttribute('aria-expanded', 'false')
   const footer = el('div', 'lp-social-compose-footer'), count = el('span', 'lp-social-count', `${text.value.length}/${text.maxLength}`), submit = button(app === 'discord' ? 'Send' : reply ? app === 'tumblr' ? 'Comment' : app === 'instagram' ? 'Post' : 'Reply' : reblog ? app === 'twitter' ? 'Quote' : 'Reblog' : 'Post', 'lp-social-primary'); submit.type = 'submit'
   let updateEmotePreview=()=>{}
   let updatePhotoTools = () => {}
+  let activeMentionToken: SocialMentionToken | undefined, activeMentionMatches: SocialMentionCandidate[] = [], activeMentionIndex = 0
+  const closeMentions = () => { activeMentionToken = undefined; activeMentionMatches = []; activeMentionIndex = 0; mentionPopover.hidden = true; mentionPopover.replaceChildren(); text.setAttribute('aria-expanded', 'false'); text.removeAttribute('aria-activedescendant') }
   const updateSubmit = () => { count.textContent = `${text.value.length}/${text.maxLength}`; submit.disabled = Boolean(ui.pending || ui.imageBusy) || (app === 'discord' && !ui.channelId) || !(text.value.trim() || ui.photo?.trim() || ui.imageId || ui.gif || reblog); if (app === 'instagram' && !reply && !reblog && !ui.imageId && !ui.photo?.trim()) submit.disabled = true; updatePhotoTools() }
-  text.oninput = () => { ui.draft = text.value; updateSubmit(); updateEmotePreview() }
-  compose.append(textLabel)
+  const chooseMention = (person: SocialMentionCandidate) => {
+    if (!activeMentionToken) return
+    const inserted = insertSocialMention(text.value, activeMentionToken, person.handle, text.maxLength)
+    if (!inserted) return
+    text.value = inserted.value; ui.draft = text.value; closeMentions(); updateSubmit(); updateEmotePreview(); text.focus({ preventScroll: true }); text.setSelectionRange(inserted.caret, inserted.caret)
+  }
+  const renderMentionMatches = () => {
+    mentionPopover.replaceChildren()
+    if (!activeMentionToken || !activeMentionMatches.length) { closeMentions(); return }
+    activeMentionIndex = Math.max(0, Math.min(activeMentionIndex, activeMentionMatches.length - 1))
+    for (const [index, person] of activeMentionMatches.entries()) {
+      const option = button('', 'lp-social-mention-option'), optionId = `${mentionPopover.id}_${index}`, identity = el('span', 'lp-social-mention-identity'), source = el('span', 'lp-social-mention-source', person.mentionSource === 'following' ? 'Following' : person.mentionSource === 'friend' ? 'Friend' : 'NPC Bank')
+      option.id = optionId; option.setAttribute('role', 'option'); option.setAttribute('aria-selected', String(index === activeMentionIndex)); option.dataset.mentionIndex = String(index)
+      identity.append(el('strong', '', person.name), el('small', '', `@${person.handle}`)); option.append(accountAvatar(person.name, person.actorId, person.avatarUrl), identity, source)
+      option.onmousedown = event => event.preventDefault(); option.onclick = () => chooseMention(person); mentionPopover.append(option)
+    }
+    const selected = mentionPopover.querySelector<HTMLElement>(`[data-mention-index="${activeMentionIndex}"]`); if (selected) text.setAttribute('aria-activedescendant', selected.id)
+  }
+  const refreshMentions = () => {
+    const token = socialMentionToken(text.value, text.selectionStart ?? text.value.length)
+    if (!token) { closeMentions(); return }
+    const matches = filterSocialMentions(mentionCandidates, token.query, 8)
+    if (!matches.length) { closeMentions(); return }
+    activeMentionToken = token; activeMentionMatches = matches; activeMentionIndex = Math.min(activeMentionIndex, matches.length - 1); mentionPopover.hidden = false; text.setAttribute('aria-expanded', 'true'); renderMentionMatches()
+  }
+  const handleMentionKey = (event: KeyboardEvent) => {
+    if (mentionPopover.hidden || !activeMentionMatches.length) return false
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); activeMentionIndex = (activeMentionIndex + (event.key === 'ArrowDown' ? 1 : -1) + activeMentionMatches.length) % activeMentionMatches.length; renderMentionMatches(); mentionPopover.querySelector<HTMLElement>(`[data-mention-index="${activeMentionIndex}"]`)?.scrollIntoView({ block: 'nearest' }); return true }
+    if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseMention(activeMentionMatches[activeMentionIndex]); return true }
+    if (event.key === 'Escape') { event.preventDefault(); closeMentions(); return true }
+    return false
+  }
+  text.oninput = () => { ui.draft = text.value; updateSubmit(); updateEmotePreview(); refreshMentions() }
+  text.onclick = refreshMentions; text.onfocus = refreshMentions; text.onblur = () => closeMentions()
+  mentionAnchor.append(textLabel, mentionPopover); compose.append(mentionAnchor)
   if (app !== 'discord' && !reply) {
     const media = el('details', 'lp-social-media'), summary = el('summary', '', ui.imageId ? 'Photo attached' : 'Add a photo or description'); media.open = Boolean(ui.mediaOpen || ui.photosOpen || ui.photo || ui.imageId); summary.onclick = () => { ui.mediaOpen = !media.open }
     const field = el('label', 'lp-social-field'), photo = el('textarea', 'lp-input'); field.append(el('span', '', 'Photo description (optional)'), photo); photo.value = ui.photo || ''; photo.maxLength = 1000; photo.rows = 2; photo.disabled = Boolean(ui.pending); photo.oninput = () => { ui.photo = photo.value; updateSubmit() }; photo.dataset.socialFocus = 'Photo description'
@@ -403,9 +442,9 @@ export function renderSocial(host: SocialViewHost): HTMLDivElement {
     if (ui.gif) { const preview = el('div', 'lp-social-gif-draft'), remove = actionButton('Remove GIF', 'Remove attached GIF', () => { ui.gif = undefined; host.render() }); preview.append(gifMedia(ui.gif), remove); compose.append(preview) }
   }
   if(app==='discord'){const preview=el('div','lp-discord-emote-preview');updateEmotePreview=()=>{const refs=messageEmotes(nativeFor({...state,pocketPersonaActorId:owner}),text.value);preview.replaceChildren();preview.hidden=!refs.length;if(refs.length)preview.append(discordEmoteText(text.value,refs))};compose.append(preview);updateEmotePreview()}
-  if (app === 'discord') text.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!submit.disabled) compose.requestSubmit() } }
+  text.onkeydown = event => { if (handleMentionKey(event)) return; if (app === 'discord' && event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!submit.disabled) compose.requestSubmit() } }
   updateSubmit(); footer.append(count, submit); compose.append(footer)
-  if (app === 'discord') { submit.setAttribute('aria-label', 'Send'); submit.replaceChildren(socialIcon('send')); const bar = el('div', 'lp-discord-composer-bar'); bar.append(textLabel, footer); compose.append(bar) }
+  if (app === 'discord') { submit.setAttribute('aria-label', 'Send'); submit.replaceChildren(socialIcon('send')); const bar = el('div', 'lp-discord-composer-bar'); bar.append(mentionAnchor, footer); compose.append(bar) }
   compose.onsubmit = event => { event.preventDefault(); if (!submit.disabled) host.request({ action: reblog ? 'reblog' : 'post', app, text: ui.draft, title: ui.title, photo: ui.photo, tags: (ui.tags || '').split(',').map(tag => tag.trim()).filter(Boolean), imageId: ui.imageId, gif: ui.gif, replyTo: reply?.id, postId: reblog?.id, channelId: ui.channelId }) }
   const composeShell = el('section', 'lp-social-compose-disclosure'), composeSummary = actionButton(app === 'instagram' ? 'Create a photo post' : app === 'tumblr' ? 'Create a post' : 'What’s happening?', `Write a ${SOCIAL_NAMES[app]} post`, () => { ui.composing = true; ui.focusComposer = true; host.render() }, 'lp-social-new-post')
   composeSummary.dataset.socialFocus = 'Start social post'; composeShell.append(composeSummary)

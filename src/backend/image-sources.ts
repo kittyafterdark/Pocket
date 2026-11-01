@@ -1,4 +1,4 @@
-import type { PocketImageSource, PocketResolvedImage } from '../types.js'
+import type { PhoneState, PocketImageSource, PocketResolvedImage } from '../types.js'
 import { builtinWallpaper, builtinWallpaperUrl } from '../domain/wallpapers.js'
 
 type ImageApi = Pick<import('lumiverse-spindle-types').SpindleAPI, 'cors' | 'images' | 'permissions' | 'userStorage'>
@@ -118,4 +118,75 @@ export async function resolvePocketImageSource(api: ImageApi, source: PocketImag
 
 export function assertPocketImageResolved(result: PocketResolvedImage): void {
   if (result.status !== 'ready' || !result.url) throw new Error(result.error || 'Pocket could not resolve that image.')
+}
+
+
+export function isPocketRenderableImageUrl(value: unknown): value is string {
+  return typeof value === 'string' && /^(https?:\/\/|\/[^/])/.test(value.trim())
+}
+
+/**
+ * Rehydrate durable Gallery references into transient render URLs on the cloned
+ * state sent to the frontend. Persisted state keeps IDs; display state gets URLs.
+ */
+export async function hydratePocketImageProjection(
+  state: PhoneState,
+  resolveGalleryUrl: (imageId: string) => Promise<string | undefined>,
+): Promise<void> {
+  const cache = new Map<string, Promise<string | undefined>>()
+  const resolve = (imageId: string): Promise<string | undefined> => {
+    const id = imageId.trim()
+    if (!id) return Promise.resolve(undefined)
+    const existing = cache.get(id)
+    if (existing) return existing
+    const pending = resolveGalleryUrl(id).catch(() => undefined)
+    cache.set(id, pending)
+    return pending
+  }
+  const tasks: Promise<void>[] = []
+  const hydrate = (imageId: string | undefined, assign: (url: string | undefined) => void): void => {
+    if (!imageId) return
+    tasks.push(resolve(imageId).then(assign))
+  }
+
+  for (const conversation of state.conversations) {
+    for (const message of conversation.messages) {
+      hydrate(message.imageId, url => { message.imageUrl = url })
+    }
+  }
+
+  for (const dating of Object.values(state.lumistry || {})) {
+    const profiles = [...(dating.self ? [dating.self] : []), ...dating.profiles]
+    for (const profile of profiles) {
+      for (const photo of profile.photos) {
+        if (photo.source.kind !== 'gallery') continue
+        hydrate(photo.source.imageId, url => { photo.url = url || '' })
+      }
+    }
+  }
+
+  if (state.social) {
+    for (const post of state.social.posts) {
+      if (post.imageId && !isPocketRenderableImageUrl(post.imageUrl)) hydrate(post.imageId, url => { post.imageUrl = url })
+    }
+    for (const server of state.social.servers) {
+      if (server.imageId && !isPocketRenderableImageUrl(server.imageUrl)) hydrate(server.imageId, url => { server.imageUrl = url })
+    }
+  }
+
+  await Promise.all(tasks)
+}
+
+/** Normalize old and new native image-generation completion shapes. */
+export async function projectGeneratedPocketImage(
+  result: unknown,
+  resolveGalleryUrl: (imageId: string) => Promise<string | undefined>,
+): Promise<{ imageId: string; imageUrl: string }> {
+  const record = result && typeof result === 'object' ? result as Record<string, unknown> : {}
+  const imageId = typeof record.imageId === 'string' ? record.imageId.trim().slice(0, 200) : ''
+  const directUrl = [record.imageUrl, record.mediaUrl]
+    .find(isPocketRenderableImageUrl)
+  let imageUrl = typeof directUrl === 'string' ? directUrl.trim().slice(0, 2_000) : ''
+  if (imageId && !imageUrl) imageUrl = (await resolveGalleryUrl(imageId).catch(() => undefined)) || ''
+  return { imageId, imageUrl }
 }

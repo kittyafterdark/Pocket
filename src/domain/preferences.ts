@@ -121,6 +121,9 @@ export function defaultPreferences(): DevicePreferences {
     handsetScale: 1,
     desktopPhoneOffset: 0,
     freeformRoleplayMessages: 0,
+    freeformAutoConsolidate: true,
+    freeformConsolidateTurns: 5,
+    freeformConsolidateOnClose: true,
     suppressRoleplayTools: false,
     desktopDockSide: 'left',
     uiScale: 1,
@@ -135,6 +138,7 @@ export function defaultPreferences(): DevicePreferences {
     inlineAppearance: 'cards',
     pushNotifications: false,
     useSwarmProfile: true,
+    includeStudioCharacterPositive: true,
     sceneEnhancer: true,
     jev: normalizeJevSettings(null),
     generationMode: 'roleplay',
@@ -199,7 +203,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     const item = record(entry)
     const requestId = text(item.requestId, '', 180)
     const task = text(item.task, '', 40) as DevicePreferences['generationHistory'][number]['task']
-    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge', 'social-feed'])
+    const tasks = new Set(['npc-contact', 'profile-refresh', 'scene-sync', 'persona-profile', 'message-reply', 'message-retry', 'group-reply', 'reply-decision', 'ambient-decision', 'freeform-consolidation', 'continuity-seed', 'post-turn-audit', 'scene-planner', 'connection-test', 'weather-week', 'timeline-review', 'tracker-judge', 'social-feed'])
     if (!requestId || !tasks.has(task) && !/^lumistry-[a-z_]+$/.test(task) && !/^native-(bank|birthdays|browser|maps|twitch|stickers)$/.test(task)) return []
     const status: DevicePreferences['generationHistory'][number]['status'] = item.status === 'completed' || item.status === 'failed' ? item.status : 'started'
     return [{
@@ -265,6 +269,9 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     handsetScale: numberIn(raw.handsetScale, fallback.handsetScale, 0.8, 1.25),
     desktopPhoneOffset: numberIn(raw.desktopPhoneOffset, 0, 0, 160),
     freeformRoleplayMessages: Math.round(numberIn(raw.freeformRoleplayMessages, 0, 0, 40)),
+    freeformAutoConsolidate: bool(raw.freeformAutoConsolidate, fallback.freeformAutoConsolidate),
+    freeformConsolidateTurns: Math.round(numberIn(raw.freeformConsolidateTurns, fallback.freeformConsolidateTurns, 1, 20)),
+    freeformConsolidateOnClose: bool(raw.freeformConsolidateOnClose, fallback.freeformConsolidateOnClose),
     suppressRoleplayTools: raw.suppressRoleplayTools === true,
     desktopDockSide: raw.desktopDockSide === 'right' ? 'right' : 'left',
     uiScale: numberIn(raw.uiScale, fallback.uiScale, 0.7, 1.3),
@@ -284,6 +291,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     inlineAppearance: raw.inlineAppearance === 'phone' ? 'phone' : 'cards',
     pushNotifications: bool(raw.pushNotifications, fallback.pushNotifications),
     useSwarmProfile: bool(raw.useSwarmProfile, fallback.useSwarmProfile),
+    includeStudioCharacterPositive: bool(raw.includeStudioCharacterPositive, fallback.includeStudioCharacterPositive),
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',

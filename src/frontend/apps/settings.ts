@@ -13,7 +13,7 @@ import { resolvePocketTouchScrollMode } from '../touch-scroll.js'
 import type { PageAction } from '../shared.js'
 import { wallpaperImageControl } from '../components/image-picker.js'
 import type { PocketImageTarget } from '../components/image-picker.js'
-import type { PocketLoreRetrievalLog } from '../../types.js'
+import type { PocketLoreRetrievalLog, PocketImageDiagnosticEntry } from '../../types.js'
 import type { FreeformPersona } from '../../domain/freeform.js'
 import type { FreeformSession } from '../../domain/freeform.js'
 import { ttsSettings } from '../components/tts-settings.js'
@@ -26,6 +26,9 @@ export interface SettingsViewHost {
   freeformSession?: FreeformSession | null
   appearanceBases?: FreeformPersona[]
   loreLogs?: PocketLoreRetrievalLog[] | null
+  imageDiagnostics?: PocketImageDiagnosticEntry[] | null
+  loadImageDiagnostics?(): void
+  clearImageDiagnostics?(): void
   loadLoreLogs?(): void
   renameFreeform?(name: string): void
   chooseFreeform?(): void
@@ -138,7 +141,7 @@ function categories(host: SettingsViewHost): HTMLDivElement {
   const { page, content } = host.page('Settings', 'Device-wide preferences')
   content.classList.add('lp-settings-list')
   const entries = [
-    ...(host.freeformSession ? [['freeform', 'Freeform session', 'Name, switch sessions, or start a separate roleplay chat']] : []),
+    ...(host.freeformSession ? [['freeform', 'Freeform', 'State consolidation, roleplay background, and session controls']] : []),
     ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
     ['context', 'Context', 'Character profiles, lorebooks, and this session’s scenario'],
@@ -488,11 +491,14 @@ function camera(host: SettingsViewHost): HTMLDivElement {
   const swarm = el('section', 'lp-card lp-settings-section'); swarm.append(el('div', 'lp-eyebrow', 'Swarm Studio'), toggle('Sync active profile', settings.useSwarmProfile, (value) => {
     const next = clone(settings); next.useSwarmProfile = value; settings = next; host.update(next, { persist: false }); host.send('lumiphone:save_preferences', { preferences: next })
   }))
+  const characterPositive = toggle('Include character positive base', settings.includeStudioCharacterPositive, (value) => commit(next => { next.includeStudioCharacterPositive = value }))
+  const characterPositiveHelp = el('p', 'lp-copy', 'Pocket only. Adds the bound Studio character positive prompt to character-bearing Pocket photos without changing Studio’s own auto-print setting.')
   const status = el('p', 'lp-copy', host.swarmProfile?.status === 'connected' ? `Connected · ${host.swarmProfile.checkpoint || 'profile macros resolved'}` : host.swarmProfile?.status === 'error' ? `Error · ${host.swarmProfile.error}` : host.swarmProfile?.status === 'disabled' ? 'Swarm profile sync is disabled.' : 'Swarm Studio macros were not detected for this character/persona.'); status.dataset.pocketSwarmStatus = 'true'; status.dataset.status = host.swarmProfile?.status || 'not-detected'
   const refresh = button('Refresh profile', 'lp-button'); refresh.addEventListener('click', () => host.send('lumiphone:get_swarm_profile'))
   const diagnostics = el('details', 'lp-swarm-diagnostics'); diagnostics.appendChild(el('summary', '', 'Macro diagnostics'))
   for (const name of ['char_base', 'persona_base', 'swarm_negative', 'swarm_preset', 'swarm_checkpoint', 'swarm_aspect', 'swarm_loras'] as const) { const field = host.swarmProfile?.fields?.[name]; const row = el('div', 'lp-swarm-macro'); row.append(el('strong', '', `${name} · ${field?.detected ? `${field.length} chars` : 'empty'}`)); if (field?.detected) row.append(el('p', '', field.preview)); row.dataset.pocketSwarmMacro = name; diagnostics.appendChild(row) }
-  swarm.append(status, refresh, diagnostics)
+  const diagnosticLog = button('Generation diagnostics', 'lp-button lp-button-quiet'); diagnosticLog.addEventListener('click', () => host.navigate('image-diagnostics'))
+  swarm.append(characterPositive, characterPositiveHelp, status, refresh, diagnostics, diagnosticLog)
   const defaults = el('section', 'lp-card lp-settings-section')
   defaults.append(el('div', 'lp-eyebrow', 'Camera defaults'), el('p', 'lp-copy', 'Leave connection and checkpoint blank to use Lumiverse’s native presets, workflow and LoRA stack. Saved overrides apply to every Pocket photo unless changed in Camera.'))
   const native = button('Lumiverse image settings', 'lp-button lp-button-quiet')
@@ -586,17 +592,81 @@ function data(host: SettingsViewHost): HTMLDivElement {
 
 function freeformSettings(host: SettingsViewHost): HTMLDivElement {
   const session = host.freeformSession!
-  const { page, content } = host.page('Freeform session', session.personaName)
-  const card = el('section', 'lp-card lp-settings-section')
+  let settings = clone(host.draft)
+  const commit = (mutate: (next: DevicePreferences) => void) => { const next = clone(settings); mutate(next); settings = normalizePreferences(next); host.update(settings) }
+  const { page, content } = host.page('Freeform', session.personaName)
+
+  const stateCard = el('section', 'lp-card lp-settings-section')
+  stateCard.append(el('div', 'lp-eyebrow', 'State consolidation'), el('p', 'lp-copy', 'Freeform has no host story-turn sync, so Pocket periodically folds committed phone conversations into durable Journal, Timeline, and model-writable tracker state. Ordinary chatter is ignored.'))
+  stateCard.append(toggle('Auto-consolidate Freeform state', settings.freeformAutoConsolidate, value => commit(next => { next.freeformAutoConsolidate = value }), 'Runs only in Freeform. Normal roleplay keeps its existing post-turn reconciliation.'))
+  stateCard.append(slider('Consolidate every', settings.freeformConsolidateTurns, 1, 20, 1, value => `${value} completed turn${value === 1 ? '' : 's'}`, value => commit(next => { next.freeformConsolidateTurns = value }), 'Counts completed generated reply requests, not raw bubbles, so a group burst still counts as one turn.'))
+  stateCard.append(toggle('Consolidate when leaving Freeform', settings.freeformConsolidateOnClose, value => commit(next => { next.freeformConsolidateOnClose = value }), 'Flushes pending committed messages when the Pocket surface closes or leaves this Freeform session.'))
+  const checkpoint = host.state.freeformConsolidation
+  const pending = checkpoint?.pendingTurns || 0
+  const status = checkpoint?.status === 'working' ? 'Consolidating now…'
+    : checkpoint?.status === 'error' ? `Last consolidation failed: ${checkpoint.lastError || 'unknown error'}`
+      : `${pending} completed turn${pending === 1 ? '' : 's'} pending${checkpoint?.lastConsolidatedAt ? ` · Last consolidated ${new Date(checkpoint.lastConsolidatedAt).toLocaleString()}` : ' · Never consolidated'}`
+  stateCard.append(el('p', checkpoint?.status === 'error' ? 'lp-warning' : 'lp-copy', status))
+  if (checkpoint?.lastSummary) stateCard.append(el('p', 'lp-copy', `Last result: ${checkpoint.lastSummary}`))
+  const consolidate = button(checkpoint?.status === 'working' ? 'Consolidating…' : 'Consolidate now', 'lp-button')
+  consolidate.disabled = checkpoint?.status === 'working' || pending === 0
+  consolidate.onclick = () => host.send('lumiphone:freeform_consolidate')
+  stateCard.append(consolidate)
+
+  const contextCard = el('section', 'lp-card lp-settings-section')
+  contextCard.append(el('div', 'lp-eyebrow', 'Roleplay background'))
+  contextCard.append(slider('Freeform roleplay context', settings.freeformRoleplayMessages, 0, 40, 1, value => value ? `${value} messages` : 'Off', value => commit(next => { next.freeformRoleplayMessages = value }), 'Let this Freeform session read recent messages from your currently active Lumiverse roleplay chat. Off keeps Freeform independent. Requires Chats and Chat Mutation access; background context only, without changing that chat.'))
+
+  const sessionCard = el('section', 'lp-card lp-settings-section')
+  sessionCard.append(el('div', 'lp-eyebrow', 'Session'))
   const name = el('input', 'lp-input'); name.value = session.name; name.maxLength = 80
   const rename = button('Save session name', 'lp-button')
   rename.onclick = () => { if (!name.value.trim()) { host.showError('Enter a session name.'); return }; host.renameFreeform?.(name.value.trim()) }
   const change = button('Lock & switch session', 'lp-button lp-button-quiet'); change.onclick = () => host.chooseFreeform?.()
-  card.append(fieldBlock('Session name', name), rename, change)
+  sessionCard.append(fieldBlock('Session name', name), rename, change)
+
   const start = el('section', 'lp-card lp-settings-section')
   start.append(el('h3', 'lp-title', 'Take it into the story'), el('p', 'lp-copy', 'Create or open a chat in Lumiverse, then copy this Pocket into that chat. Your Freeform session and the chat keep separate histories from here on. You will choose whether to keep or replace that chat’s base Pocket.'))
   const copy = button('Start a chat from this session', 'lp-button'); copy.onclick = () => host.copyFreeformToChat?.(); start.append(copy)
-  content.append(card, start); return page
+  content.append(stateCard, contextCard, sessionCard, start); return page
+}
+
+function imageDiagnostics(host: SettingsViewHost): HTMLDivElement {
+  const { page, content } = host.page('Image diagnostics', 'Recent Pocket image requests')
+  const controls = el('div', 'lp-row lp-image-diagnostic-actions')
+  const refresh = button('Refresh', 'lp-button'); refresh.onclick = () => host.loadImageDiagnostics?.()
+  const copyAll = button('Copy all', 'lp-button lp-button-quiet'); copyAll.onclick = () => {
+    const text = JSON.stringify(host.imageDiagnostics || [], null, 2)
+    void navigator.clipboard?.writeText(text).catch(() => {})
+  }
+  const clear = button('Clear', 'lp-button lp-button-quiet'); clear.onclick = () => host.clearImageDiagnostics?.()
+  controls.append(refresh, copyAll, clear); content.append(controls)
+  content.append(el('p', 'lp-copy', 'Runtime-only diagnostics. Pocket records bridge resolution, the exact sanitized provider payload it sent, completion results, and provider errors. Tokens, cookies, API keys, and huge image blobs are redacted.'))
+  if (host.imageDiagnostics == null) {
+    content.append(el('p', 'lp-copy', 'Loading image diagnostics…'))
+    return page
+  }
+  if (!host.imageDiagnostics.length) {
+    content.append(el('p', 'lp-copy', 'No image requests logged yet. Generate or retry a photo, then refresh this screen.'))
+    return page
+  }
+  for (const entry of host.imageDiagnostics) {
+    const detail = el('details', 'lp-card lp-image-diagnostic-entry')
+    detail.dataset.status = entry.status
+    const time = entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''
+    const summary = el('summary', '')
+    summary.append(el('strong', '', `${entry.stage.replace(/_/g, ' ')}${entry.status === 'error' ? ' · ERROR' : ''}`), el('span', 'lp-copy', `${time}${entry.source ? ` · ${entry.source}` : ''}`))
+    detail.append(summary, el('p', entry.status === 'error' ? 'lp-warning' : 'lp-copy', entry.message || ''))
+    if (entry.requestId) detail.append(el('p', 'lp-copy', `Request: ${entry.requestId}`))
+    if (entry.payload !== undefined) {
+      const json = JSON.stringify(entry.payload, null, 2)
+      const pre = el('pre', 'lp-image-diagnostic-json', json)
+      const copy = button('Copy payload', 'lp-button lp-button-quiet'); copy.onclick = () => { void navigator.clipboard?.writeText(json).catch(() => {}) }
+      detail.append(copy, pre)
+    }
+    content.append(detail)
+  }
+  return page
 }
 
 function contextSettings(host: SettingsViewHost): HTMLDivElement {
@@ -605,7 +675,7 @@ function contextSettings(host: SettingsViewHost): HTMLDivElement {
   const commit = (key: 'preferFullProfiles' | 'enableLorebooks', value: boolean) => { settings = {...settings, [key]: value}; host.update(settings) }
   content.append(toggle('Prefer full character profiles', settings.preferFullProfiles, value => commit('preferFullProfiles', value), 'Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default.'))
   content.append(toggle('Enable lorebooks', settings.enableLorebooks, value => commit('enableLorebooks', value), 'Requires World Books access. Roleplay uses host-activated lore. Freeform scans constant and literal-keyword entries from global books and books attached to its Persona and participants; host regex/vector and timed activation are unavailable there.'))
-  content.append(slider('Freeform roleplay context', settings.freeformRoleplayMessages, 0, 40, 1, value => value ? `${value} messages` : 'Off', value => { settings = {...settings, freeformRoleplayMessages:value}; host.update(settings) }, 'Let Freeform read this many recent messages from your currently active roleplay chat. Off keeps it independent. Requires Chats and Chat Mutation access; background context only, without changing that chat.'))
+
   const access = button('Manage lorebook access', 'lp-button lp-button-quiet'); access.onclick = () => host.requestPermissions(); content.append(access)
   const logs=button('Lorebook retrieval log','lp-button'); logs.onclick=()=>host.navigate('lore-log'); content.append(logs)
   const scenario = el('textarea', 'lp-textarea'); scenario.value = host.state.contextScenario || ''; scenario.maxLength = 12000
@@ -631,6 +701,7 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
     }
     return page
   }
+  if (host.section === 'image-diagnostics') return imageDiagnostics(host)
   if (host.section === 'context') return contextSettings(host)
   if (host.section === 'freeform' && host.freeformSession) return freeformSettings(host)
   if (!host.section) return categories(host)

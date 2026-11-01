@@ -557,9 +557,13 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       photo.append(image);photo.onclick=()=>host.openPhoto?.({...message,imageUrl:stickerImage});bubble.prepend(photo)
     }
     if (message.photo && message.photo.status !== 'ready') {
-      const status=el('div','lp-message-photo-status',message.photo.status==='pending'?'Making a photo…':message.photo.error||'Photo stopped.')
+      const pending=message.photo.status==='pending',status=el('div',`lp-message-photo-status ${pending?'is-pending':'is-failed'}`)
+      const indicator=el('span','lp-message-photo-indicator');indicator.setAttribute('aria-hidden','true')
+      const copy=el('span','lp-message-photo-copy')
+      copy.append(el('strong','',pending?'Developing photo…':'Photo interrupted'),el('span','',pending?'Rendering the shot':message.photo.error||'Photo generation stopped.'))
+      status.append(indicator,copy)
       if (!host.readOnlyDevice) {
-        const action=message.photo.status==='pending'?'stop':'retry',control=button(action==='stop'?'Stop photo':'Retry photo','lp-bubble-action')
+        const action=pending?'stop':'retry',control=button(action==='stop'?'Stop':'Retry','lp-message-photo-control')
         control.type='button';control.setAttribute('aria-label',`${action==='stop'?'Stop':'Retry'} photo from ${message.senderName}`)
         control.onclick=()=>host.send('lumiphone:message_photo_control',{conversationId:conversation.id,messageId:message.id,action});status.append(control)
       }

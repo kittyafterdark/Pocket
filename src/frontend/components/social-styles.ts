@@ -41,6 +41,18 @@ export const SOCIAL_STYLES = `
   .lp-social-field { display:grid; gap:5px; min-width:0; font-size:11px; color:var(--social-muted); }
   .lumiphone-shell .lp-social-page .lp-social-field :is(input,textarea,select) { width:100%; min-width:0; min-height:38px; padding:9px 10px; border-radius:6px; font-size:13px; border:1px solid var(--social-border); background:var(--social-bg); color:var(--social-text); }
   .lp-social-field textarea { resize:vertical; min-height:70px; line-height:1.5; }
+  .lp-social-mention-anchor { position:relative; min-width:0; }
+  .lp-social-mention-popover { position:absolute; z-index:60; top:calc(100% + 6px); left:0; right:0; max-height:236px; overflow:auto; padding:5px; border:1px solid var(--social-border); border-radius:12px; background:color-mix(in srgb,var(--social-surface) 96%,#000); box-shadow:0 12px 30px #0008; }
+  .lp-social-mention-popover[hidden] { display:none; }
+  .lp-social-mention-option { width:100%; min-height:48px; display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center; gap:9px; padding:6px 8px; border:0; border-radius:9px; background:transparent; color:var(--social-text); text-align:left; cursor:pointer; }
+  .lp-social-mention-option:hover,.lp-social-mention-option[aria-selected="true"] { background:color-mix(in srgb,var(--social-accent) 15%,transparent); }
+  .lp-social-mention-option .lp-social-avatar { width:32px; height:32px; }
+  .lp-social-mention-identity { display:grid; min-width:0; gap:1px; }
+  .lp-social-mention-identity strong,.lp-social-mention-identity small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-social-mention-identity strong { font-size:12px; }
+  .lp-social-mention-identity small { color:var(--social-muted); font-size:10px; }
+  .lp-social-mention-source { align-self:center; padding:3px 6px; border-radius:999px; background:color-mix(in srgb,var(--social-accent) 10%,transparent); color:var(--social-muted); font-size:8px; white-space:nowrap; }
+  .lp-social-mention { color:var(--social-accent); font-weight:650; }
   .lp-social-compose-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .lp-social-count { font-size:10px; color:var(--social-muted); }
   .lp-social-primary { min-width:66px; min-height:35px; border-radius:20px; background:var(--social-accent); color:#fff; font-weight:700; }

@@ -145,7 +145,7 @@ export interface PocketGenerationRun {
 
 
   requestId: string
-  task: 'native-bank' | 'native-birthdays' | 'native-browser' | 'native-maps' | 'native-twitch' | 'native-stickers' | 'lumistry-relationship-assess' | 'lumistry-image-check' | 'lumistry-author' | 'lumistry-development' | 'lumistry-portrayal' | 'lumistry-events' | 'lumistry-enrich' | 'lumistry-discover' | 'lumistry-self_generate' | 'lumistry-generate' | 'lumistry-world' | 'lumistry-photo' | 'lumistry-like' | 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge' | 'social-feed'
+  task: 'native-bank' | 'native-birthdays' | 'native-browser' | 'native-maps' | 'native-twitch' | 'native-stickers' | 'lumistry-relationship-assess' | 'lumistry-image-check' | 'lumistry-author' | 'lumistry-development' | 'lumistry-portrayal' | 'lumistry-events' | 'lumistry-enrich' | 'lumistry-discover' | 'lumistry-self_generate' | 'lumistry-generate' | 'lumistry-world' | 'lumistry-photo' | 'lumistry-like' | 'npc-contact' | 'profile-refresh' | 'scene-sync' | 'persona-profile' | 'message-reply' | 'message-retry' | 'group-reply' | 'reply-decision' | 'ambient-decision' | 'freeform-consolidation' | 'continuity-seed' | 'post-turn-audit' | 'scene-planner' | 'connection-test' | 'weather-week' | 'timeline-review' | 'tracker-judge' | 'social-feed'
   mode: PocketGenerationMode
   connectionId: string
   connectionName: string
@@ -255,6 +255,12 @@ export interface DevicePreferences {
   handsetScale: number
   desktopPhoneOffset: number
   freeformRoleplayMessages: number
+  /** Freeform-only: periodically reconcile committed Pocket conversations into durable Journal, Timeline, and model-writable tracker state. */
+  freeformAutoConsolidate: boolean
+  /** Completed generated Freeform turns required before automatic consolidation. */
+  freeformConsolidateTurns: number
+  /** Flush pending Freeform state when the Pocket surface is closed or leaves the session. */
+  freeformConsolidateOnClose: boolean
   suppressRoleplayTools: boolean
   desktopDockSide: 'left' | 'right'
   /** Device-wide density of Pocket controls and content. Never scales the host surface. */
@@ -277,6 +283,8 @@ export interface DevicePreferences {
   inlineAppearance?: 'cards' | 'phone'
   pushNotifications: boolean
   useSwarmProfile: boolean
+  /** Pocket-only: ask Swarm Studio to prepend the bound character positive base for character-bearing photos. */
+  includeStudioCharacterPositive: boolean
   sceneEnhancer: boolean
   jev?: PocketJevSettings
   generationMode: PocketGenerationMode
@@ -303,6 +311,9 @@ export interface DevicePreferences {
   personaAppearance: Record<string, PersonaAppearanceOverride>
   generationHistory: PocketGenerationRun[]
   manualVisualProfile: ManualVisualProfile
+  /** Camera preferences for in-narrative phoyos **/
+  captureNarrativePhotos?: boolean
+  inlineNarrativePhotos?: boolean
 }
 
 export interface PhoneEventSuggestion {
@@ -983,6 +994,31 @@ export interface PocketLoreRetrievalLog {
   entries: Array<{id:string; title:string; bookId:string; reason:string; chars:number}>
 }
 
+export interface PocketImageDiagnosticEntry {
+  id: string
+  createdAt: string
+  requestId: string
+  source: string
+  stage: string
+  status: 'info' | 'ok' | 'error'
+  message: string
+  payload?: unknown
+}
+
+export interface FreeformConsolidationState {
+  version: 1
+  lastMessageId?: string
+  /** Rolling committed-message IDs already folded into durable Freeform state. */
+  processedMessageIds?: string[]
+  lastConsolidatedAt?: string
+  lastAttemptAt?: string
+  status: 'idle' | 'working' | 'error'
+  lastError?: string
+  lastSummary?: string
+  /** Projection-only count; recomputed from committed messages when state is sent to the frontend. */
+  pendingTurns?: number
+}
+
 export interface PhoneState {
   lumistry?:Record<string,import('./domain/lumistry.js').DatingState>
   storageRevision?:number
@@ -1009,6 +1045,8 @@ export interface PhoneState {
   candidateClocks?: PocketCandidateClockSnapshot[]
   /** Provenance for the latest committed narrative reconciliation pass. */
   lastReconciliation?: PocketStateReconciliation
+  /** Freeform-only incremental state consolidation checkpoint. */
+  freeformConsolidation?: FreeformConsolidationState
   sceneSnapshot: SceneActorSnapshot | null
   /** Stable actor id for the configured Pocket Persona inside the communication graph. */
   pocketPersonaActorId: string
