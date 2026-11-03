@@ -1,4 +1,5 @@
 import { normalizeAuthoringPolicy } from '../domain/authoring-policy.js'
+import { GenerationOutputLimitError, normalizeConnectionTokenLimits, outputLimitReached } from '../domain/generation-output.js'
 import { pocketReasoning } from '../domain/reasoning.js'
 import type { DevicePreferences, PocketConnectionSummary, PocketGenerationInfo, PocketGenerationRun } from '../types.js'
 
@@ -91,6 +92,8 @@ export async function runPocketGeneration(
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
     }
+    const tokenLimit = normalizeConnectionTokenLimits(preferences.generationConnectionMaxTokens)[info.effective.id]
+    if (tokenLimit) request.parameters = { ...(request.parameters || {}), max_tokens: tokenLimit }
     let result: any
     const profileTask = ['persona-profile', 'npc-contact', 'profile-refresh', 'scene-sync'].includes(task)
     const generate = async () => {
@@ -117,17 +120,18 @@ export async function runPocketGeneration(
     await generate()
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const empty = () => typeof result?.content !== 'string' || !result.content.trim()
-    const usage=result?.usage||{},reasoningOnly=Number(usage.reasoning_tokens??usage.completion_tokens_details?.reasoning_tokens)>0 && Number(usage.reasoning_tokens??usage.completion_tokens_details?.reasoning_tokens)>=Number(usage.completion_tokens)
-    if (preferences.automaticGenerationRetry && options.automaticRetry!==false && !reasoningOnly && empty() && result?.finish_reason === 'length') {
+    const reasoningOnly = () => { const usage = result?.usage || {}; const reasoning = Number(usage.reasoning_tokens ?? usage.completion_tokens_details?.reasoning_tokens); return reasoning > 0 && reasoning >= Number(usage.completion_tokens) }
+    if (preferences.automaticGenerationRetry && options.automaticRetry!==false && !reasoningOnly() && empty() && outputLimitReached(result)) {
       const limit = Number(request.parameters?.max_tokens) || 0
-      const expanded = Math.min(16384, Math.max(8192, limit * 2))
-      if (expanded > limit) {
-        host.send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'thinking', message: 'The model reached its output limit before answering. Retrying once with more room…' }, userId)
+      const expanded = tokenLimit || Math.min(16384, Math.max(8192, limit * 2))
+      if (tokenLimit || expanded > limit) {
+        host.send({ type: 'lumiphone:operation_progress', task, requestId, phase: 'thinking', message: tokenLimit ? 'The model reached this connection’s output limit. Retrying once with the same budget…' : 'The model reached its output limit before answering. Retrying once with more room…' }, userId)
         request.parameters = { ...(request.parameters || {}), max_tokens: expanded }
         await generate()
       }
     }
-    if(empty() && reasoningOnly)throw new Error(`The model used all ${Number(usage.completion_tokens).toLocaleString('en-US')} output tokens for reasoning and returned no answer text. Lower reasoning or increase the output limit, then retry.`)
+    if (empty() && reasoningOnly()) throw new GenerationOutputLimitError('The model spent its output budget on thinking without producing a reply. Increase this connection’s output token limit, then retry.')
+    if (outputLimitReached(result) && (empty() || (!options.preservePartial && ['message-reply', 'message-retry', 'group-reply', 'reply-decision'].includes(task)))) throw new GenerationOutputLimitError('The reply reached its output limit. Increase this connection’s output token limit, then retry manually.')
     if (empty()) throw new Error(result?.finish_reason === 'length'
       ? preferences.automaticGenerationRetry ? 'The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model.' : 'The model reached its output limit before answering. Automatic retry is off; retry manually.'
       : 'The model returned no answer text. Check the provider or try another model.')

@@ -1,5 +1,6 @@
 import type { DiscoveredActor, PhoneState, PocketContact, PocketConversation, PocketRelationship } from '../types.js'
 import { contactAccent, contactAvatar, stableContactAccent } from './contacts.js'
+import { identityMatches, uniqueIdentityMatch } from './actor-identity.js'
 
 type ActorSource = DiscoveredActor['source']
 
@@ -78,9 +79,12 @@ export function resolvePocketActor(
   if (contact) return contactPresentation(contact, actorId)
   const discovered = state.discoveredActors.find((entry) => entry.id === actorId)
   if (!discovered) return null
-  const promoted = discovered.promotedContactId
+  const promoted = (discovered.promotedContactId
     ? state.contacts.find((entry) => entry.id === discovered.promotedContactId)
-    : undefined
+    : undefined) || (() => {
+      const matches = identityMatches(discovered.displayName, state.contacts, entry => [entry.name, ...(entry.aliases || [])])
+      return matches.length === 1 ? matches[0] : undefined
+    })()
   if (promoted) return { ...contactPresentation(promoted, actorId), discovered }
   return {
     actorId,
@@ -96,11 +100,12 @@ export function resolvePocketActor(
 }
 
 export function listPocketActors(state: Pick<PhoneState, 'contacts' | 'discoveredActors'>): PocketActorPresentation[] {
-  const promotedContactIds = new Set(state.discoveredActors.map((entry) => entry.promotedContactId).filter((entry): entry is string => Boolean(entry)))
-  return [
-    ...state.discoveredActors.map((entry) => resolvePocketActor(state, entry.id)).filter((entry): entry is PocketActorPresentation => Boolean(entry)),
-    ...state.contacts.filter((entry) => !promotedContactIds.has(entry.id)).map((entry) => contactPresentation(entry, entry.id)),
-  ]
+  const result = new Map<string, PocketActorPresentation>()
+  for (const actorId of [...state.discoveredActors.map(actor => actor.id), ...state.contacts.map(contact => contact.id)]) {
+    const actor = resolvePocketActor(state, actorId)
+    if (actor && !result.has(actor.contact?.id || actor.actorId)) result.set(actor.contact?.id || actor.actorId, actor)
+  }
+  return [...result.values()]
 }
 
 function contactPresentation(contact: PocketContact, actorId: string): PocketActorPresentation {
@@ -117,20 +122,69 @@ function contactPresentation(contact: PocketContact, actorId: string): PocketAct
   }
 }
 
+export function canonicalActorId(state: Pick<PhoneState, 'contacts' | 'discoveredActors'>, actorId: string): string {
+  return resolvePocketActor(state, actorId)?.contact?.id || actorId
+}
+
 export function matchingActorIds(state: Pick<PhoneState, 'contacts' | 'discoveredActors'>, name: string, allowedIds?: string[]): string[] {
-  const normalized = normalizeActorName(name)
-  if (!normalized) return []
-  const allowed = allowedIds ? new Set(allowedIds) : null
-  const matches: string[] = []
-  const promotedActors = new Map(state.discoveredActors.filter((entry) => entry.promotedContactId).map((entry) => [entry.promotedContactId!, entry.id]))
-  for (const contact of state.contacts) {
-    const actorId = promotedActors.get(contact.id) || contact.id
-    if ((!allowed || allowed.has(actorId)) && normalizeActorName(contact.name) === normalized && !matches.includes(actorId)) matches.push(actorId)
+  const allowed = allowedIds ? new Set(allowedIds.map(id => canonicalActorId(state, id))) : null
+  const actors = listPocketActors(state).filter(actor => !allowed || allowed.has(canonicalActorId(state, actor.actorId)))
+  const matches = identityMatches(name, actors, actor => [actor.name, ...(actor.contact?.aliases || []), ...(actor.discovered ? [actor.discovered.displayName] : [])])
+  const byIdentity = new Map<string, string>()
+  for (const actor of matches) {
+    const key = canonicalActorId(state, actor.actorId)
+    if (!allowed || allowed.has(key)) byIdentity.set(key, allowedIds?.find(id => canonicalActorId(state, id) === key) || actor.actorId)
   }
-  for (const actor of state.discoveredActors) {
-    if ((!allowed || allowed.has(actor.id)) && actor.normalizedName === normalized && !matches.includes(actor.id)) matches.push(actor.id)
+  return [...byIdentity.values()]
+}
+
+export function groupTitleMatches(thread: PocketConversation, title: string): boolean {
+  const wanted = normalizeActorName(title)
+  return Boolean(wanted && [thread.title, ...(thread.titleAliases || [])].some(name => normalizeActorName(name) === wanted))
+}
+
+export function rememberGroupTitle(thread: PocketConversation, title: string): void {
+  const next = title.trim().replace(/\s+/g, ' ').slice(0, 120)
+  if (!next || normalizeActorName(next) === normalizeActorName(thread.title)) return
+  const names = [...(thread.titleAliases || []), thread.title, next], seen = new Set<string>()
+  const aliases = names.filter(name => { const key = normalizeActorName(name); if (!key || seen.has(key)) return false; seen.add(key); return true })
+  thread.titleAliases = aliases.length > 24 ? [aliases[0], ...aliases.slice(-23)] : aliases
+}
+
+export function matchingGroupConversation(
+  state: PhoneState, actorIds: string[], includesPersona: boolean, title = '',
+  options: { allowPartial?: boolean; personaUnspecified?: boolean; relatedTitlesOnly?: boolean } = {},
+): PocketConversation | undefined {
+  const roster = (ids: string[]) => new Set(ids.filter(id => id !== state.pocketPersonaActorId).map(id => canonicalActorId(state, id)))
+  const titleWords = (value: string) => normalizeActorName(value).replace(/([\p{L}])([\p{N}])/gu, '$1 $2').replace(/([\p{N}])([\p{L}])/gu, '$1 $2').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(/\s+/)
+  const relatedTitle = (candidate: string) => {
+    const a = titleWords(title), b = titleWords(candidate), shorter = a.length <= b.length ? a : b, longer = a.length <= b.length ? b : a
+    return shorter.length >= 2 && shorter.join(' ').length >= 4 && shorter.every((word, index) => word === longer[index])
   }
-  return matches
+  const wanted = roster(actorIds)
+  if (!wanted.size) return undefined
+  const matches = state.conversations.filter(thread => {
+    if (thread.kind !== 'group' || thread.channel === 'dating') return false
+    const samePersona = (thread.includesPocketPersona !== false) === includesPersona
+    const named = groupTitleMatches(thread, title)
+    const related = [thread.title, ...(thread.titleAliases || [])].some(relatedTitle)
+    if (!samePersona && !(options.allowPartial && options.personaUnspecified && (related || named))) return false
+    if (named && options.allowPartial) return true
+    const existing = roster(conversationActorIds(thread)), shared = [...wanted].filter(id => existing.has(id)).length
+    if (samePersona && wanted.size === existing.size && shared === wanted.size) return true
+    if (!options.allowPartial || (options.relatedTitlesOnly && !related)) return false
+    const descriptiveTitle = /^(?:messages? group|group chat|gc)(?:\s|:|$)/i.test(title.trim())
+    if (samePersona && descriptiveTitle && wanted.size >= 2 && shared === wanted.size) return true
+    // A named existing group can be addressed by only its current speakers.
+    if (related && shared > 0) return true
+    // Model-created copies often omit/add one member of a larger roster.
+    return samePersona && Math.min(wanted.size, existing.size) >= 4
+      && Math.abs(wanted.size - existing.size) === 1 && shared === Math.min(wanted.size, existing.size)
+  })
+  return matches.sort((a, b) => {
+    const age = (thread: PocketConversation) => { const at = Date.parse(thread.createdAt); return Number.isFinite(at) ? at : Number.MAX_SAFE_INTEGER }
+    return age(a) - age(b) || state.conversations.indexOf(a) - state.conversations.indexOf(b)
+  })[0]
 }
 
 export function ensureDiscoveredActor(state: PhoneState, options: {
@@ -166,7 +220,7 @@ export function ensureDiscoveredActor(state: PhoneState, options: {
 }
 
 export function ensureDirectActorConversation(state: PhoneState, actorId: string, now: string, makeId: (prefix: string) => string): PocketConversation {
-  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.includesPocketPersona !== false && conversationActorIds(conversation)[0] === actorId)
+  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.channel !== 'dating' && conversation.includesPocketPersona !== false && canonicalActorId(state, conversationActorIds(conversation)[0]) === canonicalActorId(state, actorId))
   if (existing) return existing
   const actor = resolvePocketActor(state, actorId)
   if (!actor || actor.kind === 'persona') throw new Error('Choose a valid non-Persona actor before opening a conversation.')
@@ -196,11 +250,13 @@ export function ensureExternalDirectConversation(
   makeId: (prefix: string) => string,
 ): PocketConversation {
   if (!leftActorId || !rightActorId || leftActorId === rightActorId) throw new Error('An external direct conversation needs two distinct actors.')
-  const wanted = [leftActorId, rightActorId].sort()
+  const wanted = [leftActorId, rightActorId].map(id => canonicalActorId(state, id)).sort()
+  if (wanted[0] === wanted[1]) throw new Error('An external conversation needs two distinct actors.')
   const existing = state.conversations.find((conversation) =>
     conversation.kind === 'direct'
     && conversation.includesPocketPersona === false
-    && [...conversationActorIds(conversation)].sort().join('\u0000') === wanted.join('\u0000')
+    && conversation.channel !== 'dating'
+    && conversationActorIds(conversation).map(id => canonicalActorId(state, id)).sort().join('\u0000') === wanted.join('\u0000')
   )
   if (existing) return existing
   const actors = wanted.map((actorId) => resolvePocketActor(state, actorId))
@@ -243,7 +299,7 @@ export function actorAsGenerationContact(actor: PocketActorPresentation, now: st
     presence: { inScene: false, lastSceneAt: '' },
     contextPolicy: { pinned: actor.relationship === 'close' },
     generationPolicy: { relevant: true },
-    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+    messagingPolicy: { remoteEligible: true, ambientEnabled: false, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
     messagingStyle: { talkativeness: actor.relationship === 'close' ? 58 : 42, fragmentation: 35 },
     createdAt: actor.discovered?.firstSeenAt || now,
     updatedAt: actor.discovered?.lastSeenAt || now,
@@ -253,8 +309,16 @@ export function actorAsGenerationContact(actor: PocketActorPresentation, now: st
 export function promoteDiscoveredActor(state: PhoneState, actorId: string, now: string, makeId: (prefix: string) => string): PocketContact {
   const actor = state.discoveredActors.find((entry) => entry.id === actorId)
   if (!actor) throw new Error('That discovered actor no longer exists.')
-  const existing = actor.promotedContactId ? state.contacts.find((entry) => entry.id === actor.promotedContactId) : undefined
-  if (existing) return existing
+  const existing = (actor.promotedContactId ? state.contacts.find((entry) => entry.id === actor.promotedContactId) : undefined)
+    || uniqueIdentityMatch(actor.displayName, state.contacts, entry => [entry.name, ...(entry.aliases || [])])
+  if (existing) {
+    actor.promotedContactId = existing.id
+    actor.lastSeenAt = now
+    for (const conversation of state.conversations) {
+      if (conversationActorIds(conversation).includes(actor.id) && !conversation.participantContactIds.includes(existing.id)) conversation.participantContactIds.push(existing.id)
+    }
+    return existing
+  }
   const contactId = makeId('contact')
   const contact: PocketContact = {
     id: contactId,
@@ -274,7 +338,7 @@ export function promoteDiscoveredActor(state: PhoneState, actorId: string, now: 
     presence: { inScene: false, lastSceneAt: '' },
     contextPolicy: { pinned: actor.relationship === 'close' },
     generationPolicy: { relevant: true },
-    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+    messagingPolicy: { remoteEligible: true, ambientEnabled: false, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
     messagingStyle: { talkativeness: actor.relationship === 'close' ? 58 : 42, fragmentation: 35 },
     createdAt: now,
     updatedAt: now,

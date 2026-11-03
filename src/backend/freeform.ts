@@ -25,7 +25,7 @@ export class FreeformSessions {
     if (raw?.version !== 1 || !Array.isArray(raw.sessions) || raw.sessions.some(s => !s || !/^_freeform_[\w-]{1,140}$/.test(s.id) || typeof s.name !== 'string' || typeof s.personaId !== 'string' || typeof s.personaName !== 'string')) {
       throw new Error('The Freeform session directory is unsupported. It has been left untouched.')
     }
-    return structuredClone(raw.sessions)
+    return structuredClone(raw.sessions.map(session => ({ ...session, ambientEnabled: session.ambientEnabled === true })))
   }
 
   private indexLock(userId?: string): string { return `freeform:index:${userId || '_default'}` }
@@ -42,7 +42,7 @@ export class FreeformSessions {
     if (!persona.linkedPersonaId || !persona.displayName) throw new Error('Choose a Persona for this session.')
     return this.host.lock(this.indexLock(userId), async () => {
       const sessions = await this.list(userId)
-      const session: FreeformSession = { id: `_freeform_${this.host.makeId()}`, name: checkedName, personaId: persona.linkedPersonaId!, personaName: persona.displayName, appearanceBasePersonaId: persona.linkedPersonaId, independentStyling: false, createdAt: this.host.now() }
+      const session: FreeformSession = { id: `_freeform_${this.host.makeId()}`, name: checkedName, personaId: persona.linkedPersonaId!, personaName: persona.displayName, appearanceBasePersonaId: persona.linkedPersonaId, independentStyling: false, ambientEnabled: false, createdAt: this.host.now() }
       if (!/^_freeform_[\w-]{1,140}$/.test(session.id) || await this.host.read(this.host.path(session.id, '_none'), userId) !== null) throw new Error('Could not allocate a new Freeform session. Try again.')
       const state = this.host.fresh(session.id, '_none')
       state.pocketPersona = freeformPersona(persona)
@@ -51,6 +51,16 @@ export class FreeformSessions {
       await this.host.write(this.host.path(session.id, '_none'), state, userId)
       await this.host.write(FREEFORM_INDEX_PATH, { version: 1, sessions: [...sessions, session] }, userId)
       return session
+    })
+  }
+
+  async setAmbient(sessionId: string, enabled: boolean, userId?: string): Promise<FreeformSession> {
+    return this.host.lock(this.indexLock(userId), async () => {
+      const sessions = await this.list(userId), session = sessions.find(s => s.id === sessionId)
+      if (!session) throw new Error('That Freeform session is unavailable.')
+      session.ambientEnabled = enabled
+      await this.host.write(FREEFORM_INDEX_PATH, { version: 1, sessions }, userId)
+      return structuredClone(session)
     })
   }
 

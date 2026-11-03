@@ -116,6 +116,11 @@ export function deviceActorName(state: PhoneState, actorId: string): string {
   return resolvePocketActor(state, actorId)?.name || 'Unknown actor'
 }
 
+export function messagePushTitle(state: PhoneState, senderName: string, targetOwnerActorId?: string): string {
+  const owner = targetOwnerActorId || pocketPersonaActorId(state)
+  return `[Pocket] ${senderName} → ${deviceActorName(state, owner)}`
+}
+
 export function conversationTitleForDevice(state: PhoneState, conversation: PocketConversation, deviceOwnerActorId: string): string {
   if (conversation.kind === 'group') return conversation.title || 'Group'
   const counterparts = counterpartActorIds(state, conversation, deviceOwnerActorId)

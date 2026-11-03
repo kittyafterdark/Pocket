@@ -43,6 +43,7 @@ export interface ContactsViewHost {
   generatePhoto(contactId: string): void
   generateDraftPhoto(): void
   useSourcePhoto(contactId: string): void
+  importLorebook?(anchor: HTMLElement): void
   requestSources(): void
   send(type: string, payload?: Record<string, unknown>): void
   showError(message: string): void
@@ -64,7 +65,7 @@ function draftPayload(draft: PocketContactDraft): Record<string, unknown> {
     avatarOverrideUrl: draft.avatarUrl || '', avatarSource: draft.avatarSource, avatarFocus: draft.avatarFocus,
     source: { kind: 'npc', origin: 'generated', description: draft.identityBrief },
     presence: { inScene: false, lastSceneAt: '' }, contextPolicy: { pinned: false }, generationPolicy: { relevant: true },
-    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+    messagingPolicy: { remoteEligible: true, ambientEnabled: false, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
   }
 }
 
@@ -151,7 +152,7 @@ function contactEditor(host: ContactsViewHost, contact: PocketContact | null, dr
       contextPolicy: { pinned: pinned.checked, profileMode: contact?.contextPolicy.profileMode || 'default' },
       generationPolicy: { relevant: relevant.checked },
       messagingPolicy: {
-        remoteEligible: remote.checked, allowAmbientInScene: ambientHere.checked,
+        remoteEligible: remote.checked, ambientEnabled: contact?.messagingPolicy.ambientEnabled ?? false, allowAmbientInScene: ambientHere.checked,
         lastInitiatedMessageAt: contact?.messagingPolicy.lastInitiatedMessageAt || '',
         lastInitiatedRoleplayAt: contact?.messagingPolicy.lastInitiatedRoleplayAt || '',
       },
@@ -272,7 +273,15 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
       choice.addEventListener('click', () => host.send('lumiphone:set_presence', { contactId: contact.id, inScene }))
       presenceControls.appendChild(choice)
     }
-    presence.append(presenceControls, el('p', 'lp-copy', 'Correct their location now. Later story updates can change it.'))
+    presence.append(presenceControls)
+    if (host.state.chatId.startsWith('_freeform_')) {
+      presence.append(el('p', 'lp-copy', 'Ambient chats are session-bound in Freeform. Use Settings → Freeform to enroll or silence this whole session.'))
+    } else {
+      const ambient = el('input'); ambient.type = 'checkbox'; ambient.checked = contact.messagingPolicy.ambientEnabled === true
+      ambient.addEventListener('change', () => host.send('lumiphone:set_ambient_contact', { contactId: contact.id, enabled: ambient.checked }))
+      presence.append(controlRow('Ambient chats', ambient), el('p', 'lp-copy', 'Let this profile independently start DMs and scheduled notifications for this Pocket conversation. Other contacts stay out unless you enable them too.'))
+    }
+    presence.append(el('p', 'lp-copy', 'Correct their location now. Later story updates can change it.'))
     const message = button('Message')
     message.addEventListener('click', () => host.openDirect(contact.id))
     content.prepend(hero); content.append(presence)
@@ -291,7 +300,7 @@ export function renderContactsView(host: ContactsViewHost): HTMLDivElement {
     }
     if (contact.source.kind !== 'npc' || contact.source.origin === 'discovered') {
       const profileOperation = [...host.operations.values()].find((entry) => entry.task === 'profile-refresh' && entry.phase !== 'complete' && entry.phase !== 'error')
-      const refresh = button(profileOperation ? (contact.source.kind === 'npc' ? 'Describing…' : 'Refreshing…') : (contact.source.kind === 'npc' ? 'Describe from RP ✦' : 'Refresh compact profile ✦'), 'lp-button lp-button-quiet')
+      const refresh = button(profileOperation ? (contact.source.kind === 'npc' ? 'Describing…' : 'Refreshing…') : (contact.source.kind === 'npc' ? 'Describe from phone context ✦' : 'Refresh compact profile ✦'), 'lp-button lp-button-quiet')
       refresh.disabled = !host.capabilities?.generation || Boolean(profileOperation)
       refresh.addEventListener('click', () => host.send('lumiphone:refresh_contact_profile', { contactId: contact.id }))
       content.appendChild(refresh)

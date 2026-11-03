@@ -180,6 +180,12 @@ export function renderContactImport(host: ContactsViewHost): HTMLDivElement {
     const row=button('','lp-directory-source');row.dataset.contactSource=key;const text=identity(label,help);text.querySelector('strong')!.id='lp-contact-source-'+key;text.querySelector('small')!.id='lp-contact-source-help-'+key;row.setAttribute('aria-labelledby','lp-contact-source-'+key);row.setAttribute('aria-describedby','lp-contact-source-help-'+key);row.append(text,el('span','lp-directory-source-count',String(total)),el('span','lp-directory-chevron','›'))
     row.onclick=()=>{ui.source=key;ui.sourceQuery='';ui.sourcePage=0;ui.sourceScroll=0;rerenderImport(host);requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('.lp-contact-import-browser input[type="search"]')?.focus({preventScroll:true}))};sources.append(row)
   }
+  if (host.importLorebook) {
+    const lorebook = button('Import from lorebook', 'lp-directory-source')
+    lorebook.dataset.lorebookImport = 'true'
+    lorebook.onclick = () => host.importLorebook?.(lorebook)
+    sources.append(lorebook)
+  }
   content.append(creator,searchForm,sources);rememberScroll(content,ui,'importScroll');return page
 }
 export function renderNpcBank(host: ContactsViewHost): HTMLDivElement {

@@ -89,10 +89,11 @@ export function disclosure(label: string, ...children: Node[]): HTMLDetailsEleme
 }
 
 /** A surface-local modal sheet. Never attaches persona styling to document.body. */
-export function showPocketSheet(anchor: HTMLElement, title: string, content: HTMLElement, options:{closeLabel?:string;onDismiss?:()=>void}={}): { dismiss: () => void } | undefined {
+export function showPocketSheet(anchor: HTMLElement, title: string, content: HTMLElement, options:{closeLabel?:string;onDismiss?:()=>void;className?:string;viewportWidth?:number}={}): { dismiss: () => void } | undefined {
   const parent = anchor.closest('.lumiphone-shell') || anchor.closest('[role="dialog"]') || anchor.parentElement
   if (!parent) return
   const dialog = el('dialog', 'lp-sheet')
+  if (options.className) dialog.classList.add(options.className)
   const panel = el('div', 'lp-sheet-panel')
   const heading = el('h2', 'lp-title', title)
   dialog.setAttribute('aria-label', title)
@@ -111,31 +112,41 @@ export function showPocketSheet(anchor: HTMLElement, title: string, content: HTM
     const restoreFocus = !active || active === dialog.ownerDocument.body || dialog.contains(active)
     if (home) marker.replaceWith(content)
     dialog.remove()
+    parent.ownerDocument.defaultView?.removeEventListener('resize', position)
     options.onDismiss?.()
     if (restoreFocus && anchor.isConnected) anchor.focus({ preventScroll: true })
   }, { once: true })
   panel.append(heading, content, close); dialog.append(panel); parent.append(dialog)
-  const bounds = parent.getBoundingClientRect()
-  const viewport = parent.ownerDocument.defaultView
-  if (parent.matches('.lumiphone-shell') && viewport) {
-    // Top-layer dialogs inherit CSS zoom; bounds are already visual pixels.
-    const layoutWidth = (parent as HTMLElement).offsetWidth
-    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
-    const layoutPx = (pixels: number) => pixels / zoom
-    dialog.style.position = 'fixed'
-    dialog.style.margin = '0'
-    dialog.style.left = `${layoutPx(bounds.left + 12)}px`
-    dialog.style.top = 'auto'
-    dialog.style.bottom = `${layoutPx(Math.max(12, viewport.innerHeight - bounds.bottom + 24))}px`
-    dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`
-    dialog.style.maxHeight = `${layoutPx(Math.max(120, bounds.height - 70))}px`
-  } else if (viewport) {
-    // Detached host modals can reset native dialog margins. Center in viewport
-    // layout pixels, including inherited host zoom, rather than their top-left.
-    const layoutWidth = (parent as HTMLElement).offsetWidth
-    const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
-    Object.assign(dialog.style, { position:'fixed', margin:'0', left:`${viewport.innerWidth / 2 / zoom}px`, top:`${viewport.innerHeight / 2 / zoom}px`, bottom:'auto', transform:'translate(-50%,-50%)', width:`${Math.min(440, Math.max(0, viewport.innerWidth / zoom - 32))}px`, maxHeight:`calc(${viewport.innerHeight / zoom}px - 48px - var(--app-interactive-safe-top,0px))` })
+  const position = () => {
+    const bounds = parent.getBoundingClientRect()
+    const viewport = parent.ownerDocument.defaultView
+    if (options.viewportWidth && viewport && viewport.innerWidth >= 768) {
+      const layoutWidth = (parent as HTMLElement).offsetWidth
+      const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
+      Object.assign(dialog.style, { position:'fixed', margin:'0', left:`${viewport.innerWidth / 2 / zoom}px`, top:`${viewport.innerHeight / 2 / zoom}px`, bottom:'auto', transform:'translate(-50%,-50%)', width:`${Math.min(options.viewportWidth, viewport.innerWidth - 64) / zoom}px`, maxHeight:`calc(${viewport.innerHeight / zoom}px - 48px - var(--app-interactive-safe-top,0px))` })
+    } else if (parent.matches('.lumiphone-shell') && viewport) {
+      // Top-layer dialogs inherit CSS zoom; bounds are already visual pixels.
+      const layoutWidth = (parent as HTMLElement).offsetWidth
+      const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
+      const layoutPx = (pixels: number) => pixels / zoom
+      dialog.style.transform = 'none'
+      dialog.style.position = 'fixed'
+      dialog.style.margin = '0'
+      dialog.style.left = `${layoutPx(bounds.left + 12)}px`
+      dialog.style.top = 'auto'
+      dialog.style.bottom = `${layoutPx(Math.max(12, viewport.innerHeight - bounds.bottom + 24))}px`
+      dialog.style.width = `${layoutPx(Math.max(0, bounds.width - 24))}px`
+      dialog.style.maxHeight = `min(${layoutPx(Math.max(120, bounds.height - 70))}px, calc(${layoutPx(viewport.innerHeight)}px - var(--app-interactive-safe-top,0px) - ${dialog.style.bottom}))`
+    } else if (viewport) {
+      // Detached host modals can reset native dialog margins. Center in viewport
+      // layout pixels, including inherited host zoom, rather than their top-left.
+      const layoutWidth = (parent as HTMLElement).offsetWidth
+      const zoom = layoutWidth && bounds.width ? bounds.width / layoutWidth : 1
+      Object.assign(dialog.style, { position:'fixed', margin:'0', left:`${viewport.innerWidth / 2 / zoom}px`, top:`${viewport.innerHeight / 2 / zoom}px`, bottom:'auto', transform:'translate(-50%,-50%)', width:`${Math.min(440, Math.max(0, viewport.innerWidth / zoom - 32))}px`, maxHeight:`calc(${viewport.innerHeight / zoom}px - 48px - var(--app-interactive-safe-top,0px))` })
+    }
   }
+  position()
+  parent.ownerDocument.defaultView?.addEventListener('resize', position)
   if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','')
   return { dismiss }
 }

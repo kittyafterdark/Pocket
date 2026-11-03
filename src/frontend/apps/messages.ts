@@ -25,6 +25,14 @@ export function centerMessageInThread(thread: HTMLElement, target: HTMLElement):
 }
 
 export interface MessagesViewHost {
+  selectionMode?: boolean
+  selectedConversationIds?: Set<string>
+  deletingConversations?: boolean
+  setSelectionMode?(value: boolean): void
+  onCleanup?(cleanup: () => void): void
+  toggleConversationSelection?(id: string): void
+  selectAllConversations?(ids: string[]): void
+  deleteConversations?(ids: string[], anchor: HTMLElement): void
   dating?:boolean
   datingPhotoAction?(conversationId:string,messageId:string):void
   datingPhotoAvailable?:boolean
@@ -411,14 +419,51 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
 
   if (!selectedConversation) {
     const conversations = host.state.conversations.filter((conversation) => !conversation.archived && Boolean(conversation.channel==='dating')===Boolean(dating) && conversationVisibleOnDevice(host.state, conversation, host.deviceOwnerActorId)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-    const { page, content } = host.page('Messages', `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`, {
-      label: host.readOnlyDevice ? '' : 'New', callback: () => host.selectConversation('', 'new-group'), enabled: !host.readOnlyDevice,
-    })
+    const selecting = Boolean(host.selectionMode && !host.readOnlyDevice && !dating)
+    const inboxMenu = !dating && !host.readOnlyDevice && Boolean(host.setSelectionMode)
+    const { page, content } = host.page('Messages', `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`, !host.readOnlyDevice && (selecting || !inboxMenu) ? {
+      label: selecting ? 'Cancel' : 'New', callback: () => selecting ? host.setSelectionMode?.(false) : host.selectConversation('', 'new-group'),
+    } : undefined)
     content.classList.add('lp-conversation-list')
+    if (inboxMenu && !selecting) {
+      const menu = el('details', 'lp-conversation-menu lp-inbox-actions'), toggle = el('summary', 'lp-nav-action', '⋯'), choices = el('div', 'lp-conversation-menu-sheet')
+      toggle.setAttribute('aria-label', 'Messages actions')
+      const add = button('New chat', 'lp-conversation-menu-action'), select = button('Select chats', 'lp-conversation-menu-action')
+      select.disabled = !conversations.length || Boolean(host.deletingConversations)
+      add.onclick = () => { menu.open = false; host.selectConversation('', 'new-group') }
+      select.onclick = () => { menu.open = false; host.setSelectionMode?.(true) }
+      choices.append(add, select); menu.append(toggle, choices)
+      const nav = page.querySelector('.lp-nav'), slot = nav?.lastElementChild
+      if (slot) slot.replaceWith(menu); else (nav || page).append(menu)
+      menu.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && menu.open) { event.preventDefault(); event.stopPropagation(); menu.open = false; toggle.focus() }
+        if (event.key === 'ArrowDown' && event.target === toggle) { event.preventDefault(); menu.open = true; add.focus() }
+      })
+      const outside = (event: Event) => { if (menu.open && !menu.contains(event.target as Node)) menu.open = false }
+      if (host.onCleanup) {
+        document.addEventListener('pointerdown', outside); document.addEventListener('focusin', outside)
+        host.onCleanup(() => { document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside) })
+      } else { page.addEventListener('pointerdown', outside); page.addEventListener('focusin', outside) }
+    }
+    if (selecting) {
+      const toolbar = el('div', 'lp-conversation-selection-tools')
+      const select = button('Select all', 'lp-button lp-button-quiet')
+      select.disabled = !conversations.length || Boolean(host.deletingConversations)
+      select.onclick = () => host.selectAllConversations?.(conversations.map(thread => thread.id))
+      toolbar.append(select)
+      const selected = conversations.filter(thread => host.selectedConversationIds?.has(thread.id)).map(thread => thread.id)
+      const remove = button(`Delete selected (${selected.length})`, 'lp-button lp-button-destructive'); remove.disabled = !selected.length || Boolean(host.deletingConversations)
+      remove.onclick = () => host.deleteConversations?.(selected, remove); toolbar.append(remove)
+      content.append(toolbar)
+    }
     for (const conversation of conversations) {
-      const row = button('', 'lp-conversation-row')
-      row.dataset.clickable = 'true'; row.tabIndex = 0; row.setAttribute('role', 'button')
+      const row = selecting ? el('label', 'lp-conversation-row lp-conversation-select') : button('', 'lp-conversation-row')
+      if (!selecting) { row.dataset.clickable = 'true'; row.tabIndex = 0; row.setAttribute('role', 'button') }
       const titleText = conversationTitle(host.state, conversation, host.deviceOwnerActorId)
+      if (selecting) {
+        const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.checked = Boolean(host.selectedConversationIds?.has(conversation.id)); checkbox.disabled = Boolean(host.deletingConversations); checkbox.setAttribute('aria-label', `Select ${titleText}`)
+        checkbox.onchange = () => host.toggleConversationSelection?.(conversation.id); row.append(checkbox)
+      }
       const members = counterpartActorIds(host.state, conversation, host.deviceOwnerActorId)
       const avatar = el('div', 'lp-avatar', conversation.kind === 'group' ? String(members.length) : titleText.slice(0, 1).toUpperCase())
       const directActor = conversation.kind === 'direct' ? resolvePocketActor(host.state, members[0]) : null
@@ -427,7 +472,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       }
       avatar.style.background = avatarColor(members[0] || titleText)
       const latest = conversation.messages.at(-1)
-      const description = latest
+      const description = conversation.replyFailure ? 'Reply interrupted · retry in chat' : latest
         ? `${conversation.kind === 'group' && latest.sender === 'contact' ? `${latest.senderName}: ` : ''}${latest.text}`
         : ''
       const identity = identityBlock({ name: titleText, meta: latest ? formatTime(latest.createdAt) : '', description })
@@ -435,8 +480,10 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
       const unread = conversationUnreadForDevice(host.state, conversation, host.deviceOwnerActorId)
       if (unread) row.appendChild(el('span', 'lp-unread', String(unread)))
       const open = () => host.selectConversation(conversation.id)
-      row.addEventListener('click', open)
-      row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open() } })
+      if (!selecting) {
+        row.addEventListener('click', open)
+        row.addEventListener('keydown', (event) => { if ((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') { event.preventDefault(); open() } })
+      }
       content.appendChild(row)
     }
     if (!conversations.length) content.appendChild(host.empty('No conversations yet', 'Open Contacts to message a character, Council member, or Pocket NPC.'))
@@ -475,6 +522,9 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   menuSheet.appendChild(menuAction('View Timeline', () => host.openTimeline('')))
   menuSheet.appendChild(menuAction('Generation info', () => host.showConversationGenerationInfo(conversation.id)))
   menuSheet.appendChild(menuAction('Outgoing prompt', () => host.showOutgoingPrompt(conversation.id)))
+  if (!dating && !host.readOnlyDevice && host.deleteConversations) {
+    const remove = menuAction('Delete conversation', () => host.deleteConversations?.([conversation.id], menuToggle)); menuSheet.append(remove)
+  }
   menu.append(menuToggle, menuSheet)
   nav.append(back, title, menu)
   page.appendChild(nav)
@@ -643,6 +693,12 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
   if (currentDayBoundary) bubbles.append(daySeparator(currentDayBoundary))
   eventList.append(...pendingRows,...scheduledRows)
   if (eventList.childElementCount) { eventStrip.append(eventList); referenceSlot.append(eventStrip) }
+  if (conversation.replyFailure && !busy && !host.readOnlyDevice) {
+    const failure = conversation.replyFailure, card = el('aside', 'lp-reply-failure'); card.setAttribute('role', 'status')
+    const retry = button('Retry reply', 'lp-button lp-button-quiet'); retry.disabled = !host.generationAvailable
+    retry.onclick = () => { retry.disabled = true; if (failure.retryMessageId) host.send('lumiphone:retry_message', { conversationId: conversation.id, messageId: failure.retryMessageId }); else host.generateReply(conversation.id, failure.speakerActorId) }
+    card.append(el('strong', '', failure.kind === 'length' ? 'Reply hit the output limit' : 'Reply interrupted'), el('p', '', failure.message), retry); bubbles.append(card)
+  }
   if (busy?.phase === 'checking') {
     const checking = el('div', conversation.kind === 'group' ? 'lp-group-typing' : 'lp-conversation-status')
     checking.appendChild(el('span', '', conversation.kind === 'group' ? titleText : 'Checking for reply…'))
@@ -681,7 +737,7 @@ export function renderMessagesView(host: MessagesViewHost): HTMLDivElement {
     }
     bubbles.appendChild(banner)
   }
-  if (!conversation.messages.length) bubbles.appendChild(host.empty('Say hello', 'This thread is private to this Pocket roleplay state.'))
+  if (!conversation.messages.length && !conversation.replyFailure) bubbles.appendChild(host.empty('Say hello', 'This thread is private to this Pocket roleplay state.'))
 
   if (host.readOnlyDevice) {
     const inspect = el('div', 'lp-conversation-status', `Viewing ${resolvePocketActor(host.state, host.deviceOwnerActorId)?.name || 'this actor'}'s Pocket · inspection mode`)

@@ -52,7 +52,8 @@ test('native sheets convert handset bounds through host zoom and restore focus o
     const dialog = shell.querySelector('dialog')!
     expect(parseFloat(dialog.style.width) * .85).toBeCloseTo(486)
     expect(parseFloat(dialog.style.left) * .85).toBeCloseTo(12)
-    expect(parseFloat(dialog.style.maxHeight) * .85).toBeCloseTo(630)
+    expect(Number(/^min\(([\d.]+)px,/.exec(dialog.style.maxHeight)?.[1]) * .85).toBeCloseTo(630)
+    expect(dialog.style.maxHeight).toContain('var(--app-interactive-safe-top,0px)')
     sheet.dismiss()
     expect(shell.querySelector('dialog')).toBeNull()
     expect(document.activeElement).toBe(anchor)
@@ -141,6 +142,27 @@ test('generation retry toggle saves manual mode and renders it again', () => {
   } finally { globalThis.document = previous; dom.window.close() }
 })
 
+test('output token limit edits stay attached to their generation connection', () => {
+  const previous = globalThis.document, dom = new JSDOM()
+  try {
+    globalThis.document = dom.window.document
+    let draft = { ...defaultPreferences(), generationMode: 'sidecar' as 'sidecar' | 'roleplay', sidecarConnectionId: 'sidecar', generationConnectionMaxTokens: { main: 24000, sidecar: 12000 } as Record<string, number> }
+    const render = () => {
+      const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
+      return renderSettingsView({ draft, section: 'generation', state: { setup: { initialized: true } }, page: () => ({ page, content }), update: (next: typeof draft) => { draft = next }, mountModelCombobox: () => () => {}, capabilities: {},
+        generation: { effective: { id: 'main', name: 'Main' }, connections: [{ id: 'main', name: 'Main', isDefault: true }, { id: 'sidecar', name: 'Sidecar' }], history: [] } } as any)
+    }
+    let control = render().querySelector<HTMLInputElement>('input[type="number"]')!
+    expect(control.labels![0].textContent).toBe('Output token limit'); expect(control.value).toBe('12000')
+    control.value = '16000'; control.dispatchEvent(new dom.window.Event('change'))
+    expect(draft.generationConnectionMaxTokens).toEqual({ main: 24000, sidecar: 16000 })
+    draft.generationMode = 'roleplay'; control = render().querySelector<HTMLInputElement>('input[type="number"]')!
+    expect(control.value).toBe('24000')
+    control.value = ''; control.dispatchEvent(new dom.window.Event('change'))
+    expect(draft.generationConnectionMaxTokens).toEqual({ sidecar: 16000 })
+  } finally { globalThis.document = previous; dom.window.close() }
+})
+
 
 test('image diagnostics page renders sanitized trace entries and exposes refresh, copy and clear controls', () => {
   const dom = new JSDOM('<!doctype html><body></body>')
@@ -151,7 +173,7 @@ test('image diagnostics page renders sanitized trace entries and exposes refresh
     const page = document.createElement('div'), content = document.createElement('div'); page.append(content)
     let refreshed = 0, cleared = 0
     const view = renderSettingsView({
-      draft: defaultPreferences(), section: 'image-diagnostics', page: () => ({ page, content }),
+      draft: defaultPreferences(), section: 'image-diagnostics', page: (title: string) => { const heading = document.createElement('div'); heading.textContent = title; page.prepend(heading); return { page, content } },
       imageDiagnostics: [{
         id: 'diag-1', createdAt: '2026-11-01T12:00:00.000Z', requestId: 'photo-1', source: 'camera:message',
         stage: 'provider_error', status: 'error', message: 'Invalid value for parameter sampler',

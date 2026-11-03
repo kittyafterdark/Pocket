@@ -51,7 +51,7 @@ export function freeformHost(initial: Array<[string, unknown]> = [], persist?: (
     store, sends, reads, generations, writes, permissions, personas, api, tools, interceptors,
     connect(handler: typeof receive) { receive = handler },
     async send(payload: any, userId?: string) { await frontend(payload, userId) },
-    async emit(name: string, payload: any = {}) { await events.get(name)?.(payload) },
+    async emit(name: string, payload: any = {}, userId?: string) { return await events.get(name)?.(payload, userId) },
     activeChat: () => ({ chatId: activeChat.id, characterId: activeChat.character_id }),
     switchChat(id: string) { activeChat = { ...activeChat, id } },
     switchPersona(id: string) { activePersona = personas.find(p => p.id === id)! },

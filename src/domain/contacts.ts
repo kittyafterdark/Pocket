@@ -1,4 +1,5 @@
 import {normalizeDatingAttachment} from './lumistry-person.js'
+import { identityMatches } from './actor-identity.js'
 import {normalizeLumistryCapture} from './lumistry-sharing.js'
 import {normalizeSpotifyShare} from './spotify-share.js'
 import { normalizeMessagePhoto } from './message-photo.js'
@@ -91,6 +92,7 @@ function normalizeSource(value: unknown, contactId: string, characterId: string,
       sceneKey: clean(value.sceneKey, 180) || undefined,
       discoveredActorId: clean(value.discoveredActorId, 180) || undefined,
       bankId: clean(value.bankId, 180) || undefined,
+      lorebookEntryIds: [...new Set((Array.isArray(value.lorebookEntryIds) ? value.lorebookEntryIds : []).map(id => clean(id, 180)).filter(Boolean))].slice(0, 24),
     }
   }
   if (contactId === characterId) return { kind: 'character', characterId }
@@ -114,11 +116,13 @@ export function normalizePocketContact(value: unknown, context: {
   const contextPolicy = record(value.contextPolicy) ? value.contextPolicy : {}
   const generationPolicy = record(value.generationPolicy) ? value.generationPolicy : {}
   const messagingPolicy = record(value.messagingPolicy) ? value.messagingPolicy : {}
+  const ambientEnabled = flag(messagingPolicy.ambientEnabled, false)
   const messagingStyle = record(value.messagingStyle) ? value.messagingStyle : {}
   const createdAt = timestamp(value.createdAt, context.now)
   return {
     id: contactId,
     name,
+    aliases: [...new Set((Array.isArray(value.aliases) ? value.aliases : []).map(alias => clean(alias, 120)).filter(Boolean))].slice(0, 24),
     role: clean(value.role, 120) || clean(value.subtitle, 120) || (source.kind === 'character' ? 'Character' : source.kind === 'council' ? 'Council member' : 'Pocket NPC'),
     description,
     identityBrief,
@@ -141,7 +145,8 @@ export function normalizePocketContact(value: unknown, context: {
     contextPolicy: { pinned: flag(contextPolicy.pinned), ...(contextPolicy.profileMode === 'full' || contextPolicy.profileMode === 'compact' ? {profileMode: contextPolicy.profileMode} : {}) },
     generationPolicy: { relevant: flag(generationPolicy.relevant, true) },
     messagingPolicy: {
-      remoteEligible: flag(messagingPolicy.remoteEligible, true),
+      remoteEligible: ambientEnabled || flag(messagingPolicy.remoteEligible, true),
+      ambientEnabled,
       allowAmbientInScene: flag(messagingPolicy.allowAmbientInScene, false),
       lastInitiatedMessageAt: timestamp(messagingPolicy.lastInitiatedMessageAt, ''),
       lastInitiatedRoleplayAt: timestamp(messagingPolicy.lastInitiatedRoleplayAt, ''),
@@ -287,6 +292,8 @@ function normalizeConversation(value: unknown, contacts: PocketContact[], now: s
     id: clean(value.id, 180) || makeId('conversation'),
     kind,
     title: clean(value.title, 120) || (kind === 'direct' ? fallback?.name || messages.at(-1)?.senderName || 'Conversation' : participantActorIds.map((entry) => contacts.find((contact) => contact.id === entry)?.name).filter(Boolean).join(', ').slice(0, 120) || 'Group'),
+    ...(kind === 'group' && Array.isArray(value.titleAliases) ? { titleAliases: [...new Set(value.titleAliases.map(alias => clean(alias, 120)).filter(Boolean))].slice(-24) } : {}),
+    replyFailure: record(value.replyFailure) && clean(value.replyFailure.message, 800) ? { kind: value.replyFailure.kind === 'length' ? 'length' : 'error', message: clean(value.replyFailure.message, 800), requestId: clean(value.replyFailure.requestId, 180), speakerActorId: clean(value.replyFailure.speakerActorId, 180) || undefined, retryMessageId: clean(value.replyFailure.retryMessageId, 180) || undefined, createdAt: timestamp(value.replyFailure.createdAt, now) } : undefined,
     appearance:normalizeChatAppearance(value.appearance),
     channel:value.channel==='dating'?'dating':'phone',datingOwnerId:clean(value.datingOwnerId,180)||undefined,archived:value.archived===true,
     participantActorIds,
@@ -347,7 +354,7 @@ function activeContact(context: { characterId: string; characterName: string; no
     presence: { inScene: false, lastSceneAt: '' },
     contextPolicy: { pinned: false },
     generationPolicy: { relevant: true },
-    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+    messagingPolicy: { remoteEligible: true, ambientEnabled: false, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
     messagingStyle: { talkativeness: 50, fragmentation: 35 },
     createdAt: context.now,
     updatedAt: context.now,
@@ -355,7 +362,7 @@ function activeContact(context: { characterId: string; characterName: string; no
 }
 
 export function ensureDirectConversation(state: { contacts: PocketContact[]; conversations: PocketConversation[] }, contactId: string, now: string, makeId: (prefix: string) => string): PocketConversation {
-  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.channel!=='dating' && conversation.includesPocketPersona !== false && (conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId)
+  const existing = state.conversations.find((conversation) => conversation.kind === 'direct' && conversation.channel!=='dating' && conversation.includesPocketPersona !== false && ((conversation.participantActorIds?.[0] || conversation.participantContactIds[0]) === contactId || conversation.participantContactIds.includes(contactId)))
   if (existing) return existing
   const contact = state.contacts.find((entry) => entry.id === contactId)
   const conversation: PocketConversation = {
@@ -387,8 +394,16 @@ export function normalizeContactCollections(value: AnyRecord, context: {
   }
   const canMaterializeActive = Boolean(context.characterId && context.characterId !== '_none' && !suppressedSourceKeys.has(activeSourceKey))
   if (!current && canMaterializeActive) {
-    current = activeContact(context)
-    contacts.unshift(current)
+    const matches = identityMatches(context.characterName, contacts, contact => [contact.name, ...(contact.aliases || [])])
+    if (matches.length === 1 && matches[0].source.kind === 'npc') {
+      current = matches[0]
+      current.aliases = [...new Set([...(current.aliases || []), current.name])]
+      current.name = context.characterName
+      current.source = { kind: 'character', characterId: context.characterId }
+    } else {
+      current = activeContact(context)
+      contacts.unshift(current)
+    }
   } else if (current && context.characterName && context.characterName !== 'Character') {
     current.name = context.characterName
   }
@@ -438,6 +453,6 @@ export function normalizeContactCollections(value: AnyRecord, context: {
     duplicate.unread = Math.max(duplicate.unread, conversation.unread)
     duplicate.updatedAt = duplicate.messages.at(-1)?.createdAt || duplicate.updatedAt
   }
-  if (current) ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId)
+  if (current && !(Array.isArray(value.suppressedDirectContactIds) && value.suppressedDirectContactIds.includes(current.id))) ensureDirectConversation({ contacts, conversations }, current.id, context.now, context.makeId)
   return { contacts: contacts.slice(0, MAX_CONTACTS), conversations: conversations.slice(0, MAX_CONVERSATIONS), migrated: legacy }
 }

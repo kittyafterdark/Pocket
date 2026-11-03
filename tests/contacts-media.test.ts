@@ -13,7 +13,7 @@ function fixture() {
   const dom=new JSDOM('<body/>',{pretendToBeVisual:true}),previous=new Map<string,PropertyDescriptor|undefined>()
   for(const [key,value] of Object.entries({document:dom.window.document,window:dom.window,Option:dom.window.Option,requestAnimationFrame:()=>0})){previous.set(key,Object.getOwnPropertyDescriptor(globalThis,key));Object.defineProperty(globalThis,key,{value,writable:true,configurable:true})}
   const sends:any[]=[],ui={},host:ContactsViewHost={
-    browser:ui,state:{contacts:[],conversations:[],contactGroups:[]} as any,selectedContactId:'',selectedView:'import',selectedGroupId:'',bankGroups:[],collectionDraft:undefined,collectionSaving:false,
+    browser:ui,state:{chatId:'contacts-fixture',contacts:[],conversations:[],contactGroups:[]} as any,selectedContactId:'',selectedView:'import',selectedGroupId:'',bankGroups:[],collectionDraft:undefined,collectionSaving:false,
     updateCollectionDraft(){},saveCollection:(type,payload)=>sends.push({type,...payload}),selectGroup:(id,view)=>{host.selectedGroupId=id;host.selectedView=view;render()},
     startGroup(){},generationBrief:'A florist',updateGenerationBrief:brief=>{host.generationBrief=brief},npcDraft:null,previousNpcDraft:null,
     sources:Array.from({length:720},(_,n)=>({kind:'character' as const,sourceId:'char-'+n,name:`Person ${String(n).padStart(3,'0')}`,role:n===719?'Astronomer':'Friend',avatarUrl:'',description:''})),

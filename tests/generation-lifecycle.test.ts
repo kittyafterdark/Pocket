@@ -122,6 +122,42 @@ function generationFixture(responses: Array<Record<string, unknown>>) {
   return { host, requests, events }
 }
 
+test('output token budgets persist per connection and override task budgets on the actual selected connection', async () => {
+  const limits = { sidecar: 12000, other: 24000 }
+  expect(normalizePreferences({ generationConnectionMaxTokens: limits }).generationConnectionMaxTokens).toEqual(limits)
+  expect(normalizePreferences({ generationConnectionMaxTokens: { bad: -1, zero: 0, text: '12000', tooBig: 1e9 } }).generationConnectionMaxTokens).toEqual({})
+  const f = generationFixture([{ content: 'A reply', finish_reason: 'stop' }]), load = f.host.loadPreferences
+  f.host.loadPreferences = async () => ({ ...await load(), generationConnectionMaxTokens: limits })
+  f.host.spindle.connections.list = async () => [{ id: 'sidecar', model: 'profile-model' }, { id: 'other', model: 'other-model' }]
+  await runPocketGeneration(f.host, 'message-reply', 'budget-sidecar', { parameters: { max_tokens: 720 } })
+  await runPocketGeneration(f.host, 'message-reply', 'budget-other', { parameters: { max_tokens: 720 } }, undefined, { connectionId: 'other' })
+  expect(f.requests.map(request => request.parameters.max_tokens)).toEqual([12000, 24000])
+})
+
+test('reasoning-only exhaustion is classified and respects a configured hard token limit', async () => {
+  const f = generationFixture([{ content: '', stop_reason: 'max_tokens', usage: { completion_tokens: 12000, reasoning_tokens: 12000 }, reasoning: 'PRIVATE THOUGHT' }]), load = f.host.loadPreferences
+  f.host.loadPreferences = async () => ({ ...await load(), generationConnectionMaxTokens: { sidecar: 12000 } })
+  await expect(runPocketGeneration(f.host, 'message-reply', 'thinking-empty', { parameters: { max_tokens: 720 } })).rejects.toHaveProperty('code', 'output_limit')
+  expect(f.requests).toHaveLength(1)
+  expect(f.requests[0].parameters.max_tokens).toBe(12000)
+  expect(JSON.stringify(f.events)).not.toContain('PRIVATE THOUGHT')
+})
+
+test('automatic retry respects a configured connection cap instead of silently raising it', async () => {
+  const f = generationFixture([{ content: '', finish_reason: 'length' }, { content: 'A complete reply', finish_reason: 'stop' }]), load = f.host.loadPreferences
+  f.host.loadPreferences = async () => ({ ...await load(), generationConnectionMaxTokens: { sidecar: 12000 } })
+  expect((await runPocketGeneration(f.host, 'message-reply', 'capped-retry', {})).content).toBe('A complete reply')
+  expect(f.requests.map(request => request.parameters.max_tokens)).toEqual([12000, 12000])
+})
+
+test('length-stopped replies are interrupted even when the provider returned valid-looking text', async () => {
+  for (const response of [{ content: '{"message":"partial"}', finish_reason: 'length' }, { content: 'partial', stop_reason: 'max_tokens' }]) {
+    const f = generationFixture([response])
+    await expect(runPocketGeneration(f.host, 'message-reply', 'partial-reply', {})).rejects.toHaveProperty('code', 'output_limit')
+    expect(f.events.at(-1).run.status).toBe('failed')
+  }
+})
+
 test('reasoning-budget exhaustion retries once on the selected connection without exposing reasoning', async () => {
   const f = generationFixture([{ content: '', finish_reason: 'length', reasoning: 'private thought' }, { content: '{"events":[]}', finish_reason: 'stop' }])
   const result = await runPocketGeneration(f.host, 'timeline-review', 'budget', { parameters: { max_tokens: 1100 } })

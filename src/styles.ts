@@ -9,6 +9,8 @@ import { VOICE_MESSAGE_STYLES } from './frontend/components/voice-message-styles
 import { LAUNCHER_STYLES } from './frontend/components/launcher-styles.js'
 import { APP_STORE_STYLES } from './frontend/components/app-store-styles.js'
 import { CONTACTS_MEDIA_STYLES } from './frontend/components/contacts-media-styles.js'
+import { MESSAGE_MANAGEMENT_STYLES } from './frontend/components/message-management-styles.js'
+import { LOREBOOK_CONTACT_STYLES } from './frontend/components/lorebook-contact-styles.js'
 import { SOCIAL_STYLES } from './frontend/components/social-styles.js'
 import { POCKET_PORTAL_STYLES } from './frontend/components/pocket-portal.js'
 
@@ -1330,6 +1332,8 @@ ${LAUNCHER_STYLES}
 ${APP_STORE_STYLES}
 ${SOCIAL_STYLES}
 ${CONTACTS_MEDIA_STYLES}
+${LOREBOOK_CONTACT_STYLES}
+${MESSAGE_MANAGEMENT_STYLES}
 
   .lumiphone-shell .lp-bubble:not([data-sender="system"]) { padding:calc(6px * var(--pocket-ui-scale)) calc(9px * var(--pocket-ui-scale)); border-radius:calc(19px * var(--pocket-ui-scale)); box-shadow:none; line-height:1.55; min-height:0; flex-shrink:0; }
   .lumiphone-shell .lp-bubble-time { margin-top:2px; min-height:calc(14px * var(--pocket-ui-scale)); line-height:calc(14px * var(--pocket-ui-scale)); padding-right:24px; }

@@ -1,4 +1,7 @@
 import { setup } from '../../src/frontend.js'
+import { removePhoneConversations } from '../../src/domain/conversation-deletion.js'
+import { ensureDiscoveredActor, ensureDirectActorConversation, promoteDiscoveredActor } from '../../src/domain/actors.js'
+import { upsertNpcBankFromContact } from '../../src/domain/npc-bank.js'
 import {assignPocketWallpaper,personaWallpaperActive} from '../../src/domain/wallpaper-scope.js'
 import { SocialWorld } from '../../src/backend/social-world.js'
 import { SocialDms } from '../../src/backend/social-dms.js'
@@ -40,7 +43,7 @@ const mediaMode=new URLSearchParams(location.search).has('contactsMedia'),mediaS
 let mediaPersona={id:'media-persona',name:'Till Park'},mediaFailed=false
 const mediaSources=Array.from({length:420},(_,n)=>({kind:'character',sourceId:'media-char-'+n,name:'Character '+String(n+1).padStart(3,'0'),role:n===419?'The astronomer':'From your library',description:'',avatarUrl:''}))
 let messageContinuityEnabled = false
-const deliver = (reason = 'refresh') => receive({ type: 'lumiphone:state', state: structuredClone(state), preferences, npcBank: fixtureNpcBank, ...(mediaMode?{swarmProfile:{source:'swarm_studio',available:true,status:'connected',checkpoint:'A_very_long_checkpoint_name_that_should_stay_inside_advanced_settings.safetensors'},activePersona:mediaPersona,resolvedWallpapers:{deviceHome:{url:preferences.homeWallpaper.source?'/photo.svg':'',status:'ready',sourceLabel:'Default home'},deviceChat:{status:'empty',sourceLabel:'Theme'},personaHome:{url:personaWallpaperActive(preferences.personaAppearance[mediaPersona.id],'home')?'/photo.svg':'',status:'ready',sourceLabel:'Persona home'},personaChat:{status:'empty',sourceLabel:'Theme'}}}:{}), ...(messageContinuityEnabled ? { capabilities: { panels: true, generation: true, chatMutation: true, images: true } } : {}), reason })
+const deliver = (reason = 'refresh') => receive({ type: 'lumiphone:state', state: structuredClone(state), preferences, npcBank: fixtureNpcBank, ...(mediaMode?{swarmProfile:{source:'swarm_studio',available:true,status:'connected',checkpoint:'A_very_long_checkpoint_name_that_should_stay_inside_advanced_settings.safetensors'},activePersona:mediaPersona,resolvedWallpapers:{deviceHome:{url:preferences.homeWallpaper.source?'/photo.svg':'',status:'ready',sourceLabel:'Default home'},deviceChat:{status:'empty',sourceLabel:'Theme'},personaHome:{url:personaWallpaperActive(preferences.personaAppearance[mediaPersona.id],'home')?'/photo.svg':'',status:'ready',sourceLabel:'Persona home'},personaChat:{status:'empty',sourceLabel:'Theme'}}}:{}), ...(new URLSearchParams(location.search).has('messageManagement') ? { generation: { mode: preferences.generationMode, effective: { id: 'fixture-model', name: 'Fixture model', provider: 'fixture', model: 'fixture' }, connections: [{ id: 'fixture-model', name: 'Fixture model', provider: 'fixture', model: 'fixture', isDefault: true, configured: true }], history: [], modelOverride: '' } } : {}), ...(messageContinuityEnabled ? { capabilities: { panels: true, generation: true, chatMutation: true, images: true } } : {}), reason })
 let fixtureSocialSerial = Number(localStorage.getItem('social-fixture-serial') || '0')
 const nextSocialSerial = () => { const next = ++fixtureSocialSerial; localStorage.setItem('social-fixture-serial', String(next)); return next }
 const socialWorld = new SocialWorld({
@@ -134,6 +137,67 @@ const ctx: any = {
   getActiveChat: () => ({ chatId: state.chatId, characterId: state.characterId }),
   onBackendMessage: (handler: typeof receive) => { receive = handler; return () => {} }, ready() {},
   sendToBackend(payload: any) {
+    if (new URLSearchParams(location.search).has('messageManagement')) {
+      if (payload.type === 'lumiphone:save_preferences') { Object.assign(preferences, payload.preferences); deliver('preferences') }
+      if (payload.type === 'lumiphone:delete_conversations') {
+        setTimeout(() => {
+          const deletedCount = removePhoneConversations(state, payload.conversationIds); deliver('conversations_deleted')
+          receive({ type: 'lumiphone:conversations_deleted', requestId: payload.requestId, deletedCount, conversationIds: payload.conversationIds })
+        }, 40); return
+      }
+      if (payload.type === 'lumiphone:generate_message') {
+        receive({ type: 'lumiphone:message_progress', requestId: payload.requestId, chatId: state.chatId, characterId: state.characterId, conversationId: payload.conversationId, phase: 'pending' })
+        setTimeout(() => {
+          const thread = state.conversations.find((entry: any) => entry.id === payload.conversationId); if (!thread) return
+          thread.replyFailure = undefined; thread.messages.push({ id: 'successful-retry', sender: 'contact', senderActorId: thread.participantActorIds[0], senderName: 'Alex', text: 'A complete reply after retry.', createdAt: state.roleplayNow, status: 'read' })
+          deliver('message'); receive({ type: 'lumiphone:message_progress', requestId: payload.requestId, chatId: state.chatId, characterId: state.characterId, conversationId: payload.conversationId, phase: 'done' })
+        }, 100); return
+      }
+    }
+    if (new URLSearchParams(location.search).has('actorPipeline')) {
+      if (payload.type === 'lumiphone:lorebook_contact_books') setTimeout(() => receive({ type: payload.type, requestId: payload.requestId, books: [{ id: 'people', name: 'Town lore', attachedTo: ['chat'] }, { id: 'supplement', name: 'Daily life', attachedTo: ['character'] }, { id: 'unrelated', name: 'Unrelated book', attachedTo: [] }] }), 10)
+      if (payload.type === 'lumiphone:lorebook_contact_entries') setTimeout(() => receive({ type: payload.type, requestId: payload.requestId, entries: payload.bookId === 'people'
+        ? [{ id: 'cast', title: 'Town residents', preview: 'Fern owns a flower shop. Mika owns a cafe.', disabled: false }, { id: 'closed', title: 'Old characters', preview: '', disabled: true }, { id: 'villain', title: 'character | antagonist | Kayama', preview: '', disabled: false }, { id: 'earth', title: 'location | Shuudansha / Earth', preview: '', disabled: false }, { id: 'an', title: 'character | supporting | An Kohinata', keys: ['An'], preview: 'An is a childhood friend.', disabled: false }]
+        : [{ id: 'details', title: 'Evening routines', preview: 'Fern closes at six. Mika texts briefly.', disabled: false }] }), 10)
+      if (payload.type === 'lumiphone:lorebook_contacts_extract') {
+        ;(window as any).lastLorebookRequest = structuredClone(payload)
+        setTimeout(() => receive({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId: payload.requestId, phase: 'request', message: 'Reading lorebook entries (1/2)…', completedEntries: 1, totalEntries: 2 }), 50)
+        setTimeout(() => receive({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId: payload.requestId, phase: 'thinking', message: 'Thinking…' }), 400)
+        setTimeout(() => receive({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId: payload.requestId, phase: 'writing', message: 'Writing profiles…' }), 800)
+        setTimeout(() => receive({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId: payload.requestId, phase: 'parsing', message: 'Matching profiles with existing contacts…' }), 1300)
+        setTimeout(() => receive({ type: 'lumiphone:operation_progress', task: 'npc-contact', requestId: payload.requestId, phase: 'writing', message: 'Late progress' }), 1600)
+        setTimeout(() => receive({ type: 'lumiphone:lorebook_contacts_drafts', requestId: payload.requestId, drafts: [
+          { name: 'Fern Vale', role: 'Florist', aliases: ['Fern'], identityBrief: 'Owns a flower shop that closes at six.', evidenceEntryIds: ['cast', 'details'], existingContactId: state.contacts.find((contact: any) => contact.name === 'Fern Vale')?.id, phoneProfile: { personality: 'Warm', appearance: '', textingStyle: '' }, accent: '#8b7dff', messagingStyle: { talkativeness: 50, fragmentation: 35 }, sourceDescription: '' },
+          { name: 'Mika Moon', role: 'Cafe owner', aliases: ['Mika'], identityBrief: 'Owns a cafe and texts briefly.', evidenceEntryIds: ['cast', 'details'], phoneProfile: { personality: 'Dry humor', appearance: '', textingStyle: 'Brief' }, accent: '#8b7dff', messagingStyle: { talkativeness: 50, fragmentation: 35 }, sourceDescription: '' },
+        ] }), 1500)
+      }
+      if (payload.type === 'lumiphone:lorebook_contacts_save') setTimeout(() => {
+        let addedCount = 0, reusedCount = 0
+        for (const draft of payload.drafts) {
+          if (state.contacts.some((contact: any) => contact.name === draft.name)) { reusedCount++; continue }
+          const contact = normalizeContactCollections({ contacts: [{ ...draft, id: 'lore-contact-' + state.contacts.length, source: { kind: 'npc', origin: 'generated' } }] }, { characterId: '_none', characterName: '', now: state.roleplayNow, makeId: prefix => prefix + '-pipeline' }).contacts[0]
+          state.contacts.push(contact); addedCount++
+        }
+        deliver('lorebook_contacts'); receive({ type: 'lumiphone:lorebook_contacts_saved', requestId: payload.requestId, addedCount, reusedCount })
+      }, 15)
+      if (payload.type === 'lumiphone:promote_discovered_actor') setTimeout(() => {
+        const contact = promoteDiscoveredActor(state, payload.actorId, state.roleplayNow, prefix => prefix + '-pipeline')
+        deliver('actor_promoted'); receive({ type: 'lumiphone:discovered_actor_promoted', requestId: payload.requestId, actorId: payload.actorId, contactId: contact.id })
+      }, 100)
+      if (payload.type === 'lumiphone:refresh_contact_profile') setTimeout(() => {
+        const contact = state.contacts.find((entry: any) => entry.id === payload.contactId); contact.identityBrief = 'A florist known through phone exchanges.'
+        deliver('contact_profile')
+      }, 15)
+      if (payload.type === 'lumiphone:npc_bank_save') setTimeout(() => {
+        const contact = state.contacts.find((entry: any) => entry.id === payload.contactId)
+        const entry = upsertNpcBankFromContact(fixtureNpcBank as any, contact, state.roleplayNow, prefix => prefix + '-pipeline')
+        contact.source.bankId = entry.id; deliver('npc_bank'); receive({ type: 'lumiphone:npc_bank_saved', requestId: payload.requestId, name: contact.name })
+      }, 15)
+      if (payload.type === 'lumiphone:save_contact') setTimeout(() => {
+        const contact = normalizeContactCollections({ contacts: [{ ...payload.contact, id: 'saved-lore-contact' }] }, { characterId: '_none', characterName: '', now: state.roleplayNow, makeId: prefix => prefix + '-pipeline' }).contacts[0]
+        state.contacts.push(contact); deliver('contact'); receive({ type: 'lumiphone:contact_saved', requestId: payload.requestId, contactId: contact.id, contact })
+      }, 15)
+    }
     if(mediaMode){
       mediaSends.push(structuredClone(payload))
       if(payload.type==='lumiphone:gallery_set_wallpaper'||payload.type==='lumiphone:set_wallpaper'||payload.type==='lumiphone:upload_wallpaper_asset')setTimeout(()=>{
@@ -230,6 +294,27 @@ const ctx: any = {
   },
 }
 let disposeContactsMediaFixture=setup(ctx)
+;(window as any).seedMessageManagementFixture = () => {
+  const collections = normalizeContactCollections({ contacts: [
+    { id: 'alex-management', name: 'Alex', source: { kind: 'npc', origin: 'manual' } },
+    { id: 'fern-management', name: 'Fern', source: { kind: 'npc', origin: 'manual' } },
+  ] }, { characterId: '_none', characterName: '', now: state.roleplayNow, makeId: prefix => prefix + '-management' })
+  state.contacts = collections.contacts; state.conversations = []; state.discoveredActors = []; state.groupBatches = []
+  const alex = ensureDirectConversation(state, 'alex-management', state.roleplayNow, () => 'alex-management-thread')
+  alex.replyFailure = { kind: 'length', requestId: 'failed-fixture', message: 'The model spent its output budget on thinking without producing a reply. Increase this connection’s output token limit, then retry.', createdAt: state.roleplayNow }
+  ensureDirectConversation(state, 'fern-management', state.roleplayNow, () => 'fern-management-thread')
+  state.conversations.push({ id: 'corpse-management-thread', kind: 'group', title: 'Old class group', participantActorIds: ['alex-management', 'fern-management'], participantContactIds: ['alex-management', 'fern-management'], includesPocketPersona: true, messages: [], unread: 0, availability: { state: 'remote' }, createdAt: state.roleplayNow, updatedAt: state.roleplayNow })
+  deliver('fixture')
+}
+;(window as any).messageManagementSnapshot = () => structuredClone({ state, preferences })
+;(window as any).seedActorPipelineFixture = () => {
+  state.contacts = []; state.conversations = []; state.discoveredActors = []; state.pocketPersona.displayName = 'You'
+  const actor = ensureDiscoveredActor(state, { name: 'Fern Vale', source: 'messages', now: state.roleplayNow, makeId: prefix => prefix + '-pipeline' })
+  const thread = ensureDirectActorConversation(state, actor.id, state.roleplayNow, prefix => prefix + '-pipeline')
+  thread.messages = [{ id: 'phone-evidence', sender: 'contact', senderActorId: actor.id, senderName: 'Fern Vale', text: 'The flower shop closes at six.', createdAt: state.roleplayNow, read: true, status: 'read' }]
+  deliver('fixture')
+}
+;(window as any).actorPipelineSnapshot = () => structuredClone({ state, bank: fixtureNpcBank })
 ;(window as any).remountContactsMediaFixture=()=>{disposeContactsMediaFixture();disposeContactsMediaFixture=setup(ctx);deliver('preferences')}
 // Simulate the host's canonical installed-PWA safe-top contract.
 if (innerWidth < 600) document.documentElement.style.setProperty('--app-interactive-safe-top', '47px')

@@ -840,11 +840,28 @@ describe('ambient message eligibility', () => {
   test('excludes in-scene contacts while retaining off-scene eligible actors', () => {
     const now = '2026-01-02T00:00:00.000Z'
     const contacts = normalizeContactCollections({ version: 3, contacts: [
-      { id: 'here', name: 'Here', presence: { inScene: true }, messagingPolicy: { remoteEligible: true } },
-      { id: 'away', name: 'Away', presence: { inScene: false }, messagingPolicy: { remoteEligible: true } },
+      { id: 'here', name: 'Here', presence: { inScene: true }, messagingPolicy: { remoteEligible: true, ambientEnabled: true } },
+      { id: 'away', name: 'Away', presence: { inScene: false }, messagingPolicy: { remoteEligible: true, ambientEnabled: true } },
     ] }, { characterId: 'active', characterName: 'Active', now, makeId: (prefix) => `${prefix}-id` }).contacts
     expect(ambientEligibleContacts(contacts).map((entry) => entry.id)).toContain('away')
     expect(ambientEligibleContacts(contacts).map((entry) => entry.id)).not.toContain('here')
+  })
+
+  test('requires explicit profile enrollment by default but Freeform can opt the whole session in', () => {
+    const now = '2026-01-02T00:00:00.000Z'
+    const contacts = normalizeContactCollections({ version: 3, contacts: [
+      { id: 'npc', name: 'Roulette NPC', presence: { inScene: false }, messagingPolicy: { remoteEligible: true } },
+    ] }, { characterId: '_none', characterName: 'Freeform', now, makeId: (prefix) => `${prefix}-id` }).contacts
+    expect(ambientEligibleContacts(contacts)).toHaveLength(0)
+    expect(ambientEligibleContacts(contacts, { requireProfileOptIn: false }).map(entry => entry.id)).toEqual(['npc'])
+  })
+
+  test('profile ambient enrollment implies remote-message eligibility', () => {
+    const contact = normalizeContactCollections({ version: 3, contacts: [
+      { id: 'takano', name: 'Takano', presence: { inScene: false }, messagingPolicy: { remoteEligible: false, ambientEnabled: true } },
+    ] }, { characterId: 'active', characterName: 'Active', now: '2026-01-02T00:00:00.000Z', makeId: (prefix) => `${prefix}-id` }).contacts.find((entry) => entry.id === 'takano')!
+    expect(contact.messagingPolicy.ambientEnabled).toBe(true)
+    expect(contact.messagingPolicy.remoteEligible).toBe(true)
   })
 
   test('uses bounded wall/roleplay cooldowns when chronology is valid', () => {

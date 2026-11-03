@@ -71,6 +71,17 @@ test('sidebar management renames and deletes only the selected session and rejec
   expect((await send('freeform_delete',{chatId:'host-chat',characterId:'host-character',sessionId:other.id},'separate-user')).error.error).toContain('no longer exists')
 })
 
+test('Freeform ambient enrollment is session-bound and defaults off', async () => {
+  const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Ambient world'})
+  const {session:other}=await send('freeform_create',{personaId:'persona-fern',name:'Quiet world'})
+  expect(session.ambientEnabled).toBe(false)
+  const changed=await send('freeform_ambient',{...scope(session.id),enabled:true})
+  expect(changed.error).toBeUndefined()
+  expect(changed.responses.find(p=>p.type==='lumiphone:freeform_ambient_changed')?.session.ambientEnabled).toBe(true)
+  expect((await send('freeform_open',{sessionId:session.id})).session.ambientEnabled).toBe(true)
+  expect((await send('freeform_open',{sessionId:other.id})).session.ambientEnabled).toBe(false)
+})
+
 test('Freeform appearance stays session scoped after profile edits remove the Persona link', async () => {
   const saved = host.read(PREFERENCES_PATH)
   try {

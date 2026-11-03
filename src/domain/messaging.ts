@@ -1,17 +1,20 @@
 import type { AmbientMessageFrequency, PocketContact } from '../types.js'
 
-export function ambientEligibleContacts(contacts: PocketContact[]): PocketContact[] {
-  return contacts.filter((contact) => contact.messagingPolicy.remoteEligible && (!contact.presence.inScene || contact.messagingPolicy.allowAmbientInScene))
+export function ambientEligibleContacts(contacts: PocketContact[], options: { requireProfileOptIn?: boolean } = {}): PocketContact[] {
+  const requireProfileOptIn = options.requireProfileOptIn !== false
+  return contacts.filter((contact) => (!requireProfileOptIn || contact.messagingPolicy.ambientEnabled) && contact.messagingPolicy.remoteEligible && (!contact.presence.inScene || contact.messagingPolicy.allowAmbientInScene))
 }
 
-export function contactCooldownReady(contact: PocketContact, frequency: Exclude<AmbientMessageFrequency, 'off'>, roleplayNow: string, wallNow = Date.now()): boolean {
+export function contactCooldownReady(contact: PocketContact, frequency: Exclude<AmbientMessageFrequency, 'off'>, roleplayNow: string, wallNow = Date.now(), options: { ignoreRoleplayCooldown?: boolean } = {}): boolean {
   const wallCooldown = frequency === 'sparse' ? 60 * 60_000 : 15 * 60_000
   const roleplayCooldown = frequency === 'sparse' ? 6 * 60 * 60_000 : 2 * 60 * 60_000
   const lastWall = Date.parse(contact.messagingPolicy.lastInitiatedMessageAt)
   if (Number.isFinite(lastWall) && wallNow - lastWall < wallCooldown) return false
-  const currentRoleplay = Date.parse(roleplayNow)
-  const lastRoleplay = Date.parse(contact.messagingPolicy.lastInitiatedRoleplayAt)
-  if (Number.isFinite(currentRoleplay) && Number.isFinite(lastRoleplay) && currentRoleplay >= lastRoleplay && currentRoleplay - lastRoleplay < roleplayCooldown) return false
+  if (!options.ignoreRoleplayCooldown) {
+    const currentRoleplay = Date.parse(roleplayNow)
+    const lastRoleplay = Date.parse(contact.messagingPolicy.lastInitiatedRoleplayAt)
+    if (Number.isFinite(currentRoleplay) && Number.isFinite(lastRoleplay) && currentRoleplay >= lastRoleplay && currentRoleplay - lastRoleplay < roleplayCooldown) return false
+  }
   return true
 }
 

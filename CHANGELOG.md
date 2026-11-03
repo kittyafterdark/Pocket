@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — 2026-11-03
+
+### Contacts and lorebooks
+
+- Added Contacts → Add → Import from lorebook. Combine entries across lorebooks, find several people in one pass, review and edit generated profiles, and choose who to save. Existing contacts are reused when identity matches are unambiguous.
+- Added searchable lorebook selection with attached chat/card books, relevance-ranked entry search, source previews, generation progress, and source citations. The import and review screens now use a centered desktop dialog and responsive mobile layout.
+- Improved character/contact identity matching across Pocket, discovered actors, and NPC Bank using aliases and name variants, with safeguards for ambiguous names.
+- Discovered profiles now use their phone exchanges when generating descriptions, can be saved to NPC Bank, and return to the originating chat when navigating back.
+- Improved phone lore retrieval using participants, aliases, recent phone messages, and saved source entries across chat, card, Persona, and global lorebooks. Retrieval diagnostics show the books and entries considered.
+
+### Messages and generation
+
+- Improved group chat reuse across title changes, aliases, partial member lists, and added members. Matching groups keep the oldest thread and its existing members; explicit group edits still support member removal.
+- Added an output token limit saved per generation connection, including hidden reasoning tokens. Blank retains Pocket's task defaults.
+- Interrupted or token-limited replies now display a persistent in-chat indicator with Retry reply instead of silently leaving an empty response. Retrying an existing message preserves it until a replacement succeeds.
+- Added confirmed deletion of entire conversations, including bulk selection. Deletion preserves contacts and NPC Bank profiles, cancels pending replies, and stays deleted after reload.
+- Moved New chat and Select chats into the compact Messages header menu. Selection controls appear only while selecting conversations.
+
+### Ambient messaging
+
+- Added opt-in ambient messaging per contact in roleplay and per session in Freeform, plus configurable real-time scheduled checks for enrolled profiles and sessions.
+- Scheduled checks preserve the receiving Pocket's bound Persona while another chat is open. Message push titles now identify both the sender and receiving Persona.
+
 ## 0.6.0 — 2026-10-31
 
 ### Follow-up improvements

@@ -289,6 +289,7 @@ export interface DevicePreferences {
   jev?: PocketJevSettings
   generationMode: PocketGenerationMode
   automaticGenerationRetry: boolean
+  generationConnectionMaxTokens?: Record<string, number>
   reasoningEffort?: 'off' | 'inherit' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   sidecarConnectionId: string
   sidecarModelOverride: string
@@ -296,6 +297,10 @@ export interface DevicePreferences {
   autoReplyAfterSend: boolean
   replyCadence: ReplyCadence
   ambientMessaging: AmbientMessageFrequency
+  /** Run real-time ambient-message decision checks even without a new roleplay turn. */
+  ambientScheduleEnabled: boolean
+  /** Real minutes between scheduled ambient-message checks. */
+  ambientScheduleMinutes: number
   preferFullProfiles: boolean
   enableLorebooks: boolean
   roleplayContextMode: RoleplayContextMode
@@ -482,7 +487,7 @@ export interface PocketConversationTailSnapshot {
 export type PocketContactSource =
   | { kind: 'character'; characterId: string }
   | { kind: 'council'; memberId: string; itemId: string }
-  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene' | 'discovered'; description: string; sceneKey?: string; discoveredActorId?: string; bankId?: string }
+  | { kind: 'npc'; origin: 'manual' | 'generated' | 'scene' | 'discovered'; description: string; sceneKey?: string; discoveredActorId?: string; bankId?: string; lorebookEntryIds?: string[] }
 
 export type PocketRelationship = 'background' | 'close'
 
@@ -511,6 +516,7 @@ export interface PocketMessagingStyle {
 
 export interface PocketNpcBankEntry {
   id: string
+  lorebookEntryIds?: string[]
   name: string
   normalizedName: string
   aliases: string[]
@@ -556,9 +562,17 @@ export interface PocketContactDraft {
   avatarFocus?: { x: number; y: number }
 }
 
+export interface PocketLorebookContactDraft extends PocketContactDraft {
+  aliases: string[]
+  evidenceEntryIds: string[]
+  existingContactId?: string
+  matchWarning?: string
+}
+
 export interface PocketContact {
   id: string
   name: string
+  aliases?: string[]
   role: string
   description: string
   /** Stable compact identity used in generation. Linked actors refresh from their authoritative source. */
@@ -582,6 +596,8 @@ export interface PocketContact {
   generationPolicy: { relevant: boolean }
   messagingPolicy: {
     remoteEligible: boolean
+    /** Explicit per-profile permission for independent ambient DMs and scheduled notifications. */
+    ambientEnabled: boolean
     allowAmbientInScene: boolean
     lastInitiatedMessageAt: string
     lastInitiatedRoleplayAt: string
@@ -619,6 +635,9 @@ export interface PendingGroupBatch {
 }
 
 export interface PocketConversation {
+  replyFailure?: { kind: 'length' | 'error'; message: string; requestId: string; speakerActorId?: string; retryMessageId?: string; createdAt: string }
+
+  titleAliases?: string[]
   channel?:'phone'|'dating'
   datingOwnerId?:string
   archived?:boolean
@@ -1065,6 +1084,7 @@ export interface PhoneState {
   social?: import('./domain/social.js').PocketSocialState
   /** Linked source keys explicitly deleted by the user and therefore not auto-recreated. */
   suppressedContactSourceKeys: string[]
+  suppressedDirectContactIds?: string[]
   contacts: PocketContact[]
   contactGroups?: PocketContactGroup[]
   discoveredActors: DiscoveredActor[]

@@ -10,6 +10,8 @@ export interface FreeformSession {
   personaName: string
   appearanceBasePersonaId?: string
   independentStyling?: boolean
+  /** Session-wide ambient-chat enrollment for Freeform. */
+  ambientEnabled?: boolean
   createdAt: string
 }
 export interface FreeformPersona { id: string; name: string; avatarUrl: string }

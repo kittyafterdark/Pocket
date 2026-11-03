@@ -2,6 +2,7 @@ import type { PocketContact, PocketNpcBank, PocketNpcBankEntry } from '../types.
 import { normalizeImageSource } from './preferences.js'
 import { normalizeAvatarFocus } from './contacts.js'
 import { normalizeContactGroups } from './contact-groups.js'
+import { identityName, uniqueIdentityMatch } from './actor-identity.js'
 
 export const NPC_BANK_VERSION = 2 as const
 export const NPC_BANK_PATH = 'device/npc-bank.json'
@@ -35,7 +36,7 @@ function accent(value: unknown, fallback = '#8b7dff'): string {
 }
 
 export function normalizeNpcBankName(value: unknown): string {
-  return clean(value, 120).replace(/\s+/g, ' ').toLocaleLowerCase()
+  return identityName(clean(value, 120))
 }
 
 export function emptyNpcBank(now = new Date().toISOString()): PocketNpcBank {
@@ -61,6 +62,7 @@ export function normalizeNpcBank(value: unknown, now = new Date().toISOString())
       .filter((item) => item && normalizeNpcBankName(item) !== normalizedName))].slice(0, 24)
     return [{
       id: entryId,
+      lorebookEntryIds: [...new Set((Array.isArray(raw.lorebookEntryIds) ? raw.lorebookEntryIds : []).map(id => clean(id, 180)).filter(Boolean))].slice(0, 24),
       name,
       normalizedName,
       aliases,
@@ -86,9 +88,7 @@ export function normalizeNpcBank(value: unknown, now = new Date().toISOString())
 export function findNpcBankMatch(bank: PocketNpcBank, name: string): PocketNpcBankEntry | null {
   const normalized = normalizeNpcBankName(name)
   if (!normalized) return null
-  const matches = bank.entries.filter((entry) => entry.normalizedName === normalized
-    || entry.aliases.some((alias) => normalizeNpcBankName(alias) === normalized))
-  return matches.length === 1 ? matches[0] : null
+  return uniqueIdentityMatch(name, bank.entries, entry => [entry.name, ...entry.aliases]) || null
 }
 
 export function upsertNpcBankFromContact(
@@ -108,10 +108,12 @@ export function upsertNpcBankFromContact(
   const previousName = existing?.name || ''
   const aliases = [...new Set([
     ...(existing?.aliases || []),
+    ...(contact.aliases || []),
     ...(previousName && normalizeNpcBankName(previousName) !== normalizeNpcBankName(name) ? [previousName] : []),
   ].map((item) => item.trim()).filter(Boolean))].slice(0, 24)
   const entry: PocketNpcBankEntry = {
     id: existing?.id || makeId('npcbank'),
+    lorebookEntryIds: [...new Set([...(existing?.lorebookEntryIds || []), ...(contact.source.lorebookEntryIds || [])])].slice(0, 24),
     name,
     normalizedName: normalizeNpcBankName(name),
     aliases,
@@ -139,6 +141,7 @@ export function contactFromNpcBank(entry: PocketNpcBankEntry, now: string, makeI
   return {
     id: makeId('contact'),
     name: entry.name,
+    aliases: [...entry.aliases],
     role: entry.role || 'Pocket NPC',
     description: entry.identityBrief,
     identityBrief: entry.identityBrief,
@@ -152,12 +155,12 @@ export function contactFromNpcBank(entry: PocketNpcBankEntry, now: string, makeI
     accent: entry.accent,
     sourceAccent: '',
     colorMode: 'pocket',
-    source: { kind: 'npc', origin: 'manual', description: entry.identityBrief, bankId: entry.id },
+    source: { kind: 'npc', origin: 'manual', description: entry.identityBrief, bankId: entry.id, lorebookEntryIds: entry.lorebookEntryIds },
     relationship: 'background',
     presence: { inScene: false, lastSceneAt: '' },
     contextPolicy: { pinned: false },
     generationPolicy: { relevant: true },
-    messagingPolicy: { remoteEligible: true, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
+    messagingPolicy: { remoteEligible: true, ambientEnabled: false, allowAmbientInScene: false, lastInitiatedMessageAt: '', lastInitiatedRoleplayAt: '' },
     messagingStyle: { ...entry.messagingStyle },
     createdAt: now,
     updatedAt: now,
@@ -166,6 +169,7 @@ export function contactFromNpcBank(entry: PocketNpcBankEntry, now: string, makeI
 
 export function applyNpcBankProfile(contact: PocketContact, entry: PocketNpcBankEntry, now: string): PocketContact {
   if (contact.source.kind !== 'npc') return contact
+  contact.aliases = [...new Set([...(contact.aliases || []), contact.name, ...entry.aliases])]
   contact.name = entry.name
   contact.role = entry.role || contact.role
   contact.description = entry.identityBrief
@@ -176,7 +180,7 @@ export function applyNpcBankProfile(contact: PocketContact, entry: PocketNpcBank
   contact.sourceAvatarUrl = entry.avatarUrl
   contact.accent = entry.accent
   contact.messagingStyle = { ...entry.messagingStyle }
-  contact.source = { ...contact.source, description: entry.identityBrief, bankId: entry.id }
+  contact.source = { ...contact.source, description: entry.identityBrief, bankId: entry.id, lorebookEntryIds: [...new Set([...(contact.source.lorebookEntryIds || []), ...(entry.lorebookEntryIds || [])])].slice(0, 24) }
   contact.updatedAt = now
   return contact
 }

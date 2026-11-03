@@ -61,6 +61,7 @@ import type { IdentityProfile } from '../domain/identity-profiles.js'
 import { identityProfileControls, refreshIdentityProfileControls } from './components/identity-profiles.js'
 import { weatherConditionKind, weatherGlyph, weatherOutlook } from './components/weather-outlook.js'
 import type { ContactView } from './apps/contacts.js'
+import { showLorebookContactPicker, type LorebookContactProgress } from './components/lorebook-contacts.js'
 import { renderNotificationsView } from './apps/notifications.js'
 import { PocketRouteHistory } from './router.js'
 import { activityReceipt, type ActivityRenderOptions } from './activity.js'
@@ -281,6 +282,9 @@ class PocketController {
   private spotifyPlayerState:{key:string;requestId:string;loading:boolean;preview?:SpotifySharePreview;error?:string}|null=null
   private sharingDraft={sourceId:'',target:'',ids:[] as string[],caption:''}
   private communityRequests=new Map<string,(payload:BackendPayload)=>void>()
+  private actorProfileRequests = new Map<string, { chatId: string; characterId: string; route: string }>()
+  private lorebookPicker: { dismiss: () => void; scope: string } | null = null
+  private lorebookProgress = new Map<string, (value: LorebookContactProgress) => void>()
   private chatPhotoRequests = new Map<string,(payload:BackendPayload)=>void>()
   private selectedEventId = ''
   private pendingEventSuggestion: { conversationId: string; messageId: string; suggestion: PhoneEventSuggestion } | null = null
@@ -301,6 +305,10 @@ class PocketController {
   private cameraProgress = ''
   private cameraBusy = false
   private cameraRequestId = ''
+  private conversationSelectionMode = false
+  private selectedConversationIds = new Set<string>()
+  private conversationDeleteRequest = ''
+  private conversationDeleteDismiss: (() => void) | null = null
   private messageRequests = new Map<string, { conversationId: string; speakerContactId: string; phase: 'checking' | 'pending' }>()
   private messageDrafts = new Map<string, string>()
   private groupSpeakerSelections = new Map<string, string>()
@@ -421,6 +429,8 @@ class PocketController {
   }
 
   destroy(): void {
+    this.conversationDeleteDismiss?.()
+    this.lorebookPicker?.dismiss(); this.lorebookPicker = null; this.lorebookProgress.clear()
     for(const job of this.socialGifRequests.values()){clearTimeout(job.timer);job.reject(new Error('Pocket was closed.'))};this.socialGifRequests.clear()
     this.voicePlayer.stop()
     this.setupModalDismiss?.()
@@ -673,6 +683,7 @@ class PocketController {
   }
 
   private resetPocketSession(): void {
+    this.conversationDeleteDismiss?.(); this.conversationDeleteDismiss = null; this.conversationDeleteRequest = ''; this.conversationSelectionMode = false; this.selectedConversationIds.clear()
     if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
     this.setupModalDismiss?.()
     this.clearActivitySurfaces(true, true)
@@ -684,6 +695,7 @@ class PocketController {
     this.operations.clear(); this.messageRequests.clear(); this.selectedSettingsSection = ''
     this.cameraBusy = false; this.cameraRequestId = ''; this.cameraPreview = ''; this.cameraReady = false
     this.npcDraft = null; this.previousNpcDraft = null
+    this.actorProfileRequests.clear(); this.lorebookProgress.clear()
     this.galleryRequestId = ''; this.galleryLoading = false; this.gallery = { data: [], total: 0 }
     this.datingUI=newDatingUI();this.datingRequest='';this.datingProfileRequest='';this.pendingDatingPhoto='';this.personaPhotoDraft=null;this.communityRequests.clear();this.nativeUI=newNativeUI();this.stickerTrayConversationId='';this.attachmentMenuDispose?.();this.attachmentMenuDispose=null;this.nativeBusy={};this.nativeStatus={};this.nativeErrors={};this.nativeRequests.clear();this.pendingNativeSticker=null;this.spotifyTarget='';this.spotifyPlayerState=null;this.sharingDraft={sourceId:'',target:'',ids:[],caption:''}
     this.pendingRoute = null; this.pendingEventSuggestion = null; this.manualEventConversationId = ''; this.chatPhotoSelection = null; this.chatPhotoRequests.clear()
@@ -1303,7 +1315,7 @@ class PocketController {
       return
     }
     const communityRequest=this.communityRequests.get(payload.requestId)
-    if(communityRequest && ['lumiphone:spotify_preview','lumiphone:spotify_sent','lumiphone:share_sent','lumiphone:persona_photo_sent','lumiphone:reference_armed','lumiphone:error'].includes(payload.type)){this.communityRequests.delete(payload.requestId);communityRequest(payload);return}
+    if(communityRequest && ['lumiphone:spotify_preview','lumiphone:spotify_sent','lumiphone:share_sent','lumiphone:persona_photo_sent','lumiphone:reference_armed','lumiphone:lorebook_contact_books','lumiphone:lorebook_contact_entries','lumiphone:lorebook_contacts_drafts','lumiphone:lorebook_contacts_saved','lumiphone:conversations_deleted','lumiphone:error'].includes(payload.type)){this.communityRequests.delete(payload.requestId);communityRequest(payload);return}
     if(payload.type==='lumiphone:error' && [this.datingRequest,this.datingProfileRequest].includes(payload.requestId)){
       if(payload.requestId===this.datingProfileRequest){this.datingUI.profileBusy=false;this.datingUI.profileError=payload.error;this.datingProfileRequest=''}else{this.datingUI.busy=false;this.datingUI.error=payload.error;this.datingRequest=''}
       if(this.currentApp==='dating')this.render(false);return
@@ -1370,6 +1382,12 @@ class PocketController {
       if(this.settingsRevision===this.freeformListPreferenceRevision&&typeof payload.suppressRoleplayTools==='boolean')this.preferences.suppressRoleplayTools=payload.suppressRoleplayTools
       this.renderDrawerLanding()
       if(this.sessionManageFocus){this.sessionManageFocus=false;this.drawer.root.querySelector<HTMLElement>('h2')?.focus({preventScroll:true})}
+      return
+    }
+    if (payload.type === 'lumiphone:freeform_ambient_changed' && payload.session) {
+      if (this.freeformSession?.id === payload.session.id) this.freeformSession = payload.session
+      this.freeformDirectory = null
+      if (this.currentApp === 'settings' && this.selectedSettingsSection === 'freeform') this.render(false)
       return
     }
     if (payload.type === 'lumiphone:freeform_opened' && payload.requestId === this.freeformRequest) {
@@ -1448,6 +1466,7 @@ class PocketController {
       if (this.state && (this.state.chatId !== payload.state.chatId || this.state.characterId !== payload.state.characterId)) {
         this.trackerMutationRequest = ''; this.trackerJevRequest = ''; this.jevWorking = false
         this.collectionRequest = ''
+        this.conversationDeleteDismiss?.(); this.conversationSelectionMode = false; this.selectedConversationIds.clear()
         this.cameraDraft = { scene: '', enhance: undefined }
         this.cameraPreview = ''; this.cameraProgress = ''; this.cameraBusy = false; this.cameraRequestId = ''; this.cameraContactId = ''; this.cameraReady = false
         this.cameraImageId = ''; this.cameraNpcDraft = null; this.cameraOptions = { purpose: 'scene', aspect: '', connectionId: '', model: '' }; this.cameraFocus = { x: 50, y: 50 }
@@ -1695,6 +1714,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:operation_progress' && payload.requestId) {
+      this.lorebookProgress.get(payload.requestId)?.({ phase: payload.phase, message: payload.message || 'Working…', completedEntries: payload.completedEntries, totalEntries: payload.totalEntries })
       const operation: PocketOperationProgress = {
         task: payload.task, requestId: payload.requestId, phase: payload.phase,
         message: payload.message || 'Working…',
@@ -1789,7 +1809,10 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:discovered_actor_promoted' && payload.contactId) {
-      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' }, false)
+      const origin = this.actorProfileRequests.get(payload.requestId)
+      this.actorProfileRequests.delete(payload.requestId)
+      if (!origin || origin.chatId !== this.state?.chatId || origin.characterId !== this.state?.characterId || origin.route !== JSON.stringify(this.router.current)) return
+      this.openPocket({ app: 'contacts', contactId: payload.contactId, view: 'detail' })
       return
     }
     if (payload.type === 'lumiphone:npc_bank_saved') {
@@ -1872,6 +1895,7 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      this.actorProfileRequests.delete(payload.requestId)
       if(payload.requestId===this.sessionManageRequest){this.sessionManageRequest='';this.sessionManageError=payload.error || 'Could not update the session.';this.loadFreeformDirectory();this.renderDrawerLanding();return}
       if (payload.requestId === this.freeformRequest || payload.requestId === this.freeformListRequest) {
         this.freeformRequest = ''; this.freeformListRequest = ''; this.freeformError = payload.error || 'Could not open Freeform. Try again.'
@@ -2160,6 +2184,8 @@ class PocketController {
   }
 
   private close(): void {
+    this.conversationDeleteDismiss?.(); this.conversationDeleteDismiss = null
+    this.lorebookPicker?.dismiss(); this.lorebookPicker = null
     this.voicePlayer.stop()
     for (const ui of this.launcherSessions.values()) {
       ui.placingSlot = undefined; ui.drawer = false; ui.query = ''
@@ -2510,6 +2536,8 @@ class PocketController {
     const focusedLauncherSelection = document.activeElement instanceof HTMLInputElement && focusedLauncher ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
     const focusedComposer = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.dataset.pocketComposer : ''
     const selection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : null
+    const lorebookScope = `${this.state?.chatId}:${this.state?.characterId}:${JSON.stringify(this.router.current)}`
+    if (this.lorebookPicker && this.lorebookPicker.scope !== lorebookScope) { this.lorebookPicker.dismiss(); this.lorebookPicker = null }
     for (const cleanup of this.viewCleanups.splice(0)) cleanup()
     if (!this.state) {
       this.screen.replaceChildren(this.loadingView())
@@ -2974,6 +3002,12 @@ class PocketController {
         this.groupDrafts.set(`${this.state!.chatId}:${this.state!.characterId}:new`, { title, participants: participants.map(id => actors.find(actor => actor.contact?.id === id)?.actorId || id) })
         this.openPocket({ app: 'messages', view: 'group-editor' })
       },
+      onCleanup: cleanup => this.viewCleanups.push(cleanup),
+      selectionMode: this.conversationSelectionMode, selectedConversationIds: this.selectedConversationIds, deletingConversations: Boolean(this.conversationDeleteRequest),
+      setSelectionMode: value => { this.conversationSelectionMode = value; if (!value) this.selectedConversationIds.clear(); this.render(false) },
+      toggleConversationSelection: id => { if (this.selectedConversationIds.has(id)) this.selectedConversationIds.delete(id); else this.selectedConversationIds.add(id); this.render(false) },
+      selectAllConversations: ids => { for (const id of ids) this.selectedConversationIds.add(id); this.render(false) },
+      deleteConversations: (ids, anchor) => this.confirmConversationDeletion(ids, anchor),
       generationAvailable: Boolean(this.caps?.generation), busyConversations: new Map([...this.messageRequests.values()].map((entry) => [entry.conversationId, { speakerContactId: entry.speakerContactId, phase: entry.phase }])),
       selectedGroupSpeakerId: this.groupSpeakerSelections.get(this.selectedConversationId) || 'auto',
       draft: this.messageDrafts.get(this.selectedConversationId) || '',
@@ -2984,7 +3018,10 @@ class PocketController {
       openActor: (actorId) => {
         const actor = resolvePocketActor(this.state!, actorId)
         if (actor?.contact) this.openPocket({ app: 'contacts', contactId: actor.contact.id, view: 'detail' })
-        else if (actor?.discovered) this.send('lumiphone:promote_discovered_actor', { actorId })
+        else if (actor?.discovered) {
+          const requestId = this.send('lumiphone:promote_discovered_actor', { actorId })
+          this.actorProfileRequests.set(requestId, { chatId: this.state!.chatId, characterId: this.state!.characterId, route: JSON.stringify(this.router.current) })
+        }
       },
       openDirect: (contactId) => this.send('lumiphone:open_direct', { contactId }),
       send: (type, payload) => { this.send(type, payload) },
@@ -3313,6 +3350,35 @@ class PocketController {
     modal.root.appendChild(content)
   }
 
+  private confirmConversationDeletion(ids: string[], anchor: HTMLElement): void {
+    if (this.conversationDeleteRequest || !this.state || !ids.length) return
+    const context = this.activeContext(), body = el('div', 'lp-conversation-delete-confirm'), titles = el('ul')
+    for (const id of ids) { const conversation = this.state.conversations.find(thread => thread.id === id); if (conversation) titles.append(el('li', '', conversation.title)) }
+    const feedback = el('p', 'lp-copy'); feedback.setAttribute('role', 'alert')
+    const remove = button(`Delete ${ids.length} conversation${ids.length === 1 ? '' : 's'}`, 'lp-button lp-button-destructive')
+    body.append(el('p', 'lp-copy', 'Delete these Pocket chats and all their messages? Contacts and NPC Bank profiles stay available.'), titles, feedback, remove)
+    const sheet = showPocketSheet(anchor, 'Delete conversations?', body, { closeLabel: 'Cancel', onDismiss: () => { this.conversationDeleteDismiss = null } })
+    if (!sheet) return
+    this.conversationDeleteDismiss = sheet.dismiss
+    remove.onclick = () => {
+      if (remove.disabled) return
+      const id = requestId('delete_conversations'); this.conversationDeleteRequest = id; remove.disabled = true; remove.textContent = 'Deleting…'
+      this.communityRequests.set(id, response => {
+        this.conversationDeleteRequest = ''
+        if (response.type === 'lumiphone:error') { feedback.textContent = response.error; remove.disabled = false; remove.textContent = `Delete ${ids.length} conversation${ids.length === 1 ? '' : 's'}`; this.render(false); return }
+        sheet.dismiss()
+        if (JSON.stringify(this.activeContext()) !== JSON.stringify(context)) return
+        this.conversationSelectionMode = false; this.selectedConversationIds.clear()
+        for (const conversationId of ids) { this.messageDrafts.delete(conversationId); this.groupSpeakerSelections.delete(conversationId); this.manualMessageOverrides.delete(conversationId) }
+        for (const [key, job] of this.messageRequests) if (ids.includes(job.conversationId)) this.messageRequests.delete(key)
+        if (ids.includes(this.selectedConversationId)) this.openPocket({ app: 'messages' }, false)
+        else this.render(false)
+        this.showFeedback(`${response.deletedCount || ids.length} conversation${ids.length === 1 ? '' : 's'} deleted.`)
+      })
+      this.send('lumiphone:delete_conversations', { ...context, requestId: id, conversationIds: ids })
+    }
+  }
+
   private generateReply(conversationId: string, speakerContactId = ''): void {
     if ([...this.messageRequests.values()].some((entry) => entry.conversationId === conversationId)) return
     const id = requestId('reply')
@@ -3365,6 +3431,23 @@ class PocketController {
       generatePhoto: (contactId) => this.openPocket({ app: 'camera', contactId }),
       generateDraftPhoto: () => this.openPocket({ app: 'camera', draft: true }),
       useSourcePhoto: (contactId) => this.send('lumiphone:set_contact_photo', { contactId, useSource: true }),
+      importLorebook: anchor => {
+        this.lorebookPicker?.dismiss()
+        const context = this.activeContext()
+        const dismiss = showLorebookContactPicker(anchor, (type, payload, progress) => new Promise((resolve, reject) => {
+          const id = requestId('lorebook_contacts')
+          if (progress) this.lorebookProgress.set(id, progress)
+          this.communityRequests.set(id, response => {
+            this.lorebookProgress.delete(id)
+            if (type === 'lumiphone:lorebook_contacts_extract') this.recordOperationProgress({ task: 'npc-contact', requestId: id, phase: response.type === 'lumiphone:error' ? 'error' : 'complete', message: response.type === 'lumiphone:error' ? response.error : 'NPC review ready' })
+            if (response.type === 'lumiphone:error') reject(new Error(response.error))
+            else if (this.activeContext().chatId !== context.chatId || this.activeContext().characterId !== context.characterId) reject(new Error('The active chat changed. Reopen lorebook import.'))
+            else resolve(response)
+          })
+          this.send(type, { ...context, ...payload, requestId: id })
+        }))
+        if (dismiss) this.lorebookPicker = { dismiss, scope: `${this.state?.chatId}:${this.state?.characterId}:${JSON.stringify(this.router.current)}` }
+      },
       requestSources: () => {
         if (this.contactSourcesRequested) return
         this.contactSourcesRequested = true

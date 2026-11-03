@@ -4,6 +4,7 @@ import { normalizeReasoningEffort } from './reasoning.js'
 import type { DevicePreferences, PocketImageSource, PocketWallpaper, PhonePalette, PhoneTheme } from '../types.js'
 import { normalizeJevSettings } from './jev.js'
 import { builtinWallpaper } from './wallpapers.js'
+import { normalizeConnectionTokenLimits } from './generation-output.js'
 import { normalizeSamplerOverrides } from './samplers.js'
 
 export const PREFERENCES_VERSION = 5 as const
@@ -143,6 +144,7 @@ export function defaultPreferences(): DevicePreferences {
     jev: normalizeJevSettings(null),
     generationMode: 'roleplay',
     automaticGenerationRetry: true,
+    generationConnectionMaxTokens: {},
     sidecarConnectionId: '',
     sidecarModelOverride: '',
     samplerOverrides: {},
@@ -150,6 +152,8 @@ export function defaultPreferences(): DevicePreferences {
     autoReplyAfterSend: false,
     replyCadence: 'natural',
     ambientMessaging: 'off',
+    ambientScheduleEnabled: false,
+    ambientScheduleMinutes: 30,
     preferFullProfiles: false,
     enableLorebooks: false,
     roleplayContextMode: 'smart',
@@ -296,6 +300,7 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === 'sidecar' ? 'sidecar' : 'roleplay',
     automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
+    generationConnectionMaxTokens: normalizeConnectionTokenLimits(raw.generationConnectionMaxTokens),
     ...(raw.authoring?{authoring:normalizeAuthoringPolicy(raw.authoring)}:{}),
     lumistryImageDialect:raw.lumistryImageDialect==='anima'||raw.lumistryImageDialect==='generic'?raw.lumistryImageDialect:'auto',
     sidecarConnectionId: text(raw.sidecarConnectionId, '', 180),
@@ -305,6 +310,8 @@ export function normalizePreferences(value: unknown): DevicePreferences {
     autoReplyAfterSend: bool(raw.autoReplyAfterSend, fallback.autoReplyAfterSend),
     replyCadence: raw.replyCadence === 'instant' || raw.replyCadence === 'quick' || raw.replyCadence === 'relaxed' ? raw.replyCadence : 'natural',
     ambientMessaging: raw.ambientMessaging === 'sparse' || raw.ambientMessaging === 'normal' ? raw.ambientMessaging : 'off',
+    ambientScheduleEnabled: bool(raw.ambientScheduleEnabled, false),
+    ambientScheduleMinutes: Math.round(numberIn(raw.ambientScheduleMinutes, 30, 1, 240)),
     preferFullProfiles: bool(raw.preferFullProfiles, false),
     enableLorebooks: bool(raw.enableLorebooks, false),
     roleplayContextMode: contextMode,
