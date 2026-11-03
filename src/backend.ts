@@ -118,6 +118,7 @@ import { fullProfile, profileContext } from './backend/context-options.js'
 import type { PocketLoreRetrievalLog } from './types.js'
 import { FreeformSessions } from './backend/freeform.js'
 import { isFreeformChat } from './domain/freeform.js'
+import { CoalescedWork } from './backend/coalesced-work.js'
 import type { FreeformDirectory } from './domain/freeform.js'
 
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
@@ -135,6 +136,8 @@ const MAX_EVENTS = 200
 const MAX_TRACKERS = 40
 const MAX_ACTIVITIES = 120
 const stateLocks = new Map<string, Promise<unknown>>()
+const stateRefreshes = new CoalescedWork<void>()
+const ambientObservations = new CoalescedWork<void>()
 const jevFlights = new Set<string>()
 interface CameraJob { controller: AbortController; cancelled: boolean; chatId: string; characterId: string; userId?: string }
 const cameraJobs = new Map<string, CameraJob>()
@@ -1497,7 +1500,7 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
   for (const [target, result] of Object.entries(resolvedWallpapers)) {
     if (result.status === 'error') spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || 'unknown error'}`)
   }
-  const displayState = projectSwipeScopedState(structuredClone(state))
+  const displayState = projectSwipeScopedState(state)
   if (isFreeformChat(displayState.chatId)) {
     const checkpoint = displayState.freeformConsolidation || { version: 1 as const, status: 'idle' as const }
     displayState.freeformConsolidation = { ...checkpoint, pendingTurns: freeformPendingTurnCount(displayState) }
@@ -2431,8 +2434,13 @@ async function ambientScheduleTargets(userId?: string): Promise<Array<{ chatId: 
 }
 
 async function observeAmbientTimer(_context: { chatId: string; characterId: string }, userId?: string): Promise<void> {
-  try { await ambientMessageAutomation.sync(await ambientScheduleTargets(userId), userId) }
-  catch (error) { spindle.log.warn(`Pocket ambient timer settings: ${error instanceof Error ? error.message : 'unavailable'}`) }
+  await ambientObservations.run(viewKey(userId), async () => {
+    try {
+      const preferences = await loadPreferences(userId)
+      if (preferences.ambientMessaging === 'off' || !preferences.ambientScheduleEnabled) { ambientMessageAutomation.forget(userId); return }
+      await ambientMessageAutomation.sync(await ambientScheduleTargets(userId), userId)
+    } catch (error) { spindle.log.warn(`Pocket ambient timer settings: ${error instanceof Error ? error.message : 'unavailable'}`) }
+  })
 }
 
 async function observeBackgroundTimers(context: { chatId: string; characterId: string }, userId?: string): Promise<void> {
@@ -5991,9 +5999,13 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         break
       }
       case 'lumiphone:get_state': {
-        const state = await recoverEventPhoneContinuity(context, userId)
-        await sendState(state, userId, 'load')
-        await observeBackgroundTimers(context, userId)
+        // Refreshes carry no mutations or request-specific acknowledgements. Keep
+        // only one trailing read so a burst still finishes with fresh state.
+        await stateRefreshes.run(JSON.stringify([viewKey(userId), context.chatId, context.characterId]), async () => {
+          const state = await recoverEventPhoneContinuity(context, userId)
+          await sendState(state, userId, 'load')
+          await observeBackgroundTimers(context, userId)
+        })
         break
       }
       case 'lumiphone:jev_save_key': {

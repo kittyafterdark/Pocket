@@ -1,5 +1,9 @@
 import type { PhoneState, PocketImageSource, PocketResolvedImage } from '../types.js'
 import { builtinWallpaper, builtinWallpaperUrl } from '../domain/wallpapers.js'
+import { WorkPool } from './coalesced-work.js'
+
+const IMAGE_LOOKUP_CONCURRENCY = 4
+const imageLookups = new WorkPool(IMAGE_LOOKUP_CONCURRENCY)
 
 type ImageApi = Pick<import('lumiverse-spindle-types').SpindleAPI, 'cors' | 'images' | 'permissions' | 'userStorage'>
 
@@ -103,17 +107,19 @@ async function resolveRemoteUrl(api: ImageApi, source: Extract<PocketImageSource
 /** The only boundary that translates a persisted PocketImageSource into something renderable. */
 export async function resolvePocketImageSource(api: ImageApi, source: PocketImageSource | null, userId?: string): Promise<PocketResolvedImage> {
   if (!source) return empty()
-  try {
-    if (source.kind === 'builtin') {
-      const preset = builtinWallpaper(source.wallpaperId)
-      if (!preset) throw new Error('That Pocket wallpaper is unavailable.')
-      return { url: builtinWallpaperUrl(preset.id), status: 'ready', sourceKind: 'builtin', sourceLabel: preset.name }
+  return imageLookups.run(async () => {
+    try {
+      if (source.kind === 'builtin') {
+        const preset = builtinWallpaper(source.wallpaperId)
+        if (!preset) throw new Error('That Pocket wallpaper is unavailable.')
+        return { url: builtinWallpaperUrl(preset.id), status: 'ready', sourceKind: 'builtin', sourceLabel: preset.name }
+      }
+      if (source.kind === 'url') return await resolveRemoteUrl(api, source, userId)
+      return await getStoredImage(api, source, userId)
+    } catch (error) {
+      return failure(source, error)
     }
-    if (source.kind === 'url') return await resolveRemoteUrl(api, source, userId)
-    return await getStoredImage(api, source, userId)
-  } catch (error) {
-    return failure(source, error)
-  }
+  })
 }
 
 export function assertPocketImageResolved(result: PocketResolvedImage): void {
@@ -133,20 +139,14 @@ export async function hydratePocketImageProjection(
   state: PhoneState,
   resolveGalleryUrl: (imageId: string) => Promise<string | undefined>,
 ): Promise<void> {
-  const cache = new Map<string, Promise<string | undefined>>()
-  const resolve = (imageId: string): Promise<string | undefined> => {
-    const id = imageId.trim()
-    if (!id) return Promise.resolve(undefined)
-    const existing = cache.get(id)
-    if (existing) return existing
-    const pending = resolveGalleryUrl(id).catch(() => undefined)
-    cache.set(id, pending)
-    return pending
-  }
-  const tasks: Promise<void>[] = []
+  const assignments = new Map<string, Array<(url: string | undefined) => void>>()
   const hydrate = (imageId: string | undefined, assign: (url: string | undefined) => void): void => {
     if (!imageId) return
-    tasks.push(resolve(imageId).then(assign))
+    const id = imageId.trim()
+    if (!id) { assign(undefined); return }
+    const targets = assignments.get(id) || []
+    targets.push(assign)
+    assignments.set(id, targets)
   }
 
   for (const conversation of state.conversations) {
@@ -174,7 +174,15 @@ export async function hydratePocketImageProjection(
     }
   }
 
-  await Promise.all(tasks)
+  // A large saved history must not create an RPC and promise per image at once.
+  const entries = assignments.entries()
+  const worker = async () => {
+    for (const [id, targets] of entries) {
+      const url = await resolveGalleryUrl(id).catch(() => undefined)
+      for (const assign of targets) assign(url)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(IMAGE_LOOKUP_CONCURRENCY, assignments.size) }, worker))
 }
 
 /** Normalize old and new native image-generation completion shapes. */

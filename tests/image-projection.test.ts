@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { hydratePocketImageProjection, projectGeneratedPocketImage } from '../src/backend/image-sources.js'
+import { hydratePocketImageProjection, projectGeneratedPocketImage, resolvePocketImageSource } from '../src/backend/image-sources.js'
 
 test('display projection rehydrates messages, Lumistry photos and missing social image URLs once per Gallery ID', async () => {
   const state: any = {
@@ -40,4 +40,43 @@ test('projection tolerates stale or missing Gallery records without losing durab
   expect(state.conversations[0].messages[0].imageUrl).toBeUndefined()
   expect(state.lumistry.owner.self.photos[0].source.imageId).toBe('missing')
   expect(state.lumistry.owner.self.photos[0].url).toBe('')
+})
+
+
+test('large image projections use a bounded set of workers and finish after a missing image', async () => {
+  const state: any = { conversations: [{ messages: Array.from({ length: 512 }, (_, i) => ({ imageId: 'image-' + i })) }] }
+  let release!: () => void, ready!: () => void, active = 0, maximum = 0, calls = 0
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { ready = resolve })
+  const hydration = hydratePocketImageProjection(state, async id => {
+    calls++; active++; maximum = Math.max(maximum, active); ready()
+    try { await gate; if (id === 'image-5') throw new Error('missing image'); return '/gallery/' + id }
+    finally { active-- }
+  })
+  try {
+    await started
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    expect(maximum).toBe(4)
+  } finally { release(); await hydration }
+  expect(calls).toBe(512)
+  expect(maximum).toBe(4)
+  expect(state.conversations[0].messages[5].imageUrl).toBeUndefined()
+  expect(state.conversations[0].messages[511].imageUrl).toBe('/gallery/image-511')
+})
+
+test('simultaneous image consumers share the lookup budget', async () => {
+  let release!: () => void, ready!: () => void, active = 0, maximum = 0
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { ready = resolve })
+  const api: any = {
+    permissions: { has: () => true },
+    images: { async get(id: string) { active++; maximum = Math.max(maximum, active); ready(); await gate; active--; return { mime_type: 'image/png', url: '/gallery/' + id } } },
+  }
+  const lookups = Promise.all(Array.from({ length: 40 }, (_, i) => resolvePocketImageSource(api, { kind: 'gallery', imageId: 'shared-' + i })))
+  try {
+    await started
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    expect(maximum).toBe(4)
+  } finally { release() }
+  const results = await lookups
+  expect(results.every(image => image.status === 'ready')).toBe(true)
+  expect(maximum).toBe(4)
 })

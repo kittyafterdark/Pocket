@@ -37590,7 +37590,64 @@ function relayForGeneration(state, generationId) {
   return state.relays.find((relay) => relay.status === "pending" && relay.continuation.generationId === generationId);
 }
 
+// src/backend/coalesced-work.ts
+class CoalescedWork {
+  flights = new Map;
+  run(key, work) {
+    const existing = this.flights.get(key);
+    if (existing) {
+      existing.next = work;
+      return existing.promise;
+    }
+    const flight = { next: work, promise: Promise.resolve(undefined) };
+    flight.promise = Promise.resolve().then(async () => {
+      try {
+        let result;
+        while (flight.next) {
+          const next = flight.next;
+          flight.next = undefined;
+          result = await next();
+        }
+        return result;
+      } finally {
+        if (this.flights.get(key) === flight)
+          this.flights.delete(key);
+      }
+    });
+    this.flights.set(key, flight);
+    return flight.promise;
+  }
+}
+
+class WorkPool {
+  limit;
+  active = 0;
+  waiting = [];
+  constructor(limit) {
+    this.limit = limit;
+    if (!Number.isInteger(limit) || limit < 1)
+      throw new Error("The work limit must be a positive integer.");
+  }
+  async run(work) {
+    if (this.active >= this.limit)
+      await new Promise((resolve) => this.waiting.push(resolve));
+    else
+      this.active++;
+    try {
+      return await work();
+    } finally {
+      const next = this.waiting.shift();
+      if (next)
+        next();
+      else
+        this.active--;
+    }
+  }
+}
+
 // src/backend/image-sources.ts
+var IMAGE_LOOKUP_CONCURRENCY = 4;
+var imageLookups = new WorkPool(IMAGE_LOOKUP_CONCURRENCY);
 var URL_CACHE_PATH = "device/pocket-image-url-cache.json";
 var SOURCE_LABELS = {
   builtin: "Pocket wallpaper",
@@ -37680,19 +37737,21 @@ async function resolveRemoteUrl(api, source, userId) {
 async function resolvePocketImageSource(api, source, userId) {
   if (!source)
     return empty();
-  try {
-    if (source.kind === "builtin") {
-      const preset = builtinWallpaper(source.wallpaperId);
-      if (!preset)
-        throw new Error("That Pocket wallpaper is unavailable.");
-      return { url: builtinWallpaperUrl(preset.id), status: "ready", sourceKind: "builtin", sourceLabel: preset.name };
+  return imageLookups.run(async () => {
+    try {
+      if (source.kind === "builtin") {
+        const preset = builtinWallpaper(source.wallpaperId);
+        if (!preset)
+          throw new Error("That Pocket wallpaper is unavailable.");
+        return { url: builtinWallpaperUrl(preset.id), status: "ready", sourceKind: "builtin", sourceLabel: preset.name };
+      }
+      if (source.kind === "url")
+        return await resolveRemoteUrl(api, source, userId);
+      return await getStoredImage(api, source, userId);
+    } catch (error) {
+      return failure(source, error);
     }
-    if (source.kind === "url")
-      return await resolveRemoteUrl(api, source, userId);
-    return await getStoredImage(api, source, userId);
-  } catch (error) {
-    return failure(source, error);
-  }
+  });
 }
 function assertPocketImageResolved(result) {
   if (result.status !== "ready" || !result.url)
@@ -37702,25 +37761,18 @@ function isPocketRenderableImageUrl(value) {
   return typeof value === "string" && /^(https?:\/\/|\/[^/])/.test(value.trim());
 }
 async function hydratePocketImageProjection(state, resolveGalleryUrl) {
-  const cache = new Map;
-  const resolve = (imageId) => {
-    const id = imageId.trim();
-    if (!id)
-      return Promise.resolve(undefined);
-    const existing = cache.get(id);
-    if (existing)
-      return existing;
-    const pending = resolveGalleryUrl(id).catch(() => {
-      return;
-    });
-    cache.set(id, pending);
-    return pending;
-  };
-  const tasks = [];
+  const assignments = new Map;
   const hydrate = (imageId, assign) => {
     if (!imageId)
       return;
-    tasks.push(resolve(imageId).then(assign));
+    const id = imageId.trim();
+    if (!id) {
+      assign(undefined);
+      return;
+    }
+    const targets = assignments.get(id) || [];
+    targets.push(assign);
+    assignments.set(id, targets);
   };
   for (const conversation of state.conversations) {
     for (const message of conversation.messages) {
@@ -37755,7 +37807,17 @@ async function hydratePocketImageProjection(state, resolveGalleryUrl) {
         });
     }
   }
-  await Promise.all(tasks);
+  const entries = assignments.entries();
+  const worker = async () => {
+    for (const [id, targets] of entries) {
+      const url = await resolveGalleryUrl(id).catch(() => {
+        return;
+      });
+      for (const assign of targets)
+        assign(url);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(IMAGE_LOOKUP_CONCURRENCY, assignments.size) }, worker));
 }
 async function projectGeneratedPocketImage(result, resolveGalleryUrl) {
   const record = result && typeof result === "object" ? result : {};
@@ -38208,6 +38270,8 @@ var MAX_EVENTS = 200;
 var MAX_TRACKERS = 40;
 var MAX_ACTIVITIES = 120;
 var stateLocks = new Map;
+var stateRefreshes = new CoalescedWork;
+var ambientObservations = new CoalescedWork;
 var jevFlights = new Set;
 var cameraJobs = new Map;
 var socialPhotoJobs = new Map;
@@ -39775,7 +39839,7 @@ async function sendState(state, userId, reason = "refresh", open = false, prefer
     if (result.status === "error")
       spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || "unknown error"}`);
   }
-  const displayState = projectSwipeScopedState(structuredClone(state));
+  const displayState = projectSwipeScopedState(state);
   if (isFreeformChat(displayState.chatId)) {
     const checkpoint = displayState.freeformConsolidation || { version: 1, status: "idle" };
     displayState.freeformConsolidation = { ...checkpoint, pendingTurns: freeformPendingTurnCount(displayState) };
@@ -40829,11 +40893,18 @@ async function ambientScheduleTargets(userId) {
   return [...targets.values()];
 }
 async function observeAmbientTimer(_context, userId) {
-  try {
-    await ambientMessageAutomation.sync(await ambientScheduleTargets(userId), userId);
-  } catch (error) {
-    spindle.log.warn(`Pocket ambient timer settings: ${error instanceof Error ? error.message : "unavailable"}`);
-  }
+  await ambientObservations.run(viewKey(userId), async () => {
+    try {
+      const preferences = await loadPreferences(userId);
+      if (preferences.ambientMessaging === "off" || !preferences.ambientScheduleEnabled) {
+        ambientMessageAutomation.forget(userId);
+        return;
+      }
+      await ambientMessageAutomation.sync(await ambientScheduleTargets(userId), userId);
+    } catch (error) {
+      spindle.log.warn(`Pocket ambient timer settings: ${error instanceof Error ? error.message : "unavailable"}`);
+    }
+  });
 }
 async function observeBackgroundTimers(context, userId) {
   await Promise.all([observeSocialTimers(context, userId), observeAmbientTimer(context, userId)]);
@@ -44850,9 +44921,11 @@ async function handleFrontend(payload, userId) {
         break;
       }
       case "lumiphone:get_state": {
-        const state = await recoverEventPhoneContinuity(context, userId);
-        await sendState(state, userId, "load");
-        await observeBackgroundTimers(context, userId);
+        await stateRefreshes.run(JSON.stringify([viewKey(userId), context.chatId, context.characterId]), async () => {
+          const state = await recoverEventPhoneContinuity(context, userId);
+          await sendState(state, userId, "load");
+          await observeBackgroundTimers(context, userId);
+        });
         break;
       }
       case "lumiphone:jev_save_key": {
