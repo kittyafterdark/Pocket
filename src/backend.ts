@@ -56,6 +56,7 @@ import {assignPocketWallpaper,personaWallpaperActive} from './domain/wallpaper-s
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
 import { clockDayPart, clockLabel, CLOCK_DAY_PART_KEYS } from './domain/clock-label.js'
 import { projectPhoneContext } from './domain/projection.js'
+import { normalizeTrackerContextSettings, trackerContext, trackerMacroValue } from './domain/tracker-context.js'
 import { assertPersonaAuthorship, callSummary, normalizeCallMarker } from './domain/phone-events.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
 import { applyTrackerOperation, materializeTracker, normalizeTracker, setTrackerClockPaused, trackerKey, uniqueTrackerKey, validateTrackerConfig } from './domain/trackers.js'
@@ -427,6 +428,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     references: [],
     groupBatches: [],
     weather: defaultWeather(),
+    trackerSettings: normalizeTrackerContextSettings(null),
     trackers: [],
     notifications: [],
     activities: [],
@@ -803,6 +805,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     chatId,
     characterId,
     contextScenario: text(value.contextScenario, 12000),
+    trackerSettings: normalizeTrackerContextSettings(value.trackerSettings),
     storageRevision:Math.max(0,Math.round(numberValue(value.storageRevision,0))),
     nativeApps:Object.fromEntries(Object.entries(isRecord(value.nativeApps)?value.nativeApps:{}).slice(0,16).map(([owner,data])=>[owner,normalizeNativeApps(data)])),
     lumistry:Object.fromEntries(Object.entries(isRecord(value.lumistry)?value.lumistry:{}).slice(0,16).map(([owner,data])=>[owner,normalizeDating(data)])),
@@ -5625,7 +5628,7 @@ async function applyAction(input: AnyRecord, userId?: string, source: 'model' | 
         next = setTrackerClockPaused(existing, payload.clockAction === 'pause', state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? '' : state.roleplayNow)
       } else if (existing && operation) {
         next = applyTrackerOperation(existing, {
-          operation, amount: numberValue(payload.amount ?? payload.value, 0), state: text(payload.state ?? payload.value, existing.kind === 'state' && existing.freeText ? 2000 : 80),
+          operation, clinical: payload.clinical, amount: numberValue(payload.amount ?? payload.value, 0), state: payload.state === undefined && payload.value === undefined ? undefined : text(payload.state ?? payload.value, existing.kind === 'state' && existing.freeText ? 2000 : 80),
           reason: text(payload.reason, 300), source, roleplayNow: state.roleplayNow,
         })
       } else {
@@ -6436,6 +6439,16 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           await saveState(state, userId)
           await sendState(state, userId, 'conversation')
           send({ type: 'lumiphone:conversation_opened', requestId, conversationId: conversation.id }, userId)
+        })
+        break
+      }
+      case 'lumiphone:save_tracker_settings': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          state.trackerSettings = normalizeTrackerContextSettings(payload.settings)
+          await saveState(state, userId)
+          await sendState(state, userId, 'tracker_settings')
+          send({ type: 'lumiphone:action_done', requestId }, userId)
         })
         break
       }
@@ -7287,6 +7300,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
           }
           await saveState(state, userId)
           await sendState(state, userId, 'delete')
+          if (kind === 'tracker') send({ type: 'lumiphone:action_done', requestId }, userId)
         })
         break
       }
@@ -7432,9 +7446,13 @@ function ensureInterceptor(): void {
         ? 'IMPERSONATION: you may author and persist newly-written messages as the Pocket Persona as well as other actors.'
         : 'ROLEPLAY: the human exclusively authors the Pocket Persona. Never send a message or initiate a call as that persona, including aliases, sender=user/persona, or group batches. Explicit phone input is supplied as history; never resend it. Persist other actors’ communication normally. Quoted dialogue in prose is not automatically a text message.'
       const phoneRecall = roleplayPhoneRecall(projectSwipeScopedState(state))
-      const generic = { role: 'system' as const, content: `${PHONE_GUIDANCE}\n${authorship}\nCurrent Pocket snapshot:\n${projectPhoneContext(state)}${phoneRecall ? `\n\n${phoneRecall}` : ''}` }
+      const generic = { role: 'system' as const, content: `${PHONE_GUIDANCE}\n${authorship}\nCurrent Pocket snapshot:\n${projectPhoneContext(state, undefined, false)}${phoneRecall ? `\n\n${phoneRecall}` : ''}` }
       const injectedMessages = [...cleanMessages, generic]
       const breakdown = [{ messageIndex: cleanMessages.length, name: 'Pocket memory' }]
+      if (normalizeTrackerContextSettings(state.trackerSettings).delivery === 'injection' && state.trackers.some(t => t.visibleToModel)) {
+        injectedMessages.push({ role: 'system' as const, content: trackerContext(state) })
+        breakdown.push({ messageIndex: injectedMessages.length - 1, name: 'Pocket trackers — live state' })
+      }
       if (handoffMemoryBlock) {
         injectedMessages.push({ role: 'system' as const, content: handoffMemoryBlock })
         breakdown.push({ messageIndex: injectedMessages.length - 1, name: 'Pocket handoff memory — established history' })
@@ -7891,6 +7909,27 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`
   }
 })
+
+// Resolve from the invocation's chat, never the phone UI's last active state.
+// Function handlers are supported by the runtime; the bundled DTO still types them as strings.
+for (const name of ['pocket_trackers', 'pocket_tracker']) {
+  spindle.registerMacro({
+    name, category: 'Pocket', returnType: 'string', volatile: true,
+    description: name === 'pocket_trackers' ? 'Live Pocket tracker context (macro mode only).' : 'Current visible tracker value by stable key (macro mode only).',
+    ...(name === 'pocket_tracker' ? { args: [{ name: 'key', required: true }] } : {}),
+    handler: (async (context: { chatId?: string; args?: string[] }) => {
+      const chatId = text(context.chatId, 180)
+      if (!chatId || await roleplayToolsSuppressed()) return ''
+      const characterId = await stateCharacterIdForChat(chatId, '')
+      // Do not call loadState here: dry macro evaluation must not persist clocks or migrations.
+      const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), { fallback: null })
+      if (!isRecord(raw) || Number(raw.version) > STATE_VERSION) return ''
+      const state = normalizeState(raw, chatId, characterId, text(raw.characterName, 120))
+      if (normalizeTrackerContextSettings(state.trackerSettings).delivery !== 'macros') return ''
+      return name === 'pocket_trackers' ? trackerContext(state) : trackerMacroValue(state, text(context.args?.[0], 120))
+    }) as unknown as string,
+  })
+}
 
 ensureInterceptor()
 void roleplayToolsSuppressed().then(registerTool).catch(error=>spindle.log.warn(`Pocket could not restore tool availability: ${error instanceof Error?error.message:String(error)}`))

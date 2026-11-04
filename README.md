@@ -226,6 +226,18 @@ Native touch scrolling defaults on for iPhone and iPod in Pocket's mobile widget
 
 The old default-off preference migrates to automatic device selection; an old enabled preference stays enabled. New explicit choices survive reloads. The widget requests its scroll mode at creation and updates it through Spindle's setter when available. Older hosts need the new Spindle touch scroll API for the override to take effect. This does not change host handlers or other extensions' widgets.
 
+## Tracker context in roleplay
+
+Trackers → **⋯** opens **Add new tracker** and **Settings**. Tracker settings are saved with the current roleplay, including in backups. Edit **Live state context prompt** to explain how the model should use your trackers; Pocket always appends the current visible values, targets, ranges or allowed states, and write permissions. The preview updates live.
+
+**Automatic live injection** adds this context to each RP request. **Macros in RP preset** disables automatic tracker injection so you can place `{{pocket_trackers}}` in your preset for the full prompt and state, or `{{pocket_tracker::trust}}` for one current value by stable key. Settings lists the available keys. Individual value macros include units but no update instructions. Macros resolve only in macro mode and use the invocation's chat. Hidden trackers are excluded from both paths; read-only trackers remain read-only. Large snapshots report omitted trackers. Pocket's global roleplay-tool suppression also suppresses tracker context and macros.
+
+The first card in New Tracker is **Custom**, which opens a matching picker for **A value**, **A quantity**, **A state**, **A field**, and **A timer**. Each blank tracker kind has four selectable **Display** styles in the editor: values (Arc Horizon, Cyber Barcode, Swiss Capsule, Vernier Caliper), quantities (Odometer, LED Tally, Supply Crates, Tally Rack), states (Waypoint, Phase Gates, Rotary Switch, Ribbons), fields (Terminal, Vellum, HUD, Split-View Report), and timers (Aerospace, Smart Watch, Radar, Hourglass). Existing tracker presentations remain available.
+
+**Physical Condition** has optional clinical fields for age, blood type, allergies, blood pressure, oxygen saturation, temperature, neurological status, airway, circulation, and motor condition. Enter story facts and units explicitly; blank fields are omitted. Visible clinical details accompany the tracker in live model context. On a model-writable state tracker, a `set_state` operation can include a partial `clinical` object; omitted keys keep their previous values. Reset restores the condition state and keeps the supplied clinical details.
+
+**Mental State** uses the rift presentation with editable ranges. **Faction Alignment** uses a signed scale with configurable low/high faction labels; the default range is −100 to +100. Both use normal tracker values, targets, permissions, and history.
+
 ## Tracker judge
 
 Settings → Tracker judge supports two providers:

@@ -5,6 +5,8 @@ import { button, el } from '../shared.js'
 import { controlRow, disclosure, fieldBlock, sectionBlock } from '../components/ui.js'
 import type { TrackerViewHost } from './trackers.js'
 import { trackerDisplay, trackerUpdateDescription } from '../components/tracker-display.js'
+import { trackerPresentations, CLINICAL_FIELDS } from '../../domain/tracker-presentations.js'
+import { trackerIcon } from '../components/tracker-art.js'
 
 function choice(label: string, values: Array<[string, string]>, value: string) {
   const control = el('select', 'lp-select')
@@ -12,14 +14,20 @@ function choice(label: string, values: Array<[string, string]>, value: string) {
   return { control, field: fieldBlock(label, control) }
 }
 
-export function trackerTemplates(host: TrackerViewHost): HTMLDivElement {
-  const { page, content } = host.page('New Tracker', 'Track your story')
+export function trackerTemplates(host: TrackerViewHost, custom = false): HTMLDivElement {
+  const { page, content } = host.page(custom ? 'Custom Tracker' : 'New Tracker', custom ? 'Choose what to track' : 'Track your story')
   content.append(el('p', 'lp-copy', 'Pick a starting point. You can make it yours next.'))
   const grid = el('div', 'lp-template-grid')
-  const marks = ['♡', '◔', '✿', '♥', 'ϟ', '▥', '◈', '◷', '✧', '＋']
+  if (!custom) {
+    const card = button('', 'lp-template-card'), mark = el('span', 'lp-template-mark')
+    mark.append(trackerIcon({ kind: 'meter' })); card.append(mark, el('strong', '', 'Custom'), el('small', '', 'Value, quantity, state, field or timer'))
+    card.addEventListener('click', () => host.select('__custom', 'config')); grid.append(card)
+  }
   TRACKER_TEMPLATES.forEach((template, index) => {
+    if ((template.group === 'Blank') !== custom) return
     const card = button('', 'lp-template-card')
-    card.append(el('span', 'lp-template-mark', marks[index]), el('strong', '', template.name), el('small', '', template.group))
+    const mark = el('span', 'lp-template-mark'); mark.append(trackerIcon(template.values))
+    card.append(mark, el('strong', '', custom ? ({ meter: 'A value', counter: 'A quantity', state: 'freeText' in template.values && template.values.freeText ? 'A field' : 'A state', timer: 'A timer' }[template.values.kind]) : template.name), el('small', '', custom ? 'Custom' : template.group))
     card.addEventListener('click', () => host.select(`__template:${index}`, 'config'))
     grid.append(card)
   })
@@ -87,6 +95,15 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const key = el('input', 'lp-input'); key.value = source.key
   const color = el('input', 'lp-color-input'); color.type = 'color'; color.value = /^#[0-9a-f]{6}$/i.test(source.color) ? source.color : host.accent
   const presentation = choice('Display', [], source.presentation)
+  const clinical = sectionBlock('Physical condition details', 'Optional story facts. Include units where relevant; unknown values stay blank.')
+  const clinicalInputs = CLINICAL_FIELDS.map(([key, label]) => {
+    const input = el('input', 'lp-input'); input.value = source.clinical?.[key] || ''; input.maxLength = 160
+    clinical.body.append(fieldBlock(label, input)); return [key, input] as const
+  })
+  const alignment = sectionBlock('Faction poles', 'Name the two ends of this tracker’s scale.')
+  const lowLabel = el('input', 'lp-input'); lowLabel.value = source.alignment?.lowLabel || 'Outlaw'; lowLabel.maxLength = 80
+  const highLabel = el('input', 'lp-input'); highLabel.value = source.alignment?.highLabel || 'Paragon'; highLabel.maxLength = 80
+  alignment.body.append(fieldBlock('Low-end faction', lowLabel), fieldBlock('High-end faction', highLabel))
   const range = el('div', 'lp-tracker-config-fields'); range.append(fieldBlock('Minimum', min), fieldBlock('Maximum', max), fieldBlock('Reset value', initial), fieldBlock('Unit', unit), stepField)
   const bandList = el('div', 'lp-band-list')
   const bandRows: Array<{ row: HTMLElement; min: HTMLInputElement; max: HTMLInputElement; label: HTMLInputElement; color: HTMLInputElement; meaning: HTMLSelectElement }> = []
@@ -108,8 +125,8 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
   const add = button('＋ Add a range', 'lp-button lp-button-quiet')
   add.addEventListener('click', () => { addBand({ min: Number(min.value), max: Number(max.value), label: 'New range', color: color.value }); remember() })
   bands.body.append(bandList, add)
-  const advanced = disclosure('Fine tuning', presentation.field, range, fieldBlock('Color', color), bands.section, fieldBlock('Stable key', key, 'Used by model tools. New trackers receive a unique key.'))
-  const allowed: Record<TrackerKind, string[]> = { meter: ['meter', 'vitals', 'relationship', 'segmented', 'compact'], counter: ['counter', 'compact'], state: ['state', 'compact'], timer: ['timer', 'compact'] }
+  basic.body.insertBefore(presentation.field, mode.field)
+  const advanced = disclosure('Fine tuning', range, fieldBlock('Color', color), bands.section, fieldBlock('Stable key', key, 'Used by model tools. New trackers receive a unique key.'))
   const collect = () => {
     const isField = kind.control.value === 'field'
     const kindValue = (isField ? 'state' : kind.control.value) as TrackerKind
@@ -122,6 +139,8 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
       states: [...new Set(states.value.split('\n').map(entry => entry.trim()).filter(Boolean))],
       step: Number(step.value), direction: direction.control.value, color: color.value,
       modelPrompt: modelPrompt.value.trim(),
+      clinical: Object.fromEntries(clinicalInputs.map(([key, input]) => [key, input.value.trim()])),
+      ...(presentation.control.value === 'alignment' || source.alignment ? { alignment: { lowLabel: lowLabel.value.trim(), highLabel: highLabel.value.trim() } } : {}),
       updateMode: mode.control.value, allowModelWrite: mode.control.value === 'model', visibleToModel: visible.checked, clock: clock.control.value,
       jev: { question: question.value.trim(), minConfidence: Number(confidence.value), levels: levels.value.split('\n').filter(line => line.trim()).map(line => { const delimiter = line.indexOf('|'); return { value: delimiter < 0 ? NaN : Number(line.slice(0, delimiter).trim()), label: delimiter < 0 ? '' : line.slice(delimiter + 1).trim() } }) },
       ratePerHour: kindValue === 'timer' ? Math.abs(Number(rate.value)) * (direction.control.value === 'down' ? -1 : 1) : Number(rate.value),
@@ -144,8 +163,11 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     modeHelp.textContent = trackerUpdateDescription(mode.control.value as PhoneTracker['updateMode'])
     const display = presentation.control.value || source.presentation
     presentation.control.replaceChildren()
-    for (const id of allowed[kindValue]) { const option = el('option', '', id[0].toUpperCase() + id.slice(1)); option.value = id; presentation.control.append(option) }
-    presentation.control.value = allowed[kindValue].includes(display) ? display : allowed[kindValue][0]
+    const choices = trackerPresentations(kindValue, isField)
+    for (const [id, label] of choices) { const option = el('option', '', label); option.value = id; presentation.control.append(option) }
+    presentation.control.value = choices.some(([id]) => id === display) ? display : choices[0][0]
+    clinical.section.hidden = kindValue !== 'state' || isField || !(['condition'].includes(presentation.control.value) || presentation.control.value === 'state' && /condition/i.test(name.value))
+    alignment.section.hidden = presentation.control.value !== 'alignment'
     const previous = state.control.value || (source.kind === 'state' ? source.state : '')
     state.control.replaceChildren()
     for (const label of [...new Set(states.value.split('\n').map(entry => entry.trim()).filter(Boolean))]) { const option = el('option', '', label); option.value = label; state.control.append(option) }
@@ -158,7 +180,7 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     preview.replaceChildren(trackerDisplay(sample, host.state))
     preview.style.setProperty('--tracker-color', draft.color)
   }
-  content.append(preview, error, basic.section, automatic.section, jev.section, advanced)
+  content.append(preview, error, basic.section, clinical.section, alignment.section, automatic.section, jev.section, advanced)
   content.addEventListener('input', remember); content.addEventListener('change', remember)
   refreshFields(); remember()
   commit = () => {
@@ -168,6 +190,6 @@ export function trackerEditor(host: TrackerViewHost, current: PhoneTracker | nul
     const save = page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!; save.disabled = true; save.textContent = 'Saving…'
     host.save({ ...draft, id: current?.id, command: current ? 'configure' : 'create' })
   }
-  if (current) { const remove = button('Delete tracker', 'lp-button lp-button-danger'); remove.addEventListener('click', () => host.send('lumiphone:delete', { kind: 'tracker', id: current.id })); content.append(remove) }
+  if (current) { const remove = button('Delete tracker', 'lp-button lp-button-danger'); remove.disabled = host.pending; remove.addEventListener('click', () => host.send('lumiphone:delete', { kind: 'tracker', id: current.id })); content.append(remove) }
   return page
 }

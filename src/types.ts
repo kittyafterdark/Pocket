@@ -847,7 +847,7 @@ export interface TrackerJevResult {
 }
 export interface PocketJevSettings { enabled: boolean; provider: 'llm' | 'typesafe'; model: string; autoAfterTurn: boolean }
 export type TrackerOperation = 'set' | 'add' | 'subtract' | 'reset' | 'set_state'
-export type TrackerPresentation = 'relationship' | 'meter' | 'vitals' | 'segmented' | 'counter' | 'timer' | 'state' | 'compact'
+export type TrackerPresentation = 'relationship' | 'meter' | 'vitals' | 'segmented' | 'counter' | 'timer' | 'state' | 'compact' | 'hunger' | 'tension' | 'condition' | 'orbit' | 'world' | 'sanity' | 'alignment' | 'arc' | 'barcode' | 'capsule' | 'caliper' | 'odometer' | 'led' | 'crates' | 'tally' | 'waypoint' | 'gates' | 'rotary' | 'ribbons' | 'terminal' | 'vellum' | 'hud' | 'report' | 'watch' | 'radar' | 'hourglass'
 
 export interface TrackerTarget {
   type: 'character' | 'persona' | 'relationship' | 'scene' | 'world' | 'custom'
@@ -893,6 +893,8 @@ interface TrackerBase {
   clock: TrackerClock
   allowModelWrite: boolean
   modelPrompt?: string
+  clinical?: import('./domain/tracker-presentations.js').TrackerClinical
+  alignment?: { lowLabel: string; highLabel: string }
   presentation: TrackerPresentation
   bands: TrackerBand[]
   history: TrackerHistoryEntry[]
@@ -1098,6 +1100,7 @@ export interface PhoneState {
   references: PocketContextReference[]
   groupBatches: PendingGroupBatch[]
   weather: RoleplayWeather
+  trackerSettings?: import('./domain/tracker-context.js').TrackerContextSettings
   trackers: PhoneTracker[]
   notifications: PhoneNotification[]
   activities: PocketActivity[]

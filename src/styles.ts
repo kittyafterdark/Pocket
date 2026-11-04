@@ -1,3 +1,4 @@
+import { TRACKER_DESIGN_STYLES } from './frontend/components/tracker-design-styles.js'
 import { NATIVE_APP_STYLES } from './frontend/apps/native-app-styles.js'
 import { SHARE_STYLES } from './frontend/components/share-styles.js'
 import {LUMISTRY_STYLES} from './frontend/lumistry-styles.js'
@@ -578,6 +579,15 @@ export const PHONE_STYLES = `
   .lp-bubble[data-selected="true"] { outline:3px solid color-mix(in srgb,var(--lp-accent) 62%,white); outline-offset:2px; }
 
 ${INLINE_BASE_STYLES}
+  .lumiphone-shell .lp-nav-action.lp-tracker-menu-toggle { font-size:18px; line-height:1; min-width:30px; justify-self:end; text-align:center; }
+  .lp-tracker-menu { position:absolute; top:calc(100% + 4px); right:12px; z-index:20; display:grid; width:190px; padding:6px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-surface); box-shadow:0 8px 30px #0005; }
+  .lp-tracker-menu-item { min-height:44px; padding:10px 13px; border:0; border-radius:9px; background:transparent; color:var(--lp-text); text-align:left; font:inherit; cursor:pointer; }
+  .lp-tracker-menu-item:hover,.lp-tracker-menu-item:focus-visible { background:color-mix(in srgb,var(--lp-accent) 13%,transparent); }
+  .lp-tracker-menu-item:focus-visible { outline:2px solid var(--lp-accent); }
+  .lp-tracker-context-preview { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; max-height:360px; overflow:auto; padding:14px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-surface); }
+  .lp-tracker-macros { display:grid; gap:10px; }
+  .lp-tracker-macros[hidden] { display:none; }
+  .lp-tracker-macros code { font-size:11px; overflow-wrap:anywhere; user-select:text; }
   .lp-tracker-filters { display:flex; gap:6px; overflow:auto; padding-bottom:2px; scrollbar-width:none; }
   .lp-tracker-card { display:grid; gap:9px; border-left:3px solid color-mix(in srgb,var(--lp-accent) 68%,transparent); }
   .lp-tracker-card[role="button"]:focus-visible { outline:3px solid color-mix(in srgb,var(--lp-accent) 52%,white); outline-offset:2px; }
@@ -1364,6 +1374,7 @@ ${LUMISTRY_STYLES}
   .lp-icon-dating {background:#b05c83;color:#fff}.lp-icon-spotify {background:#1d9154;color:#fff}.lp-icon-sharing {background:#5571b2;color:#fff}
 ${SHARE_STYLES}
 ${NATIVE_APP_STYLES}
+${TRACKER_DESIGN_STYLES}
 .lp-icon-bank{background:#466f64;color:#fff}.lp-icon-birthdays{background:#c57596;color:#fff}.lp-icon-browser{background:#53799b;color:#fff}.lp-icon-maps{background:#6e9276;color:#fff}.lp-icon-twitch{background:#7e5abc;color:#fff}.lp-icon-stickers{background:#d6b66d;color:#352b25}
 
 `

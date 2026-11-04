@@ -1678,6 +1678,7 @@ class PocketController {
     }
     if (payload.type === 'lumiphone:action_done' && payload.requestId === this.trackerMutationRequest) {
       this.trackerMutationRequest = ''
+      if (this.selectedTrackerId === '__settings') this.trackerDrafts.delete(`${this.state!.chatId}:${this.state!.characterId}:__settings`)
       if (this.currentApp === 'trackers') this.render(false)
       return
     }
@@ -2313,7 +2314,7 @@ class PocketController {
       this.send('lumiphone:mark_read', { app: 'contacts' })
     } else if (route.app === 'trackers') {
       const tracker = route.trackerId ? this.state.trackers.find((entry) => entry.id === route.trackerId) : null
-      this.selectedTrackerId = tracker?.id || (route.trackerId?.startsWith('__template') ? route.trackerId : '')
+      this.selectedTrackerId = tracker?.id || (route.trackerId && (route.trackerId.startsWith('__template') || route.trackerId === '__settings' || route.trackerId === '__custom') ? route.trackerId : '')
       this.selectedTrackerView = route.view || 'detail'
       this.send('lumiphone:mark_read', { app: 'trackers' })
     } else if (route.app === 'calendar') {

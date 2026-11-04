@@ -32,7 +32,7 @@ function projectedRoleplayTime(state: PhoneState): string {
   }
   return state.roleplayNow
 }
-export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BUDGET): string {
+export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BUDGET, includeTrackers = true): string {
   const contacts: Array<Record<string, unknown>> = state.contacts
     .filter((contact) => contact.presence.inScene || contact.contextPolicy.pinned || contact.relationship === 'close')
     .slice(0, 12)
@@ -93,7 +93,7 @@ export function projectPhoneContext(state: PhoneState, budget = MODEL_CONTEXT_BU
       location: state.weather.location.slice(0, 160), condition: state.weather.condition.slice(0, 120),
       temperature: state.weather.temperature, unit: state.weather.unit, details: state.weather.details.slice(0, 300),
     },
-    trackers,
+    ...(includeTrackers ? { trackers } : {}),
     upcoming,
     pinnedNotes: state.notes.filter((note) => note.pinned).slice(0, 5).map((note) => `${note.title.slice(0, 120)}: ${note.body.slice(0, 320)}`),
     contacts,

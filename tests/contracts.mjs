@@ -94,6 +94,7 @@ globalThis.spindle = {
   frontendCapabilities: { declare: () => () => {} },
   onFrontendMessage: (handler) => { frontendHandler = handler; return () => {} },
   sendToFrontend: (payload) => frontendMessages.push(payload),
+  registerMacro: () => {},
   registerTool: (tool) => { registeredTool = tool },
   unregisterTool: () => {},
   registerInterceptor: (handler) => { interceptorHandler = handler; return () => {} },
@@ -2789,10 +2790,12 @@ assert.equal(dockRoot.querySelectorAll('input[type="checkbox"]:checked').length,
 dockRoot.querySelector('.lumiphone-homebar button').click()
 const trackerIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find((node) => node.textContent.includes('Trackers'))
 trackerIcon.click()
-const addTracker = [...dockRoot.querySelectorAll('.lp-nav-action')].find((node) => node.textContent === 'Add')
+const addTracker = dockRoot.querySelector('[aria-label="Tracker actions"]')
 addTracker.click()
+;[...dockRoot.querySelectorAll('[role="menuitem"]')].find(node => node.textContent === 'Add new tracker').click()
 assert.match(dockRoot.textContent, /Pick a starting point/)
-const blankTemplate = [...dockRoot.querySelectorAll('.lp-template-card')].find(node => node.textContent.includes('Blank meter'))
+;[...dockRoot.querySelectorAll('.lp-template-card')].find(node => node.querySelector('strong')?.textContent === 'Custom').click()
+const blankTemplate = [...dockRoot.querySelectorAll('.lp-template-card')].find(node => node.querySelector('strong')?.textContent === 'A value')
 blankTemplate.click()
 const trackerUpdateMode = [...dockRoot.querySelectorAll('select')].find(node => node.querySelector('option[value="automatic"]'))
 trackerUpdateMode.value = 'automatic'; trackerUpdateMode.dispatchEvent(new dom.window.Event('change', { bubbles: true }))

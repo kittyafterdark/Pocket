@@ -4,6 +4,8 @@ import { button, el } from '../shared.js'
 import { trackerEditor, trackerTemplates } from './tracker-editor.js'
 import { trackerDisplay, refreshTrackerDisplay, trackerUpdateDescription } from '../components/tracker-display.js'
 import type { PageAction } from '../shared.js'
+import { trackerSettings } from './tracker-settings.js'
+import { trackerMenu } from '../components/tracker-menu.js'
 
 type Field = { label: HTMLLabelElement; input: HTMLInputElement }
 type Page = { page: HTMLDivElement; content: HTMLDivElement }
@@ -54,7 +56,15 @@ function toggle(labelText: string, initial: boolean): { row: HTMLDivElement; but
 function targetLabel(target: TrackerTarget): string { return target.label || target.type }
 
 function dashboard(host: TrackerViewHost): HTMLDivElement {
-  const { page, content } = host.page('Trackers', 'Live roleplay state', { label: 'Add', callback: () => host.select('__templates', 'config') })
+  let dismissMenu: (() => void) | undefined
+  const { page, content } = host.page('Trackers', 'Live roleplay state', { label: '⋯', ariaLabel: 'Tracker actions', callback: () => {
+    if (dismissMenu) { dismissMenu(); return }
+    dismissMenu = trackerMenu(anchor, id => host.select(id, 'config'), () => { dismissMenu = undefined })
+  } })
+  const anchor = page.querySelector<HTMLButtonElement>('.lp-nav-action:last-child')!
+  anchor.classList.add('lp-tracker-menu-toggle')
+  anchor.setAttribute('aria-haspopup', 'menu'); anchor.setAttribute('aria-expanded', 'false')
+  host.onCleanup(() => dismissMenu?.())
   const filters = el('div', 'lp-tracker-filters')
   const all = button('All', 'lp-chip'); all.setAttribute('aria-pressed', 'true')
   filters.appendChild(all)
@@ -186,6 +196,8 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
 }
 
 export function renderTrackersView(host: TrackerViewHost): HTMLDivElement {
+  if (host.selectedId === '__settings') return trackerSettings(host)
+  if (host.selectedId === '__custom') return trackerTemplates(host, true)
   if (host.selectedId === '__templates') return trackerTemplates(host)
   const selected = host.state.trackers.find((tracker) => tracker.id === host.selectedId) || null
   if (selected && host.selectedView === 'config') return trackerEditor(host, selected)

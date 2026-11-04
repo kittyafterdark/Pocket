@@ -12,7 +12,8 @@ test('tracker compositions expose one status, honest meters, and a current state
     globalThis.document = dom.window.document
     const [relationship, vitals, state, counter, timer] = trackerSamples.map(tracker => trackerDisplay(tracker, trackerSampleState))
     expect(relationship.querySelectorAll('.lp-tracker-person-name').length).toBe(2)
-    expect(relationship.textContent!.split('Building trust').length - 1).toBe(1)
+    expect(relationship.querySelectorAll('.lp-tracker-stage').length).toBe(1)
+    expect(relationship.querySelector('.lp-tracker-stage')!.textContent).toBe('Building trust')
     expect(vitals.textContent!.split('Healthy').length - 1).toBe(1)
     expect(vitals.querySelector('[role="meter"]')!.getAttribute('aria-valuenow')).toBe('83')
     expect(vitals.querySelector('.lp-vital-gauge')).toBeNull()
@@ -21,7 +22,7 @@ test('tracker compositions expose one status, honest meters, and a current state
     expect(state.querySelector('button')).toBeNull()
     expect(counter.textContent).not.toContain('AVAILABLE')
     expect(timer.textContent).toContain('00:23:00')
-    for (const card of [relationship, vitals, counter, timer]) expect(card.querySelector('svg')!.getAttribute('aria-hidden')).toBe('true')
+    for (const card of [relationship, vitals, counter, timer]) for (const svg of card.querySelectorAll('svg')) expect(svg.getAttribute('aria-hidden')).toBe('true')
   } finally { globalThis.document = previous; dom.window.close() }
 })
 

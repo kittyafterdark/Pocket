@@ -2,6 +2,16 @@
 
 ## Unreleased — 2026-11-03
 
+### Trackers
+
+- Added per-roleplay tracker settings with an editable context prompt, live state preview, and exclusive automatic injection or RP preset macro delivery.
+- Added {{pocket_trackers}} for full visible tracker context and {{pocket_tracker::key}} for individual values. Hidden trackers and model write permissions remain respected.
+- Rebuilt tracker presentations from the visual showcase, with twenty selectable custom styles, restored distinct icons, responsive layouts, and reduced-motion support.
+- Added Mental State and Faction Alignment templates, configurable faction poles, and optional Physical Condition clinical fields that persist and participate in visible model context.
+- Added a first-position Custom card opening a matching picker for values, quantities, states, fields, and timers. Tracker actions now use a compact ellipsis menu.
+- Separated Plain text from Terminal Dossier and fixed consecutive tracker deletions by acknowledging completed delete requests.
+- Added regression and desktop/mobile fixture coverage for presentation selection, context delivery, persistence, accessibility, and sequential deletion.
+
 ### Contacts and lorebooks
 
 - Added Contacts → Add → Import from lorebook. Combine entries across lorebooks, find several people in one pass, review and edit generated profiles, and choose who to save. Existing contacts are reused when identity matches are unambiguous.

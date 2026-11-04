@@ -10,6 +10,7 @@ import type {
   TrackerUpdateMode,
 } from '../types.js'
 import { normalizeJevConfig, normalizeJevResult, validateJevTracker } from './jev.js'
+import { trackerPresentations, normalizeTrackerClinical } from './tracker-presentations.js'
 
 type RecordValue = Record<string, unknown>
 export const TRACKER_HISTORY_LIMIT = 40
@@ -17,7 +18,7 @@ export const TRACKER_HISTORY_LIMIT = 40
 const KINDS = new Set<TrackerKind>(['meter', 'counter', 'state', 'timer'])
 const CLOCKS = new Set<TrackerClock>(['real', 'roleplay'])
 const MODES = new Set<TrackerUpdateMode>(['manual', 'model', 'automatic', 'jev'])
-const PRESENTATIONS = new Set<TrackerPresentation>(['relationship', 'meter', 'vitals', 'segmented', 'counter', 'timer', 'state', 'compact'])
+const PRESENTATIONS = new Set<TrackerPresentation>([...['meter', 'counter', 'state', 'timer'].flatMap(kind => trackerPresentations(kind as TrackerKind).map(([id]) => id)), ...trackerPresentations('state', true).map(([id]) => id)])
 const TARGETS = new Set<TrackerTarget['type']>(['character', 'persona', 'relationship', 'scene', 'world', 'custom'])
 
 function record(value: unknown): value is RecordValue { return Boolean(value) && typeof value === 'object' && !Array.isArray(value) }
@@ -43,8 +44,8 @@ export function validateTrackerConfig(value: RecordValue): void {
   if (value.updateMode === 'jev') validateJevTracker(value)
   if (!clean(value.label, 120)) throw new Error('Give your tracker a name.')
   if (!KINDS.has(value.kind as TrackerKind)) throw new Error('Choose a tracker type.')
-  const allowed = value.kind === 'state' ? ['state', 'compact'] : value.kind === 'counter' ? ['counter', 'compact'] : value.kind === 'timer' ? ['timer', 'compact'] : ['meter', 'vitals', 'relationship', 'segmented', 'compact']
-  if (!allowed.includes(String(value.presentation))) throw new Error('Choose a display that matches this tracker type.')
+  const allowed = trackerPresentations(value.kind as TrackerKind, value.freeText === true).map(([id]) => id)
+  if (!allowed.includes(value.presentation as TrackerPresentation)) throw new Error('Choose a display that matches this tracker type.')
   if (value.kind === 'state') {
     const states = Array.isArray(value.states) ? value.states.map(entry => clean(entry, 80)).filter(Boolean) : []
     if (value.freeText && !['manual','model'].includes(String(value.updateMode))) throw new Error('Text fields use manual or story updates.')
@@ -145,6 +146,8 @@ export function normalizeTracker(value: unknown, context: NormalizeTrackerContex
     updateMode, clock, allowModelWrite: legacy || updateMode === 'jev' ? false : value.allowModelWrite === true,
     modelPrompt: clean(value.modelPrompt, 2000),
     jev: normalizeJevConfig(value.jev), jevResult: normalizeJevResult(value.jevResult),
+    ...(Object.keys(normalizeTrackerClinical(value.clinical)).length ? { clinical: normalizeTrackerClinical(value.clinical) } : {}),
+    ...(presentation === 'alignment' || record(value.alignment) ? { alignment: { lowLabel: clean(record(value.alignment) ? value.alignment.lowLabel : '', 80) || 'Outlaw', highLabel: clean(record(value.alignment) ? value.alignment.highLabel : '', 80) || 'Paragon' } } : {}),
     presentation, bands: normalizeBands(value.bands, min, max, color), history: normalizeHistory(value.history),
     ratePerHour, lastUpdated: iso(value.lastUpdated, now),
     lastRoleplayAt: iso(value.lastRoleplayAt, iso(context.roleplayNow, '')),
@@ -171,15 +174,21 @@ export interface TrackerTemplate {
 
 export const TRACKER_TEMPLATES: TrackerTemplate[] = [
   { group: 'Character', name: 'Health', values: { kind: 'meter', label: 'Health', key: 'health', value: 100, initialValue: 100, min: 0, max: 100, unit: '%', presentation: 'vitals', bands: [{ min: 0, max: 35, label: 'Critical', color: '#ef6b73', meaning: 'bad' }, { min: 35, max: 70, label: 'Recovering', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Healthy', color: '#62c994', meaning: 'good' }] } },
-  { group: 'Character', name: 'Hunger', values: { kind: 'meter', label: 'Hunger', key: 'hunger', value: 20, initialValue: 20, min: 0, max: 100, unit: '%', updateMode: 'automatic', ratePerHour: 3, clock: 'roleplay', bands: [{ min: 0, max: 30, label: 'Sated', color: '#62c994', meaning: 'good' }, { min: 30, max: 70, label: 'Hungry', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Starving', color: '#ef6b73', meaning: 'bad' }] } },
+  { group: 'Character', name: 'Hunger', values: { kind: 'meter', label: 'Hunger', key: 'hunger', presentation: 'hunger', value: 20, initialValue: 20, min: 0, max: 100, unit: '%', updateMode: 'automatic', ratePerHour: 3, clock: 'roleplay', bands: [{ min: 0, max: 30, label: 'Sated', color: '#62c994', meaning: 'good' }, { min: 30, max: 70, label: 'Hungry', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Starving', color: '#ef6b73', meaning: 'bad' }] } },
   { group: 'Relationship', name: 'Trust', values: { kind: 'meter', label: 'Trust', key: 'trust', value: 50, initialValue: 50, min: 0, max: 100, unit: '%', presentation: 'relationship', bands: [{ min: 0, max: 30, label: 'Wary', color: '#ef6b73', meaning: 'bad' }, { min: 30, max: 70, label: 'Building trust', color: '#8b7dff', meaning: 'neutral' }, { min: 70, max: 100, label: 'Trusted', color: '#62c994', meaning: 'good' }], target: { type: 'relationship', id: '', label: 'Current relationship' } } },
-  { group: 'Relationship', name: 'Relationship Status', values: { kind: 'state', label: 'Relationship Status', key: 'relationship_status', state: 'Acquaintances', initialState: 'Acquaintances', states: ['Strangers', 'Acquaintances', 'Friends', 'Close', 'Partners'], presentation: 'state', target: { type: 'relationship', id: '', label: 'Current relationship' } } },
-  { group: 'Scene', name: 'Tension', values: { kind: 'meter', label: 'Scene Tension', key: 'scene_tension', value: 10, initialValue: 10, min: 0, max: 100, unit: '%', bands: [{ min: 0, max: 30, label: 'Calm', color: '#62c994', meaning: 'good' }, { min: 30, max: 70, label: 'Uneasy', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Flashpoint', color: '#ef6b73', meaning: 'bad' }], target: { type: 'scene', id: '', label: 'Current scene' } } },
+  { group: 'Relationship', name: 'Relationship Status', values: { kind: 'state', label: 'Relationship Status', key: 'relationship_status', state: 'Acquaintances', initialState: 'Acquaintances', states: ['Strangers', 'Acquaintances', 'Friends', 'Close', 'Partners'], presentation: 'orbit', target: { type: 'relationship', id: '', label: 'Current relationship' } } },
+  { group: 'Scene', name: 'Tension', values: { kind: 'meter', label: 'Scene Tension', key: 'scene_tension', presentation: 'tension', value: 10, initialValue: 10, min: 0, max: 100, unit: '%', bands: [{ min: 0, max: 30, label: 'Calm', color: '#62c994', meaning: 'good' }, { min: 30, max: 70, label: 'Uneasy', color: '#e2b85c', meaning: 'neutral' }, { min: 70, max: 100, label: 'Flashpoint', color: '#ef6b73', meaning: 'bad' }], target: { type: 'scene', id: '', label: 'Current scene' } } },
   { group: 'Resource', name: 'Ammo', values: { kind: 'counter', label: 'Ammo', key: 'ammo', value: 12, initialValue: 12, min: 0, max: 999, unit: ' rounds', presentation: 'counter' } },
-  { group: 'World', name: 'World Alert', values: { kind: 'state', label: 'World Alert', key: 'world_alert', state: 'Calm', initialState: 'Calm', states: ['Calm', 'Watchful', 'Alarmed', 'Crisis'], target: { type: 'world', id: '', label: 'Current world' } } },
+  { group: 'World', name: 'World Alert', values: { kind: 'state', label: 'World Alert', key: 'world_alert', presentation: 'world', state: 'Calm', initialState: 'Calm', states: ['Calm', 'Watchful', 'Alarmed', 'Crisis'], target: { type: 'world', id: '', label: 'Current world' } } },
   { group: 'Timer', name: 'Countdown', values: { kind: 'timer', label: 'Countdown', key: 'countdown', value: 60, initialValue: 60, min: 0, max: 60, unit: ' min', direction: 'down', updateMode: 'automatic', ratePerHour: -60, clock: 'roleplay', presentation: 'timer' } },
-  { group: 'State', name: 'Condition', values: { kind: 'state', label: 'Condition', key: 'condition', state: 'Stable', initialState: 'Stable', states: ['Stable', 'Wounded', 'Critical', 'Recovering'], presentation: 'state' } },
+  { group: 'State', name: 'Physical Condition', values: { kind: 'state', label: 'Physical Condition', key: 'condition', state: 'Stable', initialState: 'Stable', states: ['Stable', 'Wounded', 'Critical', 'Recovering'], presentation: 'condition' } },
   { group: 'Blank', name: 'Blank meter', values: { kind: 'meter', label: 'New tracker', key: 'new_tracker', value: 0, initialValue: 0, min: 0, max: 100, presentation: 'meter' } },
+  { group: 'Blank', name: 'Blank quantity', values: { kind: 'counter', label: 'New quantity', presentation: 'odometer', value: 0, min: 0, max: 100, step: 1 } },
+  { group: 'Blank', name: 'Blank state', values: { kind: 'state', label: 'New state', presentation: 'waypoint', states: ['Planned', 'Active', 'Complete'], state: 'Planned' } },
+  { group: 'Blank', name: 'Blank field', values: { kind: 'state', label: 'New field', presentation: 'terminal', freeText: true, state: '', states: [] } },
+  { group: 'Blank', name: 'Blank timer', values: { kind: 'timer', label: 'New timer', presentation: 'timer', value: 60, min: 0, max: 60, unit: ' min', direction: 'down' } },
+  { group: 'Character', name: 'Mental State', values: { kind: 'meter', label: 'Mental State', key: 'mental_state', presentation: 'sanity', min: 0, max: 100, value: 100, unit: '%', bands: [{ min: 0, max: 25, label: 'Overwhelmed', color: '#f472b6', meaning: 'bad' }, { min: 25, max: 50, label: 'Strained', color: '#c084fc', meaning: 'neutral' }, { min: 50, max: 75, label: 'Grounded', color: '#a5b4fc', meaning: 'neutral' }, { min: 75, max: 100, label: 'Clear', color: '#67e8f9', meaning: 'good' }] } },
+  { group: 'World', name: 'Faction Alignment', values: { kind: 'meter', label: 'Faction Alignment', key: 'faction_alignment', presentation: 'alignment', min: -100, max: 100, value: 0, unit: '', target: { type: 'world', id: '', label: 'Faction standing' }, bands: [{ min: -100, max: -25, label: 'Outlaw', color: '#f87171', meaning: 'neutral' }, { min: -25, max: 25, label: 'Neutral', color: '#c4b5fd', meaning: 'neutral' }, { min: 25, max: 100, label: 'Paragon', color: '#fcd34d', meaning: 'neutral' }] } },
 ]
 
 function addHistory(tracker: PhoneTracker, entry: Omit<TrackerHistoryEntry, 'id'>): PhoneTracker {
@@ -190,17 +199,18 @@ export function trackerBand(tracker: PhoneTracker, value = tracker.value): Track
   return tracker.bands.find((band, index) => value >= band.min && (value < band.max || index === tracker.bands.length - 1)) || null
 }
 
-export interface ApplyTrackerInput { operation: TrackerOperation; amount?: number; state?: string; reason?: string; source: TrackerHistoryEntry['source']; now?: string; roleplayNow?: string }
+export interface ApplyTrackerInput { operation: TrackerOperation; amount?: number; state?: string; clinical?: unknown; reason?: string; source: TrackerHistoryEntry['source']; now?: string; roleplayNow?: string }
 
 export function applyTrackerOperation(tracker: PhoneTracker, input: ApplyTrackerInput): PhoneTracker {
   const now = input.now || new Date().toISOString()
   if (tracker.kind === 'state') {
     if (input.operation !== 'set_state' && input.operation !== 'reset') throw new Error('State trackers accept set_state or reset.')
-    const next = input.operation === 'reset' ? tracker.initialState : clean(input.state, tracker.freeText ? 2000 : 80)
+    const next = input.operation === 'reset' ? tracker.initialState : clean(input.state ?? (input.clinical !== undefined ? tracker.state : ''), tracker.freeText ? 2000 : 80)
     if (!next && !tracker.freeText) throw new Error('set_state requires a state value.')
     if (!tracker.freeText && tracker.states.length && !tracker.states.includes(next)) throw new Error(`State must be one of: ${tracker.states.join(', ')}`)
-    if (next === tracker.state) return tracker
-    return addHistory({ ...tracker, state: next, updatedAt: now } as PhoneTracker, {
+    const clinical = input.clinical === undefined || input.operation === 'reset' ? tracker.clinical : normalizeTrackerClinical({ ...tracker.clinical, ...(record(input.clinical) ? input.clinical : {}) })
+    if (next === tracker.state && JSON.stringify(clinical) === JSON.stringify(tracker.clinical)) return tracker
+    return addHistory({ ...tracker, state: next, clinical, updatedAt: now } as PhoneTracker, {
       previous: tracker.state, next, operation: input.operation, reason: clean(input.reason, 300), source: input.source,
       createdAt: now, roleplayAt: clean(input.roleplayNow, 80) || undefined,
     })

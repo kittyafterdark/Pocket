@@ -18,8 +18,9 @@ export function freeformHost(initial: Array<[string, unknown]> = [], persist?: (
   const preferences = defaultPreferences(); preferences.autoReplyAfterSend = false; preferences.reducedMotion = true
   if (!store.has(key(PREFERENCES_PATH))) store.set(key(PREFERENCES_PATH), preferences)
   const character = { id: 'host-character', name: 'Alex', description: 'A warm friend who likes books.', avatar_url: '', metadata: {}, color: '#b5a5f5' }
-  const tools=new Map<string,any>(),interceptors:Array<(...args:any[])=>any>=[]
+  const macros=new Map<string,any>(),tools=new Map<string,any>(),interceptors:Array<(...args:any[])=>any>=[]
   const api: any = {
+    registerMacro(def:any){macros.set(def.name,def)},
     registerTool(tool:any){tools.set(tool.name,tool)},unregisterTool(name:string){tools.delete(name)},
     registerInterceptor(handler:(...args:any[])=>any){interceptors.push(handler);return ()=>{const index=interceptors.indexOf(handler);if(index>=0)interceptors.splice(index,1)}},
     permissions: { has: (name: string) => permissions.has(name), onChanged() {} },
@@ -48,7 +49,7 @@ export function freeformHost(initial: Array<[string, unknown]> = [], persist?: (
   }
   ;(globalThis as any).spindle = api
   return {
-    store, sends, reads, generations, writes, permissions, personas, api, tools, interceptors,
+    store, sends, reads, generations, writes, permissions, personas, api, tools, interceptors, macros,
     connect(handler: typeof receive) { receive = handler },
     async send(payload: any, userId?: string) { await frontend(payload, userId) },
     async emit(name: string, payload: any = {}, userId?: string) { return await events.get(name)?.(payload, userId) },

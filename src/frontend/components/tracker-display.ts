@@ -1,7 +1,8 @@
 import type { PhoneState, PhoneTracker } from '../../types.js'
 import { materializeTracker, trackerBand } from '../../domain/trackers.js'
-import { resolvePocketActor } from '../../domain/actors.js'
 import { el } from '../shared.js'
+import { renderTrackerDesign } from './tracker-design.js'
+import { trackerIcon } from './tracker-art.js'
 
 export function trackerPercent(tracker: PhoneTracker): number {
   return Math.max(0, Math.min(100, (tracker.value - tracker.min) / Math.max(.00001, tracker.max - tracker.min) * 100))
@@ -73,17 +74,6 @@ function trackerGlyph(kind: 'link' | 'vitals' | 'counter' | 'timer' | 'meal' | '
   return svg
 }
 
-function makeBars(className: string, count: number, filled = count): HTMLDivElement {
-  const visual = el('div', className)
-  visual.setAttribute('aria-hidden', 'true')
-  for (let index = 0; index < count; index++) {
-    const bar = el('span')
-    bar.dataset.filled = String(index < filled)
-    visual.append(bar)
-  }
-  return visual
-}
-
 function makeRing(percent: number, glyph: ReturnType<typeof trackerGlyph>, className = ''): HTMLDivElement {
   const ring = el('div', `lp-tracker-ring ${className}`.trim())
   ring.setAttribute('aria-hidden', 'true')
@@ -94,7 +84,8 @@ function makeRing(percent: number, glyph: ReturnType<typeof trackerGlyph>, class
 }
 
 export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDivElement {
-  const current = materializeTracker(tracker, state.roleplayNow).tracker
+  const roleplayNow = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? '' : state.roleplayNow
+  const current = materializeTracker(tracker, roleplayNow).tracker
   const flavor = trackerFlavor(current)
   const card = el('div', `lp-card lp-tracker-card lp-tracker-${current.presentation}`)
   card.dataset.trackerId = current.id; card.dataset.kind = current.kind; card.dataset.target = current.target.type; card.dataset.presentation = current.presentation; card.dataset.flavor = flavor
@@ -108,7 +99,8 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
   const top = el('div', 'lp-tracker-top')
   const mode = el('span', 'lp-tracker-update', { manual: 'Manual', model: 'Story', automatic: 'Clock', jev: 'Tracker judge' }[current.updateMode])
   mode.title = trackerUpdateDescription(current.updateMode)
-  top.append(heading, mode); card.append(top)
+  const mark = el('span', 'lp-tracker-header-icon'); mark.append(trackerIcon(current))
+  top.append(mark, heading, mode); card.append(top)
 
   const value = el('strong', 'lp-tracker-readout', trackerDisplayValue(current))
   const status = current.clockPaused ? 'Paused' : current.pausedReason || (current.kind === 'timer' ? current.direction === 'down' && current.value <= current.min ? 'Finished' : current.updateMode === 'automatic' ? current.direction === 'down' ? 'Counting down' : 'Counting up' : 'Ready' : band?.label || '')
@@ -123,82 +115,15 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
   }
   const reading = () => { const row = el('div', 'lp-tracker-reading'); row.append(value); if (status) row.append(stage()); return row }
 
-  if (current.presentation === 'relationship') {
-    const shell = el('div', 'lp-bond-widget')
-    const pair = el('div', 'lp-tracker-pair')
-    const other = resolvePocketActor(state, current.target.id)
-    const subjects = [{ name: state.pocketPersona.displayName || 'You', avatarUrl: state.pocketPersona.avatarUrl }, { name: other?.name || current.target.label || 'Unassigned', avatarUrl: other?.avatarUrl }]
-    subjects.forEach((subject, index) => {
-      if (index) pair.append(trackerGlyph('link'))
-      const person = el('div', 'lp-tracker-person')
-      const avatar = el('span', 'lp-tracker-avatar', subject.name.slice(0, 1).toUpperCase())
-      if (subject.avatarUrl) { const image = el('img'); image.src = subject.avatarUrl; image.alt = ''; avatar.replaceChildren(image) }
-      person.append(avatar, el('span', 'lp-tracker-person-name', subject.name)); pair.append(person)
-    })
-    const bondScore = el('div', 'lp-bond-score'); bondScore.append(reading(), rail())
-    shell.append(pair, bondScore); card.append(shell)
-  } else if (current.presentation === 'vitals') {
-    const body = el('div', 'lp-vital-body')
-    body.append(makeRing(percent, trackerGlyph('vitals'), 'lp-health-ring'), reading())
-    card.append(body, makeBars('lp-vital-pulse', 11, Math.max(1, Math.round(percent / 10))))
-    card.append(rail())
-  } else if (current.kind === 'state' && current.freeText) {
-    const text = el('p','lp-copy',current.state || 'No text yet'); text.style.whiteSpace='pre-wrap'; text.style.overflowWrap='anywhere'; card.append(text)
-  } else if (current.presentation === 'state' && current.kind === 'state') {
-    const currentState = el('div', 'lp-state-current')
-    currentState.append(el('span', 'lp-state-current-dot'), el('strong', '', current.state))
-    card.append(currentState)
-    const path = el('ol', 'lp-state-path'); path.setAttribute('aria-label', current.label)
-    for (const label of current.states) {
-      const step = el('li', '', label)
-      step.dataset.active = String(label === current.state)
-      if (label === current.state) step.setAttribute('aria-current', 'step')
-      path.append(step)
-    }
-    card.append(path)
-    if (current.clockPaused || current.pausedReason) card.append(stage())
-  } else if (current.presentation === 'segmented') {
-    const body = el('div', 'lp-energy-body')
-    body.append(makeRing(percent, trackerGlyph('bolt'), 'lp-energy-ring'), reading())
-    card.append(body)
-    const segments = rail(); segments.className = 'lp-tracker-segments'; segments.replaceChildren()
-    for (let index = 0; index < 10; index++) { const segment = el('span'); segment.dataset.filled = String(percent >= (index + 1) * 10); segments.append(segment) }
-    card.append(segments)
-  } else if (current.presentation === 'timer') {
-    const body = el('div', 'lp-timer-instrument')
-    const island = el('div', 'lp-timer-island'); island.append(trackerGlyph('timer'), reading())
-    body.append(island); card.append(body)
-    if (current.updateMode === 'automatic') card.append(el('span', 'lp-tracker-clock-note', `${Math.abs(current.ratePerHour)} ${current.unit.trim()} / hour · ${current.clock === 'real' ? 'Real clock' : 'Story clock'}`))
-    if (current.kind === 'timer' && current.direction === 'down') card.append(rail())
-  } else if (current.presentation === 'counter') {
-    value.textContent = String(Number(current.value.toFixed(2)))
-    if (current.unit) value.append(el('small', 'lp-counter-unit', current.unit))
-    const body = el('div', 'lp-counter-instrument')
-    if (flavor === 'ammo') {
-      const ammo = el('div', 'lp-ammo-visual'); ammo.setAttribute('aria-hidden', 'true'); ammo.append(trackerGlyph('ammo'))
-      const slots = Math.min(8, Math.max(0, Math.round(current.value)))
-      for (let index = 0; index < 8; index++) { const round = el('span'); round.dataset.loaded = String(index < slots); ammo.append(round) }
-      body.append(ammo, reading())
-    } else {
-      body.append(trackerGlyph(flavor === 'credits' ? 'wallet' : 'counter'), reading())
-    }
-    card.append(body)
-  } else if (current.presentation === 'meter') {
-    if (flavor === 'hunger') {
-      const body = el('div', 'lp-hunger-body')
-      body.append(makeRing(percent, trackerGlyph('meal'), 'lp-hunger-ring'), reading())
-      card.append(body, rail())
-    } else if (flavor === 'tension') {
-      const body = el('div', 'lp-tension-body'); body.append(reading(), trackerGlyph('wave'))
-      card.append(body, makeBars('lp-tension-wave', 14, Math.max(1, Math.round(percent / 100 * 14))), rail())
-    } else {
-      const body = el('div', 'lp-meter-body')
-      const badge = el('span', 'lp-meter-badge'); badge.append(trackerGlyph(flavor === 'custom' ? 'spark' : 'counter'))
-      body.append(badge, reading()); card.append(body, rail())
-      const limits = el('div', 'lp-tracker-limits'); limits.append(el('span', '', `${current.min}${current.unit}`), el('span', '', `${current.max}${current.unit}`)); card.append(limits)
-    }
-  } else {
-    card.append(reading())
+  if (!renderTrackerDesign(card, current, state, { percent, value, status, reading, rail, stage })) {
+    if (current.presentation === 'segmented') {
+      const body = el('div', 'lp-energy-body')
+      body.append(makeRing(percent, trackerGlyph('bolt'), 'lp-energy-ring'), reading())
+      card.append(body)
+      const segments = rail(); segments.className = 'lp-tracker-segments'; segments.replaceChildren()
+      for (let index = 0; index < 10; index++) { const segment = el('span'); segment.dataset.filled = String(percent >= (index + 1) * 10); segments.append(segment) }
+      card.append(segments)
+    } else card.append(reading())
   }
 
   const latest = current.history.at(-1)
@@ -218,6 +143,8 @@ export function refreshTrackerDisplay(card: HTMLElement, tracker: PhoneTracker, 
   const fresh = trackerDisplay(tracker, state)
   card.replaceChildren(...fresh.childNodes)
   card.style.cssText = fresh.style.cssText
+  if (fresh.dataset.design) card.dataset.design = fresh.dataset.design
+  else delete card.dataset.design
   card.dataset.meaning = fresh.dataset.meaning
   card.dataset.flavor = fresh.dataset.flavor
 }
