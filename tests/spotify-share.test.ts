@@ -19,7 +19,7 @@ function resolver(options: { changed?: boolean } = {}) {
 
 test('explicit preview resolves Spotify macros without committing and detects a track switch', async () => {
   const stable = resolver()
-  const bridge = new SpotifyShareBridge(stable.resolve, () => 1_000, () => 'one')
+  const bridge = new SpotifyShareBridge(stable.resolve, () => 1_000, async () => 'one')
   const preview = await bridge.preview({ chatId: 'chat', characterId: 'character', conversationId: 'dm', userId: 'user' })
   expect(preview.previewId).toBe('spotify_one')
   expect(preview.snapshot).toMatchObject({ title: 'A Song', artists: 'Artist', album: 'An Album', hasLyrics: true })

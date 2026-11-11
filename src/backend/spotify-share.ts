@@ -1,3 +1,4 @@
+import { localUuid } from '../domain/uuid.js'
 import { SPOTIFY_SHARE_MAX_LYRICS, normalizeSpotifyShare, selectedSpotifyLyrics, spotifyLyricsLines, spotifyShareText, spotifyTrackKey, type SpotifyShareAttachment, type SpotifyShareMode, type SpotifyTrackSnapshot } from '../domain/spotify-share.js'
 
 type ResolveMacros = (template: string, scope: { chatId: string; characterId?: string; userId?: string; commit: false }) => Promise<{ text: string; diagnostics: Array<{ message: string }> }>
@@ -22,7 +23,7 @@ export class SpotifyShareBridge {
   constructor(
     private readonly resolveMacros: ResolveMacros,
     private readonly now: () => number = () => Date.now(),
-    private readonly makeId: () => string = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    private readonly makeId: () => string | Promise<string> = localUuid,
   ) {}
 
   private userKey(userId?: string): string { return userId || '_owner' }
@@ -67,7 +68,7 @@ export class SpotifyShareBridge {
     if (after.diagnostics?.length || afterParts.length !== 2 || spotifyTrackKey(snapshot) !== spotifyTrackKey({ title: clean(afterParts[0], 240), artists: clean(afterParts[1], 300) })) {
       throw new Error('The Spotify track changed while lyrics were loading. Open the share again.')
     }
-    const previewId = `spotify_${this.makeId()}`
+    const previewId = `spotify_${await this.makeId()}`
     this.previews.set(previewId, { id: previewId, userKey: this.userKey(input.userId), chatId: input.chatId, characterId: input.characterId, conversationId: input.conversationId, snapshot, expiresAt: this.now() + 5 * 60_000 })
     return { previewId, snapshot, lines: spotifyLyricsLines(snapshot.lyrics) }
   }

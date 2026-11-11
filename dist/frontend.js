@@ -1,3 +1,25 @@
+// src/domain/uuid.ts
+var frontendUuid;
+function bindFrontendUuid(context) {
+  const uuid = context.uuid;
+  const generate = uuid ? () => uuid.v4() : undefined;
+  frontendUuid = generate;
+  return () => {
+    if (frontendUuid === generate)
+      frontendUuid = undefined;
+  };
+}
+function uuid() {
+  return frontendUuid?.() ?? localUuid();
+}
+function localUuid() {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 // src/frontend/shared.ts
 function el(tag, className = "", content = "") {
   const node = document.createElement(tag);
@@ -35,7 +57,7 @@ function inputValue(input) {
   return input.value.trim();
 }
 function requestId(prefix = "req") {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
+  return `${prefix}_${uuid()}`;
 }
 
 // src/frontend/components/ui.ts
@@ -25560,7 +25582,7 @@ function iso(value, fallback) {
   return Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 function trackerId(prefix = "trk") {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
+  return `${prefix}_${uuid()}`;
 }
 function trackerKey(value, fallback = "tracker") {
   const key = clean4(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -28669,7 +28691,7 @@ function avatar(name, className = "na-avatar") {
 
 // src/frontend/components/attachment-menu.ts
 function attachmentMenu(anchor, items, dismissed = () => {}) {
-  const host = anchor.closest(".lp-compose-stack") || anchor.parentElement, menu = el("div", "lp-attach-menu"), id = "attach-" + globalThis.crypto.randomUUID();
+  const host = anchor.closest(".lp-compose-stack") || anchor.parentElement, menu = el("div", "lp-attach-menu"), id = "attach-" + uuid();
   menu.id = id;
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", "Attach to conversation");
@@ -30339,7 +30361,7 @@ function renderStickerLibrary(h, root, back) {
       go(h, "library");
     }));
     body.append(image, details);
-    const reviewForm = details.querySelector("form"), accept = reviewForm.querySelector("button[type=submit]"), formId = "sticker-review-" + globalThis.crypto.randomUUID();
+    const reviewForm = details.querySelector("form"), accept = reviewForm.querySelector("button[type=submit]"), formId = "sticker-review-" + uuid();
     reviewForm.id = formId;
     reviewForm.setAttribute("aria-label", "Sticker review details");
     accept.setAttribute("form", formId);
@@ -34424,7 +34446,7 @@ function renderTrackerDesign(card, t, state, p) {
     segments.replaceChildren(...designBars(12, Math.round(p.percent / 100 * 12), "lp-biomonitor-bars").childNodes);
     body.append(display, p.reading(), segments);
   } else if (design === "hunger") {
-    const hearth = panel("lp-hearth-panel"), dial = el("div", "lp-hearth-dial"), mask = `hearth-${globalThis.crypto.randomUUID()}`;
+    const hearth = panel("lp-hearth-panel"), dial = el("div", "lp-hearth-dial"), mask = `hearth-${uuid()}`;
     dial.append(trackerVector("0 0 100 100", `<defs><mask id="${mask}"><circle cx="50" cy="50" r="40" fill="none" stroke="white" stroke-width="9" pathLength="100" stroke-dasharray="22 3" transform="rotate(-90 50 50)"/></mask></defs><circle cx="50" cy="50" r="40" stroke="#431407" stroke-width="8" mask="url(#${mask})"/><circle cx="50" cy="50" r="40" stroke="#ea580c" stroke-width="8" pathLength="100" stroke-dasharray="${p.percent} 100" transform="rotate(-90 50 50)" mask="url(#${mask})"/><path d="M11.3 1.046A1 1 0 0 1 12 2v5h4a1 1 0 0 1 .82 1.573l-7 10A1 1 0 0 1 8 18v-5H4a1 1 0 0 1-.82-1.573l7-10a1 1 0 0 1 1.12-.38Z" transform="translate(34 30) scale(1.7)" fill="#fb923c" stroke="none"/>`));
     const copy = el("div", "lp-hearth-copy");
     copy.append(caption("Current level"), p.reading());
@@ -34562,7 +34584,7 @@ function renderTrackerDesign(card, t, state, p) {
       copy.append(p.value, caption(t.kind === "timer" && t.direction === "down" ? "Time remaining" : "Elapsed time"));
       timer.append(radar, copy);
     } else if (design === "hourglass") {
-      const chamber = el("div", "lp-hourglass-chamber"), id = `sand-${globalThis.crypto.randomUUID()}`, top = p.percent / 100 * 35, bottom = 35 - top;
+      const chamber = el("div", "lp-hourglass-chamber"), id = `sand-${uuid()}`, top = p.percent / 100 * 35, bottom = 35 - top;
       chamber.append(trackerVector("0 0 60 90", `<defs><clipPath id="${id}-top"><rect x="0" y="${45 - top}" width="60" height="${top}"/></clipPath><clipPath id="${id}-bottom"><rect x="0" y="${80 - bottom}" width="60" height="${bottom}"/></clipPath></defs><path d="M10 10h40c0 20-15 35-20 35S10 30 10 10ZM30 45c5 0 20 15 20 35H10c0-20 15-35 20-35Z"/><path d="M10 10h40c0 20-15 35-20 35S10 30 10 10Z" fill="currentColor" opacity=".2" clip-path="url(#${id}-top)"/><path d="M30 45c5 0 20 15 20 35H10c0-20 15-35 20-35Z" fill="currentColor" opacity=".4" clip-path="url(#${id}-bottom)"/><path d="M6 10h48M6 80h48" stroke-width="4"/>`, "lp-hourglass-vector"), el("i", "lp-hourglass-particle"));
       const copy = el("div", "lp-clock-reading");
       copy.append(caption(t.kind === "timer" && t.direction === "down" ? "Time remaining" : "Elapsed time"), p.value, p.stage());
@@ -34621,7 +34643,7 @@ function renderTrackerDesign(card, t, state, p) {
   } else {
     const instrument = panel(`lp-value-panel lp-value-panel-${design}`);
     if (design === "arc") {
-      const gauge = el("div", "lp-arc-gauge"), id = `arc-${globalThis.crypto.randomUUID()}`;
+      const gauge = el("div", "lp-arc-gauge"), id = `arc-${uuid()}`;
       gauge.append(trackerVector("0 0 200 110", `<defs><linearGradient id="${id}"><stop stop-color="#06b6d4"/><stop offset=".5" stop-color="#3b82f6"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs><path d="M20 90a80 80 0 0 1 160 0" stroke="#1e293b" stroke-width="12" stroke-linecap="round"/><path d="M20 90a80 80 0 0 1 160 0" stroke="url(#${id})" stroke-width="12" pathLength="100" stroke-dasharray="${p.percent} 100" stroke-linecap="round"/>`), p.value);
       instrument.append(gauge, limits());
       body.append(instrument, p.stage(), semanticMeter());
@@ -35240,7 +35262,7 @@ function trackerSettings(host) {
     macros.append(row);
   }
   const previewLabel = el("div", "lp-eyebrow", "Live tracker context preview");
-  previewLabel.id = `tracker-preview-${globalThis.crypto.randomUUID()}`;
+  previewLabel.id = `tracker-preview-${uuid()}`;
   const preview = el("pre", "lp-tracker-context-preview");
   preview.tabIndex = 0;
   preview.setAttribute("role", "region");
@@ -35275,7 +35297,7 @@ function trackerSettings(host) {
 // src/frontend/components/tracker-menu.ts
 function trackerMenu(anchor, select, dismissed) {
   const menu = el("div", "lp-tracker-menu");
-  menu.id = `tracker-menu-${globalThis.crypto.randomUUID()}`;
+  menu.id = `tracker-menu-${uuid()}`;
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", "Tracker actions");
   anchor.setAttribute("aria-expanded", "true");
@@ -55471,11 +55493,22 @@ ${TRACKER_DESIGN_STYLES}
 // src/frontend.ts
 function setup(ctx) {
   const removeStyle = ctx.dom.addStyle(PHONE_STYLES);
-  const destroyPhone = setupPhone(ctx);
-  return () => {
-    destroyPhone();
+  const unbindUuid = bindFrontendUuid(ctx);
+  try {
+    const destroyPhone = setupPhone(ctx);
+    return () => {
+      unbindUuid();
+      try {
+        destroyPhone();
+      } finally {
+        removeStyle();
+      }
+    };
+  } catch (error) {
+    unbindUuid();
     removeStyle();
-  };
+    throw error;
+  }
 }
 export {
   setup

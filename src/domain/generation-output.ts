@@ -6,6 +6,10 @@ export function outputLimitReached(response: any): boolean {
 
 export class GenerationOutputLimitError extends Error {
   readonly code = 'output_limit'
+
+  constructor(message: string, public readonly reason: 'truncated' | 'empty' | 'reasoning-exhausted') {
+    super(message)
+  }
 }
 
 export function normalizeConnectionTokenLimits(value: unknown): Record<string, number> {

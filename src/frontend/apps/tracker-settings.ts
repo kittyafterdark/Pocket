@@ -1,3 +1,4 @@
+import { uuid } from '../../domain/uuid.js'
 import { DEFAULT_TRACKER_PROMPT, normalizeTrackerContextSettings, trackerContext, TRACKER_PROMPT_LIMIT } from '../../domain/tracker-context.js'
 import { button, el } from '../shared.js'
 import { fieldBlock } from '../components/ui.js'
@@ -27,7 +28,7 @@ export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
     const row = el('div'); row.append(el('span', 'lp-copy', `${tracker.label} · `), el('code', '', `{{pocket_tracker::${tracker.key}}}`)); macros.append(row)
   }
   const previewLabel = el('div', 'lp-eyebrow', 'Live tracker context preview')
-  previewLabel.id = `tracker-preview-${globalThis.crypto.randomUUID()}`
+  previewLabel.id = `tracker-preview-${uuid()}`
   const preview = el('pre', 'lp-tracker-context-preview'); preview.tabIndex = 0
   preview.setAttribute('role', 'region')
   preview.setAttribute('aria-labelledby', previewLabel.id)

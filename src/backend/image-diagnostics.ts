@@ -1,3 +1,4 @@
+import { localUuid } from '../domain/uuid.js'
 export type PocketImageDiagnosticStatus = 'info' | 'ok' | 'error'
 
 export interface PocketImageDiagnosticEntry {
@@ -45,7 +46,7 @@ export function sanitizeImageDiagnosticValue(value: unknown, depth = 0, key = ''
 
 export function recordImageDiagnostic(userId: string | undefined, entry: Omit<PocketImageDiagnosticEntry, 'id' | 'createdAt'>): PocketImageDiagnosticEntry {
   const next: PocketImageDiagnosticEntry = {
-    id: crypto.randomUUID(),
+    id: localUuid(),
     createdAt: new Date().toISOString(),
     ...entry,
     payload: entry.payload === undefined ? undefined : sanitizeImageDiagnosticValue(entry.payload),

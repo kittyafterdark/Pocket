@@ -1,9 +1,10 @@
+import { uuid } from '../../domain/uuid.js'
 import { el } from '../shared.js'
 import { icon, textButton } from '../apps/native-chrome.js'
 
 /** Surface-local menu. No modal backdrop, global styling, or detached phone coordinates. */
 export function attachmentMenu(anchor:HTMLButtonElement,items:Array<{label:string;icon:string;run():void}>,dismissed=()=>{}):()=>void {
-  const host=anchor.closest<HTMLElement>('.lp-compose-stack')||anchor.parentElement!,menu=el('div','lp-attach-menu'),id='attach-'+globalThis.crypto.randomUUID()
+  const host=anchor.closest<HTMLElement>('.lp-compose-stack')||anchor.parentElement!,menu=el('div','lp-attach-menu'),id='attach-'+uuid()
   menu.id=id;menu.setAttribute('role','menu');menu.setAttribute('aria-label','Attach to conversation');anchor.setAttribute('aria-expanded','true');anchor.setAttribute('aria-controls',id);anchor.setAttribute('aria-haspopup','menu')
   let closed=false
   const close=(focus=false)=>{if(closed)return;closed=true;menu.remove();anchor.setAttribute('aria-expanded','false');anchor.removeAttribute('aria-controls');document.removeEventListener('pointerdown',outside,true);dismissed();if(focus&&anchor.isConnected)anchor.focus({preventScroll:true})}

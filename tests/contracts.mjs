@@ -264,6 +264,7 @@ assert.deepEqual(storage.get('phones/chat-a__char-a.json').social, contractSocia
 
 // Photo selection is explicit, host-backed, and separate from posting or the old wallpaper fixture.
 const contractSocialOriginalUpload = spindle.images.uploadFromDataUrl, contractSocialOriginalGenerate = spindle.imageGen.generate
+const contractSocialCameraPreferences = storage.get('device/preferences.json')
 const contractSocialImageIds = ['social-upload-photo', 'social-generated-photo', 'social-late-upload', 'social-late-generation']
 const contractSocialUploadCalls = [], contractSocialGenerationCalls = []
 try {
@@ -272,6 +273,8 @@ try {
     const image = { id: 'social-upload-photo', url: '/api/v1/images/social-upload-photo', mime_type: 'image/png' }
     hostImages.set(image.id, image); return image
   }
+  // This fixture exercises the direct Camera path with an explicit connection.
+  storage.set('device/preferences.json', { ...contractSocialCameraPreferences, useSwarmProfile: false })
   spindle.imageGen.generate = async input => { contractSocialGenerationCalls.push(input); return { imageId: 'social-generated-photo', imageUrl: '/api/v1/images/social-generated-photo' } }
   await frontendHandler({ type: 'lumiphone:social_photo_upload', requestId: 'social-upload', chatId: 'chat-a', characterId: 'char-a', deviceOwnerActorId: launcherOwner, app: 'instagram', filename: 'harbor.png', dataUrl: 'data:image/png;base64,AA==' }, 'user-a')
   const uploaded = frontendMessages.find(message => message.type === 'lumiphone:social_photo_uploaded' && message.requestId === 'social-upload')
@@ -315,6 +318,8 @@ try {
   for (const field of ['social', 'notifications', 'activities']) assert.deepEqual(storage.get('phones/chat-a__char-a.json')[field], beforeCancelledGeneration[field], `late cancelled image generation must not mutate ${field}`)
 } finally {
   spindle.images.uploadFromDataUrl = contractSocialOriginalUpload; spindle.imageGen.generate = contractSocialOriginalGenerate
+  if (contractSocialCameraPreferences === undefined) storage.delete('device/preferences.json')
+  else storage.set('device/preferences.json', contractSocialCameraPreferences)
   for (const id of contractSocialImageIds) hostImages.delete(id)
 }
 // Actual social handlers preserve per-app refresh modes and participant-scoped DM continuity.
@@ -700,8 +705,13 @@ assert.doesNotMatch(ordinaryIntercept.messages.at(-1).content, /POCKET CONTINUIT
 // Match the current real Lumiverse payload: interceptor context supplies the chat,
 // but not characterId/generationId and the internal continuation row may omit metadata.
 const pendingIntercept = await interceptorHandler([{ role: 'user', content: 'Continue.' }], { chatId: 'chat-a', userId: 'user-a' })
-assert.equal(pendingIntercept.messages.length, 3, 'the urgent relay must be a separate system contribution after generic Pocket memory')
-assert.match(pendingIntercept.messages.at(-2).content, /"contacts":\[\{/, 'the generic snapshot must load the authoritative chat/character phone')
+assert.deepEqual(
+  pendingIntercept.breakdown.map(entry => entry.name),
+  ['Pocket memory', 'Pocket trackers — live state', 'Pocket continuity relay — newer state'],
+  'the urgent relay must be a separate contribution after memory and trackers',
+)
+assert.equal(pendingIntercept.messages.length, 4)
+assert.match(pendingIntercept.messages[1].content, /"contacts":\[\{/, 'the generic snapshot must load the authoritative chat/character phone')
 assert.match(pendingIntercept.messages.at(-1).content, /=== POCKET CONTINUITY RELAY — NEWER STATE ===/, 'pending relay must outrank stale scene context')
 assert.match(pendingIntercept.messages.at(-1).content, /You are literally standing here/)
 assert.equal(pendingIntercept.breakdown.at(-1).name, 'Pocket continuity relay — newer state')
@@ -740,7 +750,7 @@ await new Promise((resolve) => setTimeout(resolve, 30))
 assert.equal(storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.id === secondRelay.id).continuation.state, 'accepted', 'retry must use the same native continuation path')
 const retriedRelay = storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.id === secondRelay.id)
 const retryIntercept = await interceptorHandler([{ role: 'user', content: 'Continue retry.', sourceMessageMetadata: { pocketContinuation: true, pocketRelayId: retriedRelay.id } }], { chatId: 'chat-a', userId: 'user-a' })
-assert.equal(retryIntercept.messages.length, 3, 'message provenance must target a relay even when runtime context omits character and generation IDs')
+assert.equal(retryIntercept.messages.length, 4, 'message provenance must target a relay even when runtime context omits character and generation IDs')
 assert.match(retryIntercept.messages.at(-1).content, /A distinct later handoff/)
 const retriedInjectedRelay = storage.get('phones/chat-a__char-a.json').relays.find((entry) => entry.id === secondRelay.id)
 await backendEvents.get('GENERATION_STARTED')({ chatId: 'chat-a', generationId: retriedInjectedRelay.continuation.generationId }, 'user-a')
@@ -785,13 +795,13 @@ const intercepted = await interceptorHandler([{ role: 'user', content: 'Continue
   chatId: 'chat-a', characterId: 'char-a', userId: 'user-a',
 })
 const interceptedContent = intercepted.messages.map((message) => String(message.content || '')).join('\n\n')
-assert.equal(intercepted.messages.length, 3, 'consumed relay must fall back to persistent established handoff history')
+assert.equal(intercepted.messages.length, 4, 'consumed relay must fall back to persistent established handoff history')
 assert.deepEqual(
   intercepted.breakdown.map((entry) => entry.name),
-  ['Pocket memory', 'Pocket handoff memory — established history'],
+  ['Pocket memory', 'Pocket trackers — live state', 'Pocket handoff memory — established history'],
 )
 assert.match(intercepted.messages[1].content, /Current Pocket snapshot/)
-assert.match(intercepted.messages[2].content, /POCKET HANDOFF MEMORY — ESTABLISHED SHARED HISTORY/)
+assert.match(intercepted.messages[3].content, /POCKET HANDOFF MEMORY — ESTABLISHED SHARED HISTORY/)
 assert.doesNotMatch(interceptedContent, /POCKET CONTINUITY RELAY — NEWER STATE/, 'consumed relay urgency must disappear')
 assert.doesNotMatch(intercepted.messages[1].content, /Hello from the phone/)
 
@@ -1473,10 +1483,10 @@ const normalReferenceIntercept = await interceptorHandler([{
 }], {
   chatId: 'chat-a', characterId: 'char-a', userId: 'user-a', generationId: 'reference-generation', generationType: 'normal', isDryRun: false,
 })
-assert.equal(normalReferenceIntercept.messages.length, 4, 'Pocket snapshot, established handoff history, and explicit reference must remain separate prompt contributions')
+assert.equal(normalReferenceIntercept.messages.length, 5, 'Pocket snapshot, trackers, established handoff history, and explicit reference must remain separate prompt contributions')
 assert.deepEqual(
   normalReferenceIntercept.breakdown.map((entry) => entry.name),
-  ['Pocket memory', 'Pocket handoff memory — established history', 'Pocket user reference — this turn'],
+  ['Pocket memory', 'Pocket trackers — live state', 'Pocket handoff memory — established history', 'Pocket user reference — this turn'],
 )
 assert.match(normalReferenceIntercept.messages.at(-1).content, /POCKET USER REFERENCE — THIS TURN/)
 assert.match(normalReferenceIntercept.messages.at(-1).content, /Conversation: Night Shift/)
@@ -1576,15 +1586,22 @@ await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene
 const boundedActors = storage.get('phones/chat-a__char-a.json').contacts.filter((contact) => contact.name.startsWith('Bounded actor'))
 assert.equal(boundedActors.length, 6, 'Scene Sync must commit at most six complete contacts')
 assert.ok(boundedActors.every((contact) => contact.role.length <= 120 && contact.identityBrief.length <= 350 && contact.sceneNote.length <= 220))
-const sceneMutationSurface = (state) => JSON.stringify({
-  contacts: state.contacts,
+const sceneMutationSurface = (state) => JSON.parse(JSON.stringify({
+  // Loading the saved roster can fill empty optional fields before generation.
+  contacts: state.contacts.map(contact => ({
+    ...contact,
+    aliases: contact.aliases ?? [],
+    source: contact.source.kind === 'npc'
+      ? { ...contact.source, lorebookEntryIds: contact.source.lorebookEntryIds ?? [] }
+      : contact.source,
+  })),
   sceneSnapshot: state.sceneSnapshot,
   conversations: state.conversations,
-})
+}))
 const beforeInvalidScene = sceneMutationSurface(storage.get('phones/chat-a__char-a.json'))
 spindle.generate.quiet = async () => ({ content: '{"wrong":[]}' })
 await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene-invalid', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
-assert.equal(sceneMutationSurface(storage.get('phones/chat-a__char-a.json')), beforeInvalidScene, 'invalid Scene Sync output must not partially mutate contact state')
+assert.deepEqual(sceneMutationSurface(storage.get('phones/chat-a__char-a.json')), beforeInvalidScene, 'invalid Scene Sync output must not partially mutate contact state')
 assert.ok(frontendMessages.some((message) => message.type === 'lumiphone:error' && message.requestId === 'scene-invalid'))
 spindle.generate.quiet = async () => ({ content: '{"contacts":[]}' })
 await frontendHandler({ type: 'lumiphone:sync_scene_contacts', requestId: 'scene-two', chatId: 'chat-a', characterId: 'char-a' }, 'user-a')
@@ -1757,6 +1774,9 @@ assert.equal(quietRequests.at(-1).parameters.model, 'discovered-model', 'sidecar
 const sidecarRun = storage.get('device/preferences.json').generationHistory.find((entry) => entry.requestId === 'sidecar-test')
 assert.deepEqual({ connectionId: sidecarRun.connectionId, model: sidecarRun.model, status: sidecarRun.status }, { connectionId: 'pocket-sidecar', model: 'discovered-model', status: 'completed' })
 
+// These Camera cases exercise the direct host path independently of Studio sync.
+const contractDirectCameraPreferences = storage.get('device/preferences.json')
+storage.set('device/preferences.json', { ...contractDirectCameraPreferences, useSwarmProfile: false })
 const originalQuiet = spindle.generate.quiet
 spindle.generate.quiet = async () => { throw new Error('planner unavailable') }
 await frontendHandler({
@@ -1856,6 +1876,8 @@ await frontendHandler({ type: 'lumiphone:camera_cancel', requestId: 'camera-canc
 resolveLateImage({ imageId: 'late-image', imageUrl: '/api/v1/image-gen/results/late-image' })
 await cancelledGeneration
 assert.ok(!frontendMessages.some((message) => message.type === 'lumiphone:camera_done' && message.requestId === 'camera-cancelled'))
+spindle.imageGen.generate = originalImageGenerate
+storage.set('device/preferences.json', contractDirectCameraPreferences)
 
 await frontendHandler({
   type: 'lumiphone:import_data', requestId: 'future-import', chatId: 'chat-a', characterId: 'char-a',
@@ -2772,7 +2794,12 @@ assert.equal(dockRoot.querySelector('textarea').value, 'A sleepy florist', 'quic
 dockRoot.querySelector('.lumiphone-homebar button').click()
 const draftMessagesIcon = [...dockRoot.querySelectorAll('.lp-app-icon')].find(node => node.getAttribute('aria-label') === 'Messages')
 draftMessagesIcon.click()
-;[...dockRoot.querySelectorAll('.lp-nav-action')].find(node => node.textContent === 'New').click()
+const inboxActions = dockRoot.querySelector('summary[aria-label="Messages actions"]')
+assert.ok(inboxActions, 'the inbox exposes its actions menu')
+inboxActions.click()
+const newChat = [...inboxActions.parentElement.querySelectorAll('button')].find(node => node.textContent === 'New chat')
+assert.ok(newChat, 'the actions menu offers New chat')
+newChat.click()
 const recipientSearch = dockRoot.querySelector('input[type="search"]')
 recipientSearch.value = 'NO SUCH CONTACT'
 recipientSearch.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
@@ -2851,8 +2878,10 @@ assert.equal(stateMutation.payload.operation, 'set_state'); assert.equal(stateMu
 backendReceiver({ type: 'lumiphone:action_done', requestId: stateMutation.requestId, result: { trackerId: 'fixture-state' } })
 dockRoot.querySelector('.lp-nav-action').click()
 openFixtureTracker('fixture-timer')
-assert.ok(dockRoot.querySelector('.lp-timer-instrument'))
-assert.doesNotMatch(dockRoot.querySelector('.lp-tracker-stage').textContent, /High|Low|Steady/, 'timer status must describe the clock, not meter bands')
+const timerPanel = dockRoot.querySelector('.lp-clock-panel-timer')
+assert.ok(timerPanel, 'the timer detail renders its clock panel')
+assert.match(timerPanel.textContent, /Time remaining|Elapsed time/)
+assert.doesNotMatch(timerPanel.textContent, /High|Low|Steady/, 'timer status must describe the clock, not meter bands')
 ;[...dockRoot.querySelectorAll('button')].find(node => node.textContent === 'Pause clock').click()
 const clockMutation = frontendSends.at(-1)
 assert.equal(clockMutation.payload.command, 'clock'); assert.equal(clockMutation.payload.clockAction, 'pause')

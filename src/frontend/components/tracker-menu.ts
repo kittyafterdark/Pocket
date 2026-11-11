@@ -1,8 +1,9 @@
+import { uuid } from '../../domain/uuid.js'
 import { button, el } from '../shared.js'
 
 export function trackerMenu(anchor: HTMLButtonElement, select: (id: string) => void, dismissed: () => void): () => void {
   const menu = el('div', 'lp-tracker-menu')
-  menu.id = `tracker-menu-${globalThis.crypto.randomUUID()}`
+  menu.id = `tracker-menu-${uuid()}`
   menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Tracker actions')
   anchor.setAttribute('aria-expanded', 'true'); anchor.setAttribute('aria-controls', menu.id)
   let closed = false

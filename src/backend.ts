@@ -1,3 +1,4 @@
+import { backendUuid, localUuid } from './domain/uuid.js'
 import { syncWalletTrackers } from './domain/wallet-tracker-sync.js'
 import { NativeAppsRuntime } from './backend/native-apps.js'
 import { normalizeNativeApps, NATIVE_APP_IDS } from './domain/native-apps.js'
@@ -180,7 +181,7 @@ const freeformSessions = new FreeformSessions({
   makeId: () => id('session'), now: nowIso,
 })
 
-const spotifyShare = new SpotifyShareBridge((template,scope)=>spindle.macros.resolve(template,scope))
+const spotifyShare = new SpotifyShareBridge((template,scope)=>spindle.macros.resolve(template,scope), Date.now, () => backendUuid(spindle))
 const TRUSTED_SPOTIFY_SHARE=Symbol('spotify-share')
 const TRUSTED_CAPTURE=Symbol('pocket-capture')
 const TRUSTED_DATING_PHOTO=Symbol('dating-photo')
@@ -312,8 +313,7 @@ function nowIso(): string {
 }
 
 function id(prefix: string): string {
-  const random = globalThis.crypto?.randomUUID?.().replace(/-/g, '').slice(0, 14)
-  return `${prefix}_${random || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`
+  return `${prefix}_${localUuid().replace(/-/g, '').slice(0, 14)}`
 }
 
 function safeSegment(value: string): string {

@@ -1,3 +1,4 @@
+import { uuid } from '../../domain/uuid.js'
 import { el } from '../shared.js'
 import { nativeFor, type PocketSticker } from '../../domain/native-apps.js'
 import { BUILTIN_STICKER_PACKS } from '../../domain/builtin-sticker-packs.js'
@@ -20,7 +21,7 @@ export function renderStickerLibrary(h:NativeHost,root:HTMLElement,back:HTMLElem
     const name=input(h,'review-sticker-name','Sticker name');name.querySelector('input')!.required=true;name.querySelector('input')!.maxLength=70
     const details=form(h,'Make it yours',[name,textarea(h,'review-sticker-description','Sticker description'),input(h,'review-sticker-caption','Short caption (optional)'),packPicker('review-sticker-pack')],'Accept sticker',values=>h.action('stickers','accept',{previewId:p.id,name:values['review-sticker-name'],description:values['review-sticker-description'],caption:values['review-sticker-caption'],packId:values['review-sticker-pack']},()=>{drafts['sticker-pack']=drafts['review-sticker-pack'];drafts['sticker-search']='';go(h,'library')}))
     body.append(image,details)
-    const reviewForm=details.querySelector('form')!,accept=reviewForm.querySelector<HTMLButtonElement>('button[type=submit]')!,formId='sticker-review-'+globalThis.crypto.randomUUID();reviewForm.id=formId;reviewForm.setAttribute('aria-label','Sticker review details');accept.setAttribute('form',formId)
+    const reviewForm=details.querySelector('form')!,accept=reviewForm.querySelector<HTMLButtonElement>('button[type=submit]')!,formId='sticker-review-'+uuid();reviewForm.id=formId;reviewForm.setAttribute('aria-label','Sticker review details');accept.setAttribute('form',formId)
     const footer=el('div','st-review-footer');footer.setAttribute('role','group');footer.setAttribute('aria-label','Sticker review actions')
     const actions=el('div','st-review-actions'),retry=textButton('Retry generation',()=>{drafts['sticker-name']=drafts['review-sticker-name'];drafts['sticker-description']=drafts['review-sticker-description'];drafts['sticker-caption']=drafts['review-sticker-caption'];drafts['sticker-destination']=drafts['review-sticker-pack'];h.action('stickers','generate',{name:drafts['sticker-name'],description:drafts['sticker-description'],caption:drafts['sticker-caption'],packId:drafts['sticker-destination']})}),discard=textButton('Discard sticker',()=>h.action('stickers','discard',{previewId:p.id},()=>go(h,'create')),'na-button na-danger');retry.disabled=discard.disabled=h.busy;actions.append(retry,discard);footer.append(accept,actions);root.append(body,footer);return
   }

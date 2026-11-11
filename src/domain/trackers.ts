@@ -1,3 +1,4 @@
+import { uuid } from './uuid.js'
 import type {
   PhoneTracker,
   TrackerBand,
@@ -25,7 +26,7 @@ function record(value: unknown): value is RecordValue { return Boolean(value) &&
 function clean(value: unknown, max = 160): string { return typeof value === 'string' ? value.trim().slice(0, max) : '' }
 function finite(value: unknown, fallback: number): number { const number = Number(value); return Number.isFinite(number) ? number : fallback }
 function iso(value: unknown, fallback: string): string { const text = clean(value, 80); return Number.isFinite(Date.parse(text)) ? text : fallback }
-function trackerId(prefix = 'trk'): string { return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}` }
+function trackerId(prefix = 'trk'): string { return `${prefix}_${uuid()}` }
 
 export function trackerKey(value: unknown, fallback = 'tracker'): string {
   const key = clean(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')

@@ -1,3 +1,4 @@
+import { uuid } from '../domain/uuid.js'
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', content = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag)
   if (className) node.className = className
@@ -44,5 +45,5 @@ export function inputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLS
 }
 
 export function requestId(prefix = 'req'): string {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`}`
+  return `${prefix}_${uuid()}`
 }

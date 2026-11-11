@@ -1,6 +1,7 @@
 import {datingReplyTexts} from '../domain/lumistry-reply-burst.js';
 import {parsePhoneReply} from './phone-reply-format.js';
 import type { PocketGenerationRun } from '../types.js';
+import { GenerationOutputLimitError } from '../domain/generation-output.js';
 import { runPocketGeneration, type PocketGenerationHost } from './generation.js';
 import { parseGeneratedObject, looksTruncated, StructuredOutputError, runStructuredResponse, validateStructuredTask, expandedStructuredBudget } from './structured.js';
 
@@ -41,7 +42,10 @@ export async function runStructuredJsonGeneration(host: PocketGenerationHost, ta
         const response=await generate({...request,parameters},attempt?`${requestId}:structured-retry`:requestId);
         return accepted||validateStructuredTask(task,parseGeneratedObject(response.content));
       } catch(error) {
-        if(!automaticRetry||attempt||!(error instanceof StructuredOutputError)||error.kind!=='truncated'||['reasoning-exhausted','refused'].includes(error.details?.code||''))throw error;
+        const providerTruncation = error instanceof GenerationOutputLimitError && error.reason === 'truncated';
+        const jsonTruncation = error instanceof StructuredOutputError && error.kind === 'truncated'
+          && !['reasoning-exhausted', 'refused'].includes(error.details?.code || '');
+        if (!automaticRetry || attempt || (!providerTruncation && !jsonTruncation)) throw error;
         if(request.signal instanceof AbortSignal)request.signal.throwIfAborted();
         host.send({type:'lumiphone:operation_progress',task,requestId,phase:'thinking',message:'The reply was cut off. Retrying once…'},userId);
       }

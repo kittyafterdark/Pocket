@@ -130,8 +130,13 @@ export async function runPocketGeneration(
         await generate()
       }
     }
-    if (empty() && reasoningOnly()) throw new GenerationOutputLimitError('The model spent its output budget on thinking without producing a reply. Increase this connection’s output token limit, then retry.')
-    if (outputLimitReached(result) && (empty() || (!options.preservePartial && ['message-reply', 'message-retry', 'group-reply', 'reply-decision'].includes(task)))) throw new GenerationOutputLimitError('The reply reached its output limit. Increase this connection’s output token limit, then retry manually.')
+    if (empty() && reasoningOnly()) {
+      const tokens = Number(result.usage.completion_tokens).toLocaleString('en-US')
+      throw new GenerationOutputLimitError(`The model spent all ${tokens} output tokens on thinking without producing a reply. Increase this connection’s output token limit, then retry.`, 'reasoning-exhausted')
+    }
+    if (outputLimitReached(result) && (empty() || (!options.preservePartial && ['message-reply', 'message-retry', 'group-reply', 'reply-decision'].includes(task)))) {
+      throw new GenerationOutputLimitError('The reply reached its output limit. Increase this connection’s output token limit, then retry manually.', empty() ? 'empty' : 'truncated')
+    }
     if (empty()) throw new Error(result?.finish_reason === 'length'
       ? preferences.automaticGenerationRetry ? 'The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model.' : 'The model reached its output limit before answering. Automatic retry is off; retry manually.'
       : 'The model returned no answer text. Check the provider or try another model.')

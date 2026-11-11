@@ -1,4 +1,21 @@
 // @bun
+// src/domain/uuid.ts
+var frontendUuid;
+function uuid() {
+  return frontendUuid?.() ?? localUuid();
+}
+function localUuid() {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+async function backendUuid(api) {
+  const uuid = api.uuid;
+  return uuid ? await uuid.v4() : localUuid();
+}
+
 // src/domain/jev.ts
 var TYPESAFE_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 var object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
@@ -141,7 +158,7 @@ function iso(value, fallback) {
   return Number.isFinite(Date.parse(text)) ? text : fallback;
 }
 function trackerId(prefix = "trk") {
-  return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
+  return `${prefix}_${uuid()}`;
 }
 function trackerKey(value, fallback = "tracker") {
   const key = clean2(value, 120).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -27767,7 +27784,12 @@ function outputLimitReached(response) {
 }
 
 class GenerationOutputLimitError extends Error {
+  reason;
   code = "output_limit";
+  constructor(message, reason) {
+    super(message);
+    this.reason = reason;
+  }
 }
 function normalizeConnectionTokenLimits(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -27965,10 +27987,13 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
         await generate();
       }
     }
-    if (empty() && reasoningOnly())
-      throw new GenerationOutputLimitError("The model spent its output budget on thinking without producing a reply. Increase this connection\u2019s output token limit, then retry.");
-    if (outputLimitReached(result) && (empty() || !options.preservePartial && ["message-reply", "message-retry", "group-reply", "reply-decision"].includes(task)))
-      throw new GenerationOutputLimitError("The reply reached its output limit. Increase this connection\u2019s output token limit, then retry manually.");
+    if (empty() && reasoningOnly()) {
+      const tokens = Number(result.usage.completion_tokens).toLocaleString("en-US");
+      throw new GenerationOutputLimitError(`The model spent all ${tokens} output tokens on thinking without producing a reply. Increase this connection\u2019s output token limit, then retry.`, "reasoning-exhausted");
+    }
+    if (outputLimitReached(result) && (empty() || !options.preservePartial && ["message-reply", "message-retry", "group-reply", "reply-decision"].includes(task))) {
+      throw new GenerationOutputLimitError("The reply reached its output limit. Increase this connection\u2019s output token limit, then retry manually.", empty() ? "empty" : "truncated");
+    }
     if (empty())
       throw new Error(result?.finish_reason === "length" ? preferences.automaticGenerationRetry ? "The model exhausted its output limit without returning an answer. Try a lower reasoning setting or another model." : "The model reached its output limit before answering. Automatic retry is off; retry manually." : "The model returned no answer text. Check the provider or try another model.");
     if (input.signal instanceof AbortSignal)
@@ -33548,7 +33573,9 @@ async function runStructuredJsonGeneration(host, task, requestId, request, userI
         const response = await generate({ ...request, parameters }, attempt ? `${requestId}:structured-retry` : requestId);
         return accepted || validateStructuredTask(task, parseGeneratedObject2(response.content));
       } catch (error) {
-        if (!automaticRetry || attempt || !(error instanceof StructuredOutputError) || error.kind !== "truncated" || ["reasoning-exhausted", "refused"].includes(error.details?.code || ""))
+        const providerTruncation = error instanceof GenerationOutputLimitError && error.reason === "truncated";
+        const jsonTruncation = error instanceof StructuredOutputError && error.kind === "truncated" && !["reasoning-exhausted", "refused"].includes(error.details?.code || "");
+        if (!automaticRetry || attempt || !providerTruncation && !jsonTruncation)
           throw error;
         if (request.signal instanceof AbortSignal)
           request.signal.throwIfAborted();
@@ -33641,7 +33668,7 @@ class SpotifyShareBridge {
   now;
   makeId;
   previews = new Map;
-  constructor(resolveMacros, now = () => Date.now(), makeId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`) {
+  constructor(resolveMacros, now = () => Date.now(), makeId = localUuid) {
     this.resolveMacros = resolveMacros;
     this.now = now;
     this.makeId = makeId;
@@ -33711,7 +33738,7 @@ ${MARKER}
     if (after.diagnostics?.length || afterParts.length !== 2 || spotifyTrackKey(snapshot) !== spotifyTrackKey({ title: clean11(afterParts[0], 240), artists: clean11(afterParts[1], 300) })) {
       throw new Error("The Spotify track changed while lyrics were loading. Open the share again.");
     }
-    const previewId = `spotify_${this.makeId()}`;
+    const previewId = `spotify_${await this.makeId()}`;
     this.previews.set(previewId, { id: previewId, userKey: this.userKey(input.userId), chatId: input.chatId, characterId: input.characterId, conversationId: input.conversationId, snapshot, expiresAt: this.now() + 5 * 60000 });
     return { previewId, snapshot, lines: spotifyLyricsLines(snapshot.lyrics) };
   }
@@ -37972,7 +37999,7 @@ function sanitizeImageDiagnosticValue(value, depth = 0, key = "") {
 }
 function recordImageDiagnostic(userId, entry) {
   const next = {
-    id: crypto.randomUUID(),
+    id: localUuid(),
     createdAt: new Date().toISOString(),
     ...entry,
     payload: entry.payload === undefined ? undefined : sanitizeImageDiagnosticValue(entry.payload)
@@ -38440,7 +38467,7 @@ var freeformSessions = new FreeformSessions({
   makeId: () => id("session"),
   now: nowIso
 });
-var spotifyShare = new SpotifyShareBridge((template, scope) => spindle.macros.resolve(template, scope));
+var spotifyShare = new SpotifyShareBridge((template, scope) => spindle.macros.resolve(template, scope), Date.now, () => backendUuid(spindle));
 var TRUSTED_SPOTIFY_SHARE = Symbol("spotify-share");
 var TRUSTED_CAPTURE = Symbol("pocket-capture");
 var TRUSTED_DATING_PHOTO = Symbol("dating-photo");
@@ -38607,8 +38634,7 @@ function nowIso() {
   return new Date().toISOString();
 }
 function id(prefix) {
-  const random = globalThis.crypto?.randomUUID?.().replace(/-/g, "").slice(0, 14);
-  return `${prefix}_${random || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`}`;
+  return `${prefix}_${localUuid().replace(/-/g, "").slice(0, 14)}`;
 }
 function safeSegment(value) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 160) || "_none";
