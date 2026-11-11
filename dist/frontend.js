@@ -40472,7 +40472,30 @@ function renderFreeformLock(directory, draft, busy, error, actions) {
 }
 
 // src/frontend/components/pocket-portal.ts
-function renderPocketPortal(view, navigate, content) {
+function renderPowerControl(power) {
+  const row = el("div", "pocket-portal-power");
+  const control = button("", "pocket-portal-switch");
+  control.setAttribute("role", "switch");
+  control.setAttribute("aria-label", "Enable Pocket");
+  control.setAttribute("aria-checked", String(power.enabled));
+  if (power.saving)
+    control.setAttribute("aria-disabled", "true");
+  control.onclick = power.toggle;
+  const copy = el("span", "pocket-portal-switch-copy");
+  copy.append(el("strong", "", "Enable Pocket"), el("small", "", "Applies to your account"));
+  const indicator = el("span", "pocket-portal-switch-indicator");
+  indicator.setAttribute("aria-hidden", "true");
+  indicator.append(el("span", "", power.enabled ? "On" : "Off"), el("span", "pocket-portal-switch-track"));
+  control.append(copy, indicator);
+  row.append(control);
+  if (power.error) {
+    const error = el("p", "pocket-lock-status", power.error);
+    error.setAttribute("role", "alert");
+    row.append(error);
+  }
+  return row;
+}
+function renderPocketPortal(view, navigate, content, power) {
   const root = el("section", "pocket-portal lumiphone-device-drawer");
   root.setAttribute("aria-label", "Pocket");
   const nav = el("nav", "pocket-portal-nav");
@@ -40484,6 +40507,12 @@ function renderPocketPortal(view, navigate, content) {
   root.append(nav);
   const body = el("div", "pocket-portal-body");
   if (view === "home") {
+    if (power)
+      body.append(renderPowerControl(power));
+    if (power?.enabled === false) {
+      root.append(body);
+      return root;
+    }
     const title = el("h2", "", "A little closer.");
     title.tabIndex = -1;
     body.append(el("p", "pocket-portal-eyebrow", "WELCOME TO YOUR POCKET"), title, el("p", "pocket-portal-intro", "Pick up where you are. Or go somewhere new."));
@@ -40512,7 +40541,9 @@ function renderPocketPortal(view, navigate, content) {
     chevron.setAttribute("aria-hidden", "true");
     back.prepend(chevron);
     back.onclick = () => navigate("home");
-    body.append(back, content);
+    body.append(back);
+    if (content)
+      body.append(content);
   }
   root.append(body);
   return root;
@@ -40522,6 +40553,19 @@ ${SESSION_MANAGER_STYLES}
 .pocket-portal{--pocket-text:var(--lumiverse-text,#eceaf1);--pocket-muted:var(--lumiverse-text-muted,#a7a3b2);--pocket-accent:var(--lumiverse-primary,#b5a5f5);--pocket-border:var(--lumiverse-border,#ffffff16);--pocket-surface:var(--lumiverse-fill-subtle,#ffffff06);--pocket-hover:var(--lumiverse-fill,#ffffff0c);box-sizing:border-box;width:100%;min-width:0;min-height:100%;padding:24px 20px 32px;color:var(--pocket-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--pocket-accent) 9%,transparent),transparent 55%)}
 .pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-portrait-choices{margin-block:20px}.pocket-portal .lumiphone-portrait-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-block:14px}.pocket-portal .lumiphone-portrait-option{display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 10px;min-width:0;border:1px solid var(--pocket-border);border-radius:12px;background:var(--pocket-surface);color:inherit;text-align:center}.pocket-portal .lumiphone-portrait-preview{width:80px;height:80px;object-fit:cover;border-radius:14px}.pocket-portal .lumiphone-portrait-details{display:grid;gap:5px;max-width:100%;overflow-wrap:anywhere;font-size:12px}.pocket-portal .lumiphone-portrait-details small{font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-portrait-status{flex-basis:100%;order:2;margin:4px 0 0}.pocket-portal .lumiphone-device-access{flex:1 1 110px;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
 @media(max-width:420px){.pocket-portal{padding:18px 16px 28px}.pocket-portal-nav{padding-bottom:24px}.pocket-portal h2{font-size:28px}.pocket-portal-destination{padding:20px 16px 26px}}
+.pocket-portal-power{display:grid;gap:8px;margin:0 0 26px}
+.pocket-portal-switch{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:54px;padding:9px 12px 9px 14px;border:1px solid var(--pocket-border);border-radius:14px;background:var(--pocket-surface);color:inherit;text-align:left}
+.pocket-portal-switch:hover{border-color:var(--pocket-accent)}
+.pocket-portal-switch[aria-checked=true]{border-color:color-mix(in srgb,var(--pocket-accent) 28%,var(--pocket-border));background:color-mix(in srgb,var(--pocket-accent) 8%,var(--pocket-surface))}
+.pocket-portal-switch[aria-disabled=true]{cursor:progress}
+.pocket-portal-switch-copy{display:grid;gap:2px}.pocket-portal-switch-copy strong{font-weight:650}.pocket-portal-switch-copy small{font-size:11px;color:var(--pocket-muted)}
+.pocket-portal-switch-indicator{display:flex;align-items:center;gap:8px;color:var(--pocket-muted);font-size:11px;font-weight:650}
+.pocket-portal-switch[aria-checked=true] .pocket-portal-switch-indicator{color:var(--pocket-accent)}
+.pocket-portal-switch-track{display:grid;align-items:center;flex:none;width:38px;height:22px;padding:2px;border:1px solid color-mix(in srgb,var(--pocket-muted) 60%,transparent);border-radius:999px;background:var(--pocket-hover)}
+.pocket-portal-switch-track::before{content:'';width:14px;height:14px;border-radius:50%;background:var(--pocket-muted);transition:translate .16s ease}
+.pocket-portal-switch[aria-checked=true] .pocket-portal-switch-track{background:var(--pocket-accent);border-color:var(--pocket-accent)}
+.pocket-portal-switch[aria-checked=true] .pocket-portal-switch-track::before{translate:16px 0;background:var(--lumiverse-bg,#17151e)}
+@media(prefers-reduced-motion:reduce){.pocket-portal-switch-track::before{transition:none}}
 .pocket-freeform-confirm{--lp-accent:var(--lumiverse-primary,#b6a5ee);font:400 13px/1.6 Inter,ui-sans-serif,system-ui,sans-serif}.pocket-freeform-confirm *{box-sizing:border-box}.pocket-freeform-confirm .lp-settings-section{gap:14px}.pocket-freeform-confirm .lp-copy{font:inherit;margin:0 0 6px;color:var(--lp-muted,#b9b5c5)}.pocket-freeform-confirm .lp-button{min-height:44px;padding:12px 14px;font:600 13px/1.4 Inter,ui-sans-serif,system-ui,sans-serif;white-space:normal;border:1px solid var(--lp-border,#ffffff22);border-radius:10px}.pocket-freeform-confirm .lp-button[data-primary=true]{background:var(--lp-accent);color:#17151e}.pocket-freeform-confirm button:focus-visible{outline:2px solid var(--lp-accent);outline-offset:3px}
 @media(prefers-reduced-motion:reduce){.pocket-portal-destination{transition:none}}
 `;
@@ -44774,6 +44818,10 @@ class PocketController {
   loreLogRequest = "";
   state = null;
   preferences = defaultPreferences();
+  pocketEnabled = true;
+  pocketPowerRequest = "";
+  pocketPowerSaving = false;
+  pocketPowerError = "";
   settingsDraft = null;
   portraitRefreshRequest = "";
   portraitRefreshStatus = "";
@@ -45017,6 +45065,8 @@ class PocketController {
     this.renderDrawerLanding();
     this.installHostIntegrations();
     this.tickClock();
+    this.pocketPowerRequest = requestId("pocket_power");
+    this.send("lumiphone:get_enabled", { requestId: this.pocketPowerRequest });
     this.refresh();
   }
   destroy() {
@@ -45071,7 +45121,7 @@ class PocketController {
     this.cleanups.push(action.onClick(() => this.open()));
     this.cleanups.push(() => action.destroy());
     this.cleanups.push(this.ctx.messages.registerTagInterceptor({ tagName: "lumi-phone", removeFromMessage: true }, (payload) => {
-      if (payload.isStreaming)
+      if (!this.pocketEnabled || payload.isStreaming)
         return;
       const key = `${payload.messageId || ""}:${payload.fullMatch}`;
       if (this.lastTagKeys.has(key))
@@ -45228,7 +45278,8 @@ class PocketController {
       this.renderDrawerLanding();
     } catch {
       this.widget = null;
-      this.mountPhoneInDrawer();
+      if (this.pocketEnabled)
+        this.mountPhoneInDrawer();
     }
   }
   launcherViewport() {
@@ -45417,6 +45468,19 @@ class PocketController {
     keep.focus();
   }
   renderDrawerLanding() {
+    if (this.portalView === "home" || !this.pocketEnabled) {
+      const restoreFocus = this.drawer.root.contains(document.activeElement) && document.activeElement?.getAttribute("role") === "switch";
+      const home = renderPocketPortal("home", (view) => this.navigatePortal(view), null, {
+        enabled: this.pocketEnabled,
+        saving: this.pocketPowerSaving,
+        error: this.pocketPowerError,
+        toggle: () => this.togglePocket()
+      });
+      this.drawer.root.replaceChildren(home);
+      if (restoreFocus)
+        home.querySelector('[role="switch"]')?.focus({ preventScroll: true });
+      return;
+    }
     const activeField = this.drawer.root.contains(document.activeElement) ? document.activeElement?.dataset.freeformField : undefined;
     const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     this.drawer.root.replaceChildren();
@@ -45846,10 +45910,43 @@ class PocketController {
     this.ctx.sendToBackend({ type, requestId: id, chatId: context.chatId, characterId: context.characterId, deviceOwnerActorId: this.currentDeviceOwnerActorId(), ...payload });
     return id;
   }
+  togglePocket() {
+    if (this.pocketPowerSaving)
+      return;
+    this.pocketPowerSaving = true;
+    this.pocketPowerError = "";
+    this.pocketPowerRequest = requestId("pocket_power");
+    this.renderDrawerLanding();
+    this.send("lumiphone:set_enabled", { requestId: this.pocketPowerRequest, enabled: !this.pocketEnabled });
+  }
+  applyPocketPower(enabled) {
+    if (this.pocketEnabled === enabled)
+      return;
+    this.pocketEnabled = enabled;
+    this.launcher.dataset.pocketOff = String(!enabled);
+    const label = enabled ? "Open Pocket" : "Pocket is off. Open Pocket settings";
+    this.launcher.title = label;
+    this.launcher.setAttribute("aria-label", label);
+    if (enabled)
+      this.refresh();
+    else {
+      this.portalView = "home";
+      this.pendingRoute = null;
+      this.setupModalDismiss?.();
+      if (this.expanded)
+        this.close();
+      this.clearActivitySurfaces(true, true);
+      this.hideComposerReferencePill();
+    }
+    this.updateBadge();
+  }
   refresh() {
-    this.send("lumiphone:get_state");
+    if (this.pocketEnabled)
+      this.send("lumiphone:get_state");
   }
   announceView() {
+    if (!this.pocketEnabled)
+      return;
     this.send("lumiphone:view_state", { open: this.expanded, route: this.router.current });
   }
   activeComposerReference() {
@@ -45955,6 +46052,8 @@ class PocketController {
     this.lastComposerReferenceId = "";
   }
   syncComposerReferencePill() {
+    if (!this.pocketEnabled)
+      return;
     const pill = this.composerReferencePill;
     if (!pill)
       return;
@@ -46033,6 +46132,18 @@ class PocketController {
     return { key, ui };
   }
   onBackend(payload) {
+    if (this.pocketPowerRequest && payload.requestId === this.pocketPowerRequest) {
+      this.pocketPowerRequest = "";
+      this.pocketPowerSaving = false;
+      if (payload.type === "lumiphone:enabled")
+        this.applyPocketPower(payload.enabled === true);
+      if (payload.type === "lumiphone:error")
+        this.pocketPowerError = "Could not update Pocket. Try again.";
+      this.renderDrawerLanding();
+      return;
+    }
+    if (!this.pocketEnabled)
+      return;
     if (this.portraitRefreshRequest && payload.requestId === this.portraitRefreshRequest && payload.type === "lumiphone:persona_portrait_choices") {
       this.portraitRefreshRequest = "";
       this.portraitChoices = payload.personas || [];
@@ -47181,7 +47292,7 @@ class PocketController {
     return Math.min(999, Math.max(notifications, messages));
   }
   updateBadge() {
-    const unread = this.unreadCount();
+    const unread = this.pocketEnabled ? this.unreadCount() : 0;
     this.launcherBadge.hidden = unread === 0;
     this.launcherBadge.textContent = unread > 99 ? "99+" : String(unread);
     this.drawer.setBadge(unread ? unread > 99 ? "99+" : String(unread) : null);
@@ -47389,6 +47500,11 @@ class PocketController {
     this.customStyle.textContent = customCss ? `@scope (${surfaceSelector}) { ${customCss} }` : "";
   }
   open() {
+    if (!this.pocketEnabled) {
+      this.portalView = "home";
+      this.drawer.activate();
+      return;
+    }
     if (!this.widget) {
       this.drawer.activate();
       this.mountPhoneInDrawer();
@@ -47434,7 +47550,7 @@ class PocketController {
         ui.error = undefined;
       }
     }
-    if (!this.widget && !this.dockPanel && !this.mobileWidget)
+    if (!this.expanded && !this.widget && !this.dockPanel && !this.mobileWidget)
       return;
     this.expanded = false;
     this.shell.hidden = true;
@@ -47447,7 +47563,8 @@ class PocketController {
     this.announceView();
     window.clearTimeout(this.collapseTimer);
     this.collapseTimer = window.setTimeout(() => {
-      this.launcherFocus?.focus({ preventScroll: true });
+      if (this.pocketEnabled)
+        this.launcherFocus?.focus({ preventScroll: true });
       this.launcherFocus = null;
     }, this.preferences.reducedMotion || this.preferences.animation === "none" ? 0 : this.preferences.animationDurationMs);
   }
@@ -47558,6 +47675,8 @@ class PocketController {
     this.openPocket(this.router.home(), false);
   }
   openPocket(routeInput, pushHistory = true) {
+    if (!this.pocketEnabled)
+      return;
     let normalized = normalizePocketRoute(routeInput);
     if (normalized.app === "messages" && this.state?.conversations.find((c) => c.id === ("conversationId" in normalized ? normalized.conversationId : undefined))?.channel === "dating")
       normalized = { app: "dating", conversationId: normalized.conversationId };
@@ -47701,7 +47820,7 @@ class PocketController {
     return provisional && this.provisionalActivityIsActive(provisional) ? provisional.activity : undefined;
   }
   mountInlineArtifacts() {
-    if (this.freeformSession)
+    if (!this.pocketEnabled || this.freeformSession)
       return;
     const active = this.activeContext();
     const entries = [];
@@ -54197,6 +54316,7 @@ var PHONE_STYLES = `
     filter:drop-shadow(0 5px 7px #0006);
     transition: transform .2s ease, box-shadow .2s ease; touch-action: none;
   }
+  .lumiphone-launcher[data-pocket-off="true"] { filter:grayscale(1); }
   .lumiphone-launcher:hover { transform: translateY(-2px) rotate(-5deg); }
   .lumiphone-launcher-phone { width:31px; height:48px; display:grid; position:relative; border:2px solid #b8afd2; border-radius:10px; padding:6px 3px; background:#252131; transform:rotate(8deg); box-shadow:inset 0 0 0 1px #17141f; }
   .lumiphone-launcher-phone::before { content:''; position:absolute; top:3px; left:10px; width:7px; height:2px; border-radius:4px; background:#b8afd2; z-index:1; }

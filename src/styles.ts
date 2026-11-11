@@ -86,6 +86,7 @@ export const PHONE_STYLES = `
     filter:drop-shadow(0 5px 7px #0006);
     transition: transform .2s ease, box-shadow .2s ease; touch-action: none;
   }
+  .lumiphone-launcher[data-pocket-off="true"] { filter:grayscale(1); }
   .lumiphone-launcher:hover { transform: translateY(-2px) rotate(-5deg); }
   .lumiphone-launcher-phone { width:31px; height:48px; display:grid; position:relative; border:2px solid #b8afd2; border-radius:10px; padding:6px 3px; background:#252131; transform:rotate(8deg); box-shadow:inset 0 0 0 1px #17141f; }
   .lumiphone-launcher-phone::before { content:''; position:absolute; top:3px; left:10px; width:7px; height:2px; border-radius:4px; background:#b8afd2; z-index:1; }

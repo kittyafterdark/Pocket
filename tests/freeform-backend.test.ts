@@ -15,6 +15,27 @@ async function send(type: string, payload: Record<string, unknown> = {}, userId?
 }
 const scope = (id: string) => ({ chatId: id, characterId: '_none' })
 
+test('Pocket access persists per account and gates phone actions and roleplay hooks', async () => {
+  const user = 'pocket-paused-user', other = 'pocket-active-user'
+  const enabled = async (userId: string) => (await send('get_enabled', {}, userId)).responses.at(-1)?.enabled
+  expect(await enabled(user)).toBe(true)
+  await send('set_enabled', { enabled: false }, user)
+  expect(await enabled(user)).toBe(false)
+  expect(await enabled(other)).toBe(true)
+  expect((await send('get_state', {}, user)).state).toBeUndefined()
+  expect((await send('freeform_create', { personaId: 'persona-fern' }, user)).error?.error).toContain('Pocket is off')
+  expect((await send('get_state', {}, other)).state).toBeDefined()
+
+  const messages = [{ role: 'user', content: 'A roleplay turn with Pocket paused.' }]
+  expect(await host.interceptors[0](messages, { chatId: 'host-chat', userId: user })).toBe(messages)
+  expect(await host.emit('TOOL_INVOCATION', { toolName: 'phone_action' }, user)).toContain('Pocket is off')
+  expect(host.tools.has('phone_action')).toBe(true)
+
+  await send('set_enabled', { enabled: true }, user)
+  expect(await enabled(user)).toBe(true)
+  expect((await send('get_state', {}, user)).state).toBeDefined()
+})
+
 test('timeskip advances the Pocket clock once, persists a separator and reaches reply context',async()=>{
   const {session}=await send('freeform_create',{personaId:'persona-fern',name:'Timeskip'})
   const imported=await send('import_contact',{...scope(session.id),kind:'character',sourceId:'host-character'})

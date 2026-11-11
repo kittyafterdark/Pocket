@@ -1085,6 +1085,14 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
   return state
 }
 
+// Keep account access separate from the importable and resettable handset preferences.
+const POCKET_ACCESS_PATH = 'preferences/pocket-access.json'
+
+async function pocketEnabled(userId?: string): Promise<boolean> {
+  const access = await spindle.userStorage.getJson<{ enabled?: boolean } | null>(POCKET_ACCESS_PATH, { fallback: null, userId })
+  return access?.enabled !== false
+}
+
 async function loadPreferences(userId?: string, legacy?: unknown): Promise<DevicePreferences> {
   const raw = await spindle.userStorage.getJson<unknown>(PREFERENCES_PATH, { fallback: null, userId })
   const preferences = normalizePreferences(raw ?? legacy)
@@ -1587,6 +1595,7 @@ function sendActivity(activity: PocketActivity | undefined, userId?: string): vo
 
 async function maybePush(state: PhoneState, preferences: DevicePreferences, notification: PhoneNotification, userId?: string): Promise<void> {
   if (!preferences.pushNotifications || !spindle.permissions.has('push_notification')) return
+  if (!await pocketEnabled(userId)) return
   const throttleKey = `${userId || '_default'}:${stateKey(state.chatId, state.characterId)}:${notification.app}`
   const lastSent = notificationThrottle.get(throttleKey) || 0
   if (Date.now() - lastSent < 15_000) return
@@ -1999,7 +2008,7 @@ function commitArrivalHandoff(
 }
 
 async function requestRelayContinuation(chatId: string, characterId: string, relayId: string, userId?: string): Promise<void> {
-  if (isFreeformChat(chatId)) return
+  if (isFreeformChat(chatId) || !await pocketEnabled(userId)) return
   const method = 'spindle.chat.appendMessage(triggerGeneration)' as const
   const permissions = {
     chatMutation: spindle.permissions.has('chat_mutation'),
@@ -2401,6 +2410,7 @@ async function socialBankFriend(entryId: string, userId?: string): Promise<Socia
 
 async function observeSocialTimers(context: { chatId: string; characterId: string }, userId?: string): Promise<void> {
   try {
+    if (!await pocketEnabled(userId)) return
     const view = frontendViews.get(viewKey(userId))
     if (view && isFreeformChat(view.chatId) && (view.chatId !== context.chatId || view.characterId !== context.characterId)) return
     if (isFreeformChat(context.chatId)) { await socialAutomation.observe(context, userId); return }
@@ -2439,6 +2449,7 @@ async function ambientScheduleTargets(userId?: string): Promise<Array<{ chatId: 
 async function observeAmbientTimer(_context: { chatId: string; characterId: string }, userId?: string): Promise<void> {
   await ambientObservations.run(viewKey(userId), async () => {
     try {
+      if (!await pocketEnabled(userId)) return
       const preferences = await loadPreferences(userId)
       if (preferences.ambientMessaging === 'off' || !preferences.ambientScheduleEnabled) { ambientMessageAutomation.forget(userId); return }
       await ambientMessageAutomation.sync(await ambientScheduleTargets(userId), userId)
@@ -4779,6 +4790,7 @@ async function scheduleArrivalContinuation(chatId: string, characterId: string, 
 }
 
 async function scheduleReplyBurst(chatId: string, characterId: string, conversationId: string, userId?: string): Promise<void> {
+  if (!await pocketEnabled(userId)) return
   const timerKey = burstTimerKey(chatId, characterId, conversationId, userId)
   const previous = replyBurstTimers.get(timerKey)
   if (previous) clearTimeout(previous)
@@ -4796,6 +4808,7 @@ async function scheduleReplyBurst(chatId: string, characterId: string, conversat
 
 async function maybeReplyAfterSend(chatId: string, characterId: string, conversationId: string, userId?: string, expectedBurstId = ''): Promise<void> {
   try {
+    if (!await pocketEnabled(userId)) return
     await replyJobs.run(replyJobScope(chatId, characterId, conversationId, userId), signal => maybeReplyAfterSendJob(chatId, characterId, conversationId, userId, expectedBurstId, signal))
   } catch (error) {
     if (!(error instanceof Error && error.name === 'AbortError')) throw error
@@ -4927,6 +4940,7 @@ async function considerAmbientMessage(chatId: string, characterId: string, oppor
   const personaFreezeKey = ambientPersonaFreezeKey(chatId, characterId, userId)
   if (freezePersona) ambientPersonaFreezeScopes.add(personaFreezeKey)
   try {
+    if (!await pocketEnabled(userId)) return
     const preferences = await loadPreferences(userId)
     if (!spindle.permissions.has('generation') || preferences.ambientMessaging === 'off') return
     const freeform = isFreeformChat(chatId)
@@ -5691,6 +5705,30 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
   if (!isRecord(payload) || !text(payload.type, 120).startsWith('lumiphone:')) return
   const requestId = text(payload.requestId, 180)
   try {
+    if (payload.type === 'lumiphone:get_enabled') {
+      send({ type: 'lumiphone:enabled', requestId, enabled: await pocketEnabled(userId) }, userId)
+      return
+    }
+    if (payload.type === 'lumiphone:set_enabled') {
+      const enabled = payload.enabled
+      if (typeof enabled !== 'boolean') throw new Error('Choose whether to enable Pocket.')
+      const userKey = viewKey(userId)
+      await withStateLock('pocket-access:' + userKey, async () => {
+        await spindle.userStorage.setJson(POCKET_ACCESS_PATH, { enabled }, { userId })
+        if (!enabled) {
+          frontendViews.delete(userKey)
+          arrivalIdle.cancelPrefix(userKey + ':')
+          ambientMessageAutomation.forget(userId)
+          socialAutomation.forget(userId)
+        }
+        send({ type: 'lumiphone:enabled', requestId, enabled }, userId)
+      })
+      return
+    }
+    if (!await pocketEnabled(userId)) {
+      if (payload.type === 'lumiphone:get_state' || payload.type === 'lumiphone:view_state') return
+      throw new Error('Pocket is off for your account.')
+    }
     const context = await resolveContext(payload, userId)
     if (isFreeformChat(context.chatId) && [
       'lumiphone:quickstart_event', 'lumiphone:continue_relay', 'lumiphone:continue_arrival',
@@ -7423,7 +7461,7 @@ function ensureInterceptor(): void {
   if (interceptorDisposer || !spindle.permissions.has('interceptor')) return
   interceptorDisposer = spindle.registerInterceptor(async (messages, context) => {
     try {
-      if((await roleplayToolsSuppressed(context.userId)))return messages
+      if (!await pocketEnabled(context.userId) || await roleplayToolsSuppressed(context.userId)) return messages
       const chatId = context.chatId || '_lobby'
       const characterId = await stateCharacterIdForChat(chatId, context.characterId, context.userId)
       const generationId = text(context.generationId, 180)
@@ -7876,6 +7914,7 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
   try {
     const userId = eventUserId
     if (!userId) throw new Error('Pocket tool invocation is missing authenticated user context')
+    if (!await pocketEnabled(userId)) throw new Error('Pocket is off for your account.')
     if((await roleplayToolsSuppressed(userId)))throw new Error('Pocket tools are suppressed for roleplay. Use the Freeform phone directly.')
     const args = isRecord(payload.args) ? payload.args : {}
     const merged = {
@@ -7917,12 +7956,13 @@ for (const name of ['pocket_trackers', 'pocket_tracker']) {
     name, category: 'Pocket', returnType: 'string', volatile: true,
     description: name === 'pocket_trackers' ? 'Live Pocket tracker context (macro mode only).' : 'Current visible tracker value by stable key (macro mode only).',
     ...(name === 'pocket_tracker' ? { args: [{ name: 'key', required: true }] } : {}),
-    handler: (async (context: { chatId?: string; args?: string[] }) => {
+    handler: (async (context: { chatId?: string; args?: string[]; userId?: string }) => {
       const chatId = text(context.chatId, 180)
-      if (!chatId || await roleplayToolsSuppressed()) return ''
-      const characterId = await stateCharacterIdForChat(chatId, '')
+      const { userId } = context
+      if (!chatId || !await pocketEnabled(userId) || await roleplayToolsSuppressed(userId)) return ''
+      const characterId = await stateCharacterIdForChat(chatId, '', userId)
       // Do not call loadState here: dry macro evaluation must not persist clocks or migrations.
-      const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), { fallback: null })
+      const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), { fallback: null, userId })
       if (!isRecord(raw) || Number(raw.version) > STATE_VERSION) return ''
       const state = normalizeState(raw, chatId, characterId, text(raw.characterName, 120))
       if (normalizeTrackerContextSettings(state.trackerSettings).delivery !== 'macros') return ''
@@ -7961,6 +8001,7 @@ spindle.on('CHAT_SWITCHED', async (payload: any, userId?: string) => {
   const chatId = text(payload?.chatId, 180)
   if (!chatId) return
   try {
+    if (!await pocketEnabled(userId)) return
     const chat = spindle.permissions.has('chats') ? await (spindle.chats.get as any)(chatId, userId) : null
     const characterId = text(chat?.character_id, 180) || '_none'
     await sendState(await loadState(chatId, characterId, userId), userId, 'chat_switched')
@@ -7970,7 +8011,7 @@ spindle.on('CHAT_SWITCHED', async (payload: any, userId?: string) => {
 
 spindle.on('PERSONA_CHANGED', async (_payload: any, userId?: string) => {
   try {
-    if (!spindle.permissions.has('chats')) return
+    if (!spindle.permissions.has('chats') || !await pocketEnabled(userId)) return
     const chat: any = await spindle.chats.getActive(userId)
     const chatId = text(chat?.id, 180)
     if (!chatId) return
@@ -7985,6 +8026,7 @@ spindle.on('GENERATION_STARTED', async (payload: any, userId?: string) => {
   const chatId = text(payload?.chatId, 180)
   const generationId = text(payload?.generationId, 180)
   if (!chatId || !generationId || !spindle.permissions.has('chats')) return
+  if (!await pocketEnabled(userId).catch(() => false)) return
   const hostMessageId = text(payload?.targetMessageId ?? payload?.target_message_id, 180)
   const rawSwipeValue = payload?.targetSwipeId ?? payload?.target_swipe_id
   const rawSwipeId = Number(rawSwipeValue)
@@ -8150,6 +8192,7 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
   if (generationId) activePocketCandidates.delete(candidateRuntimeKey(userId, generationId))
   if (!chatId || !spindle.permissions.has('chats')) return
   try {
+    if (!await pocketEnabled(userId)) return
     const chat: any = await spindle.chats.get(chatId, userId)
     const characterId = text(chat?.character_id, 180) || '_none'
     const generationType = text(payload?.generationType ?? payload?.generation_type, 40)

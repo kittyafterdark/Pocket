@@ -39496,6 +39496,11 @@ async function loadState(chatId, characterId, userId) {
     await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId });
   return state;
 }
+var POCKET_ACCESS_PATH = "preferences/pocket-access.json";
+async function pocketEnabled(userId) {
+  const access = await spindle.userStorage.getJson(POCKET_ACCESS_PATH, { fallback: null, userId });
+  return access?.enabled !== false;
+}
 async function loadPreferences(userId, legacy) {
   const raw = await spindle.userStorage.getJson(PREFERENCES_PATH, { fallback: null, userId });
   const preferences = normalizePreferences(raw ?? legacy);
@@ -40044,6 +40049,8 @@ function sendActivity(activity, userId) {
 async function maybePush(state, preferences, notification, userId) {
   if (!preferences.pushNotifications || !spindle.permissions.has("push_notification"))
     return;
+  if (!await pocketEnabled(userId))
+    return;
   const throttleKey = `${userId || "_default"}:${stateKey(state.chatId, state.characterId)}:${notification.app}`;
   const lastSent = notificationThrottle.get(throttleKey) || 0;
   if (Date.now() - lastSent < 15000)
@@ -40517,7 +40524,7 @@ function commitArrivalHandoff(state, conversation, contact, decision) {
   return relay;
 }
 async function requestRelayContinuation(chatId, characterId, relayId, userId) {
-  if (isFreeformChat(chatId))
+  if (isFreeformChat(chatId) || !await pocketEnabled(userId))
     return;
   const method = "spindle.chat.appendMessage(triggerGeneration)";
   const permissions = {
@@ -40972,6 +40979,8 @@ async function socialBankFriend(entryId, userId) {
 }
 async function observeSocialTimers(context, userId) {
   try {
+    if (!await pocketEnabled(userId))
+      return;
     const view = frontendViews.get(viewKey(userId));
     if (view && isFreeformChat(view.chatId) && (view.chatId !== context.chatId || view.characterId !== context.characterId))
       return;
@@ -41024,6 +41033,8 @@ async function ambientScheduleTargets(userId) {
 async function observeAmbientTimer(_context, userId) {
   await ambientObservations.run(viewKey(userId), async () => {
     try {
+      if (!await pocketEnabled(userId))
+        return;
       const preferences = await loadPreferences(userId);
       if (preferences.ambientMessaging === "off" || !preferences.ambientScheduleEnabled) {
         ambientMessageAutomation.forget(userId);
@@ -43537,6 +43548,8 @@ async function scheduleArrivalContinuation(chatId, characterId, conversationId, 
   });
 }
 async function scheduleReplyBurst(chatId, characterId, conversationId, userId) {
+  if (!await pocketEnabled(userId))
+    return;
   const timerKey = burstTimerKey(chatId, characterId, conversationId, userId);
   const previous = replyBurstTimers.get(timerKey);
   if (previous)
@@ -43556,6 +43569,8 @@ async function scheduleReplyBurst(chatId, characterId, conversationId, userId) {
 }
 async function maybeReplyAfterSend(chatId, characterId, conversationId, userId, expectedBurstId = "") {
   try {
+    if (!await pocketEnabled(userId))
+      return;
     await replyJobs.run(replyJobScope(chatId, characterId, conversationId, userId), (signal) => maybeReplyAfterSendJob(chatId, characterId, conversationId, userId, expectedBurstId, signal));
   } catch (error) {
     if (!(error instanceof Error && error.name === "AbortError"))
@@ -43719,6 +43734,8 @@ async function considerAmbientMessage(chatId, characterId, opportunity, userId, 
   if (freezePersona)
     ambientPersonaFreezeScopes.add(personaFreezeKey);
   try {
+    if (!await pocketEnabled(userId))
+      return;
     const preferences = await loadPreferences(userId);
     if (!spindle.permissions.has("generation") || preferences.ambientMessaging === "off")
       return;
@@ -44619,6 +44636,32 @@ async function handleFrontend(payload, userId) {
     return;
   const requestId = text9(payload.requestId, 180);
   try {
+    if (payload.type === "lumiphone:get_enabled") {
+      send({ type: "lumiphone:enabled", requestId, enabled: await pocketEnabled(userId) }, userId);
+      return;
+    }
+    if (payload.type === "lumiphone:set_enabled") {
+      const enabled = payload.enabled;
+      if (typeof enabled !== "boolean")
+        throw new Error("Choose whether to enable Pocket.");
+      const userKey = viewKey(userId);
+      await withStateLock("pocket-access:" + userKey, async () => {
+        await spindle.userStorage.setJson(POCKET_ACCESS_PATH, { enabled }, { userId });
+        if (!enabled) {
+          frontendViews.delete(userKey);
+          arrivalIdle.cancelPrefix(userKey + ":");
+          ambientMessageAutomation.forget(userId);
+          socialAutomation.forget(userId);
+        }
+        send({ type: "lumiphone:enabled", requestId, enabled }, userId);
+      });
+      return;
+    }
+    if (!await pocketEnabled(userId)) {
+      if (payload.type === "lumiphone:get_state" || payload.type === "lumiphone:view_state")
+        return;
+      throw new Error("Pocket is off for your account.");
+    }
     const context = await resolveContext(payload, userId);
     if (isFreeformChat(context.chatId) && [
       "lumiphone:quickstart_event",
@@ -46742,7 +46785,7 @@ function ensureInterceptor() {
     return;
   interceptorDisposer = spindle.registerInterceptor(async (messages, context) => {
     try {
-      if (await roleplayToolsSuppressed(context.userId))
+      if (!await pocketEnabled(context.userId) || await roleplayToolsSuppressed(context.userId))
         return messages;
       const chatId = context.chatId || "_lobby";
       const characterId = await stateCharacterIdForChat(chatId, context.characterId, context.userId);
@@ -47171,6 +47214,8 @@ spindle.on("TOOL_INVOCATION", async (payload, eventUserId) => {
     const userId = eventUserId;
     if (!userId)
       throw new Error("Pocket tool invocation is missing authenticated user context");
+    if (!await pocketEnabled(userId))
+      throw new Error("Pocket is off for your account.");
     if (await roleplayToolsSuppressed(userId))
       throw new Error("Pocket tools are suppressed for roleplay. Use the Freeform phone directly.");
     const args = isRecord2(payload.args) ? payload.args : {};
@@ -47220,10 +47265,11 @@ for (const name of ["pocket_trackers", "pocket_tracker"]) {
     ...name === "pocket_tracker" ? { args: [{ name: "key", required: true }] } : {},
     handler: async (context) => {
       const chatId = text9(context.chatId, 180);
-      if (!chatId || await roleplayToolsSuppressed())
+      const { userId } = context;
+      if (!chatId || !await pocketEnabled(userId) || await roleplayToolsSuppressed(userId))
         return "";
-      const characterId = await stateCharacterIdForChat(chatId, "");
-      const raw = await spindle.userStorage.getJson(statePath(chatId, characterId), { fallback: null });
+      const characterId = await stateCharacterIdForChat(chatId, "", userId);
+      const raw = await spindle.userStorage.getJson(statePath(chatId, characterId), { fallback: null, userId });
       if (!isRecord2(raw) || Number(raw.version) > STATE_VERSION)
         return "";
       const state = normalizeState(raw, chatId, characterId, text9(raw.characterName, 120));
@@ -47267,6 +47313,8 @@ spindle.on("CHAT_SWITCHED", async (payload, userId) => {
   if (!chatId)
     return;
   try {
+    if (!await pocketEnabled(userId))
+      return;
     const chat = spindle.permissions.has("chats") ? await spindle.chats.get(chatId, userId) : null;
     const characterId = text9(chat?.character_id, 180) || "_none";
     await sendState(await loadState(chatId, characterId, userId), userId, "chat_switched");
@@ -47275,7 +47323,7 @@ spindle.on("CHAT_SWITCHED", async (payload, userId) => {
 });
 spindle.on("PERSONA_CHANGED", async (_payload, userId) => {
   try {
-    if (!spindle.permissions.has("chats"))
+    if (!spindle.permissions.has("chats") || !await pocketEnabled(userId))
       return;
     const chat = await spindle.chats.getActive(userId);
     const chatId = text9(chat?.id, 180);
@@ -47291,6 +47339,8 @@ spindle.on("GENERATION_STARTED", async (payload, userId) => {
   const chatId = text9(payload?.chatId, 180);
   const generationId = text9(payload?.generationId, 180);
   if (!chatId || !generationId || !spindle.permissions.has("chats"))
+    return;
+  if (!await pocketEnabled(userId).catch(() => false))
     return;
   const hostMessageId = text9(payload?.targetMessageId ?? payload?.target_message_id, 180);
   const rawSwipeValue = payload?.targetSwipeId ?? payload?.target_swipe_id;
@@ -47485,6 +47535,8 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
   if (!chatId || !spindle.permissions.has("chats"))
     return;
   try {
+    if (!await pocketEnabled(userId))
+      return;
     const chat = await spindle.chats.get(chatId, userId);
     const characterId = text9(chat?.character_id, 180) || "_none";
     const generationType = text9(payload?.generationType ?? payload?.generation_type, 40);

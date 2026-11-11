@@ -200,6 +200,10 @@ class PocketController {
   private loreLogRequest = ''
   private state: PhoneState | null = null
   private preferences: DevicePreferences = defaultPreferences()
+  private pocketEnabled = true
+  private pocketPowerRequest = ''
+  private pocketPowerSaving = false
+  private pocketPowerError = ''
   private settingsDraft: DevicePreferences | null = null
   private portraitRefreshRequest=''
   private portraitRefreshStatus=''
@@ -425,6 +429,8 @@ class PocketController {
     this.renderDrawerLanding()
     this.installHostIntegrations()
     this.tickClock()
+    this.pocketPowerRequest = requestId('pocket_power')
+    this.send('lumiphone:get_enabled', { requestId: this.pocketPowerRequest })
     this.refresh()
   }
 
@@ -471,7 +477,7 @@ class PocketController {
     this.cleanups.push(this.ctx.messages.registerTagInterceptor(
       { tagName: 'lumi-phone', removeFromMessage: true },
       (payload) => {
-        if (payload.isStreaming) return
+        if (!this.pocketEnabled || payload.isStreaming) return
         const key = `${payload.messageId || ''}:${payload.fullMatch}`
         if (this.lastTagKeys.has(key)) return
         this.lastTagKeys.add(key)
@@ -615,7 +621,7 @@ class PocketController {
       this.renderDrawerLanding()
     } catch {
       this.widget = null
-      this.mountPhoneInDrawer()
+      if (this.pocketEnabled) this.mountPhoneInDrawer()
     }
   }
 
@@ -739,6 +745,18 @@ class PocketController {
   }
 
   private renderDrawerLanding(): void {
+    if (this.portalView === 'home' || !this.pocketEnabled) {
+      const restoreFocus = this.drawer.root.contains(document.activeElement) && document.activeElement?.getAttribute('role') === 'switch'
+      const home = renderPocketPortal('home', view => this.navigatePortal(view), null, {
+        enabled: this.pocketEnabled,
+        saving: this.pocketPowerSaving,
+        error: this.pocketPowerError,
+        toggle: () => this.togglePocket(),
+      })
+      this.drawer.root.replaceChildren(home)
+      if (restoreFocus) home.querySelector<HTMLButtonElement>('[role="switch"]')?.focus({ preventScroll: true })
+      return
+    }
     const activeField = this.drawer.root.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.freeformField : undefined
     const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null
     this.drawer.root.replaceChildren()
@@ -1063,11 +1081,40 @@ class PocketController {
     return id
   }
 
+  private togglePocket(): void {
+    if (this.pocketPowerSaving) return
+    this.pocketPowerSaving = true
+    this.pocketPowerError = ''
+    this.pocketPowerRequest = requestId('pocket_power')
+    this.renderDrawerLanding()
+    this.send('lumiphone:set_enabled', { requestId: this.pocketPowerRequest, enabled: !this.pocketEnabled })
+  }
+
+  private applyPocketPower(enabled: boolean): void {
+    if (this.pocketEnabled === enabled) return
+    this.pocketEnabled = enabled
+    this.launcher.dataset.pocketOff = String(!enabled)
+    const label = enabled ? 'Open Pocket' : 'Pocket is off. Open Pocket settings'
+    this.launcher.title = label
+    this.launcher.setAttribute('aria-label', label)
+    if (enabled) this.refresh()
+    else {
+      this.portalView = 'home'
+      this.pendingRoute = null
+      this.setupModalDismiss?.()
+      if (this.expanded) this.close()
+      this.clearActivitySurfaces(true, true)
+      this.hideComposerReferencePill()
+    }
+    this.updateBadge()
+  }
+
   private refresh(): void {
-    this.send('lumiphone:get_state')
+    if (this.pocketEnabled) this.send('lumiphone:get_state')
   }
 
   private announceView(): void {
+    if (!this.pocketEnabled) return
     this.send('lumiphone:view_state', { open: this.expanded, route: this.router.current })
   }
 
@@ -1186,6 +1233,7 @@ class PocketController {
   }
 
   private syncComposerReferencePill(): void {
+    if (!this.pocketEnabled) return
     const pill = this.composerReferencePill
     if (!pill) return
 
@@ -1274,6 +1322,15 @@ class PocketController {
   }
 
   private onBackend(payload: BackendPayload): void {
+    if (this.pocketPowerRequest && payload.requestId === this.pocketPowerRequest) {
+      this.pocketPowerRequest = ''
+      this.pocketPowerSaving = false
+      if (payload.type === 'lumiphone:enabled') this.applyPocketPower(payload.enabled === true)
+      if (payload.type === 'lumiphone:error') this.pocketPowerError = 'Could not update Pocket. Try again.'
+      this.renderDrawerLanding()
+      return
+    }
+    if (!this.pocketEnabled) return
     if(this.portraitRefreshRequest && payload.requestId===this.portraitRefreshRequest && payload.type==='lumiphone:persona_portrait_choices'){
       this.portraitRefreshRequest='';this.portraitChoices=payload.personas||[];this.portraitRefreshStatus='';this.renderDrawerLanding()
       this.drawer.root.querySelector<HTMLButtonElement>('.lumiphone-portrait-choices button')?.focus();return
@@ -1959,7 +2016,7 @@ class PocketController {
   }
 
   private updateBadge(): void {
-    const unread = this.unreadCount()
+    const unread = this.pocketEnabled ? this.unreadCount() : 0
     this.launcherBadge.hidden = unread === 0
     this.launcherBadge.textContent = unread > 99 ? '99+' : String(unread)
     this.drawer.setBadge(unread ? (unread > 99 ? '99+' : String(unread)) : null)
@@ -2158,6 +2215,11 @@ class PocketController {
   }
 
   private open(): void {
+    if (!this.pocketEnabled) {
+      this.portalView = 'home'
+      this.drawer.activate()
+      return
+    }
     if (!this.widget) {
       this.drawer.activate()
       this.mountPhoneInDrawer()
@@ -2192,7 +2254,7 @@ class PocketController {
       ui.placingSlot = undefined; ui.drawer = false; ui.query = ''
       if (!ui.pending) { ui.draft = undefined; ui.selected = undefined; ui.selectedItem = undefined; ui.placingSlot = undefined; ui.folderId = undefined; ui.widgetPicker = false; ui.error = undefined }
     }
-    if (!this.widget && !this.dockPanel && !this.mobileWidget) return
+    if (!this.expanded && !this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
     this.shell.hidden = true
     this.launcher.hidden = false
@@ -2204,7 +2266,7 @@ class PocketController {
     this.announceView()
     window.clearTimeout(this.collapseTimer)
     this.collapseTimer = window.setTimeout(() => {
-      this.launcherFocus?.focus({ preventScroll: true })
+      if (this.pocketEnabled) this.launcherFocus?.focus({ preventScroll: true })
       this.launcherFocus = null
     }, this.preferences.reducedMotion || this.preferences.animation === 'none' ? 0 : this.preferences.animationDurationMs)
   }
@@ -2277,6 +2339,7 @@ class PocketController {
   }
 
   private openPocket(routeInput: PocketRoute, pushHistory = true): void {
+    if (!this.pocketEnabled) return
     let normalized = normalizePocketRoute(routeInput)
     if(normalized.app==='messages' && this.state?.conversations.find(c=>c.id===('conversationId' in normalized?normalized.conversationId:undefined))?.channel==='dating')normalized={app:'dating',conversationId:normalized.conversationId}
     if (this.state && LAUNCHER_APPS.some(entry => entry.app === normalized.app) && !pocketAppInstalled(normalizeLauncherLayout(this.state.launcherLayouts?.[this.currentDeviceOwnerActorId()]), normalized.app)) {
@@ -2397,7 +2460,7 @@ class PocketController {
   }
 
   private mountInlineArtifacts(): void {
-    if (this.freeformSession) return
+    if (!this.pocketEnabled || this.freeformSession) return
     const active = this.activeContext()
     const entries: PhoneSequenceEntry[] = []
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {

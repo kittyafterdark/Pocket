@@ -3,8 +3,38 @@ import { button, el } from '../shared.js'
 
 export type PocketPortalView = 'home' | 'devices' | 'freeform' | 'sessions'
 
+interface PocketPowerControl {
+  enabled: boolean
+  saving: boolean
+  error: string
+  toggle: () => void
+}
+
+function renderPowerControl(power: PocketPowerControl): HTMLElement {
+  const row = el('div', 'pocket-portal-power')
+  const control = button('', 'pocket-portal-switch')
+  control.setAttribute('role', 'switch')
+  control.setAttribute('aria-label', 'Enable Pocket')
+  control.setAttribute('aria-checked', String(power.enabled))
+  if (power.saving) control.setAttribute('aria-disabled', 'true')
+  control.onclick = power.toggle
+  const copy = el('span', 'pocket-portal-switch-copy')
+  copy.append(el('strong', '', 'Enable Pocket'), el('small', '', 'Applies to your account'))
+  const indicator = el('span', 'pocket-portal-switch-indicator')
+  indicator.setAttribute('aria-hidden', 'true')
+  indicator.append(el('span', '', power.enabled ? 'On' : 'Off'), el('span', 'pocket-portal-switch-track'))
+  control.append(copy, indicator)
+  row.append(control)
+  if (power.error) {
+    const error = el('p', 'pocket-lock-status', power.error)
+    error.setAttribute('role', 'alert')
+    row.append(error)
+  }
+  return row
+}
+
 /** Sidebar navigation only. Both modes open the same Pocket handset and apps. */
-export function renderPocketPortal(view: PocketPortalView, navigate: (view: PocketPortalView) => void, content: HTMLElement): HTMLElement {
+export function renderPocketPortal(view: PocketPortalView, navigate: (view: PocketPortalView) => void, content: HTMLElement | null, power?: PocketPowerControl): HTMLElement {
   const root = el('section', 'pocket-portal lumiphone-device-drawer')
   root.setAttribute('aria-label', 'Pocket')
   const nav = el('nav', 'pocket-portal-nav'); nav.setAttribute('aria-label', 'Pocket navigation')
@@ -13,6 +43,11 @@ export function renderPocketPortal(view: PocketPortalView, navigate: (view: Pock
   root.append(nav)
   const body = el('div', 'pocket-portal-body')
   if (view === 'home') {
+    if (power) body.append(renderPowerControl(power))
+    if (power?.enabled === false) {
+      root.append(body)
+      return root
+    }
     const title = el('h2', '', 'A little closer.'); title.tabIndex = -1
     body.append(el('p', 'pocket-portal-eyebrow', 'WELCOME TO YOUR POCKET'), title, el('p', 'pocket-portal-intro', 'Pick up where you are. Or go somewhere new.'))
     const cards = el('div', 'pocket-portal-destinations')
@@ -32,7 +67,8 @@ export function renderPocketPortal(view: PocketPortalView, navigate: (view: Pock
   } else {
     const back = button('All spaces', 'pocket-portal-text-action')
     const chevron = el('span', '', '‹ '); chevron.setAttribute('aria-hidden', 'true'); back.prepend(chevron)
-    back.onclick = () => navigate('home'); body.append(back, content)
+    back.onclick = () => navigate('home'); body.append(back)
+    if (content) body.append(content)
   }
   root.append(body)
   return root
@@ -43,6 +79,19 @@ ${SESSION_MANAGER_STYLES}
 .pocket-portal{--pocket-text:var(--lumiverse-text,#eceaf1);--pocket-muted:var(--lumiverse-text-muted,#a7a3b2);--pocket-accent:var(--lumiverse-primary,#b5a5f5);--pocket-border:var(--lumiverse-border,#ffffff16);--pocket-surface:var(--lumiverse-fill-subtle,#ffffff06);--pocket-hover:var(--lumiverse-fill,#ffffff0c);box-sizing:border-box;width:100%;min-width:0;min-height:100%;padding:24px 20px 32px;color:var(--pocket-text);font:400 13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--pocket-accent) 9%,transparent),transparent 55%)}
 .pocket-portal *{box-sizing:border-box}.pocket-portal [hidden]{display:none!important}.pocket-portal button{font:inherit;cursor:pointer}.pocket-portal button:disabled{opacity:.5;cursor:default}.pocket-portal :is(button,select,input):focus-visible{outline:2px solid var(--pocket-accent);outline-offset:3px}.pocket-portal-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px}.pocket-portal-wordmark{border:0;padding:4px 0;background:none;color:inherit;font-size:23px!important;font-weight:750!important;letter-spacing:-.07em}.pocket-portal-mode{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:right}.pocket-portal-body{max-width:440px;margin-inline:auto}.pocket-portal h2{font-size:30px;font-weight:550;line-height:1.15;letter-spacing:-.055em;margin:0}.pocket-portal-eyebrow{font-size:9px;letter-spacing:.16em;color:var(--pocket-accent);margin:10px 0 12px}.pocket-portal-intro{color:var(--pocket-muted);margin:14px 0 28px;font-size:12px;line-height:1.7;max-width:35ch}.pocket-portal-destinations{display:grid;gap:14px}.pocket-portal-destination{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center;position:relative;width:100%;padding:22px 20px 28px;text-align:left;border:1px solid var(--pocket-border);border-radius:16px;background:var(--pocket-surface);color:inherit;transition:background .15s,border-color .15s}.pocket-portal-destination:hover{background:var(--pocket-hover);border-color:var(--pocket-accent)}.pocket-portal-destination small{grid-column:1;font-size:8px;letter-spacing:.12em;color:var(--pocket-muted)}.pocket-portal-destination strong{grid-column:1;font-size:23px;letter-spacing:-.04em;font-weight:550}.pocket-portal-art{grid-column:2;grid-row:1/3;color:var(--pocket-accent)}.pocket-portal-art svg{display:block;width:96px;height:76px}.pocket-portal-card-copy{grid-column:1/-1;color:var(--pocket-muted);font-size:12px;max-width:30ch;padding-right:12px}.pocket-portal-arrow{position:absolute;right:19px;bottom:17px;color:var(--pocket-accent)}.pocket-portal-footnote{margin:26px 0;font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-title{font-size:14px;letter-spacing:0;text-transform:none}.pocket-portal .lumiphone-device-copy{font-size:12px;margin:6px 0}.pocket-portal .lumiphone-portrait-choices{margin-block:20px}.pocket-portal .lumiphone-portrait-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-block:14px}.pocket-portal .lumiphone-portrait-option{display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 10px;min-width:0;border:1px solid var(--pocket-border);border-radius:12px;background:var(--pocket-surface);color:inherit;text-align:center}.pocket-portal .lumiphone-portrait-preview{width:80px;height:80px;object-fit:cover;border-radius:14px}.pocket-portal .lumiphone-portrait-details{display:grid;gap:5px;max-width:100%;overflow-wrap:anywhere;font-size:12px}.pocket-portal .lumiphone-portrait-details small{font-size:10px;color:var(--pocket-muted)}.pocket-portal .lumiphone-device-footer{display:flex;flex-wrap:wrap;gap:8px}.pocket-portal .lumiphone-portrait-status{flex-basis:100%;order:2;margin:4px 0 0}.pocket-portal .lumiphone-device-access{flex:1 1 110px;min-height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface)}.pocket-portal-text-action{border:0;background:none;padding:10px 0;color:var(--pocket-muted);min-height:44px;font-size:11px!important;text-align:left}.pocket-freeform-lock{display:grid;gap:12px;padding-top:20px}.pocket-freeform-lock .pocket-portal-eyebrow{margin:0}.pocket-freeform-lock .pocket-portal-intro{margin:0 0 8px}.pocket-lock-mark{color:var(--pocket-accent)}.pocket-lock-mark svg{width:26px;height:26px}.pocket-lock-avatar{position:relative;display:grid;place-items:center;overflow:hidden;width:64px;height:64px;margin:4px 0 8px;border-radius:22px;background:var(--pocket-hover);color:var(--pocket-accent);font-size:25px}.pocket-lock-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}.pocket-lock-field{display:grid;gap:7px;font-size:11px;color:var(--pocket-muted)}.pocket-lock-field :is(select,input){min-width:0;width:100%;height:44px;padding:10px 12px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--lumiverse-bg-elevated,#25232b);color:var(--pocket-text);font:inherit;font-size:13px}.pocket-portal-action{min-height:44px;padding:10px 14px;border:1px solid var(--pocket-border);border-radius:10px;background:var(--pocket-surface);color:var(--pocket-text)}.pocket-portal-primary{background:var(--pocket-accent);color:var(--lumiverse-bg,#17151e)}.pocket-lock-divider{font-size:8px;letter-spacing:.14em;color:var(--pocket-muted);text-align:center;margin:16px 0 4px}.pocket-lock-status{font-size:12px;color:var(--pocket-muted);margin:0;overflow-wrap:anywhere}.pocket-lock-status[role=alert]{color:var(--lumiverse-error,#f3a2ac)}
 @media(max-width:420px){.pocket-portal{padding:18px 16px 28px}.pocket-portal-nav{padding-bottom:24px}.pocket-portal h2{font-size:28px}.pocket-portal-destination{padding:20px 16px 26px}}
+.pocket-portal-power{display:grid;gap:8px;margin:0 0 26px}
+.pocket-portal-switch{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:54px;padding:9px 12px 9px 14px;border:1px solid var(--pocket-border);border-radius:14px;background:var(--pocket-surface);color:inherit;text-align:left}
+.pocket-portal-switch:hover{border-color:var(--pocket-accent)}
+.pocket-portal-switch[aria-checked=true]{border-color:color-mix(in srgb,var(--pocket-accent) 28%,var(--pocket-border));background:color-mix(in srgb,var(--pocket-accent) 8%,var(--pocket-surface))}
+.pocket-portal-switch[aria-disabled=true]{cursor:progress}
+.pocket-portal-switch-copy{display:grid;gap:2px}.pocket-portal-switch-copy strong{font-weight:650}.pocket-portal-switch-copy small{font-size:11px;color:var(--pocket-muted)}
+.pocket-portal-switch-indicator{display:flex;align-items:center;gap:8px;color:var(--pocket-muted);font-size:11px;font-weight:650}
+.pocket-portal-switch[aria-checked=true] .pocket-portal-switch-indicator{color:var(--pocket-accent)}
+.pocket-portal-switch-track{display:grid;align-items:center;flex:none;width:38px;height:22px;padding:2px;border:1px solid color-mix(in srgb,var(--pocket-muted) 60%,transparent);border-radius:999px;background:var(--pocket-hover)}
+.pocket-portal-switch-track::before{content:'';width:14px;height:14px;border-radius:50%;background:var(--pocket-muted);transition:translate .16s ease}
+.pocket-portal-switch[aria-checked=true] .pocket-portal-switch-track{background:var(--pocket-accent);border-color:var(--pocket-accent)}
+.pocket-portal-switch[aria-checked=true] .pocket-portal-switch-track::before{translate:16px 0;background:var(--lumiverse-bg,#17151e)}
+@media(prefers-reduced-motion:reduce){.pocket-portal-switch-track::before{transition:none}}
 .pocket-freeform-confirm{--lp-accent:var(--lumiverse-primary,#b6a5ee);font:400 13px/1.6 Inter,ui-sans-serif,system-ui,sans-serif}.pocket-freeform-confirm *{box-sizing:border-box}.pocket-freeform-confirm .lp-settings-section{gap:14px}.pocket-freeform-confirm .lp-copy{font:inherit;margin:0 0 6px;color:var(--lp-muted,#b9b5c5)}.pocket-freeform-confirm .lp-button{min-height:44px;padding:12px 14px;font:600 13px/1.4 Inter,ui-sans-serif,system-ui,sans-serif;white-space:normal;border:1px solid var(--lp-border,#ffffff22);border-radius:10px}.pocket-freeform-confirm .lp-button[data-primary=true]{background:var(--lp-accent);color:#17151e}.pocket-freeform-confirm button:focus-visible{outline:2px solid var(--lp-accent);outline-offset:3px}
 @media(prefers-reduced-motion:reduce){.pocket-portal-destination{transition:none}}
 `
