@@ -27931,7 +27931,12 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
       if (preferences.sidecarModelOverride)
         request.parameters = { ...request.parameters || {}, model: preferences.sidecarModelOverride };
     }
-    const tokenLimit = normalizeConnectionTokenLimits(preferences.generationConnectionMaxTokens)[info.effective.id];
+    const continuityTask = task === "continuity-seed" || task === "post-turn-audit";
+    if (continuityTask) {
+      request.parameters = { ...request.parameters || {}, max_tokens: task === "continuity-seed" ? 2000 : 700 };
+      request.reasoning = { source: "off" };
+    }
+    const tokenLimit = continuityTask ? undefined : normalizeConnectionTokenLimits(preferences.generationConnectionMaxTokens)[info.effective.id];
     if (tokenLimit)
       request.parameters = { ...request.parameters || {}, max_tokens: tokenLimit };
     let result;
@@ -27978,7 +27983,7 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
       const reasoning = Number(usage.reasoning_tokens ?? usage.completion_tokens_details?.reasoning_tokens);
       return reasoning > 0 && reasoning >= Number(usage.completion_tokens);
     };
-    if (preferences.automaticGenerationRetry && options.automaticRetry !== false && !reasoningOnly() && empty() && outputLimitReached(result)) {
+    if (!continuityTask && preferences.automaticGenerationRetry && options.automaticRetry !== false && !reasoningOnly() && empty() && outputLimitReached(result)) {
       const limit = Number(request.parameters?.max_tokens) || 0;
       const expanded = tokenLimit || Math.min(16384, Math.max(8192, limit * 2));
       if (tokenLimit || expanded > limit) {
@@ -27991,7 +27996,9 @@ async function runPocketGeneration(host, task, requestId, input, userId, options
       const tokens = Number(result.usage.completion_tokens).toLocaleString("en-US");
       throw new GenerationOutputLimitError(`The model spent all ${tokens} output tokens on thinking without producing a reply. Increase this connection\u2019s output token limit, then retry.`, "reasoning-exhausted");
     }
-    if (outputLimitReached(result) && (empty() || !options.preservePartial && ["message-reply", "message-retry", "group-reply", "reply-decision"].includes(task))) {
+    if (outputLimitReached(result) && (empty() || continuityTask || !options.preservePartial && ["message-reply", "message-retry", "group-reply", "reply-decision"].includes(task))) {
+      if (continuityTask)
+        throw new GenerationOutputLimitError("The model exhausted the Pocket continuity task budget.", empty() ? "empty" : "truncated");
       throw new GenerationOutputLimitError("The reply reached its output limit. Increase this connection\u2019s output token limit, then retry manually.", empty() ? "empty" : "truncated");
     }
     if (empty())
@@ -28083,7 +28090,7 @@ function acknowledgeGenerationReceipt(result) {
 }
 
 // src/backend/generation-deadline.ts
-async function generationDeadline(seconds, parent, work) {
+async function generationDeadline(seconds, parent, work, timeoutMessage = "The provider did not finish before the authoring deadline. Saved work is kept.") {
   const controller = new AbortController;
   let timer;
   let rejectAbort;
@@ -28099,7 +28106,7 @@ async function generationDeadline(seconds, parent, work) {
     parent?.throwIfAborted();
     timer = setTimeout(() => {
       controller.abort();
-      rejectAbort(new PocketFailure({ layer: "provider", code: "timeout", saved: false, retryable: true }, "The provider did not finish before the authoring deadline. Saved work is kept."));
+      rejectAbort(new PocketFailure({ layer: "provider", code: "timeout", saved: false, retryable: true }, timeoutMessage));
     }, seconds * 1000);
     const result = await Promise.race([work(controller.signal), stopped]);
     parent?.throwIfAborted();
@@ -28818,24 +28825,42 @@ var POCKET_INLINE_ANCHOR_BLOCK = /<(span|div)\b[^>]*\bdata-pocket-inline-anchor\
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function visibleStructuredText(value) {
+var MAX_SOURCE_CHARS = 64000;
+var MAX_SOURCE_PARTS = 128;
+function visibleStructuredText(value, budget, depth = 0) {
+  if (depth > 12 || budget.chars <= 0 || budget.parts-- <= 0)
+    return "";
+  const take = (text) => {
+    const excerpt = text.slice(0, budget.chars);
+    budget.chars -= excerpt.length;
+    return excerpt;
+  };
   if (typeof value === "string")
-    return value;
-  if (Array.isArray(value))
-    return value.map(visibleStructuredText).filter(Boolean).join(`
+    return take(value);
+  if (Array.isArray(value)) {
+    const parts = [];
+    for (const item of value) {
+      if (budget.parts <= 0 || budget.chars <= 0)
+        break;
+      const text = visibleStructuredText(item, budget, depth + 1);
+      if (text)
+        parts.push(text);
+    }
+    return parts.join(`
 `);
+  }
   if (!isRecord(value))
     return "";
   const type = typeof value.type === "string" ? value.type : "";
   if (type && DROP_PART_TYPE.test(type))
     return "";
   if (typeof value.text === "string")
-    return value.text;
+    return take(value.text);
   if (typeof value.content === "string" || Array.isArray(value.content) || isRecord(value.content)) {
-    return visibleStructuredText(value.content);
+    return visibleStructuredText(value.content, budget, depth + 1);
   }
   if (typeof value.value === "string" && (!type || /text|output/i.test(type)))
-    return value.value;
+    return take(value.value);
   return "";
 }
 function stripMachineWrappers(value) {
@@ -28853,7 +28878,7 @@ function stripMachineWrappers(value) {
 `).trim();
 }
 function sanitizeNarrativeContent(value, max = 4000) {
-  return stripMachineWrappers(visibleStructuredText(value)).slice(0, Math.max(0, max));
+  return stripMachineWrappers(visibleStructuredText(value, { chars: MAX_SOURCE_CHARS, parts: MAX_SOURCE_PARTS })).slice(0, Math.max(0, max));
 }
 function narrativeExcerpt(value, max) {
   const clean = sanitizeNarrativeContent(value, Number.MAX_SAFE_INTEGER);
@@ -30094,7 +30119,7 @@ function defaultPreferences() {
     sceneEnhancer: true,
     jev: normalizeJevSettings(null),
     generationMode: "roleplay",
-    automaticGenerationRetry: true,
+    automaticGenerationRetry: false,
     generationConnectionMaxTokens: {},
     sidecarConnectionId: "",
     sidecarModelOverride: "",
@@ -30247,7 +30272,7 @@ function normalizePreferences(value) {
     sceneEnhancer: bool(raw.sceneEnhancer, fallback.sceneEnhancer),
     jev: normalizeJevSettings(raw.jev),
     generationMode: raw.generationMode === "sidecar" ? "sidecar" : "roleplay",
-    automaticGenerationRetry: bool(raw.automaticGenerationRetry, true),
+    automaticGenerationRetry: bool(raw.automaticGenerationRetry, false),
     generationConnectionMaxTokens: normalizeConnectionTokenLimits(raw.generationConnectionMaxTokens),
     ...raw.authoring ? { authoring: normalizeAuthoringPolicy(raw.authoring) } : {},
     lumistryImageDialect: raw.lumistryImageDialect === "anima" || raw.lumistryImageDialect === "generic" ? raw.lumistryImageDialect : "auto",
@@ -33342,6 +33367,57 @@ Rewrite exactly one public item in the accepted person's own English voice. Do n
   }
 }
 
+// src/backend/chat-history.ts
+async function readPocketChatTail(chat, chatId, tail) {
+  if (tail <= 0)
+    return [];
+  const rows = await chat.getMessages(chatId, { tail, light: true, includeExtra: false, ownMetadataOnly: true });
+  return rows.length > tail ? rows.slice(-tail) : rows;
+}
+async function* readPocketChatPages(chat, chatId) {
+  const limit = 32;
+  let previousLastId;
+  for (let offset = 0;; offset += limit) {
+    const page = await chat.getMessages(chatId, { limit, offset, light: true, includeExtra: false });
+    const lastId = page.at(-1)?.id;
+    if (!page.length || offset > 0 && lastId === previousLastId)
+      return;
+    yield page;
+    if (page.length !== limit)
+      return;
+    previousLastId = lastId;
+  }
+}
+async function readPocketChatMessage(chat, chatId, messageId) {
+  const tail = await chat.getMessages(chatId, { tail: 8, light: true, includeExtra: false, ownMetadataOnly: true });
+  const recent = tail.find((row) => row.id === messageId);
+  if (tail.length > 8)
+    return recent;
+  const at = async (offset) => {
+    const exact = await chat.getMessages(chatId, { limit: 1, offset, light: false, includeExtra: false, ownMetadataOnly: true });
+    return exact.find((row) => row.id === messageId);
+  };
+  if (Number.isSafeInteger(recent?.index_in_chat) && recent.index_in_chat >= 0) {
+    const exact = await at(recent.index_in_chat);
+    if (exact)
+      return exact;
+  }
+  const limit = 16;
+  let previousLastId;
+  for (let offset = 0;; offset += limit) {
+    const page = await chat.getMessages(chatId, { limit, offset, light: true, includeExtra: false, ownMetadataOnly: true });
+    const index = page.findIndex((row) => row.id === messageId);
+    if (page.length > limit)
+      return page[index];
+    if (index >= 0)
+      return at(offset + index);
+    const lastId = page.at(-1)?.id;
+    if (page.length < limit || lastId === previousLastId || lastId === tail.at(-1)?.id)
+      return;
+    previousLastId = lastId;
+  }
+}
+
 // src/backend/lumistry-world-evidence.ts
 async function collectWorldEvidence(state, api, permitted, user, selectedIds) {
   if (selectedIds !== undefined && (!Array.isArray(selectedIds) || selectedIds.length > 64 || selectedIds.some((id) => typeof id !== "string" || id.length > 220)))
@@ -33436,7 +33512,7 @@ async function collectWorldEvidence(state, api, permitted, user, selectedIds) {
     warnings.push("World-book permission/API unavailable. Lore was not read.");
   if (permitted("chat_mutation") && typeof api.chat?.getMessages === "function")
     try {
-      const messages = await api.chat.getMessages(state.chatId);
+      const messages = await readPocketChatTail(api.chat, state.chatId, 25);
       for (const [i, m] of messages.slice(-24).entries())
         add("message_" + (m.id || i), "Recent " + m.role + " message", m.content, 500);
       if (messages.length > 24)
@@ -34813,29 +34889,53 @@ function inspectFreeformLore(entries, scan) {
 }
 
 // src/backend/phone-lore.ts
+var MAX_LINKED_BOOKS = 24;
+var MAX_EXPLICIT_ENTRIES = 48;
+var MAX_SCANNED_ENTRIES = 400;
+var MAX_ENTRIES_PER_BOOK = 200;
+var LORE_PAGE_SIZE = 25;
+function compactLoreEntry(entry) {
+  const keys = (value) => Array.isArray(value) ? value.slice(0, 32).filter((key) => typeof key === "string" && key.length <= 180) : [];
+  return {
+    id: entry.id,
+    world_book_id: entry.world_book_id,
+    comment: typeof entry.comment === "string" ? entry.comment.slice(0, 160) : "",
+    content: typeof entry.content === "string" ? entry.content.slice(0, 12000) : "",
+    key: keys(entry.key),
+    keysecondary: keys(entry.keysecondary),
+    priority: entry.priority,
+    order_value: entry.order_value,
+    disabled: entry.disabled,
+    constant: entry.constant,
+    use_regex: entry.use_regex,
+    match_whole_words: entry.match_whole_words,
+    case_sensitive: entry.case_sensitive,
+    selective: entry.selective
+  };
+}
 async function retrievePhoneLore(api, state, conversation, userId) {
   const freeform = state.chatId.startsWith("_freeform_"), bookIds = new Set, entries = new Map, reasons = new Map;
   const markBooks = (ids) => {
     if (Array.isArray(ids)) {
       for (const id of ids)
-        if (typeof id === "string" && id)
+        if (typeof id === "string" && id && bookIds.size < MAX_LINKED_BOOKS)
           bookIds.add(id);
     }
   };
   const actors = conversationActorIds(conversation).map((id) => resolvePocketActor(state, id)).filter((actor) => Boolean(actor));
   const contacts = [...new Map([...actors.flatMap((actor) => actor?.contact ? [actor.contact] : []), ...state.contacts.filter((contact) => conversation.participantContactIds.includes(contact.id))].map((contact) => [contact.id, contact])).values()];
-  const sourceIds = new Set(contacts.flatMap((contact) => contact.source.kind === "npc" ? contact.source.lorebookEntryIds || [] : []));
+  const sourceIds = new Set(contacts.flatMap((contact) => contact.source.kind === "npc" ? contact.source.lorebookEntryIds || [] : []).slice(0, MAX_EXPLICIT_ENTRIES));
   const characters = new Set(contacts.flatMap((contact) => contact.source.kind === "character" ? [contact.source.characterId] : []));
   if (!freeform && state.characterId && state.characterId !== "_none")
     characters.add(state.characterId);
   if (!freeform) {
     const activated = await api.world_books.getActivated(state.chatId, userId);
-    for (const activation of activated) {
+    for (const activation of activated.slice(0, MAX_EXPLICIT_ENTRIES)) {
       const entry = await api.world_books.entries.get(activation.id, userId);
       if (!entry)
         continue;
-      entries.set(entry.id, entry);
-      bookIds.add(entry.world_book_id || activation.bookId || "");
+      entries.set(entry.id, compactLoreEntry(entry));
+      markBooks([entry.world_book_id || activation.bookId]);
       reasons.set(entry.id, `Host activated${activation.source ? ": " + activation.source : ""}`);
     }
     if (api.permissions.has("chats") && api.chats)
@@ -34845,7 +34945,7 @@ async function retrievePhoneLore(api, state, conversation, userId) {
   if (state.pocketPersona.linkedPersonaId && api.permissions.has("personas") && api.personas) {
     const persona = await api.personas.get(state.pocketPersona.linkedPersonaId, userId);
     if (persona?.attached_world_book_id)
-      bookIds.add(persona.attached_world_book_id);
+      markBooks([persona.attached_world_book_id]);
   }
   if (api.permissions.has("characters") && api.characters)
     for (const id of characters)
@@ -34854,23 +34954,28 @@ async function retrievePhoneLore(api, state, conversation, userId) {
     const entry = await api.world_books.entries.get(id, userId);
     if (!entry)
       continue;
-    entries.set(entry.id, entry);
-    bookIds.add(entry.world_book_id);
+    entries.set(entry.id, compactLoreEntry(entry));
+    markBooks([entry.world_book_id]);
     if (!reasons.has(entry.id))
       reasons.set(entry.id, "NPC source reference");
   }
   bookIds.delete("");
+  let scanned = 0;
   for (const bookId of bookIds) {
-    let offset = 0;
-    while (true) {
-      const page = await api.world_books.entries.list(bookId, { limit: 100, offset, userId });
-      for (const entry of page.data)
+    for (let offset = 0;offset < MAX_ENTRIES_PER_BOOK && scanned < MAX_SCANNED_ENTRIES; ) {
+      const limit = Math.min(LORE_PAGE_SIZE, MAX_ENTRIES_PER_BOOK - offset, MAX_SCANNED_ENTRIES - scanned);
+      const page = await api.world_books.entries.list(bookId, { limit, offset, userId });
+      const rows = page.data.slice(0, limit);
+      for (const entry of rows)
         if (!entries.has(entry.id))
-          entries.set(entry.id, entry);
-      offset += page.data.length;
-      if (!page.data.length || offset >= page.total)
+          entries.set(entry.id, compactLoreEntry(entry));
+      scanned += rows.length;
+      offset += rows.length;
+      if (!rows.length || offset >= page.total)
         break;
     }
+    if (scanned >= MAX_SCANNED_ENTRIES)
+      break;
   }
   const names = [state.pocketPersona.displayName, ...actors.flatMap((actor) => actor ? [actor.name, ...actor.contact?.aliases || []] : [])].filter(Boolean);
   const scan = [names.join(`
@@ -37385,8 +37490,9 @@ ${thread}` : ""].filter(Boolean).join(`
 `);
   const finalLock = channel ? `FINAL CHANNEL LOCK
 ${channel}` : "";
-  const extra = clean15(options.extraContext, 24000);
-  const bodyBudget = Math.max(0, (expandedProfile ? 64000 : BUDGETS.total) - extra.length - finalLock.length - 4);
+  const available = Math.max(0, (expandedProfile ? 64000 : BUDGETS.total) - finalLock.length - 4);
+  const extra = clean15(options.extraContext, Math.min(24000, Math.floor(available * 0.6)));
+  const bodyBudget = available - extra.length;
   const finalText = [bodyText.slice(0, bodyBudget), extra, finalLock].filter(Boolean).join(`
 
 `);
@@ -38546,8 +38652,8 @@ var nativeApps = new NativeAppsRuntime({
   },
   addEvent: (context, event, user) => applyAction({ ...context, action: "event", payload: event }, user, "user")
 });
-async function pocketHostMessages(chatId) {
-  return isFreeformChat(chatId) ? [] : spindle.chat.getMessages(chatId);
+async function pocketHostMessages(chatId, tail = 24) {
+  return isFreeformChat(chatId) ? [] : readPocketChatTail(spindle.chat, chatId, tail);
 }
 async function freeformContextMessages(chatId, userId) {
   if (!isFreeformChat(chatId))
@@ -38558,7 +38664,7 @@ async function freeformContextMessages(chatId, userId) {
   const active = await spindle.chats.getActive(userId);
   if (!active?.id || isFreeformChat(active.id))
     return [];
-  return (await spindle.chat.getMessages(active.id)).slice(-prefs.freeformRoleplayMessages);
+  return pocketHostMessages(active.id, prefs.freeformRoleplayMessages);
 }
 async function freeformDirectory(userId) {
   const sessions = await freeformSessions.list(userId);
@@ -40306,6 +40412,26 @@ async function loadPromptDebug(requestId, userId) {
   };
 }
 async function runStructuredGeneration(task, requestId, request, userId) {
+  const host = { spindle, loadPreferences, savePreferences, send };
+  if (task === "continuity-seed" || task === "post-turn-audit") {
+    const limit = task === "continuity-seed" ? 48000 : 28000;
+    const size = Array.isArray(request.messages) ? request.messages.reduce((total, message) => total + (typeof message?.content === "string" ? message.content.length : limit + 1), 0) : 0;
+    if (size > limit)
+      throw new Error("Pocket continuity input exceeded its text budget.");
+    const parent = request.signal instanceof AbortSignal ? request.signal : undefined;
+    return generationDeadline(60, parent, async (signal) => {
+      let parsed = {};
+      await runPocketGeneration(host, task, requestId, { ...request, signal }, userId, {
+        validate(response) {
+          if (typeof response.content !== "string" || response.content.length > 32000) {
+            throw new Error("Pocket continuity response exceeded its text budget.");
+          }
+          parsed = parseGeneratedObject2(response.content);
+        }
+      });
+      return parsed;
+    }, "Pocket continuity generation timed out.");
+  }
   await savePromptDebug(task, requestId, request, userId);
   const first = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId);
   const preferences = await loadPreferences(userId);
@@ -41379,6 +41505,33 @@ async function cameraGenerate(input, userId) {
 }
 var POCKET_CONTINUITY_SEED_VERSION = 4;
 var narrativeSeedFlights = new Map;
+var narrativeSeedFailures = new Map;
+async function seedForReply(chatId, characterId, userId, signal) {
+  signal.throwIfAborted();
+  let abort = () => {};
+  const cancelled = new Promise((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    return await Promise.race([refreshNarrativeSeed(chatId, characterId, userId, { recheck: true }), cancelled]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+function boundedJsonRows(rows, limit) {
+  const included = [];
+  let remaining = limit - 2;
+  for (const row of rows) {
+    const json = JSON.stringify(row);
+    const cost = json.length + Number(included.length > 0);
+    if (cost > remaining)
+      break;
+    included.push(row);
+    remaining -= cost;
+  }
+  return included;
+}
 function continuitySeedPath(chatId, characterId) {
   return `phones/${stateKey(chatId, characterId)}.continuity-seed.json`;
 }
@@ -41737,11 +41890,13 @@ function candidateMessagesForOrigin(state, origin) {
         conversation: conversation.title,
         speaker: message.senderName,
         recipients: (message.recipientActorIds || []).map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === pocketPersonaActorId(state) ? state.pocketPersona.displayName : "")).filter(Boolean),
-        text: message.text
+        text: text9(message.text, 480)
       });
+      if (rows.length > 12)
+        rows.shift();
     }
   }
-  return rows.slice(-12);
+  return rows;
 }
 function narrativeLikelyContainsPhoneAction(value) {
   return /\b(?:text(?:ed|ing|s)?|message(?:d|s|ing)?|dm(?:ed|s|ing)?|phone|screen|notification|reply|replied|sent|send|another\s+text|group\s*chat|gc)\b/i.test(value);
@@ -41749,8 +41904,13 @@ function narrativeLikelyContainsPhoneAction(value) {
 async function reconcilePostTurnCandidate(chatId, characterId, origin, generationType, userId, options = { auditClock: false }) {
   if (!spindle.permissions.has("generation") || !spindle.permissions.has("chat_mutation") || await roleplayToolsSuppressed(userId))
     return;
-  const hostMessages = await pocketHostMessages(chatId).catch(() => []);
-  const current = hostMessages.find((message) => text9(message?.id, 180) === origin.hostMessageId);
+  const hostMessages = await pocketHostMessages(chatId, 12).catch(() => []);
+  let current = hostMessages.find((message) => message.id === origin.hostMessageId);
+  if (!current || Number(current.swipe_id ?? current.swipeId ?? 0) !== origin.swipeId) {
+    current = await readPocketChatMessage(spindle.chat, chatId, origin.hostMessageId).catch(() => {
+      return;
+    });
+  }
   const currentNarrative = sanitizeNarrativeContent(hostMessageCandidateContent(current, origin.swipeId, 12000), 6000);
   if (!currentNarrative)
     return;
@@ -41804,7 +41964,7 @@ PRE-TURN CLOCK \u2014 ANCHOR ONLY:
 ${JSON.stringify(baseline)}
 
 ALREADY PERSISTED POCKET MESSAGES FOR THIS CANDIDATE:
-${JSON.stringify(persisted)}
+${JSON.stringify(boundedJsonRows(persisted, 8000))}
 
 RECENT NARRATIVE CONTEXT:
 ${recentNarrative}
@@ -42069,20 +42229,36 @@ async function refreshNarrativeSeed(chatId, characterId, userId, options = {}) {
   const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:continuity`;
   const existingFlight = narrativeSeedFlights.get(flightKey);
   if (existingFlight) {
-    await existingFlight.catch(() => null);
-    return refreshNarrativeSeed(chatId, characterId, userId, options);
+    if (options.messageId && options.messageId !== existingFlight.current.messageId)
+      existingFlight.next = options;
+    else if (options.recheck && !existingFlight.next)
+      existingFlight.next = options;
+    return existingFlight.promise;
   }
-  const flight = (async () => {
-    const hostMessages = await pocketHostMessages(chatId).catch(() => []);
-    const sourceMessages = hostMessages.filter((message) => (message?.role === "user" || message?.role === "assistant") && sanitizeNarrativeContent(message?.content, 1)).slice(-4);
+  const extract = async (options, recordSource) => {
+    const hostMessages = await pocketHostMessages(chatId, 12);
+    const sourceMessages = [];
+    for (let index = hostMessages.length - 1;index >= 0 && sourceMessages.length < 4; index--) {
+      const message = hostMessages[index];
+      if (message.hidden || message.extra?.hidden || message.role !== "user" && message.role !== "assistant")
+        continue;
+      const content = narrativeExcerpt(message.content, 24000);
+      if (content)
+        sourceMessages.unshift({ id: message.id, revision: message.revision, role: message.role, content });
+    }
     if (!sourceMessages.length)
       return loadNarrativeSeed(chatId, characterId, userId);
     const sourceKey = `v${POCKET_CONTINUITY_SEED_VERSION}:${narrativeSeedSourceKey(sourceMessages)}`;
+    recordSource(sourceKey);
     const sourceMessageIds = sourceMessages.map((message) => text9(message?.id, 180)).filter(Boolean).slice(-8);
     const previous = await loadNarrativeSeed(chatId, characterId, userId);
     const state = await loadState(chatId, characterId, userId);
     if (previous?.sourceKey === sourceKey && state.lastReconciliation?.sourceKey === sourceKey)
       return previous;
+    const failure = narrativeSeedFailures.get(flightKey);
+    if (!options.manual && failure?.sourceKey === sourceKey && failure.until > Date.now()) {
+      return previous ? { ...previous, stale: true } : null;
+    }
     const knownActors = [
       state.pocketPersona.displayName,
       state.characterName,
@@ -42091,18 +42267,18 @@ async function refreshNarrativeSeed(chatId, characterId, userId, options = {}) {
     ].filter((name, index, all) => Boolean(name) && all.findIndex((other) => normalizeActorName(other) === normalizeActorName(name)) === index);
     const recentNarrative = recentNarrativeWindow(sourceMessages).text;
     const timelineSnapshot = structuredClone(state.events.filter((event) => !event.completed).sort((a, b) => Number(Boolean(b.startedAt)) - Number(Boolean(a.startedAt)) || (b.startedAt || "").localeCompare(a.startedAt || "")).slice(0, 16));
-    const modelWritableTrackers = state.trackers.filter((tracker) => tracker.allowModelWrite && tracker.updateMode === "model").slice(0, 12).map((tracker) => ({
+    const modelWritableTrackers = boundedJsonRows(state.trackers.filter((tracker) => tracker.allowModelWrite && tracker.updateMode === "model").slice(0, 12).map((tracker) => ({
       key: tracker.key,
       label: tracker.label,
-      updateGuidance: tracker.modelPrompt || undefined,
+      updateGuidance: text9(tracker.modelPrompt, 240) || undefined,
       kind: tracker.kind,
-      value: tracker.kind === "state" ? tracker.state : tracker.value,
+      value: tracker.kind === "state" ? text9(tracker.state, 240) : tracker.value,
       min: tracker.kind === "state" ? undefined : tracker.min,
       max: tracker.kind === "state" ? undefined : tracker.max,
       states: tracker.kind === "state" && !tracker.freeText ? tracker.states : undefined,
-      fieldInstruction: tracker.kind === "state" && tracker.freeText ? `Free text field: use set_state with up to 2000 characters. ${tracker.modelPrompt || ""}` : undefined,
+      freeText: tracker.kind === "state" && tracker.freeText || undefined,
       target: tracker.target.label || tracker.target.id || tracker.target.type
-    }));
+    })), 7000);
     const currentStateAdvisory = {
       clock: {
         roleplayNow: state.roleplayNow,
@@ -42116,17 +42292,17 @@ async function refreshNarrativeSeed(chatId, characterId, userId, options = {}) {
         details: state.weather.details
       },
       inSceneActors: state.contacts.filter((contact) => contact.presence.inScene).map((contact) => contact.name).slice(0, 16),
-      activeTimeline: timelineSnapshot.map((event) => ({
+      activeTimeline: boundedJsonRows(timelineSnapshot.map((event) => ({
         id: event.id,
         title: event.title,
-        description: event.description,
+        description: text9(event.description, 180),
         whenText: event.whenText,
-        actorContactIds: event.actorContactIds,
+        actorContactIds: event.actorContactIds?.slice(0, 4),
         startedAt: event.startedAt,
         phase: event.startedAt ? "started" : "upcoming"
-      })),
+      })), 4000),
       previousWorld: previous?.world || null,
-      previousActors: previous?.actors || []
+      previousActors: boundedJsonRows(previous?.actors || [], 2500)
     };
     const parsed = await runStructuredGeneration("continuity-seed", id("continuity_seed"), {
       type: "quiet",
@@ -42232,19 +42408,44 @@ ${recentNarrative}`
       }
     });
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId });
+    narrativeSeedFailures.delete(flightKey);
     return seed;
-  })();
-  narrativeSeedFlights.set(flightKey, flight);
-  try {
-    return await flight;
-  } catch (error) {
-    spindle.log.warn(`Pocket continuity seed skipped: ${error instanceof Error ? error.message : String(error)}`);
-    const cached = await loadNarrativeSeed(chatId, characterId, userId);
-    return cached ? { ...cached, stale: true } : null;
-  } finally {
-    if (narrativeSeedFlights.get(flightKey) === flight)
+  };
+  const run = async (options) => {
+    let sourceKey = "";
+    try {
+      return await extract(options, (key) => {
+        sourceKey = key;
+      });
+    } catch (error) {
+      if (sourceKey) {
+        narrativeSeedFailures.delete(flightKey);
+        narrativeSeedFailures.set(flightKey, { sourceKey, until: Date.now() + 60000 });
+        if (narrativeSeedFailures.size > 128)
+          narrativeSeedFailures.delete(narrativeSeedFailures.keys().next().value);
+      }
+      spindle.log.warn(`Pocket continuity seed skipped: ${error instanceof Error ? error.message : String(error)}`);
+      const cached = await loadNarrativeSeed(chatId, characterId, userId);
+      return cached ? { ...cached, stale: true } : null;
+    }
+  };
+  const flight = { current: options, next: undefined, promise: Promise.resolve(null) };
+  flight.promise = Promise.resolve().then(async () => {
+    try {
+      let result = await run(flight.current);
+      while (flight.next) {
+        flight.current = flight.next;
+        flight.next = undefined;
+        if (!result || result.stale || !result.sourceMessageIds.includes(flight.current.messageId || ""))
+          result = await run(flight.current);
+      }
+      return result;
+    } finally {
       narrativeSeedFlights.delete(flightKey);
-  }
+    }
+  });
+  narrativeSeedFlights.set(flightKey, flight);
+  return flight.promise;
 }
 var freeformConsolidationFlights = new Map;
 function freeformConsolidationMessages(state) {
@@ -42545,12 +42746,22 @@ async function maybeAutoConsolidateFreeformState(context, userId) {
 }
 async function recoverEventPhoneContinuity(context, userId) {
   let state = await loadState(context.chatId, context.characterId, userId);
-  const needsRecovery = state.events.some((event) => !event.phoneHistoryBoundary && state.conversations.some((conversation) => event.startedAt && event.source?.conversationId === conversation.id || conversation.messages.some((message) => message.eventSuggestion?.scheduledEventId === event.id)));
-  if (needsRecovery && spindle.permissions.has("chats")) {
-    const messages = await pocketHostMessages(context.chatId).catch(() => []);
+  const needsRecovery = () => state.events.some((event) => !event.phoneHistoryBoundary && state.conversations.some((conversation) => event.startedAt && event.source?.conversationId === conversation.id || conversation.messages.some((message) => message.eventSuggestion?.scheduledEventId === event.id)));
+  if (!isFreeformChat(context.chatId) && needsRecovery() && spindle.permissions.has("chats") && spindle.permissions.has("chat_mutation")) {
     await withStateLock(stateKey(context.chatId, context.characterId), async () => {
       state = await loadState(context.chatId, context.characterId, userId);
-      if (recoverStartedEventPlans(state, messages))
+      if (!needsRecovery())
+        return;
+      let previous, changed = false;
+      try {
+        for await (const page of readPocketChatPages(spindle.chat, context.chatId)) {
+          changed = recoverStartedEventPlans(state, previous ? [previous, ...page] : page) || changed;
+          if (!needsRecovery())
+            break;
+          previous = page.at(-1);
+        }
+      } catch {}
+      if (changed)
         await saveState(state, userId);
     });
   }
@@ -42614,7 +42825,7 @@ async function generateMessageJob(input, userId) {
   const requestId = text9(input.requestId, 180) || id("reply");
   const key = stateKey(context.chatId, context.characterId);
   await recoverEventPhoneContinuity(context, userId);
-  const continuitySeed = (await loadPreferences(userId)).roleplayContextMode === "off" ? null : await refreshNarrativeSeed(context.chatId, context.characterId, userId);
+  const continuitySeed = (await loadPreferences(userId)).roleplayContextMode === "off" ? null : await seedForReply(context.chatId, context.characterId, userId, input.signal);
   await withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId);
     const preferences = await loadPreferences(userId);
@@ -42986,7 +43197,7 @@ async function generateGroupBatchJob(input, userId) {
     const activeBatch = state.groupBatches.find((entry) => entry.conversationId === conversation.id && (entry.status === "queued" || entry.status === "delivering"));
     if (activeBatch)
       throw new Error("This group already has a reply burst in progress.");
-    const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId);
+    const groupContinuitySeed = preferences.roleplayContextMode === "off" ? null : await seedForReply(context.chatId, context.characterId, userId, input.signal);
     const sourceBurstId = text9(input.sourceBurstId, 180) || conversation.outgoingBurst?.id;
     const manualOverride = bool2(input.manualOverride);
     const eligible = conversationActorIds(conversation).map((actorId) => resolvePocketActor(state, actorId)).filter((entry) => Boolean(entry && (!entry.contact || entry.contact.generationPolicy.relevant && (manualOverride || entry.contact.messagingPolicy.remoteEligible && !entry.contact.presence.inScene))));
@@ -45768,9 +45979,9 @@ async function handleFrontend(payload, userId) {
               await saveState(state, userId);
             });
           }
-          const seed = await refreshNarrativeSeed(context.chatId, context.characterId, userId);
-          if (!seed)
-            throw new Error("Pocket could not find committed roleplay text to seed the world yet.");
+          const seed = await refreshNarrativeSeed(context.chatId, context.characterId, userId, { manual: true });
+          if (!seed || seed.stale)
+            throw new Error("Pocket could not seed the world from the current story. Check the Pocket generation status and try again.");
           send({ type: "lumiphone:operation_progress", task: "world-seed", requestId, phase: "saving", message: "Saving world, Weather, and Timeline\u2026" }, userId);
           await withStateLock(stateKey(context.chatId, context.characterId), async () => {
             const state = await loadState(context.chatId, context.characterId, userId);
@@ -46954,8 +47165,9 @@ async function resolveLegacyTagCandidateOrigin(chatId, hostMessageId, userId) {
     return { chatId, hostMessageId, swipeId: active.swipeId, generationId: active.generationId };
   if (!spindle.permissions.has("chats"))
     return;
-  const messages = await pocketHostMessages(chatId).catch(() => []);
-  const target = messages.find((message) => text9(message?.id, 180) === hostMessageId);
+  const target = await readPocketChatMessage(spindle.chat, chatId, hostMessageId).catch(() => {
+    return;
+  });
   if (!target)
     return;
   const rawSwipeId = Number(target?.swipe_id ?? target?.swipeId ?? 0);
@@ -46965,8 +47177,7 @@ async function resolveLegacyTagCandidateOrigin(chatId, hostMessageId, userId) {
 async function rewriteCompiledLegacyTag(origin, fullMatch, activityId, action) {
   if (!spindle.permissions.has("chat_mutation") || !fullMatch)
     return false;
-  const messages = await pocketHostMessages(origin.chatId);
-  const target = messages.find((message) => text9(message?.id, 180) === origin.hostMessageId);
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId);
   if (!target)
     return false;
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120000);
@@ -46981,8 +47192,9 @@ async function rewriteCompiledLegacyTag(origin, fullMatch, activityId, action) {
 async function compileLegacyPhoneTags(characterId, origin, userId) {
   if (!spindle.permissions.has("chats") || await roleplayToolsSuppressed(userId))
     return { compiled: 0, messageAnchors: 0 };
-  const messages = await pocketHostMessages(origin.chatId).catch(() => []);
-  const target = messages.find((message) => text9(message?.id, 180) === origin.hostMessageId);
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId).catch(() => {
+    return;
+  });
   if (!target)
     return { compiled: 0, messageAnchors: 0 };
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120000);
@@ -47114,8 +47326,9 @@ async function updateCandidateHostContent(origin, target, nextContent) {
   await spindle.chat.updateMessage(origin.chatId, origin.hostMessageId, { content: nextContent, skipChunkRebuild: true });
 }
 async function pruneUncommittedCandidateMessages(characterId, origin, userId) {
-  const hostMessages = await pocketHostMessages(origin.chatId).catch(() => []);
-  const target = hostMessages.find((message) => text9(message?.id, 180) === origin.hostMessageId);
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId).catch(() => {
+    return;
+  });
   let candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120000);
   const committedRefs = candidateCommitRefs(candidateContent);
   let rescuedInline = 0;
@@ -47179,8 +47392,7 @@ async function pruneUncommittedCandidateMessages(characterId, origin, userId) {
 async function finalizeCandidateArtifactTags(characterId, origin, userId) {
   if (!spindle.permissions.has("chat_mutation"))
     return false;
-  const hostMessages = await pocketHostMessages(origin.chatId);
-  const target = hostMessages.find((message) => text9(message?.id, 180) === origin.hostMessageId);
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId);
   if (!target)
     return false;
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120000);
@@ -47546,7 +47758,7 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
       const relay = generationId ? relayForGeneration(state, generationId) : undefined;
       let reference = generationId ? referenceForGeneration(state, generationId) : undefined;
       let endedBoundUserMessageId = "";
-      if (!reference && generationType === "normal" && messageId && spindle.permissions.has("chat_mutation")) {
+      if (!reference && state.references.some((entry) => entry.status === "injected" && entry.boundUserMessageId) && generationType === "normal" && messageId && spindle.permissions.has("chat_mutation")) {
         try {
           const hostMessages = await pocketHostMessages(chatId);
           const generatedIndex = hostMessages.findIndex((message) => text9(message?.id, 180) === messageId);
@@ -47630,16 +47842,20 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
     if (generationType === "normal" && messageId && !payload?.error) {
       send({ type: "lumiphone:reconciliation_status", status: "working", generationId, messageId }, userId);
       try {
-        await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId });
-        const reconciled = await loadState(chatId, characterId, userId);
-        send({
-          type: "lumiphone:reconciliation_status",
-          status: "complete",
-          generationId,
-          messageId,
-          revision: reconciled.lastReconciliation?.revision || reconciled.stateRevision || 0,
-          domains: reconciled.lastReconciliation?.domains || []
-        }, userId);
+        const seed = await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId });
+        if (!seed || seed.stale) {
+          send({ type: "lumiphone:reconciliation_status", status: "error", generationId, messageId, error: "Pocket could not refresh continuity for this turn." }, userId);
+        } else {
+          const reconciled = await loadState(chatId, characterId, userId);
+          send({
+            type: "lumiphone:reconciliation_status",
+            status: "complete",
+            generationId,
+            messageId,
+            revision: reconciled.lastReconciliation?.revision || reconciled.stateRevision || 0,
+            domains: reconciled.lastReconciliation?.domains || []
+          }, userId);
+        }
       } catch (error) {
         send({ type: "lumiphone:reconciliation_status", status: "error", generationId, messageId, error: error instanceof Error ? error.message : String(error) }, userId);
         throw error;

@@ -17,19 +17,36 @@ function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function visibleStructuredText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.map(visibleStructuredText).filter(Boolean).join('\n')
+const MAX_SOURCE_CHARS = 64_000
+const MAX_SOURCE_PARTS = 128
+
+function visibleStructuredText(value: unknown, budget: { chars: number; parts: number }, depth = 0): string {
+  if (depth > 12 || budget.chars <= 0 || budget.parts-- <= 0) return ''
+  const take = (text: string) => {
+    const excerpt = text.slice(0, budget.chars)
+    budget.chars -= excerpt.length
+    return excerpt
+  }
+  if (typeof value === 'string') return take(value)
+  if (Array.isArray(value)) {
+    const parts: string[] = []
+    for (const item of value) {
+      if (budget.parts <= 0 || budget.chars <= 0) break
+      const text = visibleStructuredText(item, budget, depth + 1)
+      if (text) parts.push(text)
+    }
+    return parts.join('\n')
+  }
   if (!isRecord(value)) return ''
 
   const type = typeof value.type === 'string' ? value.type : ''
   if (type && DROP_PART_TYPE.test(type)) return ''
 
-  if (typeof value.text === 'string') return value.text
+  if (typeof value.text === 'string') return take(value.text)
   if (typeof value.content === 'string' || Array.isArray(value.content) || isRecord(value.content)) {
-    return visibleStructuredText(value.content)
+    return visibleStructuredText(value.content, budget, depth + 1)
   }
-  if (typeof value.value === 'string' && (!type || /text|output/i.test(type))) return value.value
+  if (typeof value.value === 'string' && (!type || /text|output/i.test(type))) return take(value.value)
   return ''
 }
 
@@ -65,7 +82,7 @@ function stripMachineWrappers(value: string): string {
  * prose is never heuristically classified as reasoning.
  */
 export function sanitizeNarrativeContent(value: unknown, max = 4_000): string {
-  return stripMachineWrappers(visibleStructuredText(value)).slice(0, Math.max(0, max))
+  return stripMachineWrappers(visibleStructuredText(value, { chars: MAX_SOURCE_CHARS, parts: MAX_SOURCE_PARTS })).slice(0, Math.max(0, max))
 }
 
 /** Keep both scene setup and resolution when a long turn exceeds the context budget. */

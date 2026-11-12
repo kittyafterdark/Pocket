@@ -160,8 +160,9 @@ export async function assemblePocketContext(options: {
     ? [actorIdentity ? `ACTOR IDENTITY\n${actorIdentity}` : '', continuity, thread ? `PHONE THREAD\n${thread}` : ''].filter(Boolean).join('\n\n')
     : parts.join('\n\n')
   const finalLock = channel ? `FINAL CHANNEL LOCK\n${channel}` : ''
-  const extra = clean(options.extraContext, 24000)
-  const bodyBudget = Math.max(0, (expandedProfile ? 64000 : BUDGETS.total) - extra.length - finalLock.length - 4)
+  const available = Math.max(0, (expandedProfile ? 64_000 : BUDGETS.total) - finalLock.length - 4)
+  const extra = clean(options.extraContext, Math.min(24_000, Math.floor(available * 0.6)))
+  const bodyBudget = available - extra.length
   const finalText = [bodyText.slice(0, bodyBudget), extra, finalLock].filter(Boolean).join('\n\n')
   const latestMismatch = Boolean(authoritativeLatest.id && (!includedLatest.id || authoritativeLatest.id !== includedLatest.id))
   const freshnessWarning = mode === 'story' || mode === 'off' || !wantsRecent ? '' : latestMismatch

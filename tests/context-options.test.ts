@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { defaultPreferences, normalizePreferences } from '../src/domain/preferences.js'
 import { fullProfile, profileContext, freeformLore } from '../src/backend/context-options.js'
 import { retrievePhoneLore } from '../src/backend/phone-lore.js'
+import { readPocketChatMessage } from '../src/backend/chat-history.js'
 import { normalizePocketContact } from '../src/domain/contacts.js'
 import { applyNpcBankProfile, contactFromNpcBank, emptyNpcBank, normalizeNpcBank, upsertNpcBankFromContact } from '../src/domain/npc-bank.js'
 
@@ -78,4 +79,43 @@ test('NPC Bank preserves lorebook source references through save, reload and reu
   expect(copy.source.kind === 'npc' && copy.source.lorebookEntryIds).toEqual(['profile', 'childhood'])
   applyNpcBankProfile(copy, { ...reloaded.entries[0], lorebookEntryIds: [] }, now)
   expect(copy.source.kind === 'npc' && copy.source.lorebookEntryIds).toEqual(['profile', 'childhood'])
+})
+
+test('lore scanning limits pages and leaves room for a second linked book', async () => {
+  const requests: Array<{ book: string; limit: number; offset: number }> = []
+  const api: any = {
+    permissions: { has: () => false },
+    world_books: {
+      async getGlobal() { return ['large', 'small'] },
+      entries: {
+        async list(book: string, { limit, offset }: { limit: number; offset: number }) {
+          requests.push({ book, limit, offset })
+          if (book === 'small') return { data: [{ id: 'one', constant: true, content: 'Local lore.' }], total: 1 }
+          return {
+            total: 10_000,
+            data: Array.from({ length: limit }, (_, index) => ({ id: `row-${offset + index}`, content: 'Unmatched lore.', key: ['unmatched'] })),
+          }
+        },
+      },
+    },
+  }
+  const result = await retrievePhoneLore(api, { chatId: '_freeform_lore', contacts: [], pocketPersona: {} } as any,
+    { participantContactIds: [], messages: [] } as any)
+  expect(result.text).toBe('Local lore.')
+  expect(requests.filter(request => request.book === 'large').reduce((total, request) => total + request.limit, 0)).toBe(200)
+  expect(requests.every(request => request.limit <= 25)).toBe(true)
+})
+
+test('older candidate lookup fetches full swipes only for the matched message', async () => {
+  const messages = Array.from({ length: 59 }, (_, index) => ({
+    id: `message-${index}`, index_in_chat: index, content: 'active', swipes: ['active', 'alternate'],
+  }))
+  const fullReads: number[] = []
+  const chat = { async getMessages(_: string, options: { tail?: number; limit?: number; offset?: number; light: boolean }) {
+    if (!options.light) fullReads.push(options.limit!)
+    const rows = options.tail ? messages.slice(-options.tail) : messages.slice(options.offset, options.offset! + options.limit!)
+    return options.light ? rows.map(row => ({ ...row, swipes: [row.content, null] })) : rows
+  } }
+  expect((await readPocketChatMessage(chat, 'chat', 'message-17')).swipes).toEqual(['active', 'alternate'])
+  expect(fullReads).toEqual([1])
 })

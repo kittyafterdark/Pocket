@@ -92,7 +92,12 @@ export async function runPocketGeneration(
       request.connection_id = info.effective.id
       if (preferences.sidecarModelOverride) request.parameters = { ...(request.parameters || {}), model: preferences.sidecarModelOverride }
     }
-    const tokenLimit = normalizeConnectionTokenLimits(preferences.generationConnectionMaxTokens)[info.effective.id]
+    const continuityTask = task === 'continuity-seed' || task === 'post-turn-audit'
+    if (continuityTask) {
+      request.parameters = { ...(request.parameters || {}), max_tokens: task === 'continuity-seed' ? 2_000 : 700 }
+      request.reasoning = { source: 'off' }
+    }
+    const tokenLimit = continuityTask ? undefined : normalizeConnectionTokenLimits(preferences.generationConnectionMaxTokens)[info.effective.id]
     if (tokenLimit) request.parameters = { ...(request.parameters || {}), max_tokens: tokenLimit }
     let result: any
     const profileTask = ['persona-profile', 'npc-contact', 'profile-refresh', 'scene-sync'].includes(task)
@@ -121,7 +126,7 @@ export async function runPocketGeneration(
     if (input.signal instanceof AbortSignal) input.signal.throwIfAborted()
     const empty = () => typeof result?.content !== 'string' || !result.content.trim()
     const reasoningOnly = () => { const usage = result?.usage || {}; const reasoning = Number(usage.reasoning_tokens ?? usage.completion_tokens_details?.reasoning_tokens); return reasoning > 0 && reasoning >= Number(usage.completion_tokens) }
-    if (preferences.automaticGenerationRetry && options.automaticRetry!==false && !reasoningOnly() && empty() && outputLimitReached(result)) {
+    if (!continuityTask && preferences.automaticGenerationRetry && options.automaticRetry!==false && !reasoningOnly() && empty() && outputLimitReached(result)) {
       const limit = Number(request.parameters?.max_tokens) || 0
       const expanded = tokenLimit || Math.min(16384, Math.max(8192, limit * 2))
       if (tokenLimit || expanded > limit) {
@@ -134,7 +139,8 @@ export async function runPocketGeneration(
       const tokens = Number(result.usage.completion_tokens).toLocaleString('en-US')
       throw new GenerationOutputLimitError(`The model spent all ${tokens} output tokens on thinking without producing a reply. Increase this connection’s output token limit, then retry.`, 'reasoning-exhausted')
     }
-    if (outputLimitReached(result) && (empty() || (!options.preservePartial && ['message-reply', 'message-retry', 'group-reply', 'reply-decision'].includes(task)))) {
+    if (outputLimitReached(result) && (empty() || continuityTask || (!options.preservePartial && ['message-reply', 'message-retry', 'group-reply', 'reply-decision'].includes(task)))) {
+      if (continuityTask) throw new GenerationOutputLimitError('The model exhausted the Pocket continuity task budget.', empty() ? 'empty' : 'truncated')
       throw new GenerationOutputLimitError('The reply reached its output limit. Increase this connection’s output token limit, then retry manually.', empty() ? 'empty' : 'truncated')
     }
     if (empty()) throw new Error(result?.finish_reason === 'length'

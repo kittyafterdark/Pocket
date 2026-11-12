@@ -82,6 +82,8 @@ import { ReplyJobs } from './backend/reply-jobs.js'
 import { removePhoneConversations, validateConversationDeletion } from './domain/conversation-deletion.js'
 import { GenerationOutputLimitError } from './domain/generation-output.js'
 import { inspectPocketGeneration, runPocketGeneration } from './backend/generation.js'
+import { readPocketChatMessage, readPocketChatPages, readPocketChatTail } from './backend/chat-history.js'
+import { generationDeadline } from './backend/generation-deadline.js'
 import { parseGeneratedObject, parseWithTruncationRetry } from './backend/structured.js'
 import { ArrivalIdle } from './backend/arrival-idle.js'
 import { applyTimelineReview, normalizeWeatherOutlook } from './domain/app-review.js'
@@ -210,8 +212,8 @@ const nativeApps=new NativeAppsRuntime({loadState,saveState,sendState,send,withS
   addEvent:(context,event,user)=>applyAction({...context,action:'event',payload:event},user,'user'),
 })
 
-async function pocketHostMessages(chatId: string): Promise<any[]> {
-  return isFreeformChat(chatId) ? [] : spindle.chat.getMessages(chatId)
+async function pocketHostMessages(chatId: string, tail = 24): Promise<any[]> {
+  return isFreeformChat(chatId) ? [] : readPocketChatTail(spindle.chat, chatId, tail)
 }
 
 async function freeformContextMessages(chatId: string, userId?: string): Promise<any[]> {
@@ -220,7 +222,7 @@ async function freeformContextMessages(chatId: string, userId?: string): Promise
   if (!prefs.freeformRoleplayMessages || !spindle.permissions.has('chats') || !spindle.permissions.has('chat_mutation')) return []
   const active = await spindle.chats.getActive(userId)
   if (!active?.id || isFreeformChat(active.id)) return []
-  return (await spindle.chat.getMessages(active.id)).slice(-prefs.freeformRoleplayMessages)
+  return pocketHostMessages(active.id, prefs.freeformRoleplayMessages)
 }
 
 async function freeformDirectory(userId?: string): Promise<FreeformDirectory> {
@@ -1837,6 +1839,26 @@ async function runStructuredGeneration(
   request: AnyRecord,
   userId?: string,
 ): Promise<AnyRecord> {
+  const host = { spindle, loadPreferences, savePreferences, send }
+  if (task === 'continuity-seed' || task === 'post-turn-audit') {
+    const limit = task === 'continuity-seed' ? 48_000 : 28_000
+    const size = Array.isArray(request.messages) ? request.messages.reduce((total, message) =>
+      total + (typeof message?.content === 'string' ? message.content.length : limit + 1), 0) : 0
+    if (size > limit) throw new Error('Pocket continuity input exceeded its text budget.')
+    const parent = request.signal instanceof AbortSignal ? request.signal : undefined
+    return generationDeadline(60, parent, async (signal) => {
+      let parsed: AnyRecord = {}
+      await runPocketGeneration(host, task, requestId, { ...request, signal }, userId, {
+        validate(response) {
+          if (typeof response.content !== 'string' || response.content.length > 32_000) {
+            throw new Error('Pocket continuity response exceeded its text budget.')
+          }
+          parsed = parseGeneratedObject(response.content)
+        },
+      })
+      return parsed
+    }, 'Pocket continuity generation timed out.')
+  }
   await savePromptDebug(task, requestId, request, userId)
   const first: any = await runPocketGeneration({ spindle, loadPreferences, savePreferences, send }, task, requestId, request, userId)
   const preferences = await loadPreferences(userId)
@@ -2800,7 +2822,37 @@ interface PostTurnAuditResult {
 }
 
 const POCKET_CONTINUITY_SEED_VERSION = 4 as const
-const narrativeSeedFlights = new Map<string, Promise<NarrativeSeedSnapshot | null>>()
+type SeedRefresh = { generationId?: string; messageId?: string; manual?: boolean; recheck?: boolean }
+const narrativeSeedFlights = new Map<string, { promise: Promise<NarrativeSeedSnapshot | null>; current: SeedRefresh; next?: SeedRefresh }>()
+const narrativeSeedFailures = new Map<string, { sourceKey: string; until: number }>()
+
+/** A cancelled reply stops waiting without cancelling reconciliation for other callers. */
+async function seedForReply(chatId: string, characterId: string, userId: string | undefined, signal: AbortSignal) {
+  signal.throwIfAborted()
+  let abort: () => void = () => {}
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+  try {
+    return await Promise.race([refreshNarrativeSeed(chatId, characterId, userId, { recheck: true }), cancelled])
+  } finally {
+    signal.removeEventListener('abort', abort)
+  }
+}
+
+function boundedJsonRows<T>(rows: readonly T[], limit: number): T[] {
+  const included: T[] = []
+  let remaining = limit - 2
+  for (const row of rows) {
+    const json = JSON.stringify(row)
+    const cost = json.length + Number(included.length > 0)
+    if (cost > remaining) break
+    included.push(row)
+    remaining -= cost
+  }
+  return included
+}
 
 function continuitySeedPath(chatId: string, characterId: string): string {
   return `phones/${stateKey(chatId, characterId)}.continuity-seed.json`
@@ -3161,11 +3213,12 @@ function candidateMessagesForOrigin(state: PhoneState, origin: PocketTurnCandida
         conversation: conversation.title,
         speaker: message.senderName,
         recipients: (message.recipientActorIds || []).map((actorId) => resolvePocketActor(state, actorId)?.name || (actorId === pocketPersonaActorId(state) ? state.pocketPersona.displayName : '')).filter(Boolean),
-        text: message.text,
+        text: text(message.text, 480),
       })
+      if (rows.length > 12) rows.shift()
     }
   }
-  return rows.slice(-12)
+  return rows
 }
 
 function narrativeLikelyContainsPhoneAction(value: string): boolean {
@@ -3181,8 +3234,11 @@ async function reconcilePostTurnCandidate(
   options: { auditClock: boolean } = { auditClock: false },
 ): Promise<void> {
   if (!spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')||(await roleplayToolsSuppressed(userId))) return
-  const hostMessages: any[] = await pocketHostMessages(chatId).catch(() => [])
-  const current = hostMessages.find((message) => text(message?.id, 180) === origin.hostMessageId)
+  const hostMessages = await pocketHostMessages(chatId, 12).catch(() => [])
+  let current = hostMessages.find(message => message.id === origin.hostMessageId)
+  if (!current || Number(current.swipe_id ?? current.swipeId ?? 0) !== origin.swipeId) {
+    current = await readPocketChatMessage(spindle.chat, chatId, origin.hostMessageId).catch(() => undefined)
+  }
   const currentNarrative = sanitizeNarrativeContent(hostMessageCandidateContent(current, origin.swipeId, 12_000), 6_000)
   if (!currentNarrative) return
 
@@ -3236,7 +3292,7 @@ PRE-TURN CLOCK — ANCHOR ONLY:
 ${JSON.stringify(baseline)}
 
 ALREADY PERSISTED POCKET MESSAGES FOR THIS CANDIDATE:
-${JSON.stringify(persisted)}
+${JSON.stringify(boundedJsonRows(persisted, 8_000))}
 
 RECENT NARRATIVE CONTEXT:
 ${recentNarrative}
@@ -3520,7 +3576,7 @@ async function loadNarrativeSeed(chatId: string, characterId: string, userId?: s
   }
   return normalizeNarrativeSeed(raw)
 }
-async function refreshNarrativeSeed(chatId: string, characterId: string, userId?: string, options: { generationId?: string; messageId?: string } = {}): Promise<NarrativeSeedSnapshot | null> {
+async function refreshNarrativeSeed(chatId: string, characterId: string, userId?: string, options: SeedRefresh = {}): Promise<NarrativeSeedSnapshot | null> {
   if (!chatId || isFreeformChat(chatId) || chatId === '_lobby' || !spindle.permissions.has('generation') || !spindle.permissions.has('chat_mutation')) {
     return loadNarrativeSeed(chatId, characterId, userId)
   }
@@ -3528,23 +3584,33 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
   const flightKey = `${viewKey(userId)}:${stateKey(chatId, characterId)}:continuity`
   const existingFlight = narrativeSeedFlights.get(flightKey)
   if (existingFlight) {
-    // A turn may commit while a prior extraction is running. Recheck the source after it settles.
-    await existingFlight.catch(() => null)
-    return refreshNarrativeSeed(chatId, characterId, userId, options)
+    // A new turn or reply may observe newer prose. Share a single trailing recheck.
+    if (options.messageId && options.messageId !== existingFlight.current.messageId) existingFlight.next = options
+    else if (options.recheck && !existingFlight.next) existingFlight.next = options
+    return existingFlight.promise
   }
 
-  const flight = (async () => {
-    const hostMessages: any[] = await pocketHostMessages(chatId).catch(() => [])
-    const sourceMessages = hostMessages
-      .filter((message) => (message?.role === 'user' || message?.role === 'assistant') && sanitizeNarrativeContent(message?.content, 1))
-      .slice(-4)
+  const extract = async (options: SeedRefresh, recordSource: (sourceKey: string) => void): Promise<NarrativeSeedSnapshot | null> => {
+    const hostMessages = await pocketHostMessages(chatId, 12)
+    const sourceMessages = []
+    for (let index = hostMessages.length - 1; index >= 0 && sourceMessages.length < 4; index--) {
+      const message = hostMessages[index]
+      if (message.hidden || message.extra?.hidden || (message.role !== 'user' && message.role !== 'assistant')) continue
+      const content = narrativeExcerpt(message.content, 24_000)
+      if (content) sourceMessages.unshift({ id: message.id, revision: message.revision, role: message.role, content })
+    }
     if (!sourceMessages.length) return loadNarrativeSeed(chatId, characterId, userId)
 
     const sourceKey = `v${POCKET_CONTINUITY_SEED_VERSION}:${narrativeSeedSourceKey(sourceMessages)}`
+    recordSource(sourceKey)
     const sourceMessageIds = sourceMessages.map((message) => text(message?.id, 180)).filter(Boolean).slice(-8)
     const previous = await loadNarrativeSeed(chatId, characterId, userId)
     const state = await loadState(chatId, characterId, userId)
     if (previous?.sourceKey === sourceKey && state.lastReconciliation?.sourceKey === sourceKey) return previous
+    const failure = narrativeSeedFailures.get(flightKey)
+    if (!options.manual && failure?.sourceKey === sourceKey && failure.until > Date.now()) {
+      return previous ? { ...previous, stale: true } : null
+    }
     const knownActors = [
       state.pocketPersona.displayName,
       state.characterName,
@@ -3554,21 +3620,21 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
 
     const recentNarrative = recentNarrativeWindow(sourceMessages).text
     const timelineSnapshot = structuredClone(state.events.filter(event => !event.completed).sort((a, b) => Number(Boolean(b.startedAt)) - Number(Boolean(a.startedAt)) || (b.startedAt || '').localeCompare(a.startedAt || '')).slice(0, 16))
-    const modelWritableTrackers = state.trackers
+    const modelWritableTrackers = boundedJsonRows(state.trackers
       .filter((tracker) => tracker.allowModelWrite && tracker.updateMode === 'model')
       .slice(0, 12)
       .map((tracker) => ({
         key: tracker.key,
         label: tracker.label,
-        updateGuidance: tracker.modelPrompt || undefined,
+        updateGuidance: text(tracker.modelPrompt, 240) || undefined,
         kind: tracker.kind,
-        value: tracker.kind === 'state' ? tracker.state : tracker.value,
+        value: tracker.kind === 'state' ? text(tracker.state, 240) : tracker.value,
         min: tracker.kind === 'state' ? undefined : tracker.min,
         max: tracker.kind === 'state' ? undefined : tracker.max,
         states: tracker.kind === 'state' && !tracker.freeText ? tracker.states : undefined,
-        fieldInstruction: tracker.kind === 'state' && tracker.freeText ? `Free text field: use set_state with up to 2000 characters. ${tracker.modelPrompt || ''}` : undefined,
+        freeText: tracker.kind === 'state' && tracker.freeText || undefined,
         target: tracker.target.label || tracker.target.id || tracker.target.type,
-      }))
+      })), 7_000)
     const currentStateAdvisory = {
       clock: {
         roleplayNow: state.roleplayNow,
@@ -3582,17 +3648,17 @@ async function refreshNarrativeSeed(chatId: string, characterId: string, userId?
         details: state.weather.details,
       },
       inSceneActors: state.contacts.filter((contact) => contact.presence.inScene).map((contact) => contact.name).slice(0, 16),
-      activeTimeline: timelineSnapshot.map((event) => ({
+      activeTimeline: boundedJsonRows(timelineSnapshot.map((event) => ({
         id: event.id,
         title: event.title,
-        description: event.description,
+        description: text(event.description, 180),
         whenText: event.whenText,
-        actorContactIds: event.actorContactIds,
+        actorContactIds: event.actorContactIds?.slice(0, 4),
         startedAt: event.startedAt,
         phase: event.startedAt ? 'started' : 'upcoming',
-      })),
+      })), 4_000),
       previousWorld: previous?.world || null,
-      previousActors: previous?.actors || [],
+      previousActors: boundedJsonRows(previous?.actors || [], 2_500),
     }
     const parsed = await runStructuredGeneration('continuity-seed', id('continuity_seed'), {
       type: 'quiet',
@@ -3694,19 +3760,41 @@ ${recentNarrative}`,
     })
     await spindle.userStorage.setJson(continuitySeedPath(chatId, characterId), seed, { indent: 2, userId })
 
+    narrativeSeedFailures.delete(flightKey)
     return seed
-  })()
-
-  narrativeSeedFlights.set(flightKey, flight)
-  try {
-    return await flight
-  } catch (error) {
-    spindle.log.warn(`Pocket continuity seed skipped: ${error instanceof Error ? error.message : String(error)}`)
-    const cached = await loadNarrativeSeed(chatId, characterId, userId)
-    return cached ? { ...cached, stale: true } : null
-  } finally {
-    if (narrativeSeedFlights.get(flightKey) === flight) narrativeSeedFlights.delete(flightKey)
   }
+  const run = async (options: SeedRefresh): Promise<NarrativeSeedSnapshot | null> => {
+    let sourceKey = ''
+    try {
+      return await extract(options, key => { sourceKey = key })
+    } catch (error) {
+      if (sourceKey) {
+        narrativeSeedFailures.delete(flightKey)
+        narrativeSeedFailures.set(flightKey, { sourceKey, until: Date.now() + 60_000 })
+        if (narrativeSeedFailures.size > 128) narrativeSeedFailures.delete(narrativeSeedFailures.keys().next().value!)
+      }
+      spindle.log.warn(`Pocket continuity seed skipped: ${error instanceof Error ? error.message : String(error)}`)
+      const cached = await loadNarrativeSeed(chatId, characterId, userId)
+      return cached ? { ...cached, stale: true } : null
+    }
+  }
+
+  const flight = { current: options, next: undefined as SeedRefresh | undefined, promise: Promise.resolve(null as NarrativeSeedSnapshot | null) }
+  flight.promise = Promise.resolve().then(async () => {
+    try {
+      let result = await run(flight.current)
+      while (flight.next) {
+        flight.current = flight.next
+        flight.next = undefined
+        if (!result || result.stale || !result.sourceMessageIds.includes(flight.current.messageId || '')) result = await run(flight.current)
+      }
+      return result
+    } finally {
+      narrativeSeedFlights.delete(flightKey)
+    }
+  })
+  narrativeSeedFlights.set(flightKey, flight)
+  return flight.promise
 }
 
 interface FreeformConsolidationMessage {
@@ -3970,13 +4058,21 @@ async function maybeAutoConsolidateFreeformState(context: { chatId: string; char
 
 async function recoverEventPhoneContinuity(context: { chatId: string; characterId: string }, userId?: string): Promise<PhoneState> {
   let state = await loadState(context.chatId, context.characterId, userId)
-  const needsRecovery = state.events.some(event => !event.phoneHistoryBoundary
+  const needsRecovery = () => state.events.some(event => !event.phoneHistoryBoundary
     && state.conversations.some(conversation => (event.startedAt && event.source?.conversationId === conversation.id) || conversation.messages.some(message => message.eventSuggestion?.scheduledEventId === event.id)))
-  if (needsRecovery && spindle.permissions.has('chats')) {
-    const messages = await pocketHostMessages(context.chatId).catch(() => [])
+  if (!isFreeformChat(context.chatId) && needsRecovery() && spindle.permissions.has('chats') && spindle.permissions.has('chat_mutation')) {
     await withStateLock(stateKey(context.chatId, context.characterId), async () => {
       state = await loadState(context.chatId, context.characterId, userId)
-      if (recoverStartedEventPlans(state, messages)) await saveState(state, userId)
+      if (!needsRecovery()) return
+      let previous: any, changed = false
+      try {
+        for await (const page of readPocketChatPages(spindle.chat, context.chatId)) {
+          changed = recoverStartedEventPlans(state, previous ? [previous, ...page] : page) || changed
+          if (!needsRecovery()) break
+          previous = page.at(-1)
+        }
+      } catch { /* Preserve any verified boundaries found before a history read failed. */ }
+      if (changed) await saveState(state, userId)
     })
   }
   return state
@@ -4032,7 +4128,7 @@ async function generateMessageJob(input: AnyRecord & { signal: AbortSignal }, us
   await recoverEventPhoneContinuity(context, userId)
   const continuitySeed = (await loadPreferences(userId)).roleplayContextMode === 'off'
     ? null
-    : await refreshNarrativeSeed(context.chatId, context.characterId, userId)
+    : await seedForReply(context.chatId, context.characterId, userId, input.signal)
   await withStateLock(key, async () => {
     const state = await loadState(context.chatId, context.characterId, userId)
     const preferences = await loadPreferences(userId)
@@ -4341,7 +4437,9 @@ async function generateGroupBatchJob(input: AnyRecord & { signal: AbortSignal },
     if (!conversation) throw new Error('That group conversation no longer exists.')
     const activeBatch = state.groupBatches.find((entry) => entry.conversationId === conversation.id && (entry.status === 'queued' || entry.status === 'delivering'))
     if (activeBatch) throw new Error('This group already has a reply burst in progress.')
-    const groupContinuitySeed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
+    const groupContinuitySeed = preferences.roleplayContextMode === 'off'
+      ? null
+      : await seedForReply(context.chatId, context.characterId, userId, input.signal)
     const sourceBurstId = text(input.sourceBurstId, 180) || conversation.outgoingBurst?.id
     const manualOverride = bool(input.manualOverride)
     const eligible = conversationActorIds(conversation)
@@ -6613,8 +6711,8 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
               await saveState(state, userId)
             })
           }
-        const seed = await refreshNarrativeSeed(context.chatId, context.characterId, userId)
-        if (!seed) throw new Error('Pocket could not find committed roleplay text to seed the world yet.')
+        const seed = await refreshNarrativeSeed(context.chatId, context.characterId, userId, { manual: true })
+        if (!seed || seed.stale) throw new Error('Pocket could not seed the world from the current story. Check the Pocket generation status and try again.')
         send({ type: 'lumiphone:operation_progress', task: 'world-seed', requestId, phase: 'saving', message: 'Saving world, Weather, and Timeline…' }, userId)
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
@@ -7636,8 +7734,7 @@ async function resolveLegacyTagCandidateOrigin(chatId: string, hostMessageId: st
   const active = [...activePocketCandidates.values()].find((entry) => entry.userKey === viewKey(userId) && entry.chatId === chatId && entry.hostMessageId === hostMessageId)
   if (active) return { chatId, hostMessageId, swipeId: active.swipeId, generationId: active.generationId }
   if (!spindle.permissions.has('chats')) return undefined
-  const messages: any[] = await pocketHostMessages(chatId).catch(() => [])
-  const target = messages.find((message: any) => text(message?.id, 180) === hostMessageId)
+  const target = await readPocketChatMessage(spindle.chat, chatId, hostMessageId).catch(() => undefined)
   if (!target) return undefined
   const rawSwipeId = Number(target?.swipe_id ?? target?.swipeId ?? 0)
   const swipeId = Number.isInteger(rawSwipeId) && rawSwipeId >= 0 ? rawSwipeId : 0
@@ -7651,8 +7748,7 @@ async function rewriteCompiledLegacyTag(
   action: string,
 ): Promise<boolean> {
   if (!spindle.permissions.has('chat_mutation') || !fullMatch) return false
-  const messages: any[] = await pocketHostMessages(origin.chatId)
-  const target = messages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId)
   if (!target) return false
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
   const at = candidateContent.indexOf(fullMatch)
@@ -7669,8 +7765,7 @@ async function compileLegacyPhoneTags(
   userId?: string,
 ): Promise<{ compiled: number; messageAnchors: number }> {
   if (!spindle.permissions.has('chats')||(await roleplayToolsSuppressed(userId))) return { compiled: 0, messageAnchors: 0 }
-  const messages: any[] = await pocketHostMessages(origin.chatId).catch(() => [])
-  const target = messages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId).catch(() => undefined)
   if (!target) return { compiled: 0, messageAnchors: 0 }
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
   if (!candidateContent.includes('<lumi-phone')) return { compiled: 0, messageAnchors: 0 }
@@ -7817,8 +7912,7 @@ async function pruneUncommittedCandidateMessages(
   origin: PocketTurnCandidateOrigin,
   userId?: string,
 ): Promise<{ removed: number; kept: number; rescuedInline: number; removedActivityIds: string[]; keptActivityIds: string[] }> {
-  const hostMessages: any[] = await pocketHostMessages(origin.chatId).catch(() => [])
-  const target = hostMessages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId).catch(() => undefined)
   let candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
   const committedRefs = candidateCommitRefs(candidateContent)
   let rescuedInline = 0
@@ -7882,8 +7976,7 @@ async function finalizeCandidateArtifactTags(
   userId?: string,
 ): Promise<boolean> {
   if (!spindle.permissions.has('chat_mutation')) return false
-  const hostMessages: any[] = await pocketHostMessages(origin.chatId)
-  const target = hostMessages.find((message: any) => text(message?.id, 180) === origin.hostMessageId)
+  const target = await readPocketChatMessage(spindle.chat, origin.chatId, origin.hostMessageId)
   if (!target) return false
   const candidateContent = hostMessageCandidateContent(target, origin.swipeId, 120_000)
   if (!candidateContent || (!candidateContent.includes('<pocket-artifact') && !candidateContent.includes('<pocket-commit'))) return false
@@ -8207,7 +8300,7 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
       // interception and GENERATION_ENDED even though the assistant message itself
       // was committed. The reference already records the exact user turn it bound
       // to, so reconcile through chat history before leaving it stuck "applying".
-      if (!reference && generationType === 'normal' && messageId && spindle.permissions.has('chat_mutation')) {
+      if (!reference && state.references.some(entry => entry.status === 'injected' && entry.boundUserMessageId) && generationType === 'normal' && messageId && spindle.permissions.has('chat_mutation')) {
         try {
           const hostMessages: any[] = await pocketHostMessages(chatId)
           const generatedIndex = hostMessages.findIndex((message: any) => text(message?.id, 180) === messageId)
@@ -8307,13 +8400,17 @@ spindle.on('GENERATION_ENDED', async (payload: any, userId?: string) => {
     if (generationType === 'normal' && messageId && !payload?.error) {
       send({ type: 'lumiphone:reconciliation_status', status: 'working', generationId, messageId }, userId)
       try {
-        await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId })
-        const reconciled = await loadState(chatId, characterId, userId)
-        send({
-          type: 'lumiphone:reconciliation_status', status: 'complete', generationId, messageId,
-          revision: reconciled.lastReconciliation?.revision || reconciled.stateRevision || 0,
-          domains: reconciled.lastReconciliation?.domains || [],
-        }, userId)
+        const seed = await refreshNarrativeSeed(chatId, characterId, userId, { generationId, messageId })
+        if (!seed || seed.stale) {
+          send({ type: 'lumiphone:reconciliation_status', status: 'error', generationId, messageId, error: 'Pocket could not refresh continuity for this turn.' }, userId)
+        } else {
+          const reconciled = await loadState(chatId, characterId, userId)
+          send({
+            type: 'lumiphone:reconciliation_status', status: 'complete', generationId, messageId,
+            revision: reconciled.lastReconciliation?.revision || reconciled.stateRevision || 0,
+            domains: reconciled.lastReconciliation?.domains || [],
+          }, userId)
+        }
       } catch (error) {
         send({ type: 'lumiphone:reconciliation_status', status: 'error', generationId, messageId, error: error instanceof Error ? error.message : String(error) }, userId)
         throw error

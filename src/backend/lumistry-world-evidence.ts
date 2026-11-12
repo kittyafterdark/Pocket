@@ -1,3 +1,4 @@
+import {readPocketChatTail} from './chat-history.js';
 import type {PhoneState} from '../types.js';
 import {worldSource,WORLD_READING_LIMITS,type WorldCoverage,type WorldSourceChoice} from '../domain/lumistry-world-reading.js';
 /** Native evidence only. Choosing sources never canonizes them or calls a model. */
@@ -43,7 +44,7 @@ export async function collectWorldEvidence(state:PhoneState,api:any,permitted:(p
   if(remaining<=0)warnings.push('The lore reading budget was reached; the picker shows sources that were not included.');
  }else warnings.push('World-book permission/API unavailable. Lore was not read.');
  if(permitted('chat_mutation')&&typeof api.chat?.getMessages==='function')try{
-  const messages=await api.chat.getMessages(state.chatId);for(const [i,m] of messages.slice(-24).entries())add('message_'+(m.id||i),'Recent '+m.role+' message',m.content,500);if(messages.length>24)warnings.push('Only the last 24 chat messages were indexed.');
+  const messages=await readPocketChatTail(api.chat,state.chatId,25);for(const [i,m] of messages.slice(-24).entries())add('message_'+(m.id||i),'Recent '+m.role+' message',m.content,500);if(messages.length>24)warnings.push('Only the last 24 chat messages were indexed.');
  }catch{warnings.push('Recent chat could not be read.');}
  else warnings.push('Chat message permission/API is disabled; recent messages were not read.');
  if(selected&&[...selected].some(id=>!availableSources.some(s=>s.id===id)))throw new Error('A selected world source is unavailable or no longer belongs to this setting. Choose sources again.');

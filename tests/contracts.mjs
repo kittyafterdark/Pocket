@@ -1345,13 +1345,7 @@ const lunaDirect = contactState.conversations.find((conversation) => conversatio
 const quietBeforeCouncil = quietRequests.length
 await frontendHandler({ type: 'lumiphone:generate_message', requestId: 'reply-luna', chatId: 'chat-a', characterId: 'char-a', conversationId: lunaDirect.id }, 'user-a')
 const councilGenerationRequests = quietRequests.slice(quietBeforeCouncil)
-assert.equal(councilGenerationRequests.length, 2, 'Council DM generation must perform one continuity refresh and one phone reply generation')
-assert.ok(
-  councilGenerationRequests.some((request) =>
-    String(request?.messages?.find((message) => message?.role === 'system')?.content || '').includes('Extract a small structured RP WORLD STATE delta')
-  ),
-  'Council DM generation must include the bounded continuity-seed refresh',
-)
+assert.equal(councilGenerationRequests.length, 1, 'Council DM generation must share the prior failed continuity refresh for the same source and still generate its reply')
 assert.ok(
   councilGenerationRequests.some((request) =>
     String(request?.messages?.find((message) => message?.role === 'system')?.content || '').includes('You are Luna writing a private phone DM')
@@ -3621,6 +3615,7 @@ try {
   assert.match(prompt, /LAST KNOWN ROLEPLAY STATE/)
   assert.doesNotMatch(prompt, /CURRENT ROLEPLAY STATE/)
   failSeed = false
+  await frontendHandler({ type: 'lumiphone:setup_world_seed', requestId: 'retrieval-world-retry', chatId: state.chatId, characterId: state.characterId }, 'user-a')
   await generate('retrieval-retry-refresh')
   prompt = dmRequest.messages.map(message => message.content).join('\n')
   assert.match(prompt, /NEW-UNKNOWN-LOCATION/)

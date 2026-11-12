@@ -145,7 +145,7 @@ test('reasoning-only exhaustion is classified and respects a configured hard tok
 
 test('automatic retry respects a configured connection cap instead of silently raising it', async () => {
   const f = generationFixture([{ content: '', finish_reason: 'length' }, { content: 'A complete reply', finish_reason: 'stop' }]), load = f.host.loadPreferences
-  f.host.loadPreferences = async () => ({ ...await load(), generationConnectionMaxTokens: { sidecar: 12000 } })
+  f.host.loadPreferences = async () => ({ ...await load(), automaticGenerationRetry: true, generationConnectionMaxTokens: { sidecar: 12000 } })
   expect((await runPocketGeneration(f.host, 'message-reply', 'capped-retry', {})).content).toBe('A complete reply')
   expect(f.requests.map(request => request.parameters.max_tokens)).toEqual([12000, 12000])
 })
@@ -160,6 +160,8 @@ test('length-stopped replies are interrupted even when the provider returned val
 
 test('reasoning-budget exhaustion retries once on the selected connection without exposing reasoning', async () => {
   const f = generationFixture([{ content: '', finish_reason: 'length', reasoning: 'private thought' }, { content: '{"events":[]}', finish_reason: 'stop' }])
+  const load = f.host.loadPreferences
+  f.host.loadPreferences = async () => ({ ...await load(), automaticGenerationRetry: true })
   const result = await runPocketGeneration(f.host, 'timeline-review', 'budget', { parameters: { max_tokens: 1100 } })
   expect(result.content).toBe('{"events":[]}')
   expect(f.requests.length).toBe(2)
@@ -174,6 +176,8 @@ test('reasoning-budget exhaustion retries once on the selected connection withou
 test('empty provider output is a failed run and does not retry unless output was exhausted', async () => {
   for (const reason of ['stop', 'length']) {
     const f = generationFixture([{ content: '', finish_reason: reason }])
+    const load = f.host.loadPreferences
+    f.host.loadPreferences = async () => ({ ...await load(), automaticGenerationRetry: true })
     await expect(runPocketGeneration(f.host, 'reply', 'empty-' + reason, { parameters: { max_tokens: 720 }, reasoning: { source: 'custom', effort: 'low' } })).rejects.toThrow(reason === 'length' ? 'output limit' : 'no answer text')
     expect(f.requests.length).toBe(reason === 'length' ? 2 : 1)
     expect(f.requests[0].reasoning).toEqual({ source: 'custom', effort: 'low' })
@@ -182,13 +186,12 @@ test('empty provider output is a failed run and does not retry unless output was
 })
 
 
-test('manual retry preference prevents budget retry and survives normalization', async () => {
+test('automatic retry is off by default and preserves explicit preferences', async () => {
   const { normalizePreferences } = await import('../src/domain/preferences.js')
-  expect(normalizePreferences({}).automaticGenerationRetry).toBe(true)
+  expect(normalizePreferences({}).automaticGenerationRetry).toBe(false)
+  expect(normalizePreferences({ automaticGenerationRetry: true }).automaticGenerationRetry).toBe(true)
   expect(normalizePreferences({ automaticGenerationRetry: false }).automaticGenerationRetry).toBe(false)
   const f = generationFixture([{ content: '', finish_reason: 'length' }])
-  const load = f.host.loadPreferences
-  f.host.loadPreferences = async () => ({ ...await load(), automaticGenerationRetry: false })
   await expect(runPocketGeneration(f.host, 'timeline-review', 'manual', { parameters: { max_tokens: 1100 } })).rejects.toThrow('retry manually')
   expect(f.requests.length).toBe(1)
   expect(f.events.at(-1).run.status).toBe('failed')
@@ -232,6 +235,8 @@ test('repeated standalone viewport notifications leave handset styles untouched,
 
 test('operator-scoped judge requests and retries use the authenticated user',async()=>{
   const f=generationFixture([{content:'',finish_reason:'length'},{content:'{"answers":{}}',finish_reason:'stop'}])
+  const load = f.host.loadPreferences
+  f.host.loadPreferences = async () => ({ ...await load(), automaticGenerationRetry: true })
   const users:string[]=[]
   const original=f.host.spindle.generate.quiet
   f.host.spindle.generate.quiet=async(request:any)=>{

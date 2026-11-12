@@ -14,6 +14,74 @@ function deferred() {
 }
 async function flush() { for (let i = 0; i < 100; i++) await Promise.resolve() }
 
+test('world setup bounds the host read and shares a failed generation across requests', async () => {
+  const scope = { chatId: 'world-budget', characterId: 'host-character' }
+  const user = 'world-budget-user'
+  const scan = (requestId: string) => host.send({ type: 'lumiphone:setup_world_seed', ...scope, requestId }, user)
+  const originalRead = host.api.chat.getMessages
+  const originalQuiet = host.api.generate.quiet
+  const reads: any[] = [], calls: any[] = []
+  const started = deferred(), release = deferred(), joined = deferred()
+  const messages = Array.from({ length: 59 }, (_, i) => ({
+    id: `host-${i}`, role: i % 2 ? 'assistant' : 'user', content: `Fixture turn ${i}.`,
+  }))
+  await refresh(scope, user)
+  const phoneKey = [...host.store.keys()].find(key => key.startsWith(user + ':phones/') && host.store.get(key).chatId === scope.chatId)!
+  const phone = host.store.get(phoneKey)
+  phone.trackers = Array.from({ length: 12 }, (_, i) => ({
+    id: `field-${i}`, key: `field_${i}`, label: `Field ${i}`, kind: 'state', freeText: true, state: 's'.repeat(2_000),
+    modelPrompt: 'g'.repeat(2_000), allowModelWrite: true, updateMode: 'model', target: { type: 'custom', label: 'World' },
+  }))
+  await host.api.userStorage.setJson(PREFERENCES_PATH, {
+    ...host.read(PREFERENCES_PATH, user),
+    automaticGenerationRetry: true, reasoningEffort: 'high', generationConnectionMaxTokens: { 'fixture-model': 16_000 },
+  }, { userId: user })
+  host.api.chat.getMessages = async (chatId: string, options: any) => {
+    reads.push({ chatId, ...options })
+    return messages.slice(-options.tail)
+  }
+  let fail = true
+  host.api.generate.quiet = async (request: any) => {
+    calls.push(request)
+    started.resolve()
+    await release.promise
+    return fail ? { content: '', finish_reason: 'length' } : { content: '{"world":{},"facts":[],"actors":[]}' }
+  }
+  host.connect(event => {
+    if (event.requestId === 'world-joined' && event.phase === 'generating') joined.resolve()
+  })
+  const first = scan('world-first')
+  try {
+    await started.promise
+    const second = scan('world-joined')
+    await joined.promise
+    await flush()
+    release.resolve()
+    await Promise.all([first, second])
+    expect(reads).toEqual([{ chatId: scope.chatId, tail: 12, light: true, includeExtra: false, ownMetadataOnly: true }])
+    expect(calls).toHaveLength(1)
+    expect(calls[0].parameters.max_tokens).toBe(2_000)
+    expect(calls[0].reasoning).toEqual({ source: 'off' })
+    const prompt = calls[0].messages[1].content
+    const trackers = prompt.split('MODEL-WRITABLE TRACKERS:\n')[1].split('\n\nRECENT NARRATIVE')[0]
+    expect(trackers.length).toBeLessThanOrEqual(7_000)
+    expect(JSON.parse(trackers).length).toBeGreaterThan(0)
+    expect(prompt).toContain('Fixture turn 58.')
+    expect(prompt).not.toContain('Fixture turn 54.')
+    expect(host.sends.filter(event => ['world-first', 'world-joined'].includes(event.requestId) && event.phase === 'error')).toHaveLength(2)
+    fail = false
+    await scan('world-retry')
+    expect(calls).toHaveLength(2)
+    expect(host.sends.some(event => event.type === 'lumiphone:setup_world_done' && event.requestId === 'world-retry')).toBe(true)
+  } finally {
+    release.resolve()
+    await first
+    host.connect(() => {})
+    host.api.chat.getMessages = originalRead
+    host.api.generate.quiet = originalQuiet
+  }
+})
+
 test('a burst of refreshes shares work and performs a trailing read of the newest state', async () => {
   await refresh()
   const path = [...host.store.keys()].find(key => key.startsWith('fixture:phones/') && host.store.get(key).chatId === context.chatId)!.slice('fixture:'.length)

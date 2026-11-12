@@ -254,6 +254,6 @@ test('Reasoning effort selector saves and restores without clearing other genera
   expect(saved.reasoningEffort).toBe('low')
   view.querySelector<HTMLButtonElement>('[aria-label="Automatic retry"]')!.click()
   expect(saved.reasoningEffort).toBe('low')
-  expect(saved.automaticGenerationRetry).toBe(false)
+  expect(saved.automaticGenerationRetry).toBe(true)
   expect([...mount().querySelectorAll('select')].find(node => node.parentElement!.textContent!.startsWith('Reasoning effort'))!.value).toBe('low')
 }))

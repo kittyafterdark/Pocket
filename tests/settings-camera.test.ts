@@ -125,7 +125,7 @@ test('device switcher caps recent phones, searches overflow and keeps latest-int
 })
 
 
-test('generation retry toggle saves manual mode and renders it again', () => {
+test('generation retry toggle defaults off and saves an opt-in', () => {
   const previous = globalThis.document, dom = new JSDOM()
   try {
     globalThis.document = dom.window.document
@@ -135,10 +135,10 @@ test('generation retry toggle saves manual mode and renders it again', () => {
       return renderSettingsView({ draft, section: 'generation', state: { setup: { initialized: true } }, page: () => ({ page, content }), update: (next: typeof draft) => { draft = next }, mountModelCombobox: () => () => {}, capabilities: {}, generation: null } as any)
     }
     const button = render().querySelector<HTMLButtonElement>('button[aria-label="Automatic retry"]')!
-    expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(button.getAttribute('aria-pressed')).toBe('false')
     button.click()
-    expect(draft.automaticGenerationRetry).toBe(false)
-    expect(render().querySelector('button[aria-label="Automatic retry"]')?.getAttribute('aria-pressed')).toBe('false')
+    expect(draft.automaticGenerationRetry).toBe(true)
+    expect(render().querySelector('button[aria-label="Automatic retry"]')?.getAttribute('aria-pressed')).toBe('true')
   } finally { globalThis.document = previous; dom.window.close() }
 })
 

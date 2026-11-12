@@ -71,7 +71,12 @@ test('deleting a chat aborts an in-flight reply and rejects its late result', as
   const context = scope('late'), initial = await send('get_state', context), conversationId = initial.state.conversations[0].id, original = host.api.generate.quiet
   let ready!: () => void
   const started = new Promise<void>(resolve => { ready = resolve })
-  host.api.generate.quiet = async (request: any) => { ready(); await new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true })); return { content: '{"message":"LATE"}' } }
+  host.api.generate.quiet = async (request: any) => {
+    if (request.messages[0].content.includes('Extract a small structured RP WORLD STATE delta')) return { content: '{"world":{},"facts":[],"actors":[]}' }
+    ready()
+    await new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true }))
+    return { content: '{"message":"LATE"}' }
+  }
   try {
     const pending = send('generate_message', { ...context, conversationId }); await started
     const removed = await send('delete_conversations', { ...context, conversationIds: [conversationId] }); await pending
