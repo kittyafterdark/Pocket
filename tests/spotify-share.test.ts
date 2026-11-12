@@ -174,8 +174,10 @@ test('completed Spotify plain dialogue is accepted without inferred events; clas
 });
 test('Spotify truncation retries at most once without injecting a small fallback or repeating reasoning-only exhaustion',async()=>{
  const f=replyFixture([{content:'{"message":',finish_reason:'length'},{content:'{"message":"Recovered"}',finish_reason:'stop'}]);
+ f.preferences.automaticGenerationRetry=true;
  expect((await runStructuredJsonGeneration(f.host,'message-retry','song-recover',{spotifyReply:true})).message).toBe('Recovered');expect(f.requests).toHaveLength(2);expect(f.requests.every(r=>r.parameters.max_tokens===undefined)).toBe(true);
  const empty=replyFixture([{content:'',finish_reason:'length',usage:{prompt_tokens:100,completion_tokens:2000,reasoning_tokens:2000}}]);
+ empty.preferences.automaticGenerationRetry=true;
  await expect(runStructuredJsonGeneration(empty.host,'message-reply','song-reasoning',{spotifyReply:true})).rejects.toThrow('all 2,000 output tokens');expect(empty.requests).toHaveLength(1);
 });
 test('Song only can be sent from the share sheet without selecting or including lyric lines',async()=>{
