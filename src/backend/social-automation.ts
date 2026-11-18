@@ -150,10 +150,12 @@ export class SocialAutomation {
     const controller = new AbortController(); this.jobs.set(scope, controller)
     try {
       const state = await this.host.loadState(context.chatId, context.characterId, userId)
+      const initialWorld = normalizeSocialState(state.social)
       const owners = [...new Set([pocketPersonaActorId(state), ...state.conversations.flatMap(conversation => conversationDeviceActorIds(state, conversation))])]
       let count = 0
       for (const owner of owners) for (const app of SOCIAL_APPS) {
         if (controller.signal.aborted || count >= 4) return
+        if (socialAppSettings(initialWorld, owner, app).refreshMode !== 'turn' || !pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[owner]), app)) continue
         const latest = await this.host.loadState(context.chatId, context.characterId, userId), world = normalizeSocialState(latest.social)
         if (!pocketAppInstalled(normalizeLauncherLayout(latest.launcherLayouts?.[owner]), app) || socialAppSettings(world, owner, app).refreshMode !== 'turn') continue
         const channelId = app === 'discord' ? world.servers.find(server => server.memberActorIds.includes(owner))?.channels[0]?.id : undefined

@@ -379,7 +379,7 @@ export function renderLauncher(host: LauncherHost, extras: HTMLElement[]): HTMLD
       if (!root.isConnected || root.closest('[hidden]')) return
       for (const [card, entry] of liveWidgets) {
         const tracker = host.state.trackers.find(tracker => tracker.id === entry.trackerId)
-        if (tracker) refreshTrackerDisplay(card, entry.compact ? { ...tracker, presentation: 'compact' } : tracker, host.state)
+        if (tracker) refreshTrackerDisplay(card, entry.compact ? { ...tracker, presentation: 'compact' } : tracker, host.state, true)
       }
     }, 1000)
     host.onCleanup(() => clearInterval(timer))

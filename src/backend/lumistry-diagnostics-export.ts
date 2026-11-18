@@ -10,6 +10,7 @@ import {REPAIR_POLICY_VERSION} from '../domain/lumistry-repair.js';
 import {normalizeAuthoringPolicy} from '../domain/authoring-policy.js';
 import {normalizeSamplerOverrides} from '../domain/samplers.js';
 import type {PhoneState} from '../types.js';
+import {discoveryRepairEvidence} from './lumistry-display.js';
 
 const select=(v:any,keys:string[])=>Object.fromEntries(keys.filter(k=>v?.[k]!==undefined).map(k=>[k,structuredClone(v[k])]));
 export function diagnosticConfiguration(preferences:any) {
@@ -37,7 +38,7 @@ export async function exportLumistryDiagnostics(state:PhoneState,preferences:unk
   experienceTools:d.tools,experienceSetup:{answers:d.setupDraft,applied:d.setupApplied,content:d.experiencePreferences},settings:d.generationSettings,filters:d.filters,world:{settingKey:d.settingKey,context:d.worldContext,fields:d.worldFields,population:d.populationWorld,guide:d.worldGuide,reading:d.worldReviewCache},
   measurements:{lifetime:d.discoveryAccounting,baseline:d.measurementBaseline,cumulative:d.creationTelemetry||emptyCreationTelemetry(),currentPeriod:measurementTelemetry(d.creationTelemetry||emptyCreationTelemetry(),d.measurementBaseline)},
   jobs:structuredClone(jobs),
-  repairEvidence:jobs.flatMap(job=>job!.slots.filter(s=>s.progress||s.quarantinedProgress).map(s=>({schema:'lumistry-replay-1',categoryOptions:Object.fromEntries(d.worldFields.map(w=>[w.key,w.options])),exportedAt,contract:job!.creationContract,jobId:job!.id,slotId:s.id,plan:s.plan,counts:{questions:s.questionCount,photos:s.photoCount},attempts:s.unitAttempts,spent:job!.spent,progress:s.progress,quarantine:s.quarantinedProgress}))),
+  repairEvidence:jobs.flatMap(job=>job!.slots.filter(s=>s.progress||s.quarantinedProgress).map(slot=>discoveryRepairEvidence(d,job!,slot,exportedAt))),
   messaging:state.conversations.filter(c=>c.channel==='dating'&&c.datingOwnerId===owner).map(c=>({id:c.id,archived:c.archived,updatedAt:c.updatedAt,messageCount:c.messages.length,unread:c.unread,
    availability:select(c.availability,['state','reason','resumePauseReason']),pause:c.pause?select(c.pause,['reason','createdAt','source']):undefined,
    lastDecision:c.lastDecision?select(c.lastDecision,['rawAction','normalizedAction','normalizationReason','contactInScene','remoteEligible','explicitRemoteOverride','createdAt','burstId','relayId']):undefined,

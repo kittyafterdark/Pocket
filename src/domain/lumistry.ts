@@ -58,6 +58,8 @@ export interface DatingProfile {
     visualSetting?:string;
     creationPlan?:CandidatePlan;
     authoring?: PersonAuthoring;
+    /** Display snapshot flag. Authoring text is fetched from the saved profile on demand. */
+    hasPrivateAuthoring?: true;
     development?: DatingDevelopment;
     tropeIds?: string[];
     id: string;

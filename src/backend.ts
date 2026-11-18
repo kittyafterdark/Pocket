@@ -5,6 +5,7 @@ import { normalizeNativeApps, NATIVE_APP_IDS } from './domain/native-apps.js'
 import {createCommunityRuntime} from './backend/community-runtime.js'
 import {SpotifyShareBridge} from './backend/spotify-share.js'
 import {datingReplyTexts} from './domain/lumistry-reply-burst.js'
+import { projectLumistryDisplay } from './backend/lumistry-display.js'
 import {preparePersonaDatingPhoto} from './domain/lumistry-user-photo.js'
 import {normalizeDating,datingReplyMessages,datingDecisionMessages,datingThread,datingFor,hiddenDatingContact} from './domain/lumistry.js'
 import {normalizeDatingAttachment} from './domain/lumistry-person.js'
@@ -1027,7 +1028,7 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
   })
   if (isRecord(raw) && Number(raw.version) > STATE_VERSION) throw new Error('This phone state was created by a newer Pocket version.')
   const state = normalizeState(raw, chatId, characterId, characterName)
-  await loadPreferences(userId, isRecord(raw) ? raw.settings : undefined)
+  if (isRecord(raw) && raw.settings !== undefined) await loadPreferences(userId, raw.settings)
   let stateChanged = Boolean(isRecord(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION))
   if (state.actorMemoryVersion < 1) {
     backfillDirectPhoneMemories(state)
@@ -1083,7 +1084,7 @@ async function loadState(chatId: string, characterId: string, userId?: string): 
       if (profile) { Object.assign(contact, applyIdentityProfile(contact, profile)); stateChanged = true }
     }
   }
-  if (stateChanged) await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId })
+  if (stateChanged) await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 0, userId })
   return state
 }
 
@@ -1212,7 +1213,7 @@ async function saveState(state: PhoneState, userId?: string): Promise<void> {
   state.updatedAt = nowIso()
   syncWalletTrackers(state,state.updatedAt)
   state.storageRevision=Math.max(0,state.storageRevision||0)+1
-  await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId })
+  await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 0, userId })
 }
 
 function withStateLock<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -1390,26 +1391,26 @@ function routeTargetsPocketMessage(route: PocketRoute | undefined, hiddenMessage
 }
 
 function projectSwipeScopedState(state: PhoneState): PhoneState {
-  const projected = structuredClone(state)
   const hiddenMessageIds = new Set<string>()
   for (const sourceConversation of state.conversations) {
     for (const message of sourceConversation.messages) {
       if (!pocketMessageActiveForSwipe(state, message)) hiddenMessageIds.add(message.id)
     }
   }
-  if (!hiddenMessageIds.size) return projected
-  for (const conversation of projected.conversations) {
-    conversation.messages = conversation.messages.filter((message) => !hiddenMessageIds.has(message.id))
-    conversation.unread = conversationUnreadForDevice(projected, conversation, pocketPersonaActorId(projected))
-    if (conversation.outgoingBurst) {
-      conversation.outgoingBurst.messageIds = conversation.outgoingBurst.messageIds.filter((messageId) => !hiddenMessageIds.has(messageId))
-      if (!conversation.outgoingBurst.messageIds.length) conversation.outgoingBurst = undefined
-    }
+  if (!hiddenMessageIds.size) return state
+  return {
+    ...state,
+    conversations: state.conversations.map(source => {
+      const messages = source.messages.filter(message => !hiddenMessageIds.has(message.id))
+      const messageIds = source.outgoingBurst?.messageIds.filter(id => !hiddenMessageIds.has(id))
+      const conversation = { ...source, messages, outgoingBurst: source.outgoingBurst && messageIds?.length ? { ...source.outgoingBurst, messageIds } : undefined }
+      conversation.unread = conversationUnreadForDevice(state, conversation, pocketPersonaActorId(state))
+      return conversation
+    }),
+    notifications: state.notifications.filter(entry => !routeTargetsPocketMessage(entry.route, hiddenMessageIds)),
+    activities: state.activities.filter(entry => !routeTargetsPocketMessage(entry.route, hiddenMessageIds)),
+    actorMemories: state.actorMemories.filter(entry => !hiddenMessageIds.has(entry.messageId)),
   }
-  projected.notifications = projected.notifications.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds))
-  projected.activities = projected.activities.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds))
-  projected.actorMemories = projected.actorMemories.filter((entry) => !hiddenMessageIds.has(entry.messageId))
-  return projected
 }
 
 function activeCandidateForTool(userId: string, chatId: string): ActivePocketCandidate | undefined {
@@ -1513,22 +1514,28 @@ async function sendState(state: PhoneState, userId?: string, reason = 'refresh',
   for (const [target, result] of Object.entries(resolvedWallpapers)) {
     if (result.status === 'error') spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || 'unknown error'}`)
   }
-  const displayState = projectSwipeScopedState(state)
+  const displayState = { ...projectSwipeScopedState(state), lumistry: projectLumistryDisplay(state.lumistry) }
   if (isFreeformChat(displayState.chatId)) {
     const checkpoint = displayState.freeformConsolidation || { version: 1 as const, status: 'idle' as const }
     displayState.freeformConsolidation = { ...checkpoint, pendingTurns: freeformPendingTurnCount(displayState) }
   }
   const galleryUrls = new Map<string, Promise<string | undefined>>()
+  const avatarGalleryIds = new Set([...displayState.contacts, ...npcBank.entries].flatMap(contact =>
+    contact.avatarSource?.kind === 'gallery' ? [contact.avatarSource.imageId] : [],
+  ))
   const resolveGalleryUrl = (imageId: string): Promise<string | undefined> => {
     const existing = galleryUrls.get(imageId)
     if (existing) return existing
     const pending = resolvePocketImageSource(spindle, { kind: 'gallery', imageId }, userId)
       .then(image => image.status === 'ready' ? image.url : undefined)
       .catch(() => undefined)
-    galleryUrls.set(imageId, pending)
+    // History hydration already deduplicates its IDs. Only keep lookups that
+    // can be reused for the avatar pass after hydration finishes.
+    if (avatarGalleryIds.has(imageId)) galleryUrls.set(imageId, pending)
     return pending
   }
   await hydratePocketImageProjection(displayState, resolveGalleryUrl)
+  displayState.contacts = displayState.contacts.map(contact => contact.avatarSource ? { ...contact } : contact)
   await Promise.all([...displayState.contacts, ...npcBank.entries].map(async contact => {
     if (!contact.avatarSource) return
     const imageUrl = contact.avatarSource.kind === 'gallery'
@@ -1599,9 +1606,16 @@ async function maybePush(state: PhoneState, preferences: DevicePreferences, noti
   if (!preferences.pushNotifications || !spindle.permissions.has('push_notification')) return
   if (!await pocketEnabled(userId)) return
   const throttleKey = `${userId || '_default'}:${stateKey(state.chatId, state.characterId)}:${notification.app}`
+  const now = Date.now()
+  const cutoff = now - 15_000
+  // The map is in insertion order, and a renewed key moves to the end.
+  for (const [key, sentAt] of notificationThrottle) {
+    if (sentAt > cutoff) break
+    notificationThrottle.delete(key)
+  }
   const lastSent = notificationThrottle.get(throttleKey) || 0
-  if (Date.now() - lastSent < 15_000) return
-  notificationThrottle.set(throttleKey, Date.now())
+  if (lastSent > cutoff) return
+  notificationThrottle.set(throttleKey, now)
   try {
     const status = await spindle.push.getStatus(userId)
     if (!status.available) return
@@ -5838,7 +5852,7 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
       const state=await loadState(context.chatId,context.characterId,userId)
       if(!pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[pocketPersonaActorId(state)]),'dating'))throw new Error('Install Lumistry from the App Store first.')
       if(payload.deviceOwnerActorId && payload.deviceOwnerActorId!==pocketPersonaActorId(state))throw new Error('Switch to your own phone to use Lumistry.')
-      await lumistry.handle(payload,context,userId);return
+      await lumistry.handle(payload,context,userId,state);return
     }
     switch (payload.type) {
       case 'lumiphone:timeskip': {

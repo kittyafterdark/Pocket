@@ -1,6 +1,7 @@
 import { beforeAll, expect, test } from 'bun:test'
 import { CoalescedWork, WorkPool } from '../src/backend/coalesced-work.js'
 import { PREFERENCES_PATH } from '../src/domain/preferences.js'
+import { defaultLauncherLayout } from '../src/domain/launcher.js'
 import { freeformHost } from './fixtures/freeform-host.js'
 
 const host = freeformHost()
@@ -13,6 +14,38 @@ function deferred() {
   return { promise, resolve }
 }
 async function flush() { for (let i = 0; i < 100; i++) await Promise.resolve() }
+
+test('routine state pushes omit raw authoring and the owner can still inspect and export it', async () => {
+  const scope = { chatId: 'authoring-projection', characterId: 'host-character' }
+  const user = 'authoring-projection-user'
+  await refresh(scope, user)
+  const key = [...host.store.keys()].find(key => key.startsWith(user + ':phones/') && host.store.get(key).chatId === scope.chatId)!
+  const phone = host.store.get(key)
+  const owner = phone.pocketPersonaActorId
+  phone.launcherLayouts = { [owner]: { ...defaultLauncherLayout(), installedApps: ['dating'] } }
+  const authoring = { version: 2, dossier: { version: 2, kind: 'dossier', text: 'Saved private dossier' }, photos: [], gallery: [], provenance: {} }
+  const trace = { schema: 'lumistry-replay-1', reservationId: 'r-projection', outcome: 'provider-failed', messages: [{ role: 'system', content: 'Private generation prompt' }], responseText: 'Private generation response', issues: [{ code: 'timeout', message: 'Provider timed out' }] }
+  phone.lumistry = { [owner]: {
+    self: { id: 'self', alias: 'Saved Persona', age: 30, authoring },
+    profiles: [{ id: 'published-1', alias: 'Published profile', age: 30, authoring }],
+    discoveryJob: { version: 2, id: 'job-1', fingerprint: 'fixture', status: 'paused', slots: [{ id: 'slot_1', status: 'failed', progress: { version: 2, stage: 'identity', task: 'dossier', draft: { bulky: 'Private checkpoint' }, authored: authoring, lastAttempt: trace } }] },
+  } }
+  await refresh(scope, user)
+  const state = host.sends.filter(event => event.type === 'lumiphone:state' && event.state.chatId === scope.chatId).at(-1)!.state
+  const projected = state.lumistry[owner]
+  expect(projected.profiles[0].hasPrivateAuthoring).toBe(true)
+  expect(projected.profiles[0].authoring).toBeUndefined()
+  expect(projected.self.authoring.dossier.text).toBe(authoring.dossier.text)
+  expect(projected.discoveryJob.slots[0].progress.lastAttempt.outcome).toBe('provider-failed')
+  expect(JSON.stringify(projected)).not.toContain('Private generation prompt')
+  expect(JSON.stringify(projected)).not.toContain('Private checkpoint')
+  const request = (action: string, payload: Record<string, string>) => host.send({ type: 'lumiphone:dating', ...scope, requestId: action, deviceOwnerActorId: owner, action, ...payload }, user)
+  await request('inspect_profile_authoring', { profileId: 'published-1' })
+  expect(host.sends.findLast(event => event.requestId === 'inspect_profile_authoring')).toMatchObject({ phase: 'profile_authoring', authoring: { dossier: { text: authoring.dossier.text } } })
+  await request('export_repair_evidence', { jobId: 'job-1', slotId: 'slot_1' })
+  expect(host.sends.findLast(event => event.phase === 'repair_evidence')?.evidence.progress.lastAttempt.messages).toEqual(trace.messages)
+  expect(host.store.get(key).lumistry[owner].profiles[0].authoring.dossier.text).toBe(authoring.dossier.text)
+})
 
 test('world setup bounds the host read and shares a failed generation across requests', async () => {
   const scope = { chatId: 'world-budget', characterId: 'host-character' }

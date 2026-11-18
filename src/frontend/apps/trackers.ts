@@ -2,7 +2,7 @@ import type { PhoneState, PhoneTracker, TrackerKind, TrackerPresentation, Tracke
 import { materializeTracker, TRACKER_TEMPLATES, trackerBand, trackerKey } from '../../domain/trackers.js'
 import { button, el } from '../shared.js'
 import { trackerEditor, trackerTemplates } from './tracker-editor.js'
-import { trackerDisplay, refreshTrackerDisplay, trackerUpdateDescription } from '../components/tracker-display.js'
+import { trackerDisplay, refreshTrackerDisplay, trackerUpdateDescription, trackerUsesRealClock } from '../components/tracker-display.js'
 import type { PageAction } from '../shared.js'
 import { trackerSettings } from './tracker-settings.js'
 import { trackerMenu } from '../components/tracker-menu.js'
@@ -98,14 +98,17 @@ function dashboard(host: TrackerViewHost): HTMLDivElement {
     empty.appendChild(el('p', 'lp-copy', 'Add Health, Trust, Hunger, Ammo, a roleplay countdown, a state, or a blank custom tracker.'))
     content.appendChild(empty)
   }
-  const timer = window.setInterval(() => {
-    for (const tracker of host.state.trackers) {
-      if (tracker.updateMode !== 'automatic') continue
-      const card = content.querySelector<HTMLElement>(`[data-tracker-id="${CSS.escape(tracker.id)}"]`)
-      if (card) refreshTrackerDisplay(card, tracker, host.state)
-    }
-  }, 1_000)
-  host.onCleanup(() => window.clearInterval(timer))
+  const live = host.state.trackers.filter(trackerUsesRealClock)
+  if (live.length) {
+    const timer = window.setInterval(() => {
+      if (!page.isConnected || page.closest('[hidden]')) return
+      for (const tracker of live) {
+        const card = content.querySelector<HTMLElement>(`[data-tracker-id="${CSS.escape(tracker.id)}"]`)
+        if (card) refreshTrackerDisplay(card, tracker, host.state, true)
+      }
+    }, 1_000)
+    host.onCleanup(() => window.clearInterval(timer))
+  }
   return page
 }
 
@@ -113,8 +116,10 @@ function detail(host: TrackerViewHost, tracker: PhoneTracker): HTMLDivElement {
   const { page, content } = host.page(tracker.label, targetLabel(tracker.target), { label: '⚙', callback: () => host.select(tracker.id, 'config'), ariaLabel: 'Tracker settings' })
   const display = trackerDisplay(tracker, host.state)
   content.appendChild(display)
-  if (tracker.updateMode === 'automatic') {
-    const timer = window.setInterval(() => refreshTrackerDisplay(display, tracker, host.state), 1_000)
+  if (trackerUsesRealClock(tracker)) {
+    const timer = window.setInterval(() => {
+      if (page.isConnected && !page.closest('[hidden]')) refreshTrackerDisplay(display, tracker, host.state, true)
+    }, 1_000)
     host.onCleanup(() => window.clearInterval(timer))
   }
   const policy = el('div', 'lp-card lp-tracker-policy')

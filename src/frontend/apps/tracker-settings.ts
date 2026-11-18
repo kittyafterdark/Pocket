@@ -2,6 +2,7 @@ import { uuid } from '../../domain/uuid.js'
 import { DEFAULT_TRACKER_PROMPT, normalizeTrackerContextSettings, trackerContext, TRACKER_PROMPT_LIMIT } from '../../domain/tracker-context.js'
 import { button, el } from '../shared.js'
 import { fieldBlock } from '../components/ui.js'
+import { trackerUsesRealClock } from '../components/tracker-display.js'
 import type { TrackerViewHost } from './trackers.js'
 
 export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
@@ -9,11 +10,13 @@ export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
   const saved = normalizeTrackerContextSettings(host.state.trackerSettings)
   const settings = normalizeTrackerContextSettings(host.draft || saved)
   const delivery = el('select', 'lp-select')
+  delivery.dataset.trackerContextControl = 'delivery'
   for (const [value, label] of [['injection', 'Automatic live injection'], ['macros', 'Macros in RP preset']]) {
     const option = el('option', '', label); option.value = value; delivery.append(option)
   }
   delivery.value = settings.delivery
   const prompt = el('textarea', 'lp-textarea'); prompt.rows = 7; prompt.maxLength = TRACKER_PROMPT_LIMIT; prompt.value = settings.prompt
+  prompt.dataset.trackerContextControl = 'prompt'
   content.append(
     fieldBlock('Send tracker context using', delivery, 'Choose one delivery path. Automatic injection adds the tracker prompt and live state to each RP request. Macro mode lets your preset choose where they appear.'),
     fieldBlock('Live state context prompt', prompt, 'Live tracker data and write permissions are always appended. Leave this blank for data and built-in guidance only.'),
@@ -45,6 +48,11 @@ export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
   save.addEventListener('click', () => host.send('lumiphone:save_tracker_settings', { settings: { delivery: delivery.value, prompt: prompt.value } }))
   content.append(reset, macros, save, previewLabel, preview)
   update()
-  const timer = window.setInterval(() => update(), 1000); host.onCleanup(() => window.clearInterval(timer))
+  if (host.state.trackers.some(tracker => tracker.visibleToModel && trackerUsesRealClock(tracker))) {
+    const timer = window.setInterval(() => {
+      if (page.isConnected && !page.closest('[hidden]')) update()
+    }, 1000)
+    host.onCleanup(() => window.clearInterval(timer))
+  }
   return page
 }

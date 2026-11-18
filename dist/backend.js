@@ -422,7 +422,7 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
       createdAt: wallNow,
       roleplayAt: clean2(roleplayNow, 80) || undefined
     });
-  return { tracker: next, changed: true };
+  return { tracker: next, changed: nextValue !== tracker.value || Boolean(tracker.pausedReason) };
 }
 function setTrackerClockPaused(tracker, paused, roleplayNow, wallNow = new Date().toISOString()) {
   if (tracker.kind === "state" || tracker.updateMode !== "automatic")
@@ -28155,6 +28155,8 @@ async function runCommunityNativeGeneration(host, task, requestId, input, userId
 
 // src/protocol/lumistry.ts
 var core = new Set("accept archive_delete archive_measurements archive_read bank_reassess bank_settings cancel clear_error discard_discovery discard_manual discover edit enable_background enable_replies encounter enrich exchange export_diagnostics filters force_match generate generation_settings height_units image_check like love_preferences message_photo pass photo photo_add photo_remove pipeline_settings recover refresh relationship_assess relationship_sources remove reset_passes retry_slot rewrite_item self self_generate self_preferences setting_new species_accept species_reject theme unmatch voice_lab world world_accept world_sources".split(" "));
+for (const action of ["inspect_profile_authoring", "inspect_draft_authoring", "export_repair_evidence"])
+  core.add(action);
 function parseLumistryRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid Lumistry request.");
@@ -28172,6 +28174,55 @@ function parseLumistryRequest(value) {
     throw new Error("Invalid wishlist draft.");
   let family = action === "filters" ? "wishlist" : action.startsWith("world") || action.startsWith("species_") || action === "setting_new" ? "world" : action.startsWith("relationship_") || action === "love_preferences" ? "relationship" : action.startsWith("setup_") ? "setup" : action.startsWith("tools_") ? "tools" : action.includes("diagnostics") || action.startsWith("archive_") ? "diagnostics" : action.startsWith("saved_profile_") || ["self", "self_generate", "self_preferences", "edit", "accept", "remove", "photo", "photo_add", "photo_remove", "message_photo", "enrich", "generate"].includes(action) ? "profile" : ["discover", "retry_slot", "recover", "cancel", "pass", "like", "force_match", "unmatch", "reset_passes", "discard_discovery", "discard_manual", "clear_error"].includes(action) ? "discovery" : "preferences";
   return { ...v, action, family };
+}
+
+// src/backend/lumistry-display.ts
+function displayProfile(profile) {
+  return profile.authoring ? { ...profile, authoring: undefined, hasPrivateAuthoring: true } : profile;
+}
+function displaySlot(slot) {
+  const progress = slot.progress;
+  return {
+    ...slot,
+    quarantinedProgress: slot.quarantinedProgress ? {} : undefined,
+    progress: progress ? {
+      version: progress.version,
+      stage: progress.stage,
+      task: progress.task,
+      draft: { speciesProposal: progress.draft.speciesProposal },
+      authored: { version: 2, photos: [], gallery: [], provenance: {} },
+      issues: progress.issues,
+      problems: progress.problems,
+      lastAttempt: progress.lastAttempt && { ...progress.lastAttempt, messages: undefined, responseText: undefined }
+    } : undefined
+  };
+}
+function displayJob(job) {
+  return job && { ...job, slots: job.slots.map(displaySlot), reviewDraft: job.reviewDraft ? {} : undefined };
+}
+function projectLumistryDisplay(lumistry) {
+  return lumistry && Object.fromEntries(Object.entries(lumistry).map(([owner, data]) => [owner, {
+    ...data,
+    profiles: data.profiles.map(displayProfile),
+    discoveryJob: displayJob(data.discoveryJob),
+    draftJob: displayJob(data.draftJob)
+  }]));
+}
+function discoveryRepairEvidence(data, job, slot, exportedAt) {
+  return {
+    schema: "lumistry-replay-1",
+    categoryOptions: Object.fromEntries(data.worldFields.map((field) => [field.key, field.options])),
+    exportedAt,
+    contract: job.creationContract,
+    jobId: job.id,
+    slotId: slot.id,
+    plan: slot.plan,
+    counts: { questions: slot.questionCount, photos: slot.photoCount },
+    attempts: slot.unitAttempts,
+    spent: job.spent,
+    progress: slot.progress,
+    quarantine: slot.quarantinedProgress
+  };
 }
 
 // src/domain/lumistry-love-context.ts
@@ -28973,7 +29024,7 @@ async function exportLumistryDiagnostics(state, preferences, readArchive, export
     world: { settingKey: d.settingKey, context: d.worldContext, fields: d.worldFields, population: d.populationWorld, guide: d.worldGuide, reading: d.worldReviewCache },
     measurements: { lifetime: d.discoveryAccounting, baseline: d.measurementBaseline, cumulative: d.creationTelemetry || emptyCreationTelemetry(), currentPeriod: measurementTelemetry(d.creationTelemetry || emptyCreationTelemetry(), d.measurementBaseline) },
     jobs: structuredClone(jobs),
-    repairEvidence: jobs.flatMap((job) => job.slots.filter((s) => s.progress || s.quarantinedProgress).map((s) => ({ schema: "lumistry-replay-1", categoryOptions: Object.fromEntries(d.worldFields.map((w) => [w.key, w.options])), exportedAt, contract: job.creationContract, jobId: job.id, slotId: s.id, plan: s.plan, counts: { questions: s.questionCount, photos: s.photoCount }, attempts: s.unitAttempts, spent: job.spent, progress: s.progress, quarantine: s.quarantinedProgress }))),
+    repairEvidence: jobs.flatMap((job) => job.slots.filter((s) => s.progress || s.quarantinedProgress).map((slot) => discoveryRepairEvidence(d, job, slot, exportedAt))),
     messaging: state.conversations.filter((c) => c.channel === "dating" && c.datingOwnerId === owner).map((c) => ({
       id: c.id,
       archived: c.archived,
@@ -32363,7 +32414,7 @@ class Lumistry {
       await this.h.sendState(state, user, "dating");
     });
   }
-  async handle(input, context, user) {
+  async handle(input, context, user, loadedState) {
     input = parseLumistryRequest(input);
     const h = this.h, { chatId, characterId } = context;
     const baseKey = JSON.stringify(user) + ":" + h.stateKey(chatId, characterId), requestId = datingText(input.requestId, 180), action = datingText(input.action, 40);
@@ -32379,7 +32430,7 @@ class Lumistry {
       }
       return;
     }
-    const initial = await h.loadState(chatId, characterId, user), owner = initial.pocketPersonaActorId;
+    const initial = loadedState ?? await h.loadState(chatId, characterId, user), owner = initial.pocketPersonaActorId;
     if (input.deviceOwnerActorId && input.deviceOwnerActorId !== owner)
       throw new Error("Switch to your Persona device to use Lumistry.");
     if (["like", "force_match"].includes(action) && initial.conversations.length >= 80)
@@ -32408,6 +32459,27 @@ class Lumistry {
       await auxiliary(() => h.sendState(state, user, "dating"), (d) => h.reportDiagnostic?.(d, user));
     });
     const data = datingFor(initial, owner);
+    if (action === "inspect_profile_authoring" || action === "inspect_draft_authoring" || action === "export_repair_evidence") {
+      context.signal?.throwIfAborted();
+      if (h.activeScope?.(chatId, characterId, user, context.frontendSessionId) === false)
+        throw new Error("The phone changed. Reopen the inspector.");
+      if (action === "inspect_profile_authoring") {
+        const profile = data.profiles.find((p) => p.id === input.profileId) || (data.self?.id === input.profileId ? data.self : undefined);
+        if (!profile?.authoring)
+          throw new Error("This profile has no saved authoring.");
+        emit({ phase: "profile_authoring", authoring: profile.authoring, voiceLab: profile.development?.voiceLab });
+        return;
+      }
+      const job = input.manual === true ? data.draftJob : data.discoveryJob;
+      const slot = job?.id === input.jobId ? job?.slots.find((s) => s.id === input.slotId) : undefined;
+      if (!job || !slot || !(slot.progress || slot.quarantinedProgress))
+        throw new Error("This draft changed. Reopen saved authoring.");
+      if (action === "inspect_draft_authoring")
+        emit({ phase: "draft_authoring", text: slot.progress?.authored.dossier?.text || slot.quarantineReason || "Saved plan; no character text produced yet." });
+      else
+        emit({ phase: "repair_evidence", evidence: discoveryRepairEvidence(data, job, slot, h.nowIso()) });
+      return;
+    }
     if (action === "relationship_sources") {
       if (h.activeScope?.(chatId, characterId, user, context.frontendSessionId) === false)
         throw new Error("The phone changed. Reopen this connection.");
@@ -33105,10 +33177,10 @@ Rewrite exactly one public item in the accepted person's own English voice. Do n
           throw error;
         }
       } finally {
+        context.signal?.removeEventListener("abort", abort);
         if (this.jobs.get(key) === controller) {
           this.jobs.delete(key);
           this.jobSessions.delete(key);
-          context.signal?.removeEventListener("abort", abort);
           this.discoveryWatchers.delete(key);
         }
       }
@@ -33140,7 +33212,7 @@ Rewrite exactly one public item in the accepted person's own English voice. Do n
           throw new Error("Profile missing.");
         const old = d.profiles[i];
         assertDatingIngress(input.profile, "edit");
-        const p = normalizeDatingProfile({ ...input.profile, development: old.development ? { ...old.development, revision: old.development.revision + 1 } : undefined, tropeIds: old.tropeIds, contactId: old.contactId });
+        const p = normalizeDatingProfile({ ...input.profile, authoring: old.authoring, development: old.development ? { ...old.development, revision: old.development.revision + 1 } : undefined, tropeIds: old.tropeIds, contactId: old.contactId });
         if (!p)
           throw new Error("Invalid profile; age must be at least 18.");
         d.profiles[i] = p;
@@ -36976,12 +37048,15 @@ class SocialAutomation {
     this.jobs.set(scope, controller);
     try {
       const state = await this.host.loadState(context.chatId, context.characterId, userId);
+      const initialWorld = normalizeSocialState(state.social);
       const owners = [...new Set([pocketPersonaActorId(state), ...state.conversations.flatMap((conversation) => conversationDeviceActorIds(state, conversation))])];
       let count = 0;
       for (const owner of owners)
         for (const app of SOCIAL_APPS) {
           if (controller.signal.aborted || count >= 4)
             return;
+          if (socialAppSettings(initialWorld, owner, app).refreshMode !== "turn" || !pocketAppInstalled(normalizeLauncherLayout(state.launcherLayouts?.[owner]), app))
+            continue;
           const latest = await this.host.loadState(context.chatId, context.characterId, userId), world = normalizeSocialState(latest.social);
           if (!pocketAppInstalled(normalizeLauncherLayout(latest.launcherLayouts?.[owner]), app) || socialAppSettings(world, owner, app).refreshMode !== "turn")
             continue;
@@ -38008,39 +38083,52 @@ async function hydratePocketImageProjection(state, resolveGalleryUrl) {
     targets.push(assign);
     assignments.set(id, targets);
   };
-  for (const conversation of state.conversations) {
-    for (const message of conversation.messages) {
+  state.conversations = state.conversations.map((conversation) => {
+    if (!conversation.messages.some((message) => message.imageId))
+      return conversation;
+    const messages = conversation.messages.map((message) => {
+      if (!message.imageId)
+        return message;
+      const display = { ...message };
       hydrate(message.imageId, (url) => {
-        message.imageUrl = url;
+        display.imageUrl = url;
       });
-    }
+      return display;
+    });
+    return { ...conversation, messages };
+  });
+  const withPhotoUrls = (profile) => {
+    if (!profile.photos.some((photo) => photo.source.kind === "gallery"))
+      return profile;
+    const photos = profile.photos.map((photo) => {
+      if (photo.source.kind !== "gallery")
+        return photo;
+      const display = { ...photo };
+      hydrate(photo.source.imageId, (url) => {
+        display.url = url || "";
+      });
+      return display;
+    });
+    return { ...profile, photos };
+  };
+  if (state.lumistry) {
+    state.lumistry = Object.fromEntries(Object.entries(state.lumistry).map(([owner, dating]) => [owner, {
+      ...dating,
+      self: dating.self ? withPhotoUrls(dating.self) : dating.self,
+      profiles: dating.profiles.map(withPhotoUrls)
+    }]));
   }
-  for (const dating of Object.values(state.lumistry || {})) {
-    const profiles = [...dating.self ? [dating.self] : [], ...dating.profiles];
-    for (const profile of profiles) {
-      for (const photo of profile.photos) {
-        if (photo.source.kind !== "gallery")
-          continue;
-        hydrate(photo.source.imageId, (url) => {
-          photo.url = url || "";
-        });
-      }
-    }
-  }
-  if (state.social) {
-    for (const post of state.social.posts) {
-      if (post.imageId && !isPocketRenderableImageUrl(post.imageUrl))
-        hydrate(post.imageId, (url) => {
-          post.imageUrl = url;
-        });
-    }
-    for (const server of state.social.servers) {
-      if (server.imageId && !isPocketRenderableImageUrl(server.imageUrl))
-        hydrate(server.imageId, (url) => {
-          server.imageUrl = url;
-        });
-    }
-  }
+  const withImageUrl = (entry) => {
+    if (!entry.imageId || isPocketRenderableImageUrl(entry.imageUrl))
+      return entry;
+    const display = { ...entry };
+    hydrate(entry.imageId, (url) => {
+      display.imageUrl = url;
+    });
+    return display;
+  };
+  if (state.social)
+    state.social = { ...state.social, posts: state.social.posts.map(withImageUrl), servers: state.social.servers.map(withImageUrl) };
   const entries = assignments.entries();
   const worker = async () => {
     for (const [id, targets] of entries) {
@@ -38066,61 +38154,116 @@ async function projectGeneratedPocketImage(result, resolveGalleryUrl) {
 }
 
 // src/backend/image-diagnostics.ts
-var MAX_LOGS = 40;
-var logsByUser = new Map;
+var MAX_USER_LOGS = 40;
+var MAX_TOTAL_LOGS = 160;
+var MAX_PAYLOAD_CHARS = 24000;
+var MAX_PAYLOAD_NODES = 500;
+var logs = new Map;
 function keyFor2(userId) {
   return userId || "__default__";
 }
-function cleanString(value) {
-  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
-    const head = value.slice(0, value.indexOf(",") + 1);
-    return `${head}<${Math.max(0, value.length - head.length)} base64 chars>`;
+function cleanString(value, limit) {
+  if (!limit)
+    return "";
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value.slice(0, 128))) {
+    const payloadStart = value.indexOf(",") + 1;
+    return `${value.slice(0, Math.min(payloadStart, 100))}<${value.length - payloadStart} base64 chars>`.slice(0, limit);
   }
-  if (value.length > 24000)
-    return `${value.slice(0, 24000)}\u2026 <${value.length - 24000} chars truncated>`;
+  if (value.length > limit) {
+    const preview = `${value.slice(0, Math.max(0, limit - 32))}\u2026 <truncated>`.slice(0, limit);
+    return JSON.parse(JSON.stringify(preview));
+  }
   return value;
 }
-function sanitizeImageDiagnosticValue(value, depth = 0, key = "") {
+function sanitizeImageDiagnosticValue(value) {
+  return sanitize(value, { chars: MAX_PAYLOAD_CHARS, nodes: MAX_PAYLOAD_NODES });
+}
+function sanitize(value, budget, depth = 0, key = "") {
+  budget.nodes--;
   if (depth > 8)
     return "<max depth>";
   if (/(?:authorization|cookie|password|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)/i.test(key))
     return "<redacted>";
   if (value === null || value === undefined || typeof value === "number" || typeof value === "boolean")
     return value;
-  if (typeof value === "string")
-    return cleanString(value);
-  if (Array.isArray(value))
-    return value.slice(0, 160).map((entry) => sanitizeImageDiagnosticValue(entry, depth + 1));
-  if (typeof value === "object") {
-    const result = {};
-    for (const [childKey, childValue] of Object.entries(value).slice(0, 240)) {
-      if (/^(?:data|imageData|imageDataUrl)$/i.test(childKey) && typeof childValue === "string" && childValue.length > 2000) {
-        result[childKey] = `<image payload: ${childValue.length} chars>`;
-      } else
-        result[childKey] = sanitizeImageDiagnosticValue(childValue, depth + 1, childKey);
+  if (typeof value === "string") {
+    const result = cleanString(value, budget.chars);
+    budget.chars -= result.length;
+    return result;
+  }
+  if (Array.isArray(value)) {
+    const result = [];
+    for (let index = 0;index < Math.min(value.length, 160); index++) {
+      if (budget.chars <= 0 || budget.nodes <= 0) {
+        result.push("<payload truncated>");
+        break;
+      }
+      result.push(sanitize(value[index], budget, depth + 1));
     }
     return result;
   }
-  return String(value);
+  if (typeof value === "object") {
+    const result = Object.create(null);
+    let count = 0;
+    for (const childKey in value) {
+      if (!Object.hasOwn(value, childKey))
+        continue;
+      if (++count > 240 || budget.chars <= 0 || budget.nodes <= 0) {
+        result["<payload truncated>"] = true;
+        break;
+      }
+      const label = cleanString(childKey, Math.min(200, budget.chars));
+      const childValue = value[childKey];
+      budget.chars -= label.length;
+      if (/^(?:data|imageData|imageDataUrl)$/i.test(childKey) && typeof childValue === "string" && childValue.length > 2000) {
+        result[label] = `<image payload: ${childValue.length} chars>`;
+        budget.nodes--;
+      } else
+        result[label] = sanitize(childValue, budget, depth + 1, childKey);
+    }
+    return result;
+  }
+  return sanitize(String(value), budget, depth, key);
 }
 function recordImageDiagnostic(userId, entry) {
   const next = {
     id: localUuid(),
     createdAt: new Date().toISOString(),
     ...entry,
+    requestId: cleanString(entry.requestId, 200),
+    source: cleanString(entry.source, 200),
+    stage: cleanString(entry.stage, 200),
+    message: cleanString(entry.message, 2000),
     payload: entry.payload === undefined ? undefined : sanitizeImageDiagnosticValue(entry.payload)
   };
-  const key = keyFor2(userId);
-  const logs = logsByUser.get(key) || [];
-  logs.unshift(next);
-  logsByUser.set(key, logs.slice(0, MAX_LOGS));
+  const user = keyFor2(userId);
+  let oldestForUser;
+  let count = 0;
+  for (const [id, log] of logs) {
+    if (log.user !== user)
+      continue;
+    oldestForUser ??= id;
+    count++;
+  }
+  if (oldestForUser && count >= MAX_USER_LOGS)
+    logs.delete(oldestForUser);
+  if (logs.size >= MAX_TOTAL_LOGS) {
+    const oldest = logs.keys().next().value;
+    if (oldest)
+      logs.delete(oldest);
+  }
+  logs.set(next.id, { user, entry: next });
   return next;
 }
 function listImageDiagnostics(userId) {
-  return (logsByUser.get(keyFor2(userId)) || []).map((entry) => ({ ...entry, payload: sanitizeImageDiagnosticValue(entry.payload) }));
+  const user = keyFor2(userId);
+  return Array.from(logs.values()).filter((log) => log.user === user).reverse().map((log) => structuredClone(log.entry));
 }
 function clearImageDiagnostics(userId) {
-  logsByUser.delete(keyFor2(userId));
+  const user = keyFor2(userId);
+  for (const [id, log] of logs)
+    if (log.user === user)
+      logs.delete(id);
 }
 
 // src/backend/image-jobs.ts
@@ -39529,7 +39672,8 @@ async function loadState(chatId, characterId, userId) {
   if (isRecord2(raw) && Number(raw.version) > STATE_VERSION)
     throw new Error("This phone state was created by a newer Pocket version.");
   const state = normalizeState(raw, chatId, characterId, characterName);
-  await loadPreferences(userId, isRecord2(raw) ? raw.settings : undefined);
+  if (isRecord2(raw) && raw.settings !== undefined)
+    await loadPreferences(userId, raw.settings);
   let stateChanged = Boolean(isRecord2(raw) && Number(raw.version || 0) <= STATE_VERSION && (raw.settings !== undefined || Number(raw.version || 0) < STATE_VERSION));
   if (state.actorMemoryVersion < 1) {
     backfillDirectPhoneMemories(state);
@@ -39599,7 +39743,7 @@ async function loadState(chatId, characterId, userId) {
     }
   }
   if (stateChanged)
-    await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 2, userId });
+    await spindle.userStorage.setJson(statePath(chatId, characterId), state, { indent: 0, userId });
   return state;
 }
 var POCKET_ACCESS_PATH = "preferences/pocket-access.json";
@@ -39748,7 +39892,7 @@ async function saveState(state, userId) {
   state.updatedAt = nowIso();
   syncWalletTrackers(state, state.updatedAt);
   state.storageRevision = Math.max(0, state.storageRevision || 0) + 1;
-  await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 2, userId });
+  await spindle.userStorage.setJson(statePath(state.chatId, state.characterId), state, { indent: 0, userId });
 }
 function withStateLock(key, task) {
   const previous = stateLocks.get(key) || Promise.resolve();
@@ -39944,7 +40088,6 @@ function routeTargetsPocketMessage(route, hiddenMessageIds) {
   return Boolean(route?.app === "messages" && route.messageId && hiddenMessageIds.has(route.messageId));
 }
 function projectSwipeScopedState(state) {
-  const projected = structuredClone(state);
   const hiddenMessageIds = new Set;
   for (const sourceConversation of state.conversations) {
     for (const message of sourceConversation.messages) {
@@ -39953,20 +40096,20 @@ function projectSwipeScopedState(state) {
     }
   }
   if (!hiddenMessageIds.size)
-    return projected;
-  for (const conversation of projected.conversations) {
-    conversation.messages = conversation.messages.filter((message) => !hiddenMessageIds.has(message.id));
-    conversation.unread = conversationUnreadForDevice(projected, conversation, pocketPersonaActorId(projected));
-    if (conversation.outgoingBurst) {
-      conversation.outgoingBurst.messageIds = conversation.outgoingBurst.messageIds.filter((messageId) => !hiddenMessageIds.has(messageId));
-      if (!conversation.outgoingBurst.messageIds.length)
-        conversation.outgoingBurst = undefined;
-    }
-  }
-  projected.notifications = projected.notifications.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds));
-  projected.activities = projected.activities.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds));
-  projected.actorMemories = projected.actorMemories.filter((entry) => !hiddenMessageIds.has(entry.messageId));
-  return projected;
+    return state;
+  return {
+    ...state,
+    conversations: state.conversations.map((source) => {
+      const messages = source.messages.filter((message) => !hiddenMessageIds.has(message.id));
+      const messageIds = source.outgoingBurst?.messageIds.filter((id) => !hiddenMessageIds.has(id));
+      const conversation = { ...source, messages, outgoingBurst: source.outgoingBurst && messageIds?.length ? { ...source.outgoingBurst, messageIds } : undefined };
+      conversation.unread = conversationUnreadForDevice(state, conversation, pocketPersonaActorId(state));
+      return conversation;
+    }),
+    notifications: state.notifications.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds)),
+    activities: state.activities.filter((entry) => !routeTargetsPocketMessage(entry.route, hiddenMessageIds)),
+    actorMemories: state.actorMemories.filter((entry) => !hiddenMessageIds.has(entry.messageId))
+  };
 }
 function activeCandidateForTool(userId, chatId) {
   const userKey = viewKey(userId);
@@ -40079,12 +40222,13 @@ async function sendState(state, userId, reason = "refresh", open = false, prefer
     if (result.status === "error")
       spindle.log.warn(`Pocket image resolution failed (${target}/${result.sourceKind}): ${result.error || "unknown error"}`);
   }
-  const displayState = projectSwipeScopedState(state);
+  const displayState = { ...projectSwipeScopedState(state), lumistry: projectLumistryDisplay(state.lumistry) };
   if (isFreeformChat(displayState.chatId)) {
     const checkpoint = displayState.freeformConsolidation || { version: 1, status: "idle" };
     displayState.freeformConsolidation = { ...checkpoint, pendingTurns: freeformPendingTurnCount(displayState) };
   }
   const galleryUrls = new Map;
+  const avatarGalleryIds = new Set([...displayState.contacts, ...npcBank.entries].flatMap((contact) => contact.avatarSource?.kind === "gallery" ? [contact.avatarSource.imageId] : []));
   const resolveGalleryUrl = (imageId) => {
     const existing = galleryUrls.get(imageId);
     if (existing)
@@ -40092,10 +40236,12 @@ async function sendState(state, userId, reason = "refresh", open = false, prefer
     const pending = resolvePocketImageSource(spindle, { kind: "gallery", imageId }, userId).then((image) => image.status === "ready" ? image.url : undefined).catch(() => {
       return;
     });
-    galleryUrls.set(imageId, pending);
+    if (avatarGalleryIds.has(imageId))
+      galleryUrls.set(imageId, pending);
     return pending;
   };
   await hydratePocketImageProjection(displayState, resolveGalleryUrl);
+  displayState.contacts = displayState.contacts.map((contact) => contact.avatarSource ? { ...contact } : contact);
   await Promise.all([...displayState.contacts, ...npcBank.entries].map(async (contact) => {
     if (!contact.avatarSource)
       return;
@@ -40158,10 +40304,17 @@ async function maybePush(state, preferences, notification, userId) {
   if (!await pocketEnabled(userId))
     return;
   const throttleKey = `${userId || "_default"}:${stateKey(state.chatId, state.characterId)}:${notification.app}`;
+  const now = Date.now();
+  const cutoff = now - 15000;
+  for (const [key, sentAt] of notificationThrottle) {
+    if (sentAt > cutoff)
+      break;
+    notificationThrottle.delete(key);
+  }
   const lastSent = notificationThrottle.get(throttleKey) || 0;
-  if (Date.now() - lastSent < 15000)
+  if (lastSent > cutoff)
     return;
-  notificationThrottle.set(throttleKey, Date.now());
+  notificationThrottle.set(throttleKey, now);
   try {
     const status = await spindle.push.getStatus(userId);
     if (!status.available)
@@ -44899,7 +45052,7 @@ async function handleFrontend(payload, userId) {
         throw new Error("Install Lumistry from the App Store first.");
       if (payload.deviceOwnerActorId && payload.deviceOwnerActorId !== pocketPersonaActorId(state))
         throw new Error("Switch to your own phone to use Lumistry.");
-      await lumistry.handle(payload, context, userId);
+      await lumistry.handle(payload, context, userId, state);
       return;
     }
     switch (payload.type) {

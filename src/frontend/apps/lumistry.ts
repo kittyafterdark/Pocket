@@ -36,6 +36,18 @@ import type { PhoneState } from '../../types.js';
 import { DATING_FIELDS, datingFor, normalizeDatingProfile, publicDatingProfile, type DatingProfile, type DatingDecision } from '../../domain/lumistry.js';
 import { DATING_OPTIONS } from '../../domain/lumistry-options.js';
 import { button, el, formatTime } from '../shared.js';
+
+export function profileAuthoringSources(authoring: NonNullable<DatingProfile['authoring']>, voiceLab?: { text: string }): HTMLElement {
+    const sources=el('div','lp-stack');
+    sources.append(el('p','lp-copy','Private source material for the profile editor.'));
+    const add=(label:string,text:string)=>{const section=el('details');section.append(el('summary','',label),el('pre','lumistry-authoring-source',text));sources.append(section);};
+    for(const [label,record] of [['Original dossier',authoring.dossier],['Extracted index',authoring.index],['Public authoring',authoring.public]] as const)if(record)add(label,record.text);
+    for(const [i,record] of authoring.photos.entries())add(`Original photo authoring ${i+1}`,record.text);
+    add('Extracted fact provenance',JSON.stringify(authoring.provenance,null,2));
+    if(voiceLab)add('Diagnostic voice rehearsal',voiceLab.text);
+    return sources;
+}
+
 export interface DatingUI {
     loveDraft?:LovePreferences;visualMemory?:VisualMemory;editorSource?:DatingProfile;editorInitial?:string;editorLeave?:()=>void;libraryView?:Record<string,{search:string;category:string}>;
     supportExport?:unknown;
@@ -563,13 +575,8 @@ function profileCard(h: DatingHost, p: DatingProfile, canManage = false): HTMLEl
             actions.append(reroll, remove);
         }
         tools.append(actions);
-        if(p.authoring){const inspector=el('details','lp-stack');inspector.append(el('summary','','Private authoring inspector'),el('p','lp-copy','Editor-only source material. This does not establish what your roleplay character or friends know.'));
-            for(const [label,record] of [['Original dossier',p.authoring.dossier],['Extracted index',p.authoring.index],['Public authoring',p.authoring.public]] as const)if(record){const section=el('details');section.append(el('summary','',label),el('pre','lumistry-authoring-source',record.text));inspector.append(section);}
-            for(const [i,record] of p.authoring.photos.entries()){const section=el('details');section.append(el('summary','',`Original photo authoring ${i+1}`),el('pre','lumistry-authoring-source',record.text));inspector.append(section);}
-            const provenance=el('details');provenance.append(el('summary','','Extracted fact provenance'),el('pre','lumistry-authoring-source',JSON.stringify(p.authoring.provenance,null,2)));inspector.append(provenance);
-            if(p.development?.voiceLab){const section=el('details');section.append(el('summary','','Diagnostic voice rehearsal — not an event'),el('pre','lumistry-authoring-source',p.development.voiceLab.text));inspector.append(section);}
-            tools.append(inspector);
-        }
+        if(p.hasPrivateAuthoring)tools.append(act('Private authoring inspector',()=>h.action('inspect_profile_authoring',{profileId:p.id}),h.ui.busy,'eye'));
+        else if(p.authoring){const inspector=el('details','lp-stack');inspector.append(el('summary','','Private authoring inspector'),profileAuthoringSources(p.authoring,p.development?.voiceLab));tools.append(inspector);}
 
         if (p.photoPlan.length) {
             const plans = el('details');
@@ -811,13 +818,11 @@ function renderLumistryContent(h: DatingHost): HTMLDivElement {
         for(const [label,job] of authoringJobs){
             for(const slot of job?.slots.filter(s=>s.progress||s.quarantinedProgress)||[]){
                 const section=el('details');
-                section.append(el('summary','',`${label} · ${slot.id} · ${slot.progress?.task||'storage review'}`),el('pre','lumistry-authoring-source',slot.progress?.authored.dossier?.text||slot.quarantineReason||'Saved plan; no character text produced yet.'));
+                const draft={jobId:job!.id,slotId:slot.id,manual:label==='Manual draft'};
+                section.append(el('summary','',`${label} · ${slot.id} · ${slot.progress?.task||'storage review'}`),act('Inspect saved draft',()=>h.action('inspect_draft_authoring',draft),h.ui.busy,'eye'));
                 if(slot.status==='failed')section.append(el('p','lp-copy',slot.quarantineReason||slot.progress?.problems.slice(0,2).join('; ')||(slot.progress?.lastAttempt?.outcome==='provider-failed'&&slot.progress.lastAttempt.issues?.some(i=>i.code==='timeout')?'The provider timed out before returning an accepted unit. Check authoring reasoning/output settings, then use Retry this draft and Find more. Saved identity and accepted work are kept.':'Provider request paused. Check authoring connection settings, then retry this draft.')));
                 for(const issue of slot.progress?.issues||[])section.append(el('p','lp-copy',`${issue.recordId||issue.labels.join(', ')||'Draft'} · ${issue.code}: ${issue.message}`));
-                section.append(act('Export private repair evidence',()=>{
-                    const payload={schema:'lumistry-replay-1',categoryOptions:Object.fromEntries(d.worldFields.map(w=>[w.key,w.options])),exportedAt:new Date().toISOString(),contract:job!.creationContract,jobId:job!.id,slotId:slot.id,plan:slot.plan,counts:{questions:slot.questionCount,photos:slot.photoCount},attempts:slot.unitAttempts,spent:job!.spent,progress:slot.progress,quarantine:slot.quarantinedProgress};
-                    const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='lumistry-private-repair-'+slot.id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),0);
-                },false,'download'));
+                section.append(act('Export private repair evidence',()=>h.action('export_repair_evidence',draft),h.ui.busy,'download'));
                 section.append(el('p','lp-copy','Private evidence includes this draft’s authoring and Lumistry request data, before native provider adaptation.'));
                 if(slot.status==='failed'&&!slot.quarantinedProgress&&slot.plan?.creativeSpecies?.status!=='rejected'&&!slot.progress?.draft.speciesProposal)section.append(act('Retry this draft',()=>h.action('retry_slot',{slotId:slot.id,manual:label==='Manual draft'}),h.ui.profileBusy,'refresh'));
                 inspect.append(section);

@@ -27,3 +27,19 @@ test('image diagnostics are per-user, newest first and bounded', () => {
   expect(logs.at(-1)?.requestId).toBe('job-5')
   expect(listImageDiagnostics('diag-b')).toHaveLength(1)
 })
+
+test('wide nested diagnostics share one budget and listing cannot mutate the log', () => {
+  const user = 'diag-nested-budget'
+  const fields = Object.fromEntries(Array.from({ length: 240 }, (_, index) => [`field-${index}`, 'x'.repeat(24_000)]))
+  try {
+    recordImageDiagnostic(user, {
+      requestId: 'wide', source: 'test', stage: 'provider_request', status: 'info', message: 'budget',
+      payload: { nested: { apiKey: 'secret', ...fields }, subsequent: fields },
+    })
+    const [first] = listImageDiagnostics(user)
+    expect(JSON.stringify(first.payload).length).toBeLessThan(25_000)
+    expect((first.payload as any).nested.apiKey).toBe('<redacted>')
+    ;(first.payload as any).nested.apiKey = 'modified by reader'
+    expect((listImageDiagnostics(user)[0].payload as any).nested.apiKey).toBe('<redacted>')
+  } finally { clearImageDiagnostics(user) }
+})

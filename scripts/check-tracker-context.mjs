@@ -85,7 +85,7 @@ try {
       // Tab order reaches the native select and text field; the preview scrolls independently.
       await page.waitForFunction(() => [...document.querySelectorAll('select')].some(n => !n.disabled && n.closest('.lp-page')))
       await page.getByRole('combobox', { name: /Send tracker context using/ }).press('Tab')
-      assert.equal(await prompt().evaluate(n => n === document.activeElement), true)
+      await page.waitForFunction(() => document.activeElement?.matches('[data-tracker-context-control="prompt"]'), undefined, { timeout: 2_000 })
       await page.evaluate(() => window.freeformFixture.send({ type: 'lumiphone:action', requestId: 'preview-value', chatId: 'host-chat', characterId: 'host-character', action: 'tracker', payload: { trackerId: 'fixture-trust', operation: 'set', amount: 57 } }))
       assert.match(await page.getByLabel('Live tracker context preview', { exact: true }).innerText(), /"value":57/)
       assert.equal(await page.locator('.lp-page').evaluate(n => n.scrollWidth > n.clientWidth + 2), false)

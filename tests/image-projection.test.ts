@@ -10,6 +10,8 @@ test('display projection rehydrates messages, Lumistry photos and missing social
       servers: [{ imageId: 'server-only', imageUrl: '' }],
     },
   }
+  const persisted = { ...state }
+  const original = structuredClone(persisted)
   const calls: string[] = []
   await hydratePocketImageProjection(state, async imageId => { calls.push(imageId); return `/gallery/${imageId}` })
 
@@ -21,6 +23,7 @@ test('display projection rehydrates messages, Lumistry photos and missing social
   expect(state.social.posts[1].imageUrl).toBe('/already-renderable')
   expect(state.social.servers[0].imageUrl).toBe('/gallery/server-only')
   expect(calls.filter(id => id === 'shared')).toHaveLength(1)
+  expect(persisted).toEqual(original)
 })
 
 test('native image completion accepts mediaUrl and can recover a missing URL from the durable Gallery ID', async () => {

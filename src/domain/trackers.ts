@@ -265,7 +265,9 @@ export function materializeTracker(tracker: PhoneTracker, roleplayNow: string, w
     reason: tracker.clock === 'roleplay' ? 'Roleplay time advanced' : 'Real time advanced', source: 'automatic',
     createdAt: wallNow, roleplayAt: clean(roleplayNow, 80) || undefined,
   })
-  return { tracker: next, changed: true }
+  // Keep an up-to-date anchor for callers about to change the tracker. A
+  // parked value alone does not justify rewriting the whole phone on read.
+  return { tracker: next, changed: nextValue !== tracker.value || Boolean(tracker.pausedReason) }
 }
 
 /** Resume anchors the clock now, so a deliberate pause never catches up later. */

@@ -132,8 +132,8 @@ export function isPocketRenderableImageUrl(value: unknown): value is string {
 }
 
 /**
- * Rehydrate durable Gallery references into transient render URLs on the cloned
- * state sent to the frontend. Persisted state keeps IDs; display state gets URLs.
+ * Rehydrate durable Gallery references on a display-state shell. Copy the
+ * branches written here so the shell can safely share the rest of saved state.
  */
 export async function hydratePocketImageProjection(
   state: PhoneState,
@@ -149,30 +149,40 @@ export async function hydratePocketImageProjection(
     assignments.set(id, targets)
   }
 
-  for (const conversation of state.conversations) {
-    for (const message of conversation.messages) {
-      hydrate(message.imageId, url => { message.imageUrl = url })
-    }
+  state.conversations = state.conversations.map(conversation => {
+    if (!conversation.messages.some(message => message.imageId)) return conversation
+    const messages = conversation.messages.map(message => {
+      if (!message.imageId) return message
+      const display = { ...message }
+      hydrate(message.imageId, url => { display.imageUrl = url })
+      return display
+    })
+    return { ...conversation, messages }
+  })
+
+  const withPhotoUrls = (profile: import('../domain/lumistry.js').DatingProfile) => {
+    if (!profile.photos.some(photo => photo.source.kind === 'gallery')) return profile
+    const photos = profile.photos.map(photo => {
+      if (photo.source.kind !== 'gallery') return photo
+      const display = { ...photo }
+      hydrate(photo.source.imageId, url => { display.url = url || '' })
+      return display
+    })
+    return { ...profile, photos }
+  }
+  if (state.lumistry) {
+    state.lumistry = Object.fromEntries(Object.entries(state.lumistry).map(([owner, dating]) => [owner, {
+      ...dating, self: dating.self ? withPhotoUrls(dating.self) : dating.self, profiles: dating.profiles.map(withPhotoUrls),
+    }]))
   }
 
-  for (const dating of Object.values(state.lumistry || {})) {
-    const profiles = [...(dating.self ? [dating.self] : []), ...dating.profiles]
-    for (const profile of profiles) {
-      for (const photo of profile.photos) {
-        if (photo.source.kind !== 'gallery') continue
-        hydrate(photo.source.imageId, url => { photo.url = url || '' })
-      }
-    }
+  const withImageUrl = <T extends { imageId?: string; imageUrl?: string }>(entry: T): T => {
+    if (!entry.imageId || isPocketRenderableImageUrl(entry.imageUrl)) return entry
+    const display = { ...entry }
+    hydrate(entry.imageId, url => { display.imageUrl = url })
+    return display
   }
-
-  if (state.social) {
-    for (const post of state.social.posts) {
-      if (post.imageId && !isPocketRenderableImageUrl(post.imageUrl)) hydrate(post.imageId, url => { post.imageUrl = url })
-    }
-    for (const server of state.social.servers) {
-      if (server.imageId && !isPocketRenderableImageUrl(server.imageUrl)) hydrate(server.imageId, url => { server.imageUrl = url })
-    }
-  }
+  if (state.social) state.social = { ...state.social, posts: state.social.posts.map(withImageUrl), servers: state.social.servers.map(withImageUrl) }
 
   // A large saved history must not create an RPC and promise per image at once.
   const entries = assignments.entries()

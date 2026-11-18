@@ -25815,7 +25815,7 @@ function materializeTracker(tracker, roleplayNow, wallNow = new Date().toISOStri
       createdAt: wallNow,
       roleplayAt: clean4(roleplayNow, 80) || undefined
     });
-  return { tracker: next, changed: true };
+  return { tracker: next, changed: nextValue !== tracker.value || Boolean(tracker.pausedReason) };
 }
 
 // src/domain/jev.ts
@@ -26573,6 +26573,24 @@ function notificationBelongsToDevice(state, deviceOwnerActorId, targetOwnerActor
 }
 
 // src/frontend/apps/lumistry.ts
+function profileAuthoringSources(authoring, voiceLab) {
+  const sources = el("div", "lp-stack");
+  sources.append(el("p", "lp-copy", "Private source material for the profile editor."));
+  const add = (label, text) => {
+    const section = el("details");
+    section.append(el("summary", "", label), el("pre", "lumistry-authoring-source", text));
+    sources.append(section);
+  };
+  for (const [label, record] of [["Original dossier", authoring.dossier], ["Extracted index", authoring.index], ["Public authoring", authoring.public]])
+    if (record)
+      add(label, record.text);
+  for (const [i, record] of authoring.photos.entries())
+    add(`Original photo authoring ${i + 1}`, record.text);
+  add("Extracted fact provenance", JSON.stringify(authoring.provenance, null, 2));
+  if (voiceLab)
+    add("Diagnostic voice rehearsal", voiceLab.text);
+  return sources;
+}
 var newDatingUI = () => ({ tab: "discover", description: "", contactId: "", busy: false, status: "", error: "", photoIndex: {} });
 function backDating(ui) {
   if (profileEditorDirty(ui)) {
@@ -27301,28 +27319,11 @@ function profileCard(h, p, canManage = false) {
       actions.append(reroll, remove);
     }
     tools.append(actions);
-    if (p.authoring) {
+    if (p.hasPrivateAuthoring)
+      tools.append(act4("Private authoring inspector", () => h.action("inspect_profile_authoring", { profileId: p.id }), h.ui.busy, "eye"));
+    else if (p.authoring) {
       const inspector = el("details", "lp-stack");
-      inspector.append(el("summary", "", "Private authoring inspector"), el("p", "lp-copy", "Editor-only source material. This does not establish what your roleplay character or friends know."));
-      for (const [label, record] of [["Original dossier", p.authoring.dossier], ["Extracted index", p.authoring.index], ["Public authoring", p.authoring.public]])
-        if (record) {
-          const section = el("details");
-          section.append(el("summary", "", label), el("pre", "lumistry-authoring-source", record.text));
-          inspector.append(section);
-        }
-      for (const [i, record] of p.authoring.photos.entries()) {
-        const section = el("details");
-        section.append(el("summary", "", `Original photo authoring ${i + 1}`), el("pre", "lumistry-authoring-source", record.text));
-        inspector.append(section);
-      }
-      const provenance = el("details");
-      provenance.append(el("summary", "", "Extracted fact provenance"), el("pre", "lumistry-authoring-source", JSON.stringify(p.authoring.provenance, null, 2)));
-      inspector.append(provenance);
-      if (p.development?.voiceLab) {
-        const section = el("details");
-        section.append(el("summary", "", "Diagnostic voice rehearsal — not an event"), el("pre", "lumistry-authoring-source", p.development.voiceLab.text));
-        inspector.append(section);
-      }
+      inspector.append(el("summary", "", "Private authoring inspector"), profileAuthoringSources(p.authoring, p.development?.voiceLab));
       tools.append(inspector);
     }
     if (p.photoPlan.length) {
@@ -27783,20 +27784,13 @@ function renderLumistryContent(h) {
     for (const [label, job] of authoringJobs) {
       for (const slot of job?.slots.filter((s) => s.progress || s.quarantinedProgress) || []) {
         const section = el("details");
-        section.append(el("summary", "", `${label} · ${slot.id} · ${slot.progress?.task || "storage review"}`), el("pre", "lumistry-authoring-source", slot.progress?.authored.dossier?.text || slot.quarantineReason || "Saved plan; no character text produced yet."));
+        const draft = { jobId: job.id, slotId: slot.id, manual: label === "Manual draft" };
+        section.append(el("summary", "", `${label} · ${slot.id} · ${slot.progress?.task || "storage review"}`), act4("Inspect saved draft", () => h.action("inspect_draft_authoring", draft), h.ui.busy, "eye"));
         if (slot.status === "failed")
           section.append(el("p", "lp-copy", slot.quarantineReason || slot.progress?.problems.slice(0, 2).join("; ") || (slot.progress?.lastAttempt?.outcome === "provider-failed" && slot.progress.lastAttempt.issues?.some((i) => i.code === "timeout") ? "The provider timed out before returning an accepted unit. Check authoring reasoning/output settings, then use Retry this draft and Find more. Saved identity and accepted work are kept." : "Provider request paused. Check authoring connection settings, then retry this draft.")));
         for (const issue of slot.progress?.issues || [])
           section.append(el("p", "lp-copy", `${issue.recordId || issue.labels.join(", ") || "Draft"} · ${issue.code}: ${issue.message}`));
-        section.append(act4("Export private repair evidence", () => {
-          const payload = { schema: "lumistry-replay-1", categoryOptions: Object.fromEntries(d.worldFields.map((w) => [w.key, w.options])), exportedAt: new Date().toISOString(), contract: job.creationContract, jobId: job.id, slotId: slot.id, plan: slot.plan, counts: { questions: slot.questionCount, photos: slot.photoCount }, attempts: slot.unitAttempts, spent: job.spent, progress: slot.progress, quarantine: slot.quarantinedProgress };
-          const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "lumistry-private-repair-" + slot.id + ".json";
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 0);
-        }, false, "download"));
+        section.append(act4("Export private repair evidence", () => h.action("export_repair_evidence", draft), h.ui.busy, "download"));
         section.append(el("p", "lp-copy", "Private evidence includes this draft’s authoring and Lumistry request data, before native provider adaptation."));
         if (slot.status === "failed" && !slot.quarantinedProgress && slot.plan?.creativeSpecies?.status !== "rejected" && !slot.progress?.draft.speciesProposal)
           section.append(act4("Retry this draft", () => h.action("retry_slot", { slotId: slot.id, manual: label === "Manual draft" }), h.ui.profileBusy, "refresh"));
@@ -34758,11 +34752,21 @@ function makeRing(percent, glyph, className = "") {
   ring.querySelector(".lp-tracker-ring-core").append(glyph);
   return ring;
 }
+function trackerUsesRealClock(tracker) {
+  return tracker.kind !== "state" && tracker.updateMode === "automatic" && tracker.clock === "real" && !tracker.clockPaused && Boolean(tracker.ratePerHour) && (tracker.ratePerHour > 0 ? tracker.value < tracker.max : tracker.value > tracker.min);
+}
 function trackerDisplay(tracker, state) {
+  return renderTrackerDisplay(displayTrackerValue(tracker, state), state);
+}
+function displayTrackerValue(tracker, state) {
   const roleplayNow = state.roleplayClockSource === "narrative" && state.roleplayClockPrecision !== "exact" ? "" : state.roleplayNow;
-  const current = materializeTracker(tracker, roleplayNow).tracker;
+  return materializeTracker(tracker, roleplayNow).tracker;
+}
+var lastClockReading = new WeakMap;
+function renderTrackerDisplay(current, state) {
   const flavor = trackerFlavor(current);
   const card = el("div", `lp-card lp-tracker-card lp-tracker-${current.presentation}`);
+  lastClockReading.set(card, { value: current.value, pause: current.pausedReason });
   card.dataset.trackerId = current.id;
   card.dataset.kind = current.kind;
   card.dataset.target = current.target.type;
@@ -34830,12 +34834,17 @@ function trackerDisplay(tracker, state) {
       history.title = latest.reason;
     card.append(history);
   }
-  if (Object.values(state.nativeApps || {}).some((data) => data.wallet.trackerId === tracker.id))
+  if (Object.values(state.nativeApps || {}).some((data) => data.wallet.trackerId === current.id))
     card.append(el("small", "lp-tracker-bank-sync", "Synced with Pocket Bank"));
   return card;
 }
-function refreshTrackerDisplay(card, tracker, state) {
-  const fresh = trackerDisplay(tracker, state);
+function refreshTrackerDisplay(card, tracker, state, clockTick = false) {
+  const current = displayTrackerValue(tracker, state);
+  const previous = lastClockReading.get(card);
+  if (clockTick && previous && previous.value === current.value && previous.pause === current.pausedReason)
+    return;
+  const fresh = renderTrackerDisplay(current, state);
+  lastClockReading.set(card, { value: current.value, pause: current.pausedReason });
   card.replaceChildren(...fresh.childNodes);
   card.style.cssText = fresh.style.cssText;
   if (fresh.dataset.design)
@@ -35239,6 +35248,7 @@ function trackerSettings(host) {
   const saved = normalizeTrackerContextSettings(host.state.trackerSettings);
   const settings = normalizeTrackerContextSettings(host.draft || saved);
   const delivery = el("select", "lp-select");
+  delivery.dataset.trackerContextControl = "delivery";
   for (const [value, label] of [["injection", "Automatic live injection"], ["macros", "Macros in RP preset"]]) {
     const option = el("option", "", label);
     option.value = value;
@@ -35249,6 +35259,7 @@ function trackerSettings(host) {
   prompt.rows = 7;
   prompt.maxLength = TRACKER_PROMPT_LIMIT;
   prompt.value = settings.prompt;
+  prompt.dataset.trackerContextControl = "prompt";
   content.append(fieldBlock("Send tracker context using", delivery, "Choose one delivery path. Automatic injection adds the tracker prompt and live state to each RP request. Macro mode lets your preset choose where they appear."), fieldBlock("Live state context prompt", prompt, "Live tracker data and write permissions are always appended. Leave this blank for data and built-in guidance only."));
   const reset = button("Restore default prompt", "lp-button lp-button-quiet");
   delivery.disabled = prompt.disabled = reset.disabled = host.pending;
@@ -35289,8 +35300,13 @@ function trackerSettings(host) {
   save.addEventListener("click", () => host.send("lumiphone:save_tracker_settings", { settings: { delivery: delivery.value, prompt: prompt.value } }));
   content.append(reset, macros, save, previewLabel, preview);
   update();
-  const timer = window.setInterval(() => update(), 1000);
-  host.onCleanup(() => window.clearInterval(timer));
+  if (host.state.trackers.some((tracker) => tracker.visibleToModel && trackerUsesRealClock(tracker))) {
+    const timer = window.setInterval(() => {
+      if (page.isConnected && !page.closest("[hidden]"))
+        update();
+    }, 1000);
+    host.onCleanup(() => window.clearInterval(timer));
+  }
   return page;
 }
 
@@ -35409,24 +35425,30 @@ function dashboard(host) {
     empty.appendChild(el("p", "lp-copy", "Add Health, Trust, Hunger, Ammo, a roleplay countdown, a state, or a blank custom tracker."));
     content.appendChild(empty);
   }
-  const timer = window.setInterval(() => {
-    for (const tracker of host.state.trackers) {
-      if (tracker.updateMode !== "automatic")
-        continue;
-      const card = content.querySelector(`[data-tracker-id="${CSS.escape(tracker.id)}"]`);
-      if (card)
-        refreshTrackerDisplay(card, tracker, host.state);
-    }
-  }, 1000);
-  host.onCleanup(() => window.clearInterval(timer));
+  const live = host.state.trackers.filter(trackerUsesRealClock);
+  if (live.length) {
+    const timer = window.setInterval(() => {
+      if (!page.isConnected || page.closest("[hidden]"))
+        return;
+      for (const tracker of live) {
+        const card = content.querySelector(`[data-tracker-id="${CSS.escape(tracker.id)}"]`);
+        if (card)
+          refreshTrackerDisplay(card, tracker, host.state, true);
+      }
+    }, 1000);
+    host.onCleanup(() => window.clearInterval(timer));
+  }
   return page;
 }
 function detail(host, tracker) {
   const { page, content } = host.page(tracker.label, targetLabel(tracker.target), { label: "⚙", callback: () => host.select(tracker.id, "config"), ariaLabel: "Tracker settings" });
   const display = trackerDisplay(tracker, host.state);
   content.appendChild(display);
-  if (tracker.updateMode === "automatic") {
-    const timer = window.setInterval(() => refreshTrackerDisplay(display, tracker, host.state), 1000);
+  if (trackerUsesRealClock(tracker)) {
+    const timer = window.setInterval(() => {
+      if (page.isConnected && !page.closest("[hidden]"))
+        refreshTrackerDisplay(display, tracker, host.state, true);
+    }, 1000);
     host.onCleanup(() => window.clearInterval(timer));
   }
   const policy = el("div", "lp-card lp-tracker-policy");
@@ -40230,6 +40252,40 @@ async function cropAvatarPhoto(url, focus) {
   return canvas.toDataURL("image/png");
 }
 
+// src/frontend/components/host-mutations.ts
+var inlineAnchor = "[data-pocket-inline-anchor]";
+var receiptHost = ".pocket-receipt-host";
+var activitySurface = `${inlineAnchor},${receiptHost}`;
+function containsSelector(node, selector) {
+  if (node?.nodeType !== 1)
+    return false;
+  const element = node;
+  return element.matches(selector) || Boolean(element.querySelector(selector));
+}
+function affectsInlineActivity(record) {
+  const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+  const surface = target?.closest(activitySurface);
+  if (record.type === "attributes")
+    return true;
+  if (surface) {
+    return surface === target && surface.matches(inlineAnchor) && surface.dataset.pocketMounted === "true" && !surface.hidden && !surface.childElementCount;
+  }
+  if (target?.matches(`p:has(> ${inlineAnchor})`))
+    return true;
+  let previous = record.previousSibling;
+  let next = record.nextSibling;
+  const ignorable = (node) => node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim();
+  while (previous && ignorable(previous))
+    previous = previous.previousSibling;
+  while (next && ignorable(next))
+    next = next.nextSibling;
+  const sequenceSibling = `${activitySurface},p:has(> ${inlineAnchor})`;
+  const matchesSibling = (node) => node?.nodeType === 1 && node.matches(sequenceSibling);
+  if (matchesSibling(previous) || matchesSibling(next))
+    return true;
+  return Array.from(record.addedNodes).some((node) => containsSelector(node, activitySurface)) || Array.from(record.removedNodes).some((node) => containsSelector(node, activitySurface));
+}
+
 // src/frontend/components/app-review-control.ts
 function renderAppReviewControl(host, task, label, type) {
   const panel = el("section", "lp-app-review");
@@ -41325,7 +41381,7 @@ function renderLauncher(host, extras) {
       for (const [card, entry] of liveWidgets) {
         const tracker = host.state.trackers.find((tracker) => tracker.id === entry.trackerId);
         if (tracker)
-          refreshTrackerDisplay(card, entry.compact ? { ...tracker, presentation: "compact" } : tracker, host.state);
+          refreshTrackerDisplay(card, entry.compact ? { ...tracker, presentation: "compact" } : tracker, host.state, true);
       }
     }, 1000);
     host.onCleanup(() => clearInterval(timer));
@@ -44969,6 +45025,7 @@ class PocketController {
   setupModalOpen = false;
   setupModalBody = null;
   setupModalDismiss = null;
+  authoringSheetDismiss;
   setupPersonaEditing = false;
   setupControlCleanups = [];
   settledOperationRequests = new Set;
@@ -45083,6 +45140,7 @@ class PocketController {
     this.socialGifRequests.clear();
     this.voicePlayer.stop();
     this.setupModalDismiss?.();
+    this.authoringSheetDismiss?.();
     this.destroyed = true;
     for (const id of [...this.socialImages.keys()])
       this.cancelSocialImage(id);
@@ -45345,6 +45403,7 @@ class PocketController {
     this.freeformListRequest = this.send("lumiphone:freeform_list");
   }
   resetPocketSession() {
+    this.authoringSheetDismiss?.();
     this.conversationDeleteDismiss?.();
     this.conversationDeleteDismiss = null;
     this.conversationDeleteRequest = "";
@@ -46022,12 +46081,17 @@ class PocketController {
       this.send("lumiphone:cancel_reference", { referenceId: reference.id });
     });
     const schedule = () => this.scheduleComposerReferenceSync();
-    const mutationObserver = new MutationObserver(() => {
-      const mount = this.findHostComposerAboveMount();
-      if (!pill.isConnected || mount && pill.parentElement !== mount)
+    const selector = '[data-spindle-mount="chat_composer_above"]';
+    const mutationObserver = new MutationObserver((records) => {
+      if (records.some((record) => {
+        if (record.type === "attributes") {
+          return record.target === pill.parentElement || record.target.matches(selector);
+        }
+        return Array.from(record.addedNodes).some((node) => containsSelector(node, selector)) || Array.from(record.removedNodes).some((node) => node === pill || containsSelector(node, selector));
+      }))
         schedule();
     });
-    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-spindle-mount", "data-spindle-scope"] });
     this.cleanups.push(() => {
       mutationObserver.disconnect();
       if (this.composerSyncFrame)
@@ -46489,6 +46553,27 @@ class PocketController {
         }
         if (payload.phase === "archive")
           this.datingUI.authoringArchive = payload.archive;
+        if (payload.phase === "profile_authoring" && this.expanded && this.currentApp === "dating") {
+          this.authoringSheetDismiss?.();
+          this.authoringSheetDismiss = showPocketSheet(this.screen, "Private authoring inspector", profileAuthoringSources(payload.authoring, payload.voiceLab), { onDismiss: () => {
+            this.authoringSheetDismiss = undefined;
+          } })?.dismiss;
+        }
+        if (payload.phase === "draft_authoring" && this.expanded && this.currentApp === "dating") {
+          this.authoringSheetDismiss?.();
+          this.authoringSheetDismiss = showPocketSheet(this.screen, "Saved draft authoring", el("pre", "lumistry-authoring-source", payload.text), { onDismiss: () => {
+            this.authoringSheetDismiss = undefined;
+          } })?.dismiss;
+        }
+        if (payload.phase === "repair_evidence" && payload.evidence?.schema === "lumistry-replay-1") {
+          const url = URL.createObjectURL(new Blob([JSON.stringify(payload.evidence, null, 2)], { type: "application/json" }));
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `lumistry-private-repair-${payload.evidence.slotId}.json`;
+          a.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+          this.datingUI.status = "Private repair evidence downloaded.";
+        }
         if (payload.phase === "relationship_sources") {
           const content = el("section", "lp-stack");
           for (const source of payload.sources || []) {
@@ -46655,9 +46740,9 @@ class PocketController {
         this.provisionalActivities.delete(activity.id);
       }
       this.pruneInactiveActivitySurfaces();
-      this.mountInlineArtifacts();
       for (const activity of this.state.activities || [])
-        this.queueActivityReceipt(activity);
+        this.queueActivityReceipt(activity, false);
+      this.sweepActivityReceipts();
       this.applyAppearance();
       this.syncComposerReferencePill();
       this.updateBadge();
@@ -47533,6 +47618,7 @@ class PocketController {
     });
   }
   close() {
+    this.authoringSheetDismiss?.();
     this.conversationDeleteDismiss?.();
     this.conversationDeleteDismiss = null;
     this.lorebookPicker?.dismiss();
@@ -47556,6 +47642,8 @@ class PocketController {
       return;
     this.expanded = false;
     this.shell.hidden = true;
+    for (const cleanup of this.viewCleanups.splice(0))
+      cleanup();
     this.launcher.hidden = false;
     this.releaseDockPanel();
     if (this.mobileWidget) {
@@ -47786,8 +47874,11 @@ class PocketController {
   installInlineArtifactObserver() {
     if (this.inlineArtifactObserver || typeof MutationObserver === "undefined")
       return;
-    this.inlineArtifactObserver = new MutationObserver(() => this.scheduleInlineArtifactMount());
-    this.inlineArtifactObserver.observe(document.body, { childList: true, subtree: true });
+    this.inlineArtifactObserver = new MutationObserver((records) => {
+      if (this.pocketEnabled && !this.freeformSession && records.some(affectsInlineActivity))
+        this.scheduleInlineArtifactMount();
+    });
+    this.inlineArtifactObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-pocket-inline-anchor"] });
     this.scheduleInlineArtifactMount();
   }
   scheduleInlineArtifactMount() {
@@ -47881,6 +47972,8 @@ class PocketController {
       this.ctx.dom.uninject(injected);
     this.injectedActivities.clear();
     this.pendingActivities.clear();
+    window.clearInterval(this.receiptSweepTimer);
+    this.receiptSweepTimer = 0;
     if (clearKnown)
       this.knownActivities.clear();
     if (clearProvisional)
@@ -47893,39 +47986,28 @@ class PocketController {
       delete host.dataset.pocketSequence;
     }
   }
-  tryRenderInlineArtifact(activity) {
-    this.mountInlineArtifacts();
-    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === "true");
-    if (!hosts.length)
-      return false;
-    const fallback = this.injectedActivities.get(activity.id);
-    if (fallback) {
-      this.ctx.dom.uninject(fallback);
-      this.injectedActivities.delete(activity.id);
-    }
-    return true;
-  }
-  queueActivityReceipt(activity) {
-    if (this.freeformSession)
+  queueActivityReceipt(activity, sweep = true) {
+    if (!this.pocketEnabled || this.freeformSession)
       return;
     const active = this.activeContext();
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId)
       return;
-    if (this.tryRenderInlineArtifact(activity))
-      return;
-    if (this.injectedActivities.has(activity.id)) {
-      this.refreshActivityConnectors();
-      return;
+    if (activity.source?.messageId && !this.injectedActivities.has(activity.id) && !this.pendingActivities.has(activity.id)) {
+      this.pendingActivities.set(activity.id, Date.now() + 30000);
     }
-    if (!activity.source?.messageId)
-      return;
-    this.pendingActivities.set(activity.id, activity);
-    this.sweepActivityReceipts();
+    if (sweep)
+      this.sweepActivityReceipts();
   }
-  sweepActivityReceipts() {
-    this.mountInlineArtifacts();
-    for (const [activityId, activity] of this.pendingActivities) {
-      if (this.tryRenderInlineArtifact(activity)) {
+  sweepActivityReceipts(scanAnchors = true) {
+    if (this.destroyed || !this.pocketEnabled || this.freeformSession)
+      return;
+    if (scanAnchors)
+      this.mountInlineArtifacts();
+    const now = Date.now();
+    let injectedAny = false;
+    for (const [activityId, expiresAt] of this.pendingActivities) {
+      const activity = this.inlineActivity(activityId);
+      if (!activity || expiresAt <= now) {
         this.pendingActivities.delete(activityId);
         continue;
       }
@@ -47934,17 +48016,15 @@ class PocketController {
         continue;
       this.pendingActivities.delete(activityId);
       this.injectedActivities.set(activityId, injected);
+      injectedAny = true;
     }
-    this.refreshActivityConnectors();
-    if (this.pendingActivities.size && !this.receiptSweepTimer) {
-      this.receiptSweepTimer = window.setInterval(() => {
-        if (!this.pendingActivities.size) {
-          window.clearInterval(this.receiptSweepTimer);
-          this.receiptSweepTimer = 0;
-          return;
-        }
-        this.sweepActivityReceipts();
-      }, 1500);
+    if (injectedAny)
+      this.refreshActivityConnectors();
+    if (!this.pendingActivities.size) {
+      window.clearInterval(this.receiptSweepTimer);
+      this.receiptSweepTimer = 0;
+    } else if (!this.receiptSweepTimer) {
+      this.receiptSweepTimer = window.setInterval(() => this.sweepActivityReceipts(false), 1500);
     }
   }
   render(transition = false) {
@@ -47965,6 +48045,7 @@ class PocketController {
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false;
     const focusedAppearance = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.appearanceFocus : undefined;
     const focusedDockSide = document.activeElement?.getAttribute("aria-label") === "Desktop phone side";
+    const focusedTrackerContext = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.trackerContextControl : undefined;
     const focusedContact = this.currentApp === "contacts" && this.screen.contains(document.activeElement) ? document.activeElement?.dataset.contactFocus : "";
     const focusedSocial = this.screen.contains(document.activeElement) ? document.activeElement?.dataset.socialFocus : "";
     const socialSelection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : undefined;
@@ -48029,6 +48110,12 @@ class PocketController {
     }
     if (!transition && focusedReplyControl && !view.contains(document.activeElement))
       view.querySelector(".lp-compose > button")?.focus({ preventScroll: true });
+    if (!transition && focusedTrackerContext && !view.contains(document.activeElement)) {
+      const control = view.querySelector(`[data-tracker-context-control="${focusedTrackerContext}"]`);
+      control?.focus({ preventScroll: true });
+      if (control instanceof HTMLTextAreaElement && selection)
+        control.setSelectionRange(...selection);
+    }
     if (!transition && focusedComposer && !view.contains(document.activeElement)) {
       const composer = view.querySelector(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`);
       composer?.focus({ preventScroll: true });

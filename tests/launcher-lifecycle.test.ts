@@ -44,6 +44,8 @@ async function fixture(width = 1100, hostClampsToScale = false, nativeGeometry =
     setVisible() {}, isVisible: () => true, destroy() {},
   }
   const events = new Map<string, () => void>()
+  const messageLookups: string[] = []
+  let backendMessage: ((payload: unknown) => void) | undefined
   const ctx: any = {
     ui: {
       ...(nativeGeometry ? { geometry: { layoutViewportSize: () => {
@@ -54,17 +56,19 @@ async function fixture(width = 1100, hostClampsToScale = false, nativeGeometry =
       registerInputBarAction: () => ({ onClick: () => () => {}, destroy() {}, setLabel() {}, setSubtitle() {}, setEnabled() {} }),
       createFloatWidget(options: any) { position = hostPosition({ ...options.initialPosition }); return widget },
     },
-    dom: { findMessageElement: () => null, uninject: (node: Element) => node.remove() },
+    dom: { findMessageElement: (id: string) => { messageLookups.push(id); return null }, uninject: (node: Element) => node.remove() },
     messages: { registerTagInterceptor: () => () => {}, getLatestMessageId: () => null },
     events: { on(name: string, callback: () => void) { events.set(name, callback); return () => { events.delete(name) } } },
     permissions: { getGranted: async () => ['ui_panels'] },
     getActiveChat: () => ({ chatId: 'fixture-chat', characterId: 'fixture-character' }),
-    sendToBackend: (payload: any) => sends.push(payload), onBackendMessage: () => () => {}, ready() {},
+    sendToBackend: (payload: any) => sends.push(payload),
+    onBackendMessage: (handler: (payload: unknown) => void) => { backendMessage = handler; return () => { backendMessage = undefined } },
+    ready() {},
   }
   let cleanup = setupPhone(ctx)
   await settle()
   return {
-    win, moves, sends, position: () => position, cutoff: () => cutoff,
+    win, moves, sends, messageLookups, receive: (payload: unknown) => backendMessage?.(payload), position: () => position, cutoff: () => cutoff,
     modal(open: boolean) { modalOpen = open; win.document.body.style.overflow = open ? 'hidden' : '' },
     resize(nextWidth: number) { Object.defineProperty(win, 'innerWidth', { configurable: true, value: nextWidth }); win.dispatchEvent(new win.Event('resize')) },
     drag(next: { x: number; y: number }) { position = next; dragEnd?.() },
@@ -98,6 +102,56 @@ for (const width of [1100, 390]) test(`confirmation scroll lock settles without 
     f.modal(false); f.modal(true); await settle()
     expect(f.moves).toHaveLength(1)
   } finally { f.close() }
+})
+
+test('unrelated host DOM changes skip Pocket scans while new inline and composer mounts trigger them', async () => {
+  const f = await fixture()
+  try {
+    const doc = f.win.document
+    const query = doc.querySelectorAll.bind(doc)
+    const scans: string[] = []
+    doc.querySelectorAll = ((selector: string) => { scans.push(selector); return query(selector) }) as typeof doc.querySelectorAll
+    const chat = doc.createElement('section')
+    doc.body.append(chat)
+    for (let i = 0; i < 5; i++) chat.replaceChildren(doc.createTextNode(`Streaming chunk ${i}`))
+    await settle()
+    expect(scans).not.toContain('[data-pocket-inline-anchor]')
+    expect(scans).not.toContain('[data-spindle-mount="chat_composer_above"]')
+    const anchor = doc.createElement('span')
+    anchor.dataset.pocketInlineAnchor = 'new-activity'
+    const composer = doc.createElement('div')
+    composer.dataset.spindleMount = 'chat_composer_above'
+    chat.append(anchor, composer)
+    await settle()
+    expect(scans).toContain('[data-pocket-inline-anchor]')
+    expect(scans).toContain('[data-spindle-mount="chat_composer_above"]')
+  } finally { f.close() }
+})
+
+test('missing fallback receipts stop polling when their retry window expires', async () => {
+  const f = await fixture()
+  const originalNow = Date.now
+  let now = originalNow(), retry: (() => void) | undefined
+  const interval = f.win.setInterval.bind(f.win), clear = f.win.clearInterval.bind(f.win)
+  Date.now = () => now
+  f.win.setInterval = (callback, delay, ...args) => {
+    if (delay !== 1_500 || typeof callback !== 'function') return interval(callback, delay, ...args)
+    retry = () => callback(...args)
+    return 99_999
+  }
+  f.win.clearInterval = handle => { if (handle === 99_999) retry = undefined; else clear(handle) }
+  try {
+    f.receive({ type: 'lumiphone:activity', activity: { id: 'missing-receipt', kind: 'message',
+      scope: { chatId: 'fixture-chat', characterId: 'fixture-character' }, source: { messageId: 'missing-host-message' },
+    } })
+    expect(f.messageLookups).toEqual(['missing-host-message'])
+    expect(retry).toBeDefined()
+    now += 1500; retry?.()
+    expect(f.messageLookups).toHaveLength(2)
+    now += 30_000; retry?.()
+    expect(retry).toBeUndefined()
+    expect(f.messageLookups).toHaveLength(2)
+  } finally { Date.now = originalNow; f.close() }
 })
 
 test('scroll locks cannot loop when UI scale makes the host clamp requested coordinates', async () => {

@@ -1,4 +1,5 @@
 import {parseLumistryRequest,type LumistryResult} from '../protocol/lumistry.js';
+import {discoveryRepairEvidence} from './lumistry-display.js';
 import {lovePhoneEvidence} from '../domain/lumistry-love-context.js';
 import {currentPriorLike,interestContext,connectionBlockers,compatibilitySnapshot} from '../domain/lumistry-compatibility.js';
 import {lovePreferences} from '../domain/lumistry-love.js';
@@ -185,7 +186,7 @@ export class Lumistry {
         chatId: string;
         characterId: string;
         frontendSessionId?:string;signal?:AbortSignal;
-    }, user?: string): Promise<void> {
+    }, user?: string, loadedState?: PhoneState): Promise<void> {
         input=parseLumistryRequest(input);
         const h = this.h, { chatId, characterId } = context;
         const baseKey = JSON.stringify(user) + ':' + h.stateKey(chatId, characterId), requestId = text(input.requestId, 180), action = text(input.action, 40);
@@ -199,7 +200,7 @@ export class Lumistry {
             }
             return;
         }
-        const initial = await h.loadState(chatId, characterId, user), owner = initial.pocketPersonaActorId;
+        const initial = loadedState ?? await h.loadState(chatId, characterId, user), owner = initial.pocketPersonaActorId;
         if (input.deviceOwnerActorId && input.deviceOwnerActorId !== owner)
             throw new Error('Switch to your Persona device to use Lumistry.');
         if(['like','force_match'].includes(action)&&initial.conversations.length>=80)await compactArchivedConversations(h,chatId,characterId,owner,user);
@@ -219,6 +220,21 @@ export class Lumistry {
             await auxiliary(()=>h.sendState(state,user,'dating'),d=>h.reportDiagnostic?.(d,user));
         });
         const data = datingFor(initial, owner);
+        if(action==='inspect_profile_authoring'||action==='inspect_draft_authoring'||action==='export_repair_evidence'){
+            context.signal?.throwIfAborted();
+            if(h.activeScope?.(chatId,characterId,user,context.frontendSessionId)===false)throw new Error('The phone changed. Reopen the inspector.');
+            if(action==='inspect_profile_authoring'){
+                const profile=data.profiles.find(p=>p.id===input.profileId)||(data.self?.id===input.profileId?data.self:undefined);
+                if(!profile?.authoring)throw new Error('This profile has no saved authoring.');
+                emit({phase:'profile_authoring',authoring:profile.authoring,voiceLab:profile.development?.voiceLab});return;
+            }
+            const job=input.manual===true?data.draftJob:data.discoveryJob;
+            const slot=job?.id===input.jobId?job?.slots.find(s=>s.id===input.slotId):undefined;
+            if(!job||!slot||!(slot.progress||slot.quarantinedProgress))throw new Error('This draft changed. Reopen saved authoring.');
+            if(action==='inspect_draft_authoring')emit({phase:'draft_authoring',text:slot.progress?.authored.dossier?.text||slot.quarantineReason||'Saved plan; no character text produced yet.'});
+            else emit({phase:'repair_evidence',evidence:discoveryRepairEvidence(data,job,slot,h.nowIso())});
+            return;
+        }
         if(action==='relationship_sources'){
             if(h.activeScope?.(chatId,characterId,user,context.frontendSessionId)===false)throw new Error('The phone changed. Reopen this connection.');
             const insight=data.relationships.insights?.[input.profileId],row=insight?.journal.find(r=>r.key===input.receipt);
@@ -651,8 +667,9 @@ export class Lumistry {
                 }
             }
             finally {
+                context.signal?.removeEventListener('abort',abort);
                 if (this.jobs.get(key) === controller) {
-                    this.jobs.delete(key);this.jobSessions.delete(key);context.signal?.removeEventListener('abort',abort);
+                    this.jobs.delete(key);this.jobSessions.delete(key);
                     this.discoveryWatchers.delete(key);
                 }
             }
@@ -681,7 +698,7 @@ export class Lumistry {
                 if (i < 0)
                     throw new Error('Profile missing.');
                 const old=d.profiles[i];assertDatingIngress(input.profile,'edit');
-                const p = normalizeDatingProfile({ ...input.profile, development: old.development ? { ...old.development, revision: old.development.revision + 1 } : undefined, tropeIds: old.tropeIds, contactId: old.contactId });
+                const p = normalizeDatingProfile({ ...input.profile, authoring: old.authoring, development: old.development ? { ...old.development, revision: old.development.revision + 1 } : undefined, tropeIds: old.tropeIds, contactId: old.contactId });
                 if (!p)
                     throw new Error('Invalid profile; age must be at least 18.');
                 d.profiles[i] = p;

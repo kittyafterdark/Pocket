@@ -14,6 +14,7 @@ export type LumistryResult = {type:'lumiphone:dating_result';requestId:string;ch
  | {phase:string;[key:string]:unknown}
 );
 const core=new Set('accept archive_delete archive_measurements archive_read bank_reassess bank_settings cancel clear_error discard_discovery discard_manual discover edit enable_background enable_replies encounter enrich exchange export_diagnostics filters force_match generate generation_settings height_units image_check like love_preferences message_photo pass photo photo_add photo_remove pipeline_settings recover refresh relationship_assess relationship_sources remove reset_passes retry_slot rewrite_item self self_generate self_preferences setting_new species_accept species_reject theme unmatch voice_lab world world_accept world_sources'.split(' '));
+for(const action of ['inspect_profile_authoring','inspect_draft_authoring','export_repair_evidence'])core.add(action);
 export function parseLumistryRequest(value:unknown):LumistryRequest {
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid Lumistry request.');
  const v=value as Record<string,unknown>,action=v.action;

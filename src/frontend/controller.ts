@@ -1,5 +1,5 @@
 import {personaPhotoSheet,type PersonaPhotoChoice} from './components/lumistry-user-photo.js'
-import {renderLumistry,newDatingUI,backDating,acknowledgeWorldReview} from './apps/lumistry.js'
+import {renderLumistry,newDatingUI,backDating,acknowledgeWorldReview,profileAuthoringSources} from './apps/lumistry.js'
 import {datingFor,datingDisplayState} from '../domain/lumistry.js'
 import {acknowledgeSetupSettings} from './apps/lumistry-settings-state.js'
 import {acknowledgeFilterSave,filterScopeKey} from './apps/lumistry-filters.js'
@@ -73,6 +73,7 @@ import { disclosure, fieldBlock, outgoingSurface, showPocketSheet } from './comp
 import { cropAvatarPhoto } from './components/avatar-crop.js'
 import { activityClock } from '../domain/activity-clock.js'
 import { refreshActivityConnectors } from './components/activity-connectors.js'
+import { containsSelector, affectsInlineActivity } from './components/host-mutations.js'
 import { renderAppReviewControl } from './components/app-review-control.js'
 import { isFreeformChat } from '../domain/freeform.js'
 import type { FreeformDirectory, FreeformSession } from '../domain/freeform.js'
@@ -334,7 +335,7 @@ class PocketController {
   private lastLauncherWindowWidth = typeof window !== 'undefined' ? window.innerWidth : 0
   private pendingRoute: PocketRoute | null = null
   private injectedActivities = new Map<string, Element>()
-  private pendingActivities = new Map<string, PocketActivity>()
+  private pendingActivities = new Map<string, number>()
   private knownActivities = new Map<string, PocketActivity>()
   private provisionalActivities = new Map<string, { activity: PocketActivity; origin: PocketTurnCandidateOrigin }>()
   private inlineArtifactObserver: MutationObserver | null = null
@@ -347,6 +348,7 @@ class PocketController {
   private setupModalOpen = false
   private setupModalBody: HTMLDivElement | null = null
   private setupModalDismiss: (() => void) | null = null
+  private authoringSheetDismiss: (() => void) | undefined
   private setupPersonaEditing = false
   private setupControlCleanups: Cleanup[] = []
   private settledOperationRequests = new Set<string>()
@@ -440,6 +442,7 @@ class PocketController {
     for(const job of this.socialGifRequests.values()){clearTimeout(job.timer);job.reject(new Error('Pocket was closed.'))};this.socialGifRequests.clear()
     this.voicePlayer.stop()
     this.setupModalDismiss?.()
+    this.authoringSheetDismiss?.()
     this.destroyed = true
     for (const id of [...this.socialImages.keys()]) this.cancelSocialImage(id)
     window.clearTimeout(this.collapseTimer)
@@ -689,6 +692,7 @@ class PocketController {
   }
 
   private resetPocketSession(): void {
+    this.authoringSheetDismiss?.()
     this.conversationDeleteDismiss?.(); this.conversationDeleteDismiss = null; this.conversationDeleteRequest = ''; this.conversationSelectionMode = false; this.selectedConversationIds.clear()
     if (this.cameraBusy) this.send('lumiphone:camera_cancel', { requestId: this.cameraRequestId })
     this.setupModalDismiss?.()
@@ -1201,11 +1205,17 @@ class PocketController {
     })
 
     const schedule = () => this.scheduleComposerReferenceSync()
-    const mutationObserver = new MutationObserver(() => {
-      const mount = this.findHostComposerAboveMount()
-      if (!pill.isConnected || (mount && pill.parentElement !== mount)) schedule()
+    const selector = '[data-spindle-mount="chat_composer_above"]'
+    const mutationObserver = new MutationObserver(records => {
+      if (records.some(record => {
+        if (record.type === 'attributes') {
+          return record.target === pill.parentElement || (record.target as Element).matches(selector)
+        }
+        return Array.from(record.addedNodes).some(node => containsSelector(node, selector)) ||
+          Array.from(record.removedNodes).some(node => node === pill || containsSelector(node, selector))
+      })) schedule()
     })
-    mutationObserver.observe(document.body, { childList: true, subtree: true })
+    mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-spindle-mount', 'data-spindle-scope'] })
 
     this.cleanups.push(() => {
       mutationObserver.disconnect()
@@ -1490,6 +1500,20 @@ class PocketController {
         if(payload.phase==='saved_profiles'){this.datingUI.savedProfiles=payload.entries;this.datingUI.savedProfileDeleteId=undefined;if(typeof payload.selectedId==='string')this.datingUI.savedProfileId=payload.selectedId;this.datingUI.status=payload.message||'Saved dating profiles loaded.';}
         if(payload.phase==='saved_self_draft'){this.datingUI.editor=payload.draft;this.datingUI.selfBaseline=undefined;this.datingUI.selfEditing=true;this.datingUI.tab='self';this.datingUI.savedProfileId=payload.entry.id;this.datingUI.savedProfileName=payload.entry.name;this.datingUI.status=payload.message;}
         if(payload.phase==='archive')this.datingUI.authoringArchive=payload.archive
+        if(payload.phase==='profile_authoring' && this.expanded && this.currentApp==='dating') {
+          this.authoringSheetDismiss?.()
+          this.authoringSheetDismiss=showPocketSheet(this.screen,'Private authoring inspector',profileAuthoringSources(payload.authoring,payload.voiceLab),{onDismiss:()=>{this.authoringSheetDismiss=undefined}})?.dismiss
+        }
+        if(payload.phase==='draft_authoring' && this.expanded && this.currentApp==='dating') {
+          this.authoringSheetDismiss?.()
+          this.authoringSheetDismiss=showPocketSheet(this.screen,'Saved draft authoring',el('pre','lumistry-authoring-source',payload.text),{onDismiss:()=>{this.authoringSheetDismiss=undefined}})?.dismiss
+        }
+        if(payload.phase==='repair_evidence' && payload.evidence?.schema==='lumistry-replay-1') {
+          const url=URL.createObjectURL(new Blob([JSON.stringify(payload.evidence,null,2)],{type:'application/json'}))
+          const a=document.createElement('a');a.href=url;a.download=`lumistry-private-repair-${payload.evidence.slotId}.json`;a.click()
+          window.setTimeout(()=>URL.revokeObjectURL(url),1_000)
+          this.datingUI.status='Private repair evidence downloaded.'
+        }
         if(payload.phase==='relationship_sources'){
           const content=el('section','lp-stack');for(const source of payload.sources||[]){const row=el('article','lp-card');row.append(el('strong','',source.channel==='dating'?'Dating chat':'Authorized ordinary DM'),el('p','lp-copy',source.text));content.append(row);}
           if(payload.unavailable)content.append(el('p','lp-copy','Some supporting messages are no longer available on the selected branch. No hidden or edited source was substituted.'));
@@ -1574,8 +1598,8 @@ class PocketController {
         this.provisionalActivities.delete(activity.id)
       }
       this.pruneInactiveActivitySurfaces()
-      this.mountInlineArtifacts()
-      for (const activity of this.state.activities || []) this.queueActivityReceipt(activity)
+      for (const activity of this.state.activities || []) this.queueActivityReceipt(activity, false)
+      this.sweepActivityReceipts()
       this.applyAppearance()
       this.syncComposerReferencePill()
       this.updateBadge()
@@ -2247,6 +2271,7 @@ class PocketController {
   }
 
   private close(): void {
+    this.authoringSheetDismiss?.()
     this.conversationDeleteDismiss?.(); this.conversationDeleteDismiss = null
     this.lorebookPicker?.dismiss(); this.lorebookPicker = null
     this.voicePlayer.stop()
@@ -2257,6 +2282,7 @@ class PocketController {
     if (!this.expanded && !this.widget && !this.dockPanel && !this.mobileWidget) return
     this.expanded = false
     this.shell.hidden = true
+    for (const cleanup of this.viewCleanups.splice(0)) cleanup()
     this.launcher.hidden = false
     this.releaseDockPanel()
     if (this.mobileWidget) {
@@ -2420,8 +2446,10 @@ class PocketController {
 
   private installInlineArtifactObserver(): void {
     if (this.inlineArtifactObserver || typeof MutationObserver === 'undefined') return
-    this.inlineArtifactObserver = new MutationObserver(() => this.scheduleInlineArtifactMount())
-    this.inlineArtifactObserver.observe(document.body, { childList: true, subtree: true })
+    this.inlineArtifactObserver = new MutationObserver(records => {
+      if (this.pocketEnabled && !this.freeformSession && records.some(affectsInlineActivity)) this.scheduleInlineArtifactMount()
+    })
+    this.inlineArtifactObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-pocket-inline-anchor'] })
     this.scheduleInlineArtifactMount()
   }
 
@@ -2516,6 +2544,8 @@ class PocketController {
     for (const injected of this.injectedActivities.values()) this.ctx.dom.uninject(injected)
     this.injectedActivities.clear()
     this.pendingActivities.clear()
+    window.clearInterval(this.receiptSweepTimer)
+    this.receiptSweepTimer = 0
     if (clearKnown) this.knownActivities.clear()
     if (clearProvisional) this.provisionalActivities.clear()
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
@@ -2527,34 +2557,24 @@ class PocketController {
     }
   }
 
-  private tryRenderInlineArtifact(activity: PocketActivity): boolean {
-    this.mountInlineArtifacts()
-    // A hidden follower is already represented inside its sequence's visible phone.
-    const hosts = this.inlineHosts(activity.id).filter((host) => host.dataset.pocketMounted === 'true')
-    if (!hosts.length) return false
-    const fallback = this.injectedActivities.get(activity.id)
-    if (fallback) {
-      this.ctx.dom.uninject(fallback)
-      this.injectedActivities.delete(activity.id)
-    }
-    return true
-  }
-
-  private queueActivityReceipt(activity: PocketActivity): void {
-    if (this.freeformSession) return
+  private queueActivityReceipt(activity: PocketActivity, sweep = true): void {
+    if (!this.pocketEnabled || this.freeformSession) return
     const active = this.activeContext()
     if (activity.scope.chatId !== active.chatId || activity.scope.characterId !== active.characterId) return
-    if (this.tryRenderInlineArtifact(activity)) return
-    if (this.injectedActivities.has(activity.id)) { this.refreshActivityConnectors(); return }
-    if (!activity.source?.messageId) return
-    this.pendingActivities.set(activity.id, activity)
-    this.sweepActivityReceipts()
+    if (activity.source?.messageId && !this.injectedActivities.has(activity.id) && !this.pendingActivities.has(activity.id)) {
+      this.pendingActivities.set(activity.id, Date.now() + 30_000)
+    }
+    if (sweep) this.sweepActivityReceipts()
   }
 
-  private sweepActivityReceipts(): void {
-    this.mountInlineArtifacts()
-    for (const [activityId, activity] of this.pendingActivities) {
-      if (this.tryRenderInlineArtifact(activity)) {
+  private sweepActivityReceipts(scanAnchors = true): void {
+    if (this.destroyed || !this.pocketEnabled || this.freeformSession) return
+    if (scanAnchors) this.mountInlineArtifacts()
+    const now = Date.now()
+    let injectedAny = false
+    for (const [activityId, expiresAt] of this.pendingActivities) {
+      const activity = this.inlineActivity(activityId)
+      if (!activity || expiresAt <= now) {
         this.pendingActivities.delete(activityId)
         continue
       }
@@ -2562,17 +2582,14 @@ class PocketController {
       if (!injected) continue
       this.pendingActivities.delete(activityId)
       this.injectedActivities.set(activityId, injected)
+      injectedAny = true
     }
-    this.refreshActivityConnectors()
-    if (this.pendingActivities.size && !this.receiptSweepTimer) {
-      this.receiptSweepTimer = window.setInterval(() => {
-        if (!this.pendingActivities.size) {
-          window.clearInterval(this.receiptSweepTimer)
-          this.receiptSweepTimer = 0
-          return
-        }
-        this.sweepActivityReceipts()
-      }, 1_500)
+    if (injectedAny) this.refreshActivityConnectors()
+    if (!this.pendingActivities.size) {
+      window.clearInterval(this.receiptSweepTimer)
+      this.receiptSweepTimer = 0
+    } else if (!this.receiptSweepTimer) {
+      this.receiptSweepTimer = window.setInterval(() => this.sweepActivityReceipts(false), 1_500)
     }
   }
 
@@ -2593,6 +2610,7 @@ class PocketController {
     const oldThreadNearBottom = oldThread ? oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop < 72 : false
     const focusedAppearance=this.screen.contains(document.activeElement)?(document.activeElement as HTMLElement)?.dataset.appearanceFocus:undefined
     const focusedDockSide = document.activeElement?.getAttribute('aria-label') === 'Desktop phone side'
+    const focusedTrackerContext = this.screen.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.trackerContextControl : undefined
     const focusedContact = this.currentApp === 'contacts' && this.screen.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.contactFocus : ''
     const focusedSocial = this.screen.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.socialFocus : ''
     const socialSelection = document.activeElement instanceof HTMLTextAreaElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] as const : undefined
@@ -2660,6 +2678,11 @@ class PocketController {
       if (target instanceof HTMLTextAreaElement && socialSelection) target.setSelectionRange(...socialSelection)
     }
     if (!transition && focusedReplyControl && !view.contains(document.activeElement)) view.querySelector<HTMLButtonElement>('.lp-compose > button')?.focus({ preventScroll: true })
+    if (!transition && focusedTrackerContext && !view.contains(document.activeElement)) {
+      const control = view.querySelector<HTMLElement>(`[data-tracker-context-control="${focusedTrackerContext}"]`)
+      control?.focus({ preventScroll: true })
+      if (control instanceof HTMLTextAreaElement && selection) control.setSelectionRange(...selection)
+    }
     if (!transition && focusedComposer && !view.contains(document.activeElement)) {
       const composer = view.querySelector<HTMLTextAreaElement>(`[data-pocket-composer="${CSS.escape(focusedComposer)}"]`)
       composer?.focus({ preventScroll: true })

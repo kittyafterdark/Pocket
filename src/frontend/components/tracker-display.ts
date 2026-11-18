@@ -83,11 +83,27 @@ function makeRing(percent: number, glyph: ReturnType<typeof trackerGlyph>, class
   return ring
 }
 
+export function trackerUsesRealClock(tracker: PhoneTracker): boolean {
+  return tracker.kind !== 'state' && tracker.updateMode === 'automatic' && tracker.clock === 'real' &&
+    !tracker.clockPaused && Boolean(tracker.ratePerHour) &&
+    (tracker.ratePerHour > 0 ? tracker.value < tracker.max : tracker.value > tracker.min)
+}
+
 export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDivElement {
+  return renderTrackerDisplay(displayTrackerValue(tracker, state), state)
+}
+
+function displayTrackerValue(tracker: PhoneTracker, state: PhoneState): PhoneTracker {
   const roleplayNow = state.roleplayClockSource === 'narrative' && state.roleplayClockPrecision !== 'exact' ? '' : state.roleplayNow
-  const current = materializeTracker(tracker, roleplayNow).tracker
+  return materializeTracker(tracker, roleplayNow).tracker
+}
+
+const lastClockReading = new WeakMap<HTMLElement, { value: PhoneTracker['value']; pause: string | undefined }>()
+
+function renderTrackerDisplay(current: PhoneTracker, state: PhoneState): HTMLDivElement {
   const flavor = trackerFlavor(current)
   const card = el('div', `lp-card lp-tracker-card lp-tracker-${current.presentation}`)
+  lastClockReading.set(card, { value: current.value, pause: current.pausedReason })
   card.dataset.trackerId = current.id; card.dataset.kind = current.kind; card.dataset.target = current.target.type; card.dataset.presentation = current.presentation; card.dataset.flavor = flavor
   const band = current.kind === 'state' ? null : trackerBand(current)
   const percent = trackerPercent(current)
@@ -135,12 +151,16 @@ export function trackerDisplay(tracker: PhoneTracker, state: PhoneState): HTMLDi
     if (latest.reason) history.title = latest.reason
     card.append(history)
   }
-  if(Object.values(state.nativeApps||{}).some(data=>data.wallet.trackerId===tracker.id))card.append(el('small','lp-tracker-bank-sync','Synced with Pocket Bank'))
+  if(Object.values(state.nativeApps||{}).some(data=>data.wallet.trackerId===current.id))card.append(el('small','lp-tracker-bank-sync','Synced with Pocket Bank'))
   return card
 }
 
-export function refreshTrackerDisplay(card: HTMLElement, tracker: PhoneTracker, state: PhoneState): void {
-  const fresh = trackerDisplay(tracker, state)
+export function refreshTrackerDisplay(card: HTMLElement, tracker: PhoneTracker, state: PhoneState, clockTick = false): void {
+  const current = displayTrackerValue(tracker, state)
+  const previous = lastClockReading.get(card)
+  if (clockTick && previous && previous.value === current.value && previous.pause === current.pausedReason) return
+  const fresh = renderTrackerDisplay(current, state)
+  lastClockReading.set(card, { value: current.value, pause: current.pausedReason })
   card.replaceChildren(...fresh.childNodes)
   card.style.cssText = fresh.style.cssText
   if (fresh.dataset.design) card.dataset.design = fresh.dataset.design
