@@ -585,7 +585,7 @@ ${INLINE_BASE_STYLES}
   .lp-tracker-menu-item { min-height:44px; padding:10px 13px; border:0; border-radius:9px; background:transparent; color:var(--lp-text); text-align:left; font:inherit; cursor:pointer; }
   .lp-tracker-menu-item:hover,.lp-tracker-menu-item:focus-visible { background:color-mix(in srgb,var(--lp-accent) 13%,transparent); }
   .lp-tracker-menu-item:focus-visible { outline:2px solid var(--lp-accent); }
-  .lp-tracker-context-preview { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; max-height:360px; overflow:auto; padding:14px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-surface); }
+  .lp-tracker-context-preview, .lp-prompt-review-text { min-width:0; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; max-height:360px; overflow:auto; padding:14px; border:1px solid var(--lp-border); border-radius:14px; background:var(--lp-surface); }
   .lp-tracker-macros { display:grid; gap:10px; }
   .lp-tracker-macros[hidden] { display:none; }
   .lp-tracker-macros code { font-size:11px; overflow-wrap:anywhere; user-select:text; }
@@ -1036,7 +1036,7 @@ ${INLINE_FINISH_STYLES}
   .lp-picker-row .lp-identity-line { flex-direction:column; align-items:flex-start; gap:3px; }
   .lp-message-picker-row .lp-identity-name { line-height:1.4; }
   .lumiphone-shell [data-pocket-search-result][hidden] { display:none !important; }
-  .lp-message-picker-row[hidden], .lp-section[hidden], .lp-field[hidden], .lp-tracker-config-fields[hidden] { display:none; }
+  .lp-message-picker-row[hidden], .lp-section[hidden], .lp-field[hidden], .lp-settings-section[hidden], .lp-tracker-config-fields[hidden] { display:none; }
   .lp-template-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
   .lp-template-card { appearance:none; padding:18px 12px; border:1px solid var(--lp-border); border-radius:20px; display:grid; justify-items:start; gap:7px; background:var(--lp-surface); color:var(--lp-text); text-align:left; cursor:pointer; }
   .lp-template-card:hover { border-color:var(--lp-accent); background:color-mix(in srgb,var(--lp-accent) 9%,var(--lp-surface)); }

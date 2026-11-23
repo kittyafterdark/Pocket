@@ -1,9 +1,11 @@
+import { normalizePromptPlacement, type PromptPlacement } from './prompt-delivery.js'
 import type { PhoneState, PhoneTracker } from '../types.js'
 import { materializeTracker, trackerBand } from './trackers.js'
 
 export interface TrackerContextSettings {
   delivery: 'injection' | 'macros'
   prompt: string
+  placement?: PromptPlacement
 }
 
 export const DEFAULT_TRACKER_PROMPT = 'Use these live Pocket trackers to keep the roleplay consistent. Respect who each tracker belongs to, its current value, and its update rules. Change model-writable trackers only when the story establishes a reason; never invent changes just to move a number.'
@@ -14,6 +16,7 @@ export function normalizeTrackerContextSettings(value: unknown): TrackerContextS
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   return {
     delivery: raw.delivery === 'macros' ? 'macros' : 'injection',
+    ...(raw.placement && typeof raw.placement === 'object' ? { placement: normalizePromptPlacement(raw.placement) } : {}),
     prompt: typeof raw.prompt === 'string' ? raw.prompt.trim().slice(0, TRACKER_PROMPT_LIMIT) : DEFAULT_TRACKER_PROMPT,
   }
 }

@@ -58,6 +58,7 @@ import {assignPocketWallpaper,personaWallpaperActive} from './domain/wallpaper-s
 import { defaultPreferences, isFuturePreferences, normalizeImageSource, normalizePreferences, normalizeWallpaper, PREFERENCES_PATH } from './domain/preferences.js'
 import { clockDayPart, clockLabel, CLOCK_DAY_PART_KEYS } from './domain/clock-label.js'
 import { projectPhoneContext } from './domain/projection.js'
+import { injectPromptBlocks, normalizePromptDelivery, normalizePromptPlacement, type PocketPromptBlock } from './domain/prompt-delivery.js'
 import { normalizeTrackerContextSettings, trackerContext, trackerMacroValue } from './domain/tracker-context.js'
 import { assertPersonaAuthorship, callSummary, normalizeCallMarker } from './domain/phone-events.js'
 import { legacyActionRoute, normalizePocketRoute } from './domain/navigation.js'
@@ -431,6 +432,7 @@ function defaultState(chatId: string, characterId: string, characterName = 'Char
     references: [],
     groupBatches: [],
     weather: defaultWeather(),
+    promptSettings: normalizePromptDelivery(null),
     trackerSettings: normalizeTrackerContextSettings(null),
     trackers: [],
     notifications: [],
@@ -808,6 +810,7 @@ function normalizeState(value: unknown, chatId: string, characterId: string, cha
     chatId,
     characterId,
     contextScenario: text(value.contextScenario, 12000),
+    promptSettings: normalizePromptDelivery(value.promptSettings),
     trackerSettings: normalizeTrackerContextSettings(value.trackerSettings),
     storageRevision:Math.max(0,Math.round(numberValue(value.storageRevision,0))),
     nativeApps:Object.fromEntries(Object.entries(isRecord(value.nativeApps)?value.nativeApps:{}).slice(0,16).map(([owner,data])=>[owner,normalizeNativeApps(data)])),
@@ -6592,6 +6595,33 @@ async function handleFrontend(payload: unknown, userId?: string): Promise<void> 
         })
         break
       }
+      case 'lumiphone:save_prompt_settings': {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId)
+          state.promptSettings = normalizePromptDelivery(payload.settings)
+          await saveState(state, userId)
+          await sendState(state, userId, 'prompt_settings')
+          send({ type: 'lumiphone:action_done', requestId }, userId)
+        })
+        break
+      }
+      case 'lumiphone:review_prompt': {
+        // Read-only: do not materialize persisted clocks or consume relay/reference receipts.
+        const raw = await spindle.userStorage.getJson<unknown>(statePath(context.chatId, context.characterId), { fallback: null, userId })
+        if (!isRecord(raw)) throw new Error('Open this Pocket session before reviewing its prompt.')
+        if (Number(raw.version) > STATE_VERSION) throw new Error('This Pocket state requires a newer extension version.')
+        const state = normalizeState(raw, context.chatId, context.characterId, text(raw.characterName, 120))
+        const blocks = pocketPromptBlocks(state)
+        const handoff = persistentHandoffContext(state, { maxChars: 2_600 })
+        if (handoff) blocks.push({ name: 'Pocket handoff memory — established history', content: handoff, delivery: 'conditional', placement: normalizePromptPlacement(null) })
+        for (const relay of state.relays.filter(entry => entry.status === 'pending')) {
+          blocks.push({ name: `Continuity relay candidate · ${relay.id}`, content: pendingRelayContext(state, { relayId: relay.id, maxChars: 3_600 }), delivery: 'conditional', placement: normalizePromptPlacement(null) })
+        }
+        const reference = latestArmedReference(state)
+        if (reference) blocks.push({ name: 'Armed user reference — next eligible turn', content: serializePocketReference(reference, 2_200), delivery: 'conditional', placement: normalizePromptPlacement(null) })
+        send({ type: 'lumiphone:prompt_review', requestId, review: { createdAt: nowIso(), enabled: await pocketEnabled(userId) && !await roleplayToolsSuppressed(userId), blocks } }, userId)
+        break
+      }
       case 'lumiphone:save_tracker_settings': {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId)
@@ -7567,6 +7597,23 @@ function registerTool(suppressed=false): void {
   } as any)
 }
 
+function pocketMemoryPrompt(state: PhoneState): string {
+  const authorship = state.setup.authorship === 'impersonation'
+    ? 'IMPERSONATION: you may author and persist newly-written messages as the Pocket Persona as well as other actors.'
+    : 'ROLEPLAY: the human exclusively authors the Pocket Persona. Never send a message or initiate a call as that persona, including aliases, sender=user/persona, or group batches. Explicit phone input is supplied as history; never resend it. Persist other actors’ communication normally. Quoted dialogue in prose is not automatically a text message.'
+  const phoneRecall = roleplayPhoneRecall(projectSwipeScopedState(state))
+  return `${PHONE_GUIDANCE}\n${authorship}\nCurrent Pocket snapshot:\n${projectPhoneContext(state, undefined, false)}${phoneRecall ? `\n\n${phoneRecall}` : ''}`
+}
+
+function pocketPromptBlocks(state: PhoneState): PocketPromptBlock[] {
+  const memory = normalizePromptDelivery(state.promptSettings)
+  const trackers = normalizeTrackerContextSettings(state.trackerSettings)
+  return [
+    { name: 'Pocket memory', content: pocketMemoryPrompt(state), ...memory, macro: '{{pocket_memory}}' },
+    ...(state.trackers.some(tracker => tracker.visibleToModel) ? [{ name: 'Pocket trackers — live state', content: trackerContext(state), delivery: trackers.delivery, placement: normalizePromptPlacement(trackers.placement), macro: '{{pocket_trackers}}' } satisfies PocketPromptBlock] : []),
+  ]
+}
+
 let interceptorDisposer: (() => void) | null = null
 
 function ensureInterceptor(): void {
@@ -7592,17 +7639,7 @@ function ensureInterceptor(): void {
       const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : '')
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3_600 })
       const handoffMemoryBlock = targetRelayId ? '' : persistentHandoffContext(state, { maxChars: 2_600 })
-      const authorship = state.setup.authorship === 'impersonation'
-        ? 'IMPERSONATION: you may author and persist newly-written messages as the Pocket Persona as well as other actors.'
-        : 'ROLEPLAY: the human exclusively authors the Pocket Persona. Never send a message or initiate a call as that persona, including aliases, sender=user/persona, or group batches. Explicit phone input is supplied as history; never resend it. Persist other actors’ communication normally. Quoted dialogue in prose is not automatically a text message.'
-      const phoneRecall = roleplayPhoneRecall(projectSwipeScopedState(state))
-      const generic = { role: 'system' as const, content: `${PHONE_GUIDANCE}\n${authorship}\nCurrent Pocket snapshot:\n${projectPhoneContext(state, undefined, false)}${phoneRecall ? `\n\n${phoneRecall}` : ''}` }
-      const injectedMessages = [...cleanMessages, generic]
-      const breakdown = [{ messageIndex: cleanMessages.length, name: 'Pocket memory' }]
-      if (normalizeTrackerContextSettings(state.trackerSettings).delivery === 'injection' && state.trackers.some(t => t.visibleToModel)) {
-        injectedMessages.push({ role: 'system' as const, content: trackerContext(state) })
-        breakdown.push({ messageIndex: injectedMessages.length - 1, name: 'Pocket trackers — live state' })
-      }
+      const { messages: injectedMessages, breakdown } = injectPromptBlocks(cleanMessages, pocketPromptBlocks(state))
       if (handoffMemoryBlock) {
         injectedMessages.push({ role: 'system' as const, content: handoffMemoryBlock })
         breakdown.push({ messageIndex: injectedMessages.length - 1, name: 'Pocket handoff memory — established history' })
@@ -8058,10 +8095,10 @@ spindle.on('TOOL_INVOCATION', async (payload, eventUserId) => {
 
 // Resolve from the invocation's chat, never the phone UI's last active state.
 // Function handlers are supported by the runtime; the bundled DTO still types them as strings.
-for (const name of ['pocket_trackers', 'pocket_tracker']) {
+for (const name of ['pocket_memory', 'pocket_trackers', 'pocket_tracker']) {
   spindle.registerMacro({
     name, category: 'Pocket', returnType: 'string', volatile: true,
-    description: name === 'pocket_trackers' ? 'Live Pocket tracker context (macro mode only).' : 'Current visible tracker value by stable key (macro mode only).',
+    description: name === 'pocket_memory' ? 'Pocket guidance, authorship, snapshot and phone recall (memory macro mode only).' : name === 'pocket_trackers' ? 'Live Pocket tracker context (macro mode only).' : 'Current visible tracker value by stable key (macro mode only).',
     ...(name === 'pocket_tracker' ? { args: [{ name: 'key', required: true }] } : {}),
     handler: (async (context: { chatId?: string; args?: string[]; userId?: string }) => {
       const chatId = text(context.chatId, 180)
@@ -8072,6 +8109,7 @@ for (const name of ['pocket_trackers', 'pocket_tracker']) {
       const raw = await spindle.userStorage.getJson<unknown>(statePath(chatId, characterId), { fallback: null, userId })
       if (!isRecord(raw) || Number(raw.version) > STATE_VERSION) return ''
       const state = normalizeState(raw, chatId, characterId, text(raw.characterName, 120))
+      if (name === 'pocket_memory') return normalizePromptDelivery(state.promptSettings).delivery === 'macros' ? pocketMemoryPrompt(state) : ''
       if (normalizeTrackerContextSettings(state.trackerSettings).delivery !== 'macros') return ''
       return name === 'pocket_trackers' ? trackerContext(state) : trackerMacroValue(state, text(context.args?.[0], 120))
     }) as unknown as string,

@@ -1100,6 +1100,7 @@ export interface PhoneState {
   references: PocketContextReference[]
   groupBatches: PendingGroupBatch[]
   weather: RoleplayWeather
+  promptSettings?: import('./domain/prompt-delivery.js').PromptDeliverySettings
   trackerSettings?: import('./domain/tracker-context.js').TrackerContextSettings
   trackers: PhoneTracker[]
   notifications: PhoneNotification[]

@@ -1,3 +1,5 @@
+import { contextCategories, roleplayDelivery, promptReview, trackerMacros } from './context-settings.js'
+import type { PromptDeliverySettings, PocketPromptReview } from '../../domain/prompt-delivery.js'
 import { POCKET_REASONING_OPTIONS } from '../../domain/reasoning.js'
 import type { ChatPocketPersona, DevicePreferences, PhoneCapabilities, PhonePalette, PhoneSettings, PhoneState, PocketContextDiagnostics, PocketGenerationInfo, PocketOperationProgress, PocketResolvedWallpapers, SwarmVisualProfile } from '../../types.js'
 import { personaWallpaperActive } from '../../domain/wallpaper-scope.js'
@@ -44,6 +46,15 @@ export interface SettingsViewHost {
   swarmProfile: SwarmVisualProfile | null
   generation: PocketGenerationInfo | null
   resolvedWallpapers: PocketResolvedWallpapers
+  promptDraft?: PromptDeliverySettings
+  promptPending?: boolean
+  promptReview?: PocketPromptReview | null
+  promptReviewPending?: boolean
+  promptReviewError?: string
+  updatePromptDraft?(draft: PromptDeliverySettings): void
+  savePromptDraft?(draft: PromptDeliverySettings): void
+  loadPromptReview?(): void
+  openTrackerSettings?(): void
   contextPreview: PocketContextDiagnostics | null
   personaPreview: ChatPocketPersona | null
   operations: Map<string, PocketOperationProgress>
@@ -144,7 +155,7 @@ function categories(host: SettingsViewHost): HTMLDivElement {
     ...(host.freeformSession ? [['freeform', 'Freeform', 'State consolidation, roleplay background, and session controls']] : []),
     ['personalization', 'Personalization', 'Theme, wallpapers, and your Persona'],
     ['messages', 'Messages', 'Replies, ambient texts, roleplay context'],
-    ['context', 'Context', 'Character profiles, lorebooks, and this session’s scenario'],
+    ['context', 'Context', 'Sources, prompt review, injection depth, and macros'],
     ['generation', 'Pocket Generation', 'Model source and connection diagnostics'],
     ['jev', 'Tracker judge', 'LLM or TypeSafe Jev decisions'],
     ['camera', 'Camera & Swarm Studio', 'Visual profile and macro diagnostics'],
@@ -682,7 +693,7 @@ function imageDiagnostics(host: SettingsViewHost): HTMLDivElement {
 }
 
 function contextSettings(host: SettingsViewHost): HTMLDivElement {
-  const {page, content} = host.page('Context', 'Used in Roleplay and Freeform')
+  const {page, content} = host.page('Sources & scenario', 'Used in Roleplay and Freeform')
   let settings = clone(host.draft)
   const commit = (key: 'preferFullProfiles' | 'enableLorebooks', value: boolean) => { settings = {...settings, [key]: value}; host.update(settings) }
   content.append(toggle('Prefer full character profiles', settings.preferFullProfiles, value => commit('preferFullProfiles', value), 'Use the linked character definition rather than only the compact phone brief. Larger profiles use more context. Each contact can override this default.'))
@@ -714,7 +725,11 @@ export function renderSettingsView(host: SettingsViewHost): HTMLDivElement {
     return page
   }
   if (host.section === 'image-diagnostics') return imageDiagnostics(host)
-  if (host.section === 'context') return contextSettings(host)
+  if (host.section === 'context') return contextCategories(host)
+  if (host.section === 'context-sources') return contextSettings(host)
+  if (host.section === 'context-delivery') return roleplayDelivery(host)
+  if (host.section === 'prompt-review') return promptReview(host)
+  if (host.section === 'tracker-macros') return trackerMacros(host)
   if (host.section === 'freeform' && host.freeformSession) return freeformSettings(host)
   if (!host.section) return categories(host)
   if (host.section === 'personalization') {

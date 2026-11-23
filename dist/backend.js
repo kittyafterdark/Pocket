@@ -34133,6 +34133,45 @@ function projectPhoneContext(state, budget = MODEL_CONTEXT_BUDGET, includeTracke
   }, budget);
 }
 
+// src/domain/prompt-delivery.ts
+function normalizePromptPlacement(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const depth = Number(raw.depth);
+  return {
+    role: raw.role === "assistant" || raw.role === "user" ? raw.role : "system",
+    position: raw.position === "pre_history" || raw.position === "post_history" || raw.position === "in_history" ? raw.position : "prompt_end",
+    depth: Number.isFinite(depth) ? Math.max(0, Math.min(1e4, Math.floor(depth))) : 0
+  };
+}
+function normalizePromptDelivery(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  return { delivery: raw.delivery === "macros" ? "macros" : "injection", placement: normalizePromptPlacement(raw.placement) };
+}
+function promptInsertionIndex(messages, placement) {
+  if (placement.position === "prompt_end")
+    return messages.length;
+  const history = messages.flatMap((message, index) => message.__isChatHistory === true ? [index] : []);
+  if (!history.length)
+    return placement.position === "pre_history" ? 0 : messages.length;
+  if (placement.position === "pre_history")
+    return history[0];
+  if (placement.position === "post_history" || placement.depth === 0)
+    return history[history.length - 1] + 1;
+  return history[Math.max(0, history.length - placement.depth)];
+}
+function injectPromptBlocks(messages, blocks) {
+  const placements = blocks.filter((block) => block.delivery === "injection").map((block, order) => ({
+    block,
+    order,
+    index: promptInsertionIndex(messages, block.placement),
+    message: { role: block.placement.role, content: block.content }
+  }));
+  const result = [...messages];
+  for (const entry of [...placements].sort((a, b) => b.index - a.index || b.order - a.order))
+    result.splice(entry.index, 0, entry.message);
+  return { messages: result, breakdown: placements.map((entry) => ({ messageIndex: result.indexOf(entry.message), name: entry.block.name })) };
+}
+
 // src/domain/tracker-context.ts
 var DEFAULT_TRACKER_PROMPT = "Use these live Pocket trackers to keep the roleplay consistent. Respect who each tracker belongs to, its current value, and its update rules. Change model-writable trackers only when the story establishes a reason; never invent changes just to move a number.";
 var TRACKER_PROMPT_LIMIT = 4000;
@@ -34141,6 +34180,7 @@ function normalizeTrackerContextSettings(value) {
   const raw = value && typeof value === "object" ? value : {};
   return {
     delivery: raw.delivery === "macros" ? "macros" : "injection",
+    ...raw.placement && typeof raw.placement === "object" ? { placement: normalizePromptPlacement(raw.placement) } : {},
     prompt: typeof raw.prompt === "string" ? raw.prompt.trim().slice(0, TRACKER_PROMPT_LIMIT) : DEFAULT_TRACKER_PROMPT
   };
 }
@@ -38991,6 +39031,7 @@ function defaultState(chatId, characterId, characterName = "Character") {
     references: [],
     groupBatches: [],
     weather: defaultWeather(),
+    promptSettings: normalizePromptDelivery(null),
     trackerSettings: normalizeTrackerContextSettings(null),
     trackers: [],
     notifications: [],
@@ -39437,6 +39478,7 @@ function normalizeState(value, chatId, characterId, characterName) {
     chatId,
     characterId,
     contextScenario: text9(value.contextScenario, 12000),
+    promptSettings: normalizePromptDelivery(value.promptSettings),
     trackerSettings: normalizeTrackerContextSettings(value.trackerSettings),
     storageRevision: Math.max(0, Math.round(numberValue(value.storageRevision, 0))),
     nativeApps: Object.fromEntries(Object.entries(isRecord2(value.nativeApps) ? value.nativeApps : {}).slice(0, 16).map(([owner, data]) => [owner, normalizeNativeApps(data)])),
@@ -45980,6 +46022,36 @@ async function handleFrontend(payload, userId) {
         });
         break;
       }
+      case "lumiphone:save_prompt_settings": {
+        await withStateLock(stateKey(context.chatId, context.characterId), async () => {
+          const state = await loadState(context.chatId, context.characterId, userId);
+          state.promptSettings = normalizePromptDelivery(payload.settings);
+          await saveState(state, userId);
+          await sendState(state, userId, "prompt_settings");
+          send({ type: "lumiphone:action_done", requestId }, userId);
+        });
+        break;
+      }
+      case "lumiphone:review_prompt": {
+        const raw = await spindle.userStorage.getJson(statePath(context.chatId, context.characterId), { fallback: null, userId });
+        if (!isRecord2(raw))
+          throw new Error("Open this Pocket session before reviewing its prompt.");
+        if (Number(raw.version) > STATE_VERSION)
+          throw new Error("This Pocket state requires a newer extension version.");
+        const state = normalizeState(raw, context.chatId, context.characterId, text9(raw.characterName, 120));
+        const blocks = pocketPromptBlocks(state);
+        const handoff = persistentHandoffContext(state, { maxChars: 2600 });
+        if (handoff)
+          blocks.push({ name: "Pocket handoff memory \u2014 established history", content: handoff, delivery: "conditional", placement: normalizePromptPlacement(null) });
+        for (const relay of state.relays.filter((entry) => entry.status === "pending")) {
+          blocks.push({ name: `Continuity relay candidate \xB7 ${relay.id}`, content: pendingRelayContext(state, { relayId: relay.id, maxChars: 3600 }), delivery: "conditional", placement: normalizePromptPlacement(null) });
+        }
+        const reference = latestArmedReference(state);
+        if (reference)
+          blocks.push({ name: "Armed user reference \u2014 next eligible turn", content: serializePocketReference(reference, 2200), delivery: "conditional", placement: normalizePromptPlacement(null) });
+        send({ type: "lumiphone:prompt_review", requestId, review: { createdAt: nowIso(), enabled: await pocketEnabled(userId) && !await roleplayToolsSuppressed(userId), blocks } }, userId);
+        break;
+      }
       case "lumiphone:save_tracker_settings": {
         await withStateLock(stateKey(context.chatId, context.characterId), async () => {
           const state = await loadState(context.chatId, context.characterId, userId);
@@ -47143,6 +47215,24 @@ function registerTool(suppressed = false) {
     council_eligible: false
   });
 }
+function pocketMemoryPrompt(state) {
+  const authorship = state.setup.authorship === "impersonation" ? "IMPERSONATION: you may author and persist newly-written messages as the Pocket Persona as well as other actors." : "ROLEPLAY: the human exclusively authors the Pocket Persona. Never send a message or initiate a call as that persona, including aliases, sender=user/persona, or group batches. Explicit phone input is supplied as history; never resend it. Persist other actors\u2019 communication normally. Quoted dialogue in prose is not automatically a text message.";
+  const phoneRecall = roleplayPhoneRecall(projectSwipeScopedState(state));
+  return `${PHONE_GUIDANCE}
+${authorship}
+Current Pocket snapshot:
+${projectPhoneContext(state, undefined, false)}${phoneRecall ? `
+
+${phoneRecall}` : ""}`;
+}
+function pocketPromptBlocks(state) {
+  const memory = normalizePromptDelivery(state.promptSettings);
+  const trackers = normalizeTrackerContextSettings(state.trackerSettings);
+  return [
+    { name: "Pocket memory", content: pocketMemoryPrompt(state), ...memory, macro: "{{pocket_memory}}" },
+    ...state.trackers.some((tracker) => tracker.visibleToModel) ? [{ name: "Pocket trackers \u2014 live state", content: trackerContext(state), delivery: trackers.delivery, placement: normalizePromptPlacement(trackers.placement), macro: "{{pocket_trackers}}" }] : []
+  ];
+}
 var interceptorDisposer = null;
 function ensureInterceptor() {
   if (interceptorDisposer || !spindle.permissions.has("interceptor"))
@@ -47162,20 +47252,7 @@ function ensureInterceptor() {
       const targetRelayId = metadataRelayId || generationRelay?.id || (!generationId && active.length === 1 ? active[0].id : "");
       const relayBlock = pendingRelayContext(state, { relayId: targetRelayId, maxChars: 3600 });
       const handoffMemoryBlock = targetRelayId ? "" : persistentHandoffContext(state, { maxChars: 2600 });
-      const authorship = state.setup.authorship === "impersonation" ? "IMPERSONATION: you may author and persist newly-written messages as the Pocket Persona as well as other actors." : "ROLEPLAY: the human exclusively authors the Pocket Persona. Never send a message or initiate a call as that persona, including aliases, sender=user/persona, or group batches. Explicit phone input is supplied as history; never resend it. Persist other actors\u2019 communication normally. Quoted dialogue in prose is not automatically a text message.";
-      const phoneRecall = roleplayPhoneRecall(projectSwipeScopedState(state));
-      const generic = { role: "system", content: `${PHONE_GUIDANCE}
-${authorship}
-Current Pocket snapshot:
-${projectPhoneContext(state, undefined, false)}${phoneRecall ? `
-
-${phoneRecall}` : ""}` };
-      const injectedMessages = [...cleanMessages, generic];
-      const breakdown = [{ messageIndex: cleanMessages.length, name: "Pocket memory" }];
-      if (normalizeTrackerContextSettings(state.trackerSettings).delivery === "injection" && state.trackers.some((t) => t.visibleToModel)) {
-        injectedMessages.push({ role: "system", content: trackerContext(state) });
-        breakdown.push({ messageIndex: injectedMessages.length - 1, name: "Pocket trackers \u2014 live state" });
-      }
+      const { messages: injectedMessages, breakdown } = injectPromptBlocks(cleanMessages, pocketPromptBlocks(state));
       if (handoffMemoryBlock) {
         injectedMessages.push({ role: "system", content: handoffMemoryBlock });
         breakdown.push({ messageIndex: injectedMessages.length - 1, name: "Pocket handoff memory \u2014 established history" });
@@ -47620,13 +47697,13 @@ spindle.on("TOOL_INVOCATION", async (payload, eventUserId) => {
     return `Pocket action failed: ${error instanceof Error ? error.message : String(error)}`;
   }
 });
-for (const name of ["pocket_trackers", "pocket_tracker"]) {
+for (const name of ["pocket_memory", "pocket_trackers", "pocket_tracker"]) {
   spindle.registerMacro({
     name,
     category: "Pocket",
     returnType: "string",
     volatile: true,
-    description: name === "pocket_trackers" ? "Live Pocket tracker context (macro mode only)." : "Current visible tracker value by stable key (macro mode only).",
+    description: name === "pocket_memory" ? "Pocket guidance, authorship, snapshot and phone recall (memory macro mode only)." : name === "pocket_trackers" ? "Live Pocket tracker context (macro mode only)." : "Current visible tracker value by stable key (macro mode only).",
     ...name === "pocket_tracker" ? { args: [{ name: "key", required: true }] } : {},
     handler: async (context) => {
       const chatId = text9(context.chatId, 180);
@@ -47638,6 +47715,8 @@ for (const name of ["pocket_trackers", "pocket_tracker"]) {
       if (!isRecord2(raw) || Number(raw.version) > STATE_VERSION)
         return "";
       const state = normalizeState(raw, chatId, characterId, text9(raw.characterName, 120));
+      if (name === "pocket_memory")
+        return normalizePromptDelivery(state.promptSettings).delivery === "macros" ? pocketMemoryPrompt(state) : "";
       if (normalizeTrackerContextSettings(state.trackerSettings).delivery !== "macros")
         return "";
       return name === "pocket_trackers" ? trackerContext(state) : trackerMacroValue(state, text9(context.args?.[0], 120));

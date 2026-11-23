@@ -52,6 +52,7 @@ import { conversationActorIds, listPocketActors, normalizeActorName, resolvePock
 import { activityDeviceOwner, conversationDeviceActorIds, conversationUnreadForDevice, conversationVisibleOnDevice, notificationBelongsToDevice, pocketPersonaActorId } from '../domain/device.js'
 import { applyMobilePhoneSurface, applyVisualViewportSurface, calculatePhoneSurface, clampLauncherPosition, clearVisualViewportSurface, currentViewport, desktopDockSize, LAUNCHER_SIZE, PHONE_ASPECT, resolveLauncherPosition } from './surface.js'
 import { applyPocketTouchScroll, resolvePocketTouchScrollMode } from './touch-scroll.js'
+import type { PocketPromptReview, PromptDeliverySettings } from '../domain/prompt-delivery.js'
 import { renderSettingsView } from './apps/settings.js'
 import { renderTrackersView } from './apps/trackers.js'
 import { renderMessagesView } from './apps/messages.js'
@@ -222,6 +223,11 @@ class PocketController {
     personaHome: { ...EMPTY_RESOLVED_IMAGE }, personaChat: { ...EMPTY_RESOLVED_IMAGE },
   }
   private contextPreview: PocketContextDiagnostics | null = null
+  private promptReview: PocketPromptReview | null = null
+  private promptReviewRequest = ''
+  private promptReviewError = ''
+  private promptSaveRequest = ''
+  private promptDrafts = new Map<string, PromptDeliverySettings>()
   private personaPreview: ChatPocketPersona | null = null
   private operations = new Map<string, PocketOperationProgress>()
   private router = new PocketRouteHistory()
@@ -701,6 +707,7 @@ class PocketController {
     this.state = null; this.deviceOwnerActorId = ''; this.selectedConversationId = ''; this.selectedMessageId = ''
     this.currentApp = 'home'; this.router.reset({ app: 'home' }); this.settingsDraft = null;this.portraitRefreshRequest='';this.portraitRefreshStatus='';this.portraitChoices=[]
     this.contextPreview = null; this.personaPreview = null
+    this.promptReview = null; this.promptReviewRequest = ''; this.promptReviewError = ''; this.promptSaveRequest = ''
     this.loreLogs=null; this.loreLogRequest=''
     this.operations.clear(); this.messageRequests.clear(); this.selectedSettingsSection = ''
     this.cameraBusy = false; this.cameraRequestId = ''; this.cameraPreview = ''; this.cameraReady = false
@@ -1752,6 +1759,19 @@ class PocketController {
       if (this.setupModalOpen && this.setupModalBody && !this.setupPersonaEditing) this.renderFirstChatSetupBody()
       return
     }
+    if (payload.type === 'lumiphone:prompt_review') {
+      if (!this.promptReviewRequest || payload.requestId !== this.promptReviewRequest) return
+      this.promptReviewRequest = ''; this.promptReviewError = ''; this.promptReview = payload.review as PocketPromptReview
+      if (this.currentApp === 'settings') this.render(false)
+      return
+    }
+    if (payload.type === 'lumiphone:action_done' && this.promptSaveRequest && payload.requestId === this.promptSaveRequest) {
+      this.promptSaveRequest = ''
+      this.promptDrafts.delete(`${this.state!.chatId}:${this.state!.characterId}`)
+      this.promptReview = null
+      if (this.currentApp === 'settings') this.render(false)
+      return
+    }
     if (payload.type === 'lumiphone:context_preview' && payload.diagnostics) {
       this.contextPreview = payload.diagnostics as PocketContextDiagnostics
       if (this.currentApp === 'settings') this.render(false)
@@ -1977,6 +1997,12 @@ class PocketController {
       return
     }
     if (payload.type === 'lumiphone:error') {
+      if (this.promptReviewRequest && payload.requestId === this.promptReviewRequest) {
+        this.promptReviewRequest = ''; this.promptReviewError = payload.error || 'Could not load prompt review.'
+        if (this.currentApp === 'settings') this.render(false)
+        return
+      }
+      if (this.promptSaveRequest && payload.requestId === this.promptSaveRequest) { this.promptSaveRequest = ''; if (this.currentApp === 'settings') this.render(false) }
       this.actorProfileRequests.delete(payload.requestId)
       if(payload.requestId===this.sessionManageRequest){this.sessionManageRequest='';this.sessionManageError=payload.error || 'Could not update the session.';this.loadFreeformDirectory();this.renderDrawerLanding();return}
       if (payload.requestId === this.freeformRequest || payload.requestId === this.freeformListRequest) {
@@ -2435,6 +2461,7 @@ class PocketController {
       this.selectedSettingsSection = route.section || ''
       this.settingsDraft ||= structuredClone(this.preferences)
       if (this.selectedSettingsSection === 'camera') this.send('lumiphone:image_options', {})
+      if (this.selectedSettingsSection === 'prompt-review') this.loadPromptReview()
       if (this.selectedSettingsSection === 'image-diagnostics') { this.imageDiagnostics = null; this.imageDiagnosticsRequest = this.send('lumiphone:get_image_diagnostics') }
       this.send('lumiphone:mark_read', { app: 'settings' })
     } else if (route.app !== 'home') {
@@ -4388,6 +4415,13 @@ class PocketController {
     content.append(save,reset);modal.root.append(content)
   }
 
+  private loadPromptReview(): void {
+    if (this.promptReviewRequest) return
+    this.promptReviewError = ''; this.promptReview = null
+    this.promptReviewRequest = this.send('lumiphone:review_prompt')
+    if (this.currentApp === 'settings') this.render(false)
+  }
+
   private renderSettings(): HTMLDivElement {
     this.settingsDraft ||= structuredClone(this.preferences)
     return renderSettingsView({
@@ -4413,6 +4447,19 @@ class PocketController {
       swarmProfile: this.swarmProfile,
       generation: this.generation,
       resolvedWallpapers: this.resolvedWallpapers,
+      promptDraft: this.promptDrafts.get(`${this.state!.chatId}:${this.state!.characterId}`),
+      promptPending: Boolean(this.promptSaveRequest),
+      promptReview: this.promptReview,
+      promptReviewPending: Boolean(this.promptReviewRequest),
+      promptReviewError: this.promptReviewError,
+      updatePromptDraft: draft => this.promptDrafts.set(`${this.state!.chatId}:${this.state!.characterId}`, draft),
+      savePromptDraft: draft => {
+        if (this.promptSaveRequest) return
+        this.promptSaveRequest = this.send('lumiphone:save_prompt_settings', { settings: draft })
+        this.render(false)
+      },
+      loadPromptReview: () => this.loadPromptReview(),
+      openTrackerSettings: () => this.openPocket({ app: 'trackers', trackerId: '__settings', view: 'config' }),
       contextPreview: this.contextPreview,
       personaPreview: this.personaPreview,
       operations: this.operations,

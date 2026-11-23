@@ -1,3 +1,5 @@
+import { normalizePromptPlacement } from '../../domain/prompt-delivery.js'
+import { promptPlacementControls, trackerMacroLibrary } from '../components/prompt-delivery.js'
 import { uuid } from '../../domain/uuid.js'
 import { DEFAULT_TRACKER_PROMPT, normalizeTrackerContextSettings, trackerContext, TRACKER_PROMPT_LIMIT } from '../../domain/tracker-context.js'
 import { button, el } from '../shared.js'
@@ -15,6 +17,8 @@ export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
     const option = el('option', '', label); option.value = value; delivery.append(option)
   }
   delivery.value = settings.delivery
+  let placement = settings.placement
+  const placementControls = promptPlacementControls(normalizePromptPlacement(placement), next => { placement = next; update(true) })
   const prompt = el('textarea', 'lp-textarea'); prompt.rows = 7; prompt.maxLength = TRACKER_PROMPT_LIMIT; prompt.value = settings.prompt
   prompt.dataset.trackerContextControl = 'prompt'
   content.append(
@@ -23,13 +27,8 @@ export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
   )
   const reset = button('Restore default prompt', 'lp-button lp-button-quiet')
   delivery.disabled = prompt.disabled = reset.disabled = host.pending
-  const macros = el('section', 'lp-card lp-tracker-macros')
-  macros.append(el('div', 'lp-eyebrow', 'RP preset macros'), el('p', 'lp-copy', 'Paste these into your RP preset. They resolve only in macro mode, using the current chat. Hidden trackers are excluded.'))
-  macros.append(el('code', '', '{{pocket_trackers}}'), el('p', 'lp-copy', 'The context prompt, permissions, and all visible tracker results.'))
-  macros.append(el('code', '', '{{pocket_tracker::stable_key}}'), el('p', 'lp-copy', 'One current value (including its unit). Replace stable_key with a tracker key below. Individual values do not include update instructions.'))
-  for (const tracker of host.state.trackers.filter(t => t.visibleToModel)) {
-    const row = el('div'); row.append(el('span', 'lp-copy', `${tracker.label} · `), el('code', '', `{{pocket_tracker::${tracker.key}}}`)); macros.append(row)
-  }
+  for (const control of placementControls.querySelectorAll('input,select')) (control as HTMLInputElement).disabled = host.pending
+  const macros = trackerMacroLibrary(host.state)
   const previewLabel = el('div', 'lp-eyebrow', 'Live tracker context preview')
   previewLabel.id = `tracker-preview-${uuid()}`
   const preview = el('pre', 'lp-tracker-context-preview'); preview.tabIndex = 0
@@ -37,16 +36,17 @@ export function trackerSettings(host: TrackerViewHost): HTMLDivElement {
   preview.setAttribute('aria-labelledby', previewLabel.id)
   const save = button(host.pending ? 'Saving…' : 'Save tracker settings'); save.disabled = host.pending
   const update = (draft = false) => {
-    const next = normalizeTrackerContextSettings({ delivery: delivery.value, prompt: prompt.value })
+    const next = normalizeTrackerContextSettings({ delivery: delivery.value, prompt: prompt.value, ...(placement ? { placement } : {}) })
     macros.hidden = next.delivery !== 'macros'
+    placementControls.hidden = next.delivery === 'macros'
     const context = trackerContext(host.state, next)
     if (preview.textContent !== context) preview.textContent = context
     if (draft) { host.updateDraft({ ...next }); save.textContent = 'Save tracker settings' }
   }
   delivery.addEventListener('change', () => update(true)); prompt.addEventListener('input', () => update(true))
   reset.addEventListener('click', () => { prompt.value = DEFAULT_TRACKER_PROMPT; update(true) })
-  save.addEventListener('click', () => host.send('lumiphone:save_tracker_settings', { settings: { delivery: delivery.value, prompt: prompt.value } }))
-  content.append(reset, macros, save, previewLabel, preview)
+  save.addEventListener('click', () => host.send('lumiphone:save_tracker_settings', { settings: { delivery: delivery.value, prompt: prompt.value, ...(placement ? { placement } : {}) } }))
+  content.append(placementControls, reset, macros, save, previewLabel, preview)
   update()
   if (host.state.trackers.some(tracker => tracker.visibleToModel && trackerUsesRealClock(tracker))) {
     const timer = window.setInterval(() => {
