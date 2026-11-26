@@ -140,7 +140,9 @@ test('cancelling host TTS prevents late audio playback and provider errors prese
     globalThis.fetch = (async () => new Response('failure', { status: 502 })) as any
     play.click(); await new Promise(resolve => setTimeout(resolve, 0))
     expect(view.querySelector('[role="status"]')!.textContent).toContain('could not generate audio')
-    expect(view.querySelector('details')!.textContent).toContain('English transcript')
+    expect(view.querySelector('details')).toBeNull()
+    expect(view.querySelector('.lp-voice-transcript')!.textContent).toContain('English transcript')
+    expect((view.querySelector('.lp-voice-transcript') as HTMLElement).hidden).toBe(false)
     expect(play.getAttribute('aria-pressed')).toBe('false')
   } finally {
     globalThis.document = previous.document; globalThis.window = previous.window; globalThis.fetch = previous.fetch; dom.window.close()
@@ -151,12 +153,21 @@ test('unsupported, disabled and failed speech retain readable transcripts', () =
   const player = new VoiceMessagePlayer(), message = { text: 'A readable transcript', senderName: 'Alice' }
   const unavailable = player.render(message)
   expect(unavailable.querySelector('button')!.disabled).toBe(true)
-  expect(unavailable.querySelector('details')!.textContent).toContain(message.text)
+  expect(unavailable.querySelector('details')).toBeNull()
+  expect(unavailable.querySelector('.lp-voice-transcript')!.textContent).toContain(message.text)
+  expect((unavailable.querySelector('.lp-voice-transcript') as HTMLElement).hidden).toBe(false)
+  const toggle = unavailable.querySelector<HTMLButtonElement>('.lp-voice-transcript-toggle')!
+  toggle.click()
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect((unavailable.querySelector('.lp-voice-transcript') as HTMLElement).hidden).toBe(true)
+  toggle.click()
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
   Object.assign(dom.window, { speechSynthesis: { getVoices: () => [], speak: () => { throw new Error('unavailable') }, cancel: () => {} }, SpeechSynthesisUtterance: class {} })
   expect(player.render(message, '', false).querySelector('button')!.disabled).toBe(true)
   const failed = player.render(message); failed.querySelector('button')!.click()
   expect(failed.querySelector('[role="status"]')!.textContent).toContain('failed')
   expect(failed.querySelector('button')!.getAttribute('aria-pressed')).toBe('false')
+  expect((failed.querySelector('.lp-voice-transcript') as HTMLElement).hidden).toBe(false)
 }))
 
 test('Messages settings receive late browser voices and keep cumulative edits', () => withDom(dom => {

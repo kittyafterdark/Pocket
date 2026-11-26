@@ -32145,13 +32145,178 @@ async function synthesizeVoiceMessage(connectionId, text, signal, options) {
   return blob;
 }
 
+// src/frontend/components/pocket-icons.ts
+var SVG_NS = "http://www.w3.org/2000/svg";
+var STROKE_PATHS = {
+  back: ["m15 18-6-6 6-6"],
+  video: [
+    "M15 10l4.6-2.6A1 1 0 0 1 21 8.3v7.4a1 1 0 0 1-1.4.9L15 14",
+    "M3 6.5h12v11H3z"
+  ],
+  plus: ["M12 5v14", "M5 12h14"],
+  send: ["M12 19V5", "m6 11 6-6 6 6"],
+  chatOutline: [
+    "M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"
+  ],
+  phone: [
+    "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z"
+  ],
+  missed: ["M17 7 7 17", "M17 17H7V7"],
+  mute: [
+    "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z",
+    "M19 10v2a7 7 0 0 1-14 0v-2",
+    "m3 3 18 18"
+  ],
+  speaker: [
+    "M11 5 6 9H3v6h3l5 4V5Z",
+    "M15.5 8.5a5 5 0 0 1 0 7",
+    "M18.5 6a8.5 8.5 0 0 1 0 12"
+  ],
+  transcript: ["M4 6h16", "M4 12h16", "M4 18h10"]
+};
+var FILL_PATHS = {
+  message: "M12 3C6.5 3 2 6.8 2 11.5c0 2.5 1.2 4.7 3.2 6.3L4 21.5l4.2-1.8c1.2.4 2.5.6 3.8.6 5.5 0 10-3.8 10-8.8S17.5 3 12 3Z",
+  phoneEnd: "M22.7 15.2c-.8-.8-2-1.5-3.4-2-1.1-.4-2.3-.6-3.4-.6-.6 0-1.1.4-1.3.9l-.6 1.5c-1.3-.3-2.7-.3-4 0l-.6-1.5c-.2-.5-.7-.9-1.3-.9-1.1 0-2.3.2-3.4.6-1.4.5-2.6 1.2-3.4 2-.5.5-.6 1.3-.2 1.9l1.2 1.8c.4.6 1.2.8 1.9.5l2.5-1.1c.6-.3.9-.9.9-1.5v-.7c1.4-.2 2.8-.2 4.2 0v.7c0 .6.3 1.2.9 1.5l2.5 1.1c.7.3 1.5.1 1.9-.5l1.2-1.8c.4-.6.3-1.4-.2-1.9Z",
+  play: "M7 5.2v13.6a1 1 0 0 0 1.5.85l10.6-6.8a1 1 0 0 0 0-1.7L8.5 4.35A1 1 0 0 0 7 5.2Z"
+};
+function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs))
+    node.setAttribute(k, String(v));
+  return node;
+}
+function pocketIcon(name, className = "") {
+  const isBattery = name === "battery";
+  const svg = svgEl("svg", {
+    viewBox: isBattery ? "0 0 28 14" : "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "1.9",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+    "aria-hidden": "true",
+    ...className ? { class: className } : {}
+  });
+  if (name === "signal") {
+    for (const [x, y, w, h] of [[3, 15, 3, 5], [8, 12, 3, 8], [13, 8, 3, 12], [18, 5, 3, 15]]) {
+      svg.append(svgEl("rect", { x, y, width: w, height: h, rx: 1, fill: "currentColor", stroke: "none" }));
+    }
+    return svg;
+  }
+  if (name === "wifi") {
+    for (const d of ["M3 9.5a14.5 14.5 0 0 1 18 0", "M6.8 13.2a9 9 0 0 1 10.4 0", "M10.4 16.8a3.4 3.4 0 0 1 3.2 0"]) {
+      svg.append(svgEl("path", { d }));
+    }
+    svg.append(svgEl("circle", { cx: 12, cy: 20, r: 1, fill: "currentColor", stroke: "none" }));
+    return svg;
+  }
+  if (name === "battery") {
+    svg.append(svgEl("rect", { x: 1, y: 2, width: 22, height: 10, rx: 2.5, stroke: "currentColor", "stroke-width": 1.5, opacity: ".75" }), svgEl("rect", { x: 3, y: 4, width: 15, height: 6, rx: 1.2, fill: "currentColor", stroke: "none" }), svgEl("path", { d: "M25 5v4", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", opacity: ".75" }));
+    return svg;
+  }
+  if (name === "lock") {
+    svg.append(svgEl("rect", { x: 5, y: 11, width: 14, height: 10, rx: 2 }), svgEl("path", { d: "M8 11V7a4 4 0 0 1 8 0v4" }));
+    return svg;
+  }
+  if (name === "pause") {
+    svg.append(svgEl("rect", { x: 6, y: 5, width: 4, height: 14, rx: 1, fill: "currentColor", stroke: "none" }), svgEl("rect", { x: 14, y: 5, width: 4, height: 14, rx: 1, fill: "currentColor", stroke: "none" }));
+    return svg;
+  }
+  if (name === "video") {
+    svg.append(svgEl("path", { d: STROKE_PATHS.video[0] }), svgEl("rect", { x: 3, y: 6.5, width: 12, height: 11, rx: 2 }));
+    return svg;
+  }
+  const fill = FILL_PATHS[name];
+  if (fill) {
+    svg.append(svgEl("path", { d: fill, fill: "currentColor", stroke: "none" }));
+    return svg;
+  }
+  for (const d of STROKE_PATHS[name] || []) {
+    svg.append(svgEl("path", { d }));
+  }
+  return svg;
+}
+
+// src/frontend/components/voice-pill.ts
+var WAVE_HEIGHTS = [45, 75, 55, 95, 65, 85, 40, 78, 92, 52, 68, 88, 50, 62];
+function estimateVoiceDuration(text) {
+  const seconds = Math.max(2, Math.min(59, Math.round(text.trim().length / 10)));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+function buildVoicePill(options) {
+  const { text, senderName, variant } = options;
+  const prefix = variant === "dm" ? "lp-voice" : "pk-voice";
+  const root = document.createElement("div");
+  root.className = variant === "dm" ? "lp-voice-message" : "pk-voice-pill";
+  const bar = document.createElement("div");
+  bar.className = `${prefix}-bar`;
+  const playButton = document.createElement("button");
+  playButton.type = "button";
+  playButton.className = `${prefix}-play`;
+  playButton.setAttribute("aria-pressed", "false");
+  playButton.setAttribute("aria-label", `Play voice message from ${senderName}`);
+  playButton.append(pocketIcon("play"));
+  const wave = document.createElement("span");
+  wave.className = `${prefix}-wave`;
+  wave.setAttribute("aria-hidden", "true");
+  for (const height of WAVE_HEIGHTS) {
+    const stick = document.createElement("i");
+    stick.style.height = `${height}%`;
+    wave.append(stick);
+  }
+  const duration = document.createElement("span");
+  duration.className = `${prefix}-dur`;
+  duration.textContent = estimateVoiceDuration(text);
+  bar.append(playButton, wave, duration);
+  const statusEl = document.createElement("span");
+  statusEl.className = `${prefix}-status`;
+  statusEl.setAttribute("role", "status");
+  const transcriptToggle = document.createElement("button");
+  transcriptToggle.type = "button";
+  transcriptToggle.className = `${prefix}-transcript-toggle`;
+  const toggleLabel = document.createElement("span");
+  transcriptToggle.append(pocketIcon("transcript"), toggleLabel);
+  const transcriptEl = document.createElement("div");
+  transcriptEl.className = `${prefix}-transcript`;
+  const transcriptText = document.createElement("p");
+  transcriptText.textContent = text;
+  transcriptEl.append(transcriptText);
+  const setTranscriptOpen = (open) => {
+    transcriptToggle.setAttribute("aria-expanded", String(open));
+    toggleLabel.textContent = open ? "Hide transcript" : "Transcript";
+    transcriptEl.hidden = !open;
+  };
+  const setPlaying = (playing) => {
+    root.classList.toggle("is-playing", playing);
+    playButton.setAttribute("aria-pressed", String(playing));
+    playButton.setAttribute("aria-label", `${playing ? "Stop" : "Play"} voice message from ${senderName}`);
+    playButton.replaceChildren(pocketIcon(playing ? "pause" : "play"));
+  };
+  setTranscriptOpen(Boolean(options.expanded));
+  transcriptToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setTranscriptOpen(transcriptToggle.getAttribute("aria-expanded") !== "true");
+  });
+  root.append(bar, statusEl, transcriptToggle, transcriptEl);
+  return {
+    root,
+    playButton,
+    statusEl,
+    transcriptToggle,
+    transcriptEl,
+    senderName,
+    setPlaying,
+    setTranscriptOpen
+  };
+}
+
 // src/frontend/components/voice-message.ts
 class VoiceMessagePlayer {
   active;
   stop() {
     if (!this.active)
       return;
-    const { button, status, utterance, abort, audio, url, timer } = this.active;
+    const { setPlaying, status, utterance, abort, audio, url, timer } = this.active;
     this.active = undefined;
     if (utterance) {
       utterance.onend = utterance.onerror = null;
@@ -32169,41 +32334,39 @@ class VoiceMessagePlayer {
       URL.revokeObjectURL(url);
     if (status)
       status.textContent = "";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-pressed", "false");
+    setPlaying(false);
   }
-  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions) {
-    const container = document.createElement("div");
-    container.className = "lp-voice-message";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "lp-voice-play";
-    button.textContent = "▶ Play voice message";
-    button.setAttribute("aria-label", `Play voice message from ${message.senderName}`);
-    button.setAttribute("aria-pressed", "false");
-    const status = document.createElement("span");
-    status.className = "lp-voice-status";
-    status.setAttribute("role", "status");
+  render(message, voiceURI = "", enabled = true, connectionId = "", connectionOptions, pillOptions) {
+    const pill = buildVoicePill({
+      text: message.text,
+      senderName: message.senderName,
+      variant: pillOptions?.variant || "dm",
+      expanded: pillOptions?.defaultTranscriptOpen
+    });
+    const { root: container, playButton: button, statusEl: status, setPlaying, setTranscriptOpen } = pill;
     const supported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
     button.disabled = !enabled || !supported && !connectionId;
-    if (button.disabled)
+    if (button.disabled) {
       status.textContent = enabled ? "Speech playback unavailable in this browser." : "Voice playback is disabled in Settings.";
-    button.addEventListener("click", () => {
+      setTranscriptOpen(true);
+    }
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
       const same = this.active?.button === button;
       this.stop();
       if (same)
         return;
       if (connectionId) {
-        const active = { button, status, abort: new AbortController };
+        const active = { button, setPlaying, status, abort: new AbortController };
         this.active = active;
-        button.textContent = "■ Stop voice message";
-        button.setAttribute("aria-pressed", "true");
+        setPlaying(true);
         status.textContent = "Preparing voice message…";
         active.timer = setTimeout(() => {
-          if (this.active === active) {
-            this.stop();
-            status.textContent = "TTS generation timed out. Try again.";
-          }
+          if (this.active !== active)
+            return;
+          this.stop();
+          status.textContent = "TTS generation timed out. Try again.";
+          setTranscriptOpen(true);
         }, 90000);
         synthesizeVoiceMessage(connectionId, message.text, active.abort.signal, connectionOptions).then(async (blob) => {
           if (this.active !== active)
@@ -32216,10 +32379,11 @@ class VoiceMessagePlayer {
               this.stop();
           };
           active.audio.onerror = () => {
-            if (this.active === active) {
-              this.stop();
-              status.textContent = "Could not play the generated audio. The transcript is available below.";
-            }
+            if (this.active !== active)
+              return;
+            this.stop();
+            status.textContent = "Could not play the generated audio. The transcript is available below.";
+            setTranscriptOpen(true);
           };
           await active.audio.play();
           if (this.active === active)
@@ -32229,6 +32393,7 @@ class VoiceMessagePlayer {
             return;
           this.stop();
           status.textContent = error instanceof Error ? error.message : "TTS playback failed. The transcript is available below.";
+          setTranscriptOpen(true);
         });
         return;
       }
@@ -32239,42 +32404,34 @@ class VoiceMessagePlayer {
         hash = hash * 31 + char.charCodeAt(0) >>> 0;
       const defaults = voices.filter((voice) => voice.lang.split("-")[0] === (document.documentElement.lang || navigator.language || "en").split("-")[0]);
       const pool = defaults.length ? defaults : voices;
-      const voice = voices.find((voice) => voice.voiceURI === voiceURI) || pool[hash % (pool.length || 1)];
+      const voice = voices.find((candidate) => candidate.voiceURI === voiceURI) || pool[hash % (pool.length || 1)];
       if (voice) {
         utterance.voice = voice;
         utterance.lang = voice.lang;
       }
-      this.active = { button, utterance };
+      this.active = { button, setPlaying, utterance };
       status.textContent = "";
-      button.textContent = "■ Stop voice message";
-      button.setAttribute("aria-pressed", "true");
+      setPlaying(true);
       const finish = () => {
         if (this.active?.utterance === utterance) {
           this.active = undefined;
-          button.textContent = "▶ Play voice message";
-          button.setAttribute("aria-pressed", "false");
+          setPlaying(false);
         }
       };
       utterance.onend = finish;
       utterance.onerror = () => {
         finish();
         status.textContent = "Could not play this voice message. The transcript is available below.";
+        setTranscriptOpen(true);
       };
       try {
         window.speechSynthesis.speak(utterance);
       } catch {
         finish();
         status.textContent = "Speech playback failed. Try again.";
+        setTranscriptOpen(true);
       }
     });
-    const transcript = document.createElement("details");
-    transcript.className = "lp-voice-transcript";
-    const title = document.createElement("summary");
-    title.textContent = "Voice message transcript";
-    const text = document.createElement("p");
-    text.textContent = message.text;
-    transcript.append(title, text);
-    container.append(button, status, transcript);
     return container;
   }
 }
@@ -38469,16 +38626,20 @@ class PocketRouteHistory {
   }
 }
 
-// src/frontend/phone-screen.ts
-function node(tag, className, text = "") {
-  const element = document.createElement(tag);
-  element.className = className;
-  element.textContent = text;
-  return element;
+// src/frontend/components/inline-primitives.ts
+var TRACK_HEIGHTS = [30, 55, 85, 65, 95, 48, 76, 90, 52, 70, 42, 60];
+function el2(tag, className = "", text = "") {
+  const node = document.createElement(tag);
+  if (className)
+    node.className = className;
+  if (text)
+    node.textContent = text;
+  return node;
 }
-function portrait2(name, url) {
-  const avatar = node("span", "pocket-phone-avatar", name.slice(0, 1).toUpperCase());
+function portrait2(name, className, url, color) {
+  const avatar = el2("span", className, name.trim().slice(0, 1).toUpperCase() || "?");
   avatar.setAttribute("aria-hidden", "true");
+  avatar.style.setProperty("--av-color", color || avatarColor(name));
   if (url) {
     const image = document.createElement("img");
     image.src = url;
@@ -38487,134 +38648,158 @@ function portrait2(name, url) {
   }
   return avatar;
 }
-var ICON_PATHS = {
-  wifi: ["M3 9.5a14.5 14.5 0 0 1 18 0", "M6.5 13a9 9 0 0 1 11 0", "M10 16.5a3.6 3.6 0 0 1 4 0", "M12 20h.01"],
-  back: ["m15 18-6-6 6-6"],
-  video: ["M15 10l4.6-2.6A1 1 0 0 1 21 8.3v7.4a1 1 0 0 1-1.4.9L15 14", "M4 6.5h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"],
-  plus: ["M12 5v14", "M5 12h14"],
-  send: ["M12 19V5", "m6 11 6-6 6 6"],
-  message: ["M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"],
-  phone: ["M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z"],
-  mute: ["M11 5 6 9H3v6h3l5 4V5Z", "m19 9-6 6", "m13 9 6 6"],
-  speaker: ["M11 5 6 9H3v6h3l5 4V5Z", "M15 9a4 4 0 0 1 0 6", "M17.8 6.5a8 8 0 0 1 0 11"],
-  contacts: ["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M22 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"]
-};
-function icon3(name, className = "") {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.8");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute("aria-hidden", "true");
-  if (className)
-    svg.setAttribute("class", className);
-  if (name === "signal") {
-    [[4, 15, 2, 5], [8, 12, 2, 8], [12, 9, 2, 11], [16, 6, 2, 14]].forEach(([x, y, width, height]) => {
-      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("x", String(x));
-      rect.setAttribute("y", String(y));
-      rect.setAttribute("width", String(width));
-      rect.setAttribute("height", String(height));
-      rect.setAttribute("rx", "1");
-      rect.setAttribute("fill", "currentColor");
-      rect.setAttribute("stroke", "none");
-      svg.append(rect);
-    });
-    return svg;
-  }
-  if (name === "battery") {
-    const shell = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    shell.setAttribute("x", "3");
-    shell.setAttribute("y", "7");
-    shell.setAttribute("width", "16");
-    shell.setAttribute("height", "10");
-    shell.setAttribute("rx", "2");
-    const nub = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    nub.setAttribute("d", "M21 10v4");
-    const fill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    fill.setAttribute("x", "5");
-    fill.setAttribute("y", "9");
-    fill.setAttribute("width", "11");
-    fill.setAttribute("height", "6");
-    fill.setAttribute("rx", "1");
-    fill.setAttribute("fill", "currentColor");
-    fill.setAttribute("stroke", "none");
-    svg.append(shell, nub, fill);
-    return svg;
-  }
-  for (const pathData of ICON_PATHS[name]) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", pathData);
-    svg.append(path);
-  }
-  return svg;
+function appTile(app, iconName = app === "phone" ? "phone" : "message") {
+  const tile = el2("span", "pk-app-tile");
+  tile.dataset.app = app;
+  tile.append(pocketIcon(iconName));
+  return tile;
 }
-function callSymbol() {
-  const symbol = node("span", "pocket-call-symbol");
-  symbol.setAttribute("aria-hidden", "true");
-  const handset = icon3("phone");
-  handset.style.transform = "rotate(135deg)";
-  symbol.append(handset);
-  return symbol;
+function equalizerBars() {
+  const eq = el2("span", "pk-eq");
+  eq.setAttribute("aria-hidden", "true");
+  for (let i = 0;i < 5; i++)
+    eq.append(document.createElement("i"));
+  return eq;
 }
-function phoneStatus(time) {
-  const status = node("div", "pocket-phone-status");
-  status.append(node("span", "pocket-phone-status-time", time || "Pocket"), node("span", "pocket-phone-island"));
-  const indicators = node("span", "pocket-phone-indicators");
-  indicators.append(icon3("signal"), icon3("wifi"), icon3("battery"));
-  status.append(indicators);
+function waveformTrack(quiet = false) {
+  const track = el2("span", "pk-standby-track");
+  track.setAttribute("aria-hidden", "true");
+  for (const height of TRACK_HEIGHTS) {
+    const bar = document.createElement("i");
+    bar.style.height = `${quiet ? 28 : height}%`;
+    track.append(bar);
+  }
+  return track;
+}
+function applyFrameTokens(frame, options) {
+  frame.dataset.theme = options.theme || "midnight";
+  if (options.accent) {
+    frame.style.setProperty("--pocket-inline-accent", options.accent);
+    frame.style.setProperty("--pk-accent", options.accent);
+    frame.style.setProperty("--pk-outgoing", outgoingSurface(options.accent));
+  }
+  if (options.background)
+    frame.style.setProperty("--pocket-inline-bg", options.background);
+  if (options.backgroundSize)
+    frame.style.backgroundSize = options.backgroundSize;
+  if (options.backgroundPosition)
+    frame.style.backgroundPosition = options.backgroundPosition;
+  if (options.textColor)
+    frame.style.setProperty("--pocket-inline-text", options.textColor);
+  if (options.surfaceColor)
+    frame.style.setProperty("--pocket-inline-surface", options.surfaceColor);
+}
+function formatCallDuration(durationSeconds) {
+  if (typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds))
+    return "";
+  const total = Math.max(0, Math.round(durationSeconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+function renderInlineVoiceNode(message, renderInlineVoice) {
+  if (renderInlineVoice)
+    return renderInlineVoice(message);
+  const pill = buildVoicePill({
+    text: message.text,
+    senderName: message.senderName,
+    variant: "inline",
+    expanded: true
+  });
+  pill.playButton.disabled = true;
+  return pill.root;
+}
+
+// src/frontend/phone-screen.ts
+function phoneStatus(time, callStatus = "") {
+  const status = el2("div", "pocket-phone-status");
+  const island = el2("span", "pocket-phone-island");
+  if (callStatus) {
+    island.dataset.call = callStatus;
+    if (callStatus === "connected") {
+      const wave = el2("span", "pocket-phone-island-wave");
+      wave.setAttribute("aria-hidden", "true");
+      wave.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+      island.append(wave);
+    }
+  }
+  island.append(el2("span", "pocket-phone-island-dot"));
+  const indicators = el2("span", "pocket-phone-indicators");
+  indicators.append(pocketIcon("signal"), pocketIcon("wifi"), pocketIcon("battery"));
+  status.append(el2("span", "pocket-phone-status-time", time || "Pocket"), island, indicators);
   return status;
 }
-function appHeader(title, subtitle, openRoute, avatarUrl) {
-  const header = node("button", "pocket-phone-app-header");
+function appHeader(title, subtitle, openRoute, avatarUrl, groupSpeakers) {
+  const header = el2("button", "pocket-phone-app-header");
   header.type = "button";
   header.setAttribute("aria-label", `Open ${title} in Pocket`);
   header.addEventListener("click", openRoute);
-  const back = node("span", "pocket-phone-header-back");
-  back.append(icon3("back"));
-  const identity = node("span", "pocket-phone-header-identity");
-  identity.append(portrait2(title, avatarUrl), node("strong", "pocket-phone-conversation-title", title));
+  const back = el2("span", "pocket-phone-header-back");
+  back.append(pocketIcon("back"));
+  const identity = el2("span", "pocket-phone-header-identity");
+  if (groupSpeakers && groupSpeakers.length >= 2) {
+    const stack = el2("span", "pk-group-stack");
+    stack.setAttribute("aria-hidden", "true");
+    for (const speaker of groupSpeakers.slice(0, 2)) {
+      stack.append(portrait2(speaker.name, "pocket-phone-avatar", speaker.url));
+    }
+    identity.append(stack);
+  } else {
+    identity.append(portrait2(title, "pocket-phone-avatar", avatarUrl));
+  }
+  identity.append(el2("strong", "pocket-phone-conversation-title", title));
   if (subtitle)
-    identity.append(node("span", "pocket-phone-subtitle", subtitle));
-  const video = node("span", "pocket-phone-header-action");
-  video.append(icon3("video"));
+    identity.append(el2("span", "pocket-phone-subtitle", subtitle));
+  const video = el2("span", "pocket-phone-header-action");
+  video.append(pocketIcon("video"));
   header.append(back, identity, video);
   return header;
 }
 function composer() {
-  const bar = node("span", "pocket-mock-composer pocket-phone-composer");
+  const bar = el2("span", "pocket-mock-composer pocket-phone-composer");
   bar.setAttribute("aria-hidden", "true");
-  const add = node("span", "pocket-phone-composer-action");
-  add.append(icon3("plus"));
-  const field = node("span", "pocket-phone-composer-field", "Message");
-  const send = node("span", "pocket-phone-composer-send");
-  send.append(icon3("send"));
+  const add = el2("span", "pocket-phone-composer-action");
+  add.append(pocketIcon("plus"));
+  const field = el2("span", "pocket-phone-composer-field", "Message");
+  const send = el2("span", "pocket-phone-composer-send");
+  send.append(pocketIcon("send"));
   bar.append(add, field, send);
   return bar;
+}
+function makeCallControl(iconName, label, options = {}) {
+  const wrap = el2("div", `pocket-phone-call-control${options.danger ? " pocket-phone-call-danger" : ""}`);
+  const button = el2("button", "pk-call-btn is-circle");
+  button.type = "button";
+  button.setAttribute("aria-label", label);
+  if (options.active)
+    button.classList.add("is-active");
+  if (options.danger)
+    button.classList.add("is-danger");
+  if (options.answer)
+    button.classList.add("is-answer");
+  if (typeof options.pressed === "boolean")
+    button.setAttribute("aria-pressed", String(options.pressed));
+  button.append(pocketIcon(iconName));
+  if (options.onClick)
+    button.addEventListener("click", options.onClick);
+  wrap.append(button, el2("span", "pocket-phone-control-caption", label));
+  return wrap;
 }
 function buildPhoneScreen(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (!presentation || !["received", "observed", "sent", "batch"].includes(presentation.kind))
     return null;
   const type = presentation.call ? "call" : presentation.kind === "batch" ? "group" : presentation.kind === "sent" ? "chat" : "lock";
-  const phone = node("div", "pocket-inline-frame pocket-phone-device");
+  const phone = el2("div", "pocket-inline-frame pocket-phone-device");
   phone.dataset.pocketUi = "true";
   phone.dataset.appearance = "phone";
   phone.dataset.screen = type;
-  phone.style.setProperty("--pocket-inline-accent", options.accent || "#8b7dff");
-  if (options.textColor)
-    phone.style.setProperty("--pocket-inline-text", options.textColor);
-  if (options.surfaceColor)
-    phone.style.setProperty("--pocket-inline-surface", options.surfaceColor);
+  applyFrameTokens(phone, options);
   const clock = options.clock || activityClock(activity);
   const time = clock.precision === "exact" ? clock.time : "";
-  const screen = node("div", "pocket-phone-screen");
-  screen.append(phoneStatus(time));
+  const screen = el2("div", "pocket-phone-screen");
+  screen.append(phoneStatus(time, type === "call" ? presentation.call.status : ""));
   phone.append(screen);
   const routeButton = (label, className, aria) => {
-    const button = node("button", className, label);
+    const button = el2("button", className, label);
     button.type = "button";
     button.setAttribute("aria-label", aria);
     button.addEventListener("click", () => openRoute(activity.route));
@@ -38624,77 +38809,195 @@ function buildPhoneScreen(activity, openRoute, options) {
   const title = presentation.conversationTitle || (type === "lock" ? presentation.senderName : recipients) || activity.title || "Messages";
   if (type === "lock") {
     screen.classList.add("pocket-phone-lock");
-    if (options.background)
+    const hasCustomWallpaper = Boolean(options.background && /url\(/i.test(options.background));
+    if (hasCustomWallpaper && options.background) {
+      screen.dataset.customWallpaper = "true";
       screen.style.backgroundImage = `linear-gradient(rgba(12, 10, 18, .18), rgba(12, 10, 18, .36)), ${options.background}`;
-    screen.style.backgroundSize = options.backgroundSize || "cover";
-    screen.style.backgroundPosition = options.backgroundPosition || "center";
-    const lockHero = node("div", "pocket-phone-lock-hero");
+      screen.style.backgroundSize = options.backgroundSize || "cover";
+      screen.style.backgroundPosition = options.backgroundPosition || "center";
+    }
+    const lockHero = el2("div", "pocket-phone-lock-hero");
     const deviceLabel = presentation.kind === "observed" ? `${recipients || "Another actor"}'s phone` : recipients ? `${recipients}'s phone` : "Pocket";
-    const display = node("span", "pocket-phone-clock", clock.time || "New message");
+    const display = el2("span", "pocket-phone-clock", clock.time || "New message");
     display.dataset.precision = clock.precision;
-    lockHero.append(node("span", "pocket-phone-lock-label", deviceLabel), display);
+    lockHero.append(el2("span", "pocket-phone-lock-label", deviceLabel), display);
     if (clock.date)
-      lockHero.append(node("span", "pocket-phone-lock-caption", clock.date));
-    const notification = routeButton("", "pocket-phone-notification", `Open ${presentation.kind === "observed" ? `${recipients}'s phone · ` : ""}${title} in Pocket`);
-    const app = node("span", "pocket-phone-notification-app");
-    app.append(icon3("message"), node("span", "pocket-phone-app-label", "Messages"));
-    const body = node("span", "pocket-phone-notification-body");
-    body.append(portrait2(presentation.senderName || "?", options.avatarUrl));
-    const copy = node("span", "pocket-phone-notification-content");
-    copy.append(node("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"), node("span", "pocket-phone-notification-copy", `${presentation.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`));
-    body.append(copy);
+      lockHero.append(el2("span", "pocket-phone-lock-caption", clock.date));
+    const isVoice = presentation.format === "voice";
+    const openAria = `Open ${presentation.kind === "observed" ? `${recipients}'s phone · ` : ""}${title} in Pocket`;
+    const notification = isVoice ? el2("div", "pocket-phone-notification") : routeButton("", "pocket-phone-notification", openAria);
+    if (isVoice)
+      notification.setAttribute("role", "region");
+    const app = el2("span", "pocket-phone-notification-app");
+    app.append(pocketIcon("message"), el2("span", "pocket-phone-app-label", "Messages"));
+    if (isVoice) {
+      const openChip = routeButton("Open", "pk-notif-open-chip", openAria);
+      app.append(openChip);
+    } else if (time) {
+      app.append(el2("span", "pk-notif-time", time));
+    }
+    const body = el2("span", "pocket-phone-notification-body");
+    const avatarWrap = el2("span", "pk-avatar-wrap");
+    avatarWrap.append(portrait2(presentation.senderName || "?", "pocket-phone-avatar", options.avatarUrl));
+    const badge = el2("span", "pk-app-corner-badge");
+    badge.dataset.app = "messages";
+    badge.setAttribute("aria-hidden", "true");
+    badge.append(pocketIcon("message"));
+    avatarWrap.append(badge);
+    const copy = el2("span", "pocket-phone-notification-content");
+    copy.append(el2("strong", "pocket-phone-notification-sender", presentation.senderName || "Message"));
+    if (isVoice) {
+      copy.append(renderInlineVoiceNode({
+        text: activity.summary || "",
+        senderName: presentation.senderName || "Message",
+        senderActorId: presentation.senderActorId
+      }, options.renderInlineVoice));
+    } else {
+      copy.append(el2("span", "pocket-phone-notification-copy", activity.summary || ""));
+    }
+    body.append(avatarWrap, copy);
     notification.append(app, body);
-    screen.append(lockHero, notification, node("span", "pocket-phone-home-indicator"));
+    screen.append(lockHero, notification, el2("span", "pocket-phone-home-indicator"));
   } else if (type === "call") {
+    const call = presentation.call;
     screen.classList.add("pocket-phone-call");
-    screen.dataset.callStatus = presentation.call.status;
+    screen.dataset.callStatus = call.status;
+    const callerName = presentation.senderName || recipients || activity.title || "Call";
+    const isSent = presentation.kind === "sent";
+    const isObserved = presentation.kind === "observed";
+    const displayName = isSent ? `To ${callerName}` : callerName;
+    const durationText = formatCallDuration(call.durationSeconds);
+    const glowColor = avatarColor(presentation.senderActorId || callerName);
+    screen.style.setProperty("--caller-glow", glowColor);
+    const topbar = el2("div", "pk-ios-topbar");
     const callHeader = routeButton("", "pocket-phone-app-header pocket-phone-call-header", "Open call history in Pocket");
-    const back = node("span", "pocket-phone-header-back");
-    back.append(icon3("back"));
-    callHeader.append(back, node("span", "pocket-phone-app-label", "Phone"));
-    const identity = node("div", "pocket-phone-call-identity");
-    identity.append(portrait2(presentation.senderName || "Call", options.avatarUrl), node("strong", "pocket-phone-call-name", [presentation.senderName, recipients].filter(Boolean).join(" → ") || activity.title), node("span", "pocket-phone-call-status", callSummary(presentation.call)));
-    const controls = node("div", "pocket-phone-call-controls");
-    const control = (name, label, danger = false) => {
-      const item = node("span", `pocket-phone-call-control${danger ? " pocket-phone-call-danger" : ""}`);
-      const glyph = node("span", "pocket-phone-call-control-icon");
-      glyph.append(name === "phone" ? callSymbol() : icon3(name));
-      item.append(glyph, node("span", "pocket-phone-control-caption", label));
-      return item;
-    };
-    controls.append(control("mute", "Mute"), control("speaker", "Speaker"), control("message", "Message"), control("phone", presentation.call.status === "ended" ? "Ended" : "End", true));
-    screen.append(callHeader, identity, controls, node("span", "pocket-phone-home-indicator"));
+    const back = el2("span", "pocket-phone-header-back");
+    back.append(pocketIcon("back"));
+    callHeader.append(back, el2("span", "pocket-phone-app-label", "Phone"));
+    topbar.append(callHeader);
+    if (isObserved) {
+      const ownerPill = el2("span", "pk-lock-owner-pill");
+      ownerPill.append(pocketIcon("lock"), el2("span", "", `${recipients || "Another actor"}'s phone`));
+      topbar.append(ownerPill);
+    } else if (isSent) {
+      topbar.append(el2("span", "pk-call-chip", "Outgoing"));
+    }
+    const body = el2("div", "pk-ios-call");
+    const poster = el2("div", "pk-ios-poster");
+    const kicker = el2("div", "pk-ios-kicker");
+    if (call.status === "connected")
+      kicker.append(equalizerBars());
+    kicker.append(el2("span", "pocket-phone-call-status", callSummary(call)));
+    const name = el2("strong", "pocket-phone-call-name pk-ios-name", displayName);
+    const portraitBox = el2("div", "pk-ios-portrait");
+    const halo = el2("span", "pk-call-avatar-ring");
+    halo.append(portrait2(callerName, "pocket-phone-avatar", options.avatarUrl, glowColor));
+    portraitBox.append(halo);
+    poster.append(kicker, name, portraitBox);
+    if (call.speakerphone && call.status === "connected") {
+      const speakerBadge = el2("span", "pk-call-chip");
+      speakerBadge.append(pocketIcon("speaker"), el2("span", "", "Speakerphone"));
+      poster.append(speakerBadge);
+    }
+    const dock = el2("div", "pk-ios-dock");
+    const activityRow = el2("div", "pk-ios-activity-row");
+    const activityLeft = el2("span", "pk-ios-activity-label");
+    activityLeft.append(appTile("phone"), el2("span", "", call.status === "connected" ? "Live Audio" : call.status === "missed" ? "Missed Call" : "Call Summary"));
+    const statusChip = el2("span", "pk-call-chip");
+    if (call.status === "connected") {
+      statusChip.classList.add("is-live");
+      statusChip.textContent = "Live";
+    } else if (call.status === "missed") {
+      statusChip.classList.add("is-missed");
+      statusChip.append(pocketIcon("missed"), el2("span", "", "Missed"));
+    } else {
+      statusChip.textContent = [call.speakerphone ? "Speaker" : "", durationText || "Ended"].filter(Boolean).join(" · ");
+    }
+    activityRow.append(activityLeft, waveformTrack(call.status === "ended"), statusChip);
+    const controls = el2("div", "pocket-phone-call-controls");
+    if (call.status === "connected") {
+      controls.dataset.cols = "4";
+      const togglePressed = (eventTarget) => {
+        const button = eventTarget;
+        if (!button || typeof button.getAttribute !== "function")
+          return;
+        const next = button.getAttribute("aria-pressed") !== "true";
+        button.setAttribute("aria-pressed", String(next));
+        button.classList.toggle("is-active", next);
+      };
+      controls.append(makeCallControl("speaker", "Speaker", {
+        active: call.speakerphone,
+        pressed: call.speakerphone,
+        onClick: (event) => togglePressed(event.currentTarget)
+      }), makeCallControl("mute", "Mute", {
+        pressed: false,
+        onClick: (event) => togglePressed(event.currentTarget)
+      }), makeCallControl("chatOutline", "Message", { onClick: () => openRoute(activity.route) }), makeCallControl("phoneEnd", "End", { danger: true, onClick: () => openRoute(activity.route) }));
+    } else {
+      controls.dataset.cols = "3";
+      controls.append(makeCallControl("chatOutline", "Message", { onClick: () => openRoute(activity.route) }), makeCallControl("phone", call.status === "missed" ? "Call back" : "Call again", {
+        answer: call.status === "missed",
+        onClick: () => openRoute(activity.route)
+      }), makeCallControl("back", "History", { onClick: () => openRoute(activity.route) }));
+    }
+    dock.append(activityRow, controls);
+    body.append(poster, dock);
+    screen.append(topbar, body, el2("span", "pocket-phone-home-indicator"));
   } else {
     screen.classList.add("pocket-phone-chat");
-    const subtitle = type === "group" ? `${presentation.batchMessages?.length || 0} messages` : recipients ? "Messages" : "";
-    screen.append(appHeader(title, subtitle, () => openRoute(activity.route), type === "chat" ? options.avatarUrl : undefined));
-    const thread = node("div", "pocket-phone-thread");
+    const rawMessages = type === "group" ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || "", direction: "sent" }];
+    const groupSpeakers = [];
+    if (type === "group") {
+      const seen = new Set;
+      for (const msg of rawMessages) {
+        if (msg.direction === "sent")
+          continue;
+        const key = msg.senderActorId || msg.senderName;
+        if (!seen.has(key)) {
+          seen.add(key);
+          groupSpeakers.push({ name: msg.senderName, url: options.avatars?.[msg.senderActorId || ""] });
+        }
+        if (groupSpeakers.length >= 2)
+          break;
+      }
+    }
+    const subtitle = type === "group" ? `${rawMessages.length} messages` : recipients ? "Messages" : "";
+    screen.append(appHeader(title, subtitle, () => openRoute(activity.route), type === "chat" ? options.avatarUrl : undefined, groupSpeakers));
+    const thread = el2("div", "pocket-phone-thread");
     thread.tabIndex = 0;
     thread.setAttribute("role", "region");
     thread.setAttribute("aria-label", `${title} conversation`);
-    const messages = type === "group" ? presentation.batchMessages || [] : [{ senderName: presentation.senderName || "You", senderActorId: presentation.senderActorId, format: presentation.format, text: activity.summary || "", direction: "sent" }];
-    for (const [index, message] of messages.entries()) {
-      const row = node("div", "pocket-phone-message");
+    for (const [index, message] of rawMessages.entries()) {
+      const row = el2("div", "pocket-phone-message");
       row.dataset.direction = message.direction;
-      const previous = messages[index - 1];
-      row.dataset.continuation = String(Boolean(previous && previous.senderName === message.senderName));
-      if (message.direction !== "sent") {
-        row.append(portrait2(message.senderName, options.avatars?.[message.senderActorId || ""]));
-        const content = node("span", "pocket-phone-message-content");
-        if (row.dataset.continuation !== "true")
-          content.append(node("strong", "pocket-phone-sender", message.senderName));
-        content.append(node("span", "pocket-phone-bubble", `${message.format === "voice" ? "▶ Voice message · " : ""}${message.text}`));
-        row.append(content);
+      const previous = rawMessages[index - 1];
+      row.dataset.continuation = String(Boolean(previous && (previous.senderActorId || previous.senderName) === (message.senderActorId || message.senderName)));
+      const isVoice = message.format === "voice";
+      const content = el2("span", "pocket-phone-message-content");
+      const bubble = el2("span", `pocket-phone-bubble${isVoice ? " is-voice" : ""}`);
+      if (isVoice) {
+        bubble.append(renderInlineVoiceNode({
+          text: message.text,
+          senderName: message.senderName,
+          senderActorId: message.senderActorId
+        }, options.renderInlineVoice));
       } else {
-        const content = node("span", "pocket-phone-message-content");
-        content.append(node("span", "pocket-phone-bubble", `${message.format === "voice" ? "▶ Voice message · " : ""}${message.text}`));
-        row.append(content);
+        bubble.textContent = message.text;
       }
+      if (message.direction !== "sent") {
+        const hue = avatarColor(message.senderActorId || message.senderName);
+        row.style.setProperty("--speaker-accent", hue);
+        row.append(portrait2(message.senderName, "pocket-phone-avatar", options.avatars?.[message.senderActorId || ""], hue));
+        if (row.dataset.continuation !== "true")
+          content.append(el2("strong", "pocket-phone-sender", message.senderName));
+      }
+      content.append(bubble);
+      row.append(content);
       thread.append(row);
     }
     if (type === "chat")
-      thread.append(node("span", "pocket-phone-delivery", "Delivered"));
-    screen.append(thread, composer(), node("span", "pocket-phone-home-indicator"));
+      thread.append(el2("span", "pocket-phone-delivery", "Delivered"));
+    screen.append(thread, composer(), el2("span", "pocket-phone-home-indicator"));
   }
   return phone;
 }
@@ -38722,7 +39025,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   background: none;
 }
 .pocket-inline-anchor[data-pocket-host="true"] { margin: 12px 0; }
-.pocket-receipt-host[data-pocket-host="true"] { margin: 8px 0 2px; max-width: min(100%,460px); }
+.pocket-receipt-host[data-pocket-host="true"] { margin: 8px 0 2px; max-width: min(100%, 460px); }
 .pocket-artifact-stack[data-pocket-ui="true"]::before,
 .pocket-artifact-stack[data-pocket-ui="true"]::after,
 .pocket-inline-anchor[data-pocket-host="true"]::before,
@@ -38738,7 +39041,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   isolation: isolate;
   color-scheme: dark;
   font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: var(--pocket-inline-text, #f5f2fb);
+  color: var(--pk-screen-text, #f7f5fb);
   text-align: left;
   text-transform: none;
   letter-spacing: normal;
@@ -38746,15 +39049,161 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   white-space: normal;
   word-break: normal;
   overflow-wrap: anywhere;
+  --pk-accent: var(--pocket-inline-accent, #8b7dff);
+  --pk-outgoing: var(--pocket-inline-accent, #6a5ce0);
+  --pk-on-accent: #ffffff;
+  --pk-bezel-a: #44404c;
+  --pk-bezel-b: #16141b;
+  --pk-bezel-border: rgba(255, 255, 255, .14);
+  --pk-screen-bg: #111016;
+  --pk-screen-text: #f7f5fb;
+  --pk-screen-muted: #9b95a8;
+  --pk-surface: rgba(29, 26, 36, .88);
+  --pk-surface-solid: #1e1b26;
+  --pk-surface-2: #2b2735;
+  --pk-bubble-in: #272330;
+  --pk-bubble-in-text: #f3eff9;
+  --pk-border: rgba(255, 255, 255, .09);
+  --pk-border-strong: rgba(255, 255, 255, .15);
+  --pk-glass: rgba(31, 28, 40, .74);
+  --pk-glass-highlight: rgba(255, 255, 255, .09);
+  --pk-wallpaper-1: #1a1630;
+  --pk-wallpaper-2: #123a4a;
+  --pk-chat-1: #13111c;
+  --pk-chat-2: #0a090e;
+  --pk-island: #050507;
+  --pk-status-color: rgba(255, 255, 255, .92);
+  --pk-home-bar: rgba(255, 255, 255, .58);
+  --pk-shadow: 0 18px 44px rgba(0, 0, 0, .38), 0 4px 14px rgba(0, 0, 0, .24);
+  --pk-live: #3ce086;
+  --pk-missed: #ff697e;
+  --pk-danger: #d94c5f;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] :where(div, span, strong, button, input, textarea, img, time) {
+.pocket-inline-frame[data-pocket-ui="true"][data-theme="porcelain"] {
+  color-scheme: light;
+  --pk-bezel-a: #e3deda;
+  --pk-bezel-b: #b9b2ab;
+  --pk-bezel-border: rgba(255, 255, 255, .72);
+  --pk-screen-bg: #f4f2ef;
+  --pk-screen-text: #1f1c25;
+  --pk-screen-muted: #6c6674;
+  --pk-surface: rgba(255, 255, 255, .88);
+  --pk-surface-solid: #ffffff;
+  --pk-surface-2: #e7e2dc;
+  --pk-bubble-in: #ffffff;
+  --pk-bubble-in-text: #221f29;
+  --pk-border: rgba(35, 28, 46, .1);
+  --pk-border-strong: rgba(35, 28, 46, .16);
+  --pk-glass: rgba(255, 255, 255, .78);
+  --pk-glass-highlight: rgba(255, 255, 255, .85);
+  --pk-wallpaper-1: #e5dfd9;
+  --pk-wallpaper-2: #c6d4e6;
+  --pk-chat-1: #eae5f7;
+  --pk-chat-2: #f7f5f2;
+  --pk-island: #16141a;
+  --pk-status-color: rgba(28, 24, 34, .9);
+  --pk-home-bar: rgba(28, 24, 34, .36);
+  --pk-shadow: 0 16px 38px rgba(10, 8, 18, .24), 0 4px 12px rgba(0, 0, 0, .14);
+  --pk-live: #159b52;
+  --pk-missed: #d63651;
+  --pk-danger: #d63651;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-theme="rose"] {
+  --pk-bezel-a: #543e46;
+  --pk-bezel-b: #1e1518;
+  --pk-bezel-border: rgba(255, 206, 173, .18);
+  --pk-screen-bg: #171216;
+  --pk-screen-text: #fff5ec;
+  --pk-screen-muted: #cbb1a7;
+  --pk-surface: rgba(41, 30, 37, .9);
+  --pk-surface-solid: #281e25;
+  --pk-surface-2: #3b2c33;
+  --pk-bubble-in: #34262e;
+  --pk-bubble-in-text: #fff4ea;
+  --pk-border: rgba(255, 201, 160, .14);
+  --pk-border-strong: rgba(255, 201, 160, .24);
+  --pk-glass: rgba(48, 34, 42, .74);
+  --pk-glass-highlight: rgba(255, 224, 200, .1);
+  --pk-wallpaper-1: #5a4663;
+  --pk-wallpaper-2: #8a5648;
+  --pk-chat-1: #2f2128;
+  --pk-chat-2: #171216;
+  --pk-island: #080608;
+  --pk-status-color: rgba(255, 245, 236, .92);
+  --pk-home-bar: rgba(255, 245, 236, .48);
+  --pk-live: #76e3a8;
+  --pk-missed: #ff7c8e;
+  --pk-danger: #d95264;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-theme="forest"] {
+  --pk-bezel-a: #2c473a;
+  --pk-bezel-b: #080f0b;
+  --pk-bezel-border: rgba(187, 255, 224, .16);
+  --pk-screen-bg: #0a130e;
+  --pk-screen-text: #f0fff7;
+  --pk-screen-muted: #93b3a2;
+  --pk-surface: rgba(18, 35, 27, .9);
+  --pk-surface-solid: #12241b;
+  --pk-surface-2: #1c382b;
+  --pk-bubble-in: #183024;
+  --pk-bubble-in-text: #eefcf5;
+  --pk-border: rgba(190, 255, 222, .11);
+  --pk-border-strong: rgba(190, 255, 222, .2);
+  --pk-glass: rgba(20, 42, 32, .74);
+  --pk-glass-highlight: rgba(204, 255, 224, .08);
+  --pk-wallpaper-1: #133829;
+  --pk-wallpaper-2: #1c5b43;
+  --pk-chat-1: #0c2117;
+  --pk-chat-2: #060d09;
+  --pk-island: #030705;
+  --pk-status-color: rgba(240, 255, 247, .92);
+  --pk-home-bar: rgba(240, 255, 247, .45);
+  --pk-live: #63d8a4;
+  --pk-missed: #ff7a8f;
+  --pk-danger: #d64e62;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-theme="pink"] {
+  color-scheme: light;
+  --pk-bezel-a: #ff9dd2;
+  --pk-bezel-b: #df69a8;
+  --pk-bezel-border: rgba(255, 255, 255, .65);
+  --pk-screen-bg: #fff2f8;
+  --pk-screen-text: #3a122c;
+  --pk-screen-muted: #7d4c68;
+  --pk-surface: rgba(255, 255, 255, .88);
+  --pk-surface-solid: #ffffff;
+  --pk-surface-2: #fbdced;
+  --pk-bubble-in: #ffffff;
+  --pk-bubble-in-text: #3a122c;
+  --pk-border: rgba(74, 20, 54, .11);
+  --pk-border-strong: rgba(74, 20, 54, .18);
+  --pk-glass: rgba(255, 244, 250, .82);
+  --pk-glass-highlight: rgba(255, 255, 255, .9);
+  --pk-wallpaper-1: #ffabd7;
+  --pk-wallpaper-2: #ffd9ec;
+  --pk-chat-1: #ffe2f1;
+  --pk-chat-2: #fff6fa;
+  --pk-island: #281020;
+  --pk-status-color: rgba(58, 18, 44, .9);
+  --pk-home-bar: rgba(58, 18, 44, .34);
+  --pk-shadow: 0 18px 40px rgba(32, 8, 24, .22);
+  --pk-live: #159b52;
+  --pk-missed: #cf2850;
+  --pk-danger: #cf2850;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] :where(div, span, strong, button, input, textarea, img, time, p, i) {
   all: revert;
   margin: 0;
   padding: 0;
   border: 0;
   background: none;
   font: inherit;
+  font-style: normal;
   color: inherit;
   letter-spacing: inherit;
   text-transform: none;
@@ -38797,135 +39246,56 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   transform: none;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] {
-  --pocket-inline-accent: #8b7dff;
-  --pocket-inline-text: #f5f2fb;
-  --pocket-inline-muted: #a8a2b3;
-  --pocket-inline-surface: #242129;
-  --pocket-inline-surface-2: #2b2731;
-  --pocket-inline-surface-3: #17151c;
-  --pocket-inline-border: rgba(255, 255, 255, .075);
-  --pocket-inline-shadow: 0 16px 46px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .025);
-}
-
-.pocket-artifact-stack,
-.pocket-inline-frame[data-pocket-ui="true"] {
-  box-sizing: border-box;
+.pocket-inline-frame[data-pocket-ui="true"] button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pk-accent) 72%, white 12%);
+  outline-offset: 2px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
-  width: min(100%, 470px);
-  color: var(--pocket-inline-text);
+  width: min(100%, 440px);
+  color: var(--pk-screen-text);
+  border-radius: 17px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .28);
+  overflow: hidden;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-artifact,
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pocket-inline-batch {
-  width: 100%;
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] .pk-screen {
+  position: relative;
+  overflow: hidden;
+  border-radius: 17px;
+  background: var(--pk-screen-bg);
+  border: 1px solid var(--pk-border-strong);
+  color: var(--pk-screen-text);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-screen[data-wallpaper="lock"] {
+  background:
+    radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--pk-accent) 28%, transparent), transparent 45%),
+    radial-gradient(circle at 12% 88%, color-mix(in srgb, var(--pk-wallpaper-2) 60%, transparent), transparent 55%),
+    linear-gradient(150deg, var(--pk-wallpaper-1) 0%, var(--pk-screen-bg) 78%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-screen[data-wallpaper="chat"] {
+  background:
+    radial-gradient(circle at 75% 0%, color-mix(in srgb, var(--pk-accent) 12%, transparent), transparent 42%),
+    linear-gradient(175deg, var(--pk-chat-1) 0%, var(--pk-chat-2) 100%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {
   width: 100%;
   min-width: 0;
-  padding: 16px 18px;
-  color: var(--pocket-inline-text);
-  text-align: left;
-  font: inherit;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.018), transparent 26%),
-    linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);
-  border: 1px solid var(--pocket-inline-border);
-  border-radius: 18px;
-  box-shadow: var(--pocket-inline-shadow);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] button.pocket-inline-artifact {
   cursor: pointer;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:hover {
-  border-color: color-mix(in srgb, var(--pocket-inline-accent) 22%, rgba(255,255,255,.08));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact:focus-visible,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more:focus-visible,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--pocket-inline-accent) 72%, white 12%);
-  outline-offset: 3px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-device {
-  display: block;
-  margin-bottom: -2px;
-  color: #8f8998;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: .015em;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {
-  min-width: 0;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-header,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-header {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255,255,255,.055);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-chrome {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #a9a3b2;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app {
+/* Shared avatars & micro app tiles */
+.pocket-inline-frame[data-pocket-ui="true"] .pk-avatar-wrap {
+  position: relative;
+  flex: none;
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-app svg {
-  width: 14px;
-  height: 14px;
-  color: var(--pocket-inline-accent);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-state,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {
-  color: #8e8897;
-  font-size: 10px;
-  font-weight: 560;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-recipient {
-  align-self: flex-end;
-  margin-top: -24px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-body {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 11px;
-  align-items: start;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-message-content,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-content,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-details {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 5px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar,
@@ -38934,17 +39304,16 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   place-items: center;
   flex: 0 0 auto;
   overflow: hidden;
-  color: white;
-  font-weight: 720;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 76%, white 6%), color-mix(in srgb, var(--pocket-inline-accent) 52%, #231f2c));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 4px 14px rgba(0,0,0,.18);
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 760;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--av-color, var(--pk-accent)) 84%, #fff), color-mix(in srgb, var(--av-color, var(--pk-accent)) 62%, #14111c));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 3px 10px rgba(0, 0, 0, .18);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
+  width: 36px;
+  height: 36px;
   font-size: 13px;
 }
 
@@ -38953,158 +39322,797 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {
-  color: #fbf9ff;
-  font-weight: 760;
-  letter-spacing: -.01em;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-corner-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #4ee580, #12aa4b);
+  color: #fff;
+  border: 1.5px solid var(--pk-surface-solid);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .28);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-actors {
-  font-size: 14px;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-corner-badge svg {
+  width: 9px;
+  height: 9px;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact-copy {
-  color: #e5e1ea;
-  font-size: 13px;
-  line-height: 1.46;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-corner-badge[data-app="phone"] {
+  background: linear-gradient(145deg, #4ae188, #149d52);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {
-  border: 1px solid rgba(255,255,255,.035);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 5px 14px rgba(0,0,0,.11);
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-corner-badge[data-app="missed"] {
+  background: linear-gradient(145deg, #ff7086, #cc2f48);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-bubble {
-  align-self: flex-end;
-  max-width: 82%;
-  padding: 9px 13px;
-  border-radius: 15px 15px 5px 15px;
-  color: white;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 90%, white 10%), color-mix(in srgb, var(--pocket-inline-accent) 78%, black));
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call {
-  align-items: center;
-  min-height: 180px;
-  justify-content: center;
-  text-align: center;
-  background:
-    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--pocket-inline-accent) 10%, transparent), transparent 48%),
-    linear-gradient(160deg, #28252e, #1d1b22);
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call-identity {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-avatar {
-  width: 46px;
-  height: 46px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-call .pocket-inline-artifact-chrome {
-  justify-content: center;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol {
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-tile {
+  width: 16px;
+  height: 16px;
+  border-radius: 4.5px;
   display: inline-grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  margin-top: 4px;
+  background: linear-gradient(145deg, #4ae188, #149d52);
   color: #fff;
-  background: linear-gradient(145deg, #bd5d69, #974552);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(0,0,0,.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
+  flex: none;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-call-symbol svg {
-  width: 18px;
-  height: 18px;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-tile svg {
+  width: 10px;
+  height: 10px;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-title {
-  font-size: 15px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row {
+/* Lock-screen notification strip (received & observed scene cards) */
+.pocket-inline-frame[data-pocket-ui="true"] .pk-lock-body {
+  padding: 0;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-lock-device-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px 6px;
+  background: color-mix(in srgb, var(--pk-surface) 70%, transparent);
+  border-bottom: 1px solid var(--pk-border);
+  font-size: 11px;
+  color: var(--pk-screen-muted);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-lock-owner-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--pk-glass);
+  border: 1px solid var(--pk-border);
+  color: var(--pk-screen-text);
+  font-size: 10.5px;
+  font-weight: 650;
+  backdrop-filter: blur(10px);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-lock-owner-pill svg {
+  width: 10px;
+  height: 10px;
+  opacity: .78;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-lock-clock-mini {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--pk-screen-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-card {
+  width: 100%;
+  text-align: left;
+  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   align-items: start;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-continuation="true"] .pocket-inline-avatar {
+.pocket-inline-frame[data-pocket-ui="true"] button.pk-notif-card:hover {
+  background: color-mix(in srgb, var(--pk-accent) 7%, transparent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-open-sender {
+  order: 1;
+  min-width: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-sender {
+  order: 1;
+  font-size: 13px;
+  font-weight: 740;
+  color: var(--pk-screen-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-meta {
+  order: 2;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--pk-screen-muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-notif-text {
+  font-size: 12.5px;
+  line-height: 1.42;
+  color: color-mix(in srgb, var(--pk-screen-text) 90%, transparent);
+  overflow-wrap: anywhere;
+}
+
+/* Cropped Messages Viewport (sent & batch scene cards) */
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-nav {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--pk-surface) 92%, transparent);
+  border-bottom: 1px solid var(--pk-border);
+  backdrop-filter: blur(16px);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-app-nav-button {
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--pk-accent);
+  padding: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-btn.is-action {
+  background: var(--pk-surface-2);
+  width: 26px;
+  height: 26px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-btn.is-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-identity .pocket-inline-avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-group-stack {
+  position: relative;
+  width: 32px;
+  height: 26px;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-group-stack .pocket-inline-avatar,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-group-stack .pocket-phone-avatar {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+  border: 1.5px solid var(--pk-surface-solid);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-group-stack .pocket-inline-avatar:first-child,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-group-stack .pocket-phone-avatar:first-child {
+  left: 0;
+  top: 0;
+  z-index: 2;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-group-stack .pocket-inline-avatar:last-child,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-group-stack .pocket-phone-avatar:last-child {
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-titles {
+  min-width: 0;
+  display: grid;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-name {
+  font-size: 12.5px;
+  font-weight: 740;
+  line-height: 1.2;
+  color: var(--pk-screen-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-nav-sub {
+  font-size: 9.5px;
+  font-weight: 560;
+  color: var(--pk-screen-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-sent-card,
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-chat-transcript {
+  display: flex;
+  flex-direction: column;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-thread-canvas {
+  padding: 9px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  width: 100%;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-direction="sent"] {
+  justify-content: flex-end;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-continuation="false"]:not(:first-child) {
+  margin-top: 4px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-continuation="true"] .pocket-inline-avatar {
   visibility: hidden;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row .pocket-inline-avatar {
-  width: 28px;
-  height: 28px;
-  font-size: 11px;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row .pocket-inline-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 10px;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-sender {
-  color: #938d9b;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 82%;
+  min-width: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-direction="sent"] .pk-msg-col {
+  align-items: flex-end;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-sender {
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .01em;
+  margin-left: 4px;
+  color: var(--speaker-accent, var(--pk-screen-muted));
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-bubble {
-  align-self: flex-start;
-  max-width: 90%;
-  padding: 9px 12px;
-  color: #f0edf5;
-  font-size: 12px;
+.pocket-inline-frame[data-pocket-ui="true"] .pk-bubble {
+  padding: 8px 11px;
+  font-size: 12.5px;
   line-height: 1.42;
-  background: linear-gradient(145deg, #2c2933, #27242d);
-  border-radius: 5px 13px 13px 13px;
+  border-radius: 16px 16px 16px 4px;
+  background: var(--pk-bubble-in);
+  color: var(--pk-bubble-in-text);
+  border: 1px solid var(--pk-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+  overflow-wrap: anywhere;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-row[data-direction="sent"] .pocket-inline-transcript-bubble {
-  color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 78%, black), color-mix(in srgb, var(--pocket-inline-accent) 64%, black));
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-continuation="true"] .pk-bubble {
+  border-radius: 6px 16px 16px 16px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-direction="sent"] .pk-bubble {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pk-outgoing, var(--pk-accent)) 92%, #fff 8%), var(--pk-outgoing, var(--pk-accent)));
+  color: #ffffff;
+  border-color: transparent;
+  border-radius: 16px 16px 5px 16px;
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--pk-accent) 26%, transparent), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-direction="sent"][data-continuation="true"] .pk-bubble {
+  border-radius: 16px 6px 16px 16px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-delivery-receipt {
+  align-self: flex-end;
+  font-size: 9.5px;
+  font-weight: 660;
+  color: var(--pk-screen-muted);
+  margin: 1px 3px 0;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch {
-  border-radius: 18px;
-  overflow: hidden;
-  background: #1e1c23;
-  border: 1px solid var(--pocket-inline-border);
-  box-shadow: var(--pocket-inline-shadow);
+  display: flex;
+  flex-direction: column;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-batch .pocket-inline-artifact {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-transcript-more {
-  width: 100%;
-  padding: 11px 14px;
-  color: #a8a2b2;
-  font: inherit;
-  font-size: 11px;
-  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012));
-  border: 0;
-  border-top: 1px solid rgba(255,255,255,.055);
+.pocket-inline-frame[data-pocket-ui="true"] .pk-thread-more-btn {
+  align-self: center;
+  margin: 2px auto 10px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: var(--pk-surface);
+  border: 1px solid var(--pk-border-strong);
+  color: var(--pk-accent);
+  font-size: 10.5px;
+  font-weight: 680;
   cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-thread-more-btn:hover {
+  background: var(--pk-surface-2);
+}
+
+/* Inline Audio Pill (shared across scene cards & full phone inserts) */
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-pill {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: min(176px, 100%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-play {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--pk-outgoing, var(--pk-accent));
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  flex: none;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-play:disabled {
+  opacity: .58;
+  cursor: default;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[data-direction="sent"] .pk-voice-play,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] .pk-voice-play {
+  background: rgba(255, 255, 255, .24);
+  color: #ffffff;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-play svg {
+  width: 11px;
+  height: 11px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-wave {
+  flex: 1 1 auto;
+  min-width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 3px;
+  height: 20px;
+  overflow: hidden;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-wave i {
+  display: block;
+  flex: 0 0 3px;
+  width: 3px;
+  border-radius: 99px;
+  background: currentColor;
+  opacity: .38;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-pill.is-playing .pk-voice-wave i {
+  opacity: .94;
+  animation: pk-voice-pulse .7s ease-in-out infinite alternate;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-pill.is-playing .pk-voice-wave i:nth-child(odd) {
+  animation-delay: .15s;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-pill.is-playing .pk-voice-wave i:nth-child(3n) {
+  animation-delay: .3s;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-dur {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: .78;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-status {
+  font-size: 10px;
+  font-weight: 620;
+  color: var(--pk-missed);
+  padding: 3px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--pk-missed) 12%, transparent);
+  width: max-content;
+  max-width: 100%;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-status:empty {
+  display: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-transcript-toggle {
+  padding: 2px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 660;
+  color: inherit;
+  opacity: .78;
+  text-align: left;
+  width: max-content;
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-transcript-toggle:hover {
+  opacity: 1;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-transcript-toggle svg {
+  width: 11px;
+  height: 11px;
+  opacity: .85;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-transcript {
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  font-size: 12px;
+  line-height: 1.44;
+  opacity: .94;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-transcript p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Live Activity Standby Call Card (scene cards) & shared Call Screen tokens */
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen {
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="connected"] {
+  background:
+    radial-gradient(circle at 22% 24%, color-mix(in srgb, var(--pk-live) 20%, transparent), transparent 48%),
+    radial-gradient(circle at 82% 76%, color-mix(in srgb, var(--pk-accent) 22%, transparent), transparent 52%),
+    linear-gradient(155deg, color-mix(in srgb, var(--pk-wallpaper-1) 85%, var(--pk-screen-bg)), var(--pk-screen-bg) 82%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="missed"] {
+  background:
+    radial-gradient(circle at 18% 28%, color-mix(in srgb, var(--pk-missed) 22%, transparent), transparent 50%),
+    linear-gradient(155deg, color-mix(in srgb, var(--pk-missed) 9%, var(--pk-screen-bg)), var(--pk-screen-bg) 80%);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="ended"] {
+  background:
+    radial-gradient(circle at 75% 15%, color-mix(in srgb, var(--pk-accent) 12%, transparent), transparent 48%),
+    linear-gradient(160deg, var(--pk-surface-solid), var(--pk-screen-bg));
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-card {
+  padding: 11px 13px;
+  display: grid;
+  gap: 10px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 680;
+  color: var(--pk-screen-muted);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-body .pocket-inline-avatar {
+  width: 42px;
+  height: 42px;
+  font-size: 15px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-info {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-callkit-name {
+  font-size: 14px;
+  font-weight: 760;
+  color: var(--pk-screen-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-sub {
+  font-size: 11px;
+  color: var(--pk-screen-muted);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-track {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-track i {
+  display: block;
+  width: 2.5px;
+  border-radius: 99px;
+  background: var(--pk-screen-muted);
+  opacity: .35;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="connected"] .pk-standby-track i {
+  background: var(--pk-live);
+  opacity: .9;
+  animation: pk-eq .85s ease-in-out infinite alternate;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="connected"] .pk-standby-track i:nth-child(even) {
+  animation-delay: .2s;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="missed"] .pk-standby-track i {
+  background: var(--pk-missed);
+  opacity: .55;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-standby-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-avatar-ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="connected"] .pk-call-avatar-ring::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--pk-live) 55%, transparent);
+  animation: pk-ring-pulse 1.8s ease-out infinite;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-screen[data-call-status="missed"] .pk-call-avatar-ring::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--pk-missed) 58%, transparent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq i {
+  display: block;
+  width: 2px;
+  border-radius: 99px;
+  background: var(--pk-live);
+  animation: pk-eq .78s ease-in-out infinite alternate;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq i:nth-child(1) { height: 5px; animation-delay: 0s; }
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq i:nth-child(2) { height: 11px; animation-delay: .14s; }
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq i:nth-child(3) { height: 7px; animation-delay: .28s; }
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq i:nth-child(4) { height: 12px; animation-delay: .1s; }
+.pocket-inline-frame[data-pocket-ui="true"] .pk-eq i:nth-child(5) { height: 6px; animation-delay: .22s; }
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 680;
+  background: var(--pk-glass);
+  border: 1px solid var(--pk-border);
+  color: var(--pk-screen-text);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-chip svg {
+  width: 10px;
+  height: 10px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-chip.is-live {
+  color: var(--pk-live);
+  background: color-mix(in srgb, var(--pk-live) 13%, var(--pk-glass));
+  border-color: color-mix(in srgb, var(--pk-live) 34%, transparent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-chip.is-missed {
+  color: var(--pk-missed);
+  background: color-mix(in srgb, var(--pk-missed) 14%, var(--pk-glass));
+  border-color: color-mix(in srgb, var(--pk-missed) 34%, transparent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-hud-dock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn {
+  border: 1px solid var(--pk-border-strong);
+  background: var(--pk-glass);
+  color: var(--pk-screen-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 660;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] button.pk-call-btn {
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] button.pk-call-btn:hover {
+  border-color: var(--pk-accent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn.is-circle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn.is-pill {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn.is-active {
+  background: var(--pk-screen-text);
+  color: var(--pk-screen-bg);
+  border-color: transparent;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn.is-danger {
+  background: linear-gradient(145deg, #e05264, #b53245);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(181, 50, 69, .35);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-call-btn.is-answer {
+  background: linear-gradient(145deg, #27c771, #139650);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(19, 150, 80, .3);
 }
 
 /* Full-phone renderer */
@@ -39113,16 +40121,11 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   width: min(360px, 92vw);
   aspect-ratio: 9 / 18.4;
   padding: 5px;
-  color: var(--pocket-inline-text);
-  background:
-    linear-gradient(145deg, #4a4650 0%, #27242c 22%, #121116 64%, #343039 100%);
-  border: 1px solid rgba(255,255,255,.12);
+  color: var(--pk-screen-text);
+  background: linear-gradient(145deg, var(--pk-bezel-a) 0%, var(--pk-bezel-b) 55%, var(--pk-bezel-a) 100%);
+  border: 1px solid var(--pk-bezel-border);
   border-radius: 42px;
-  box-shadow:
-    0 32px 70px rgba(0,0,0,.48),
-    0 8px 24px rgba(0,0,0,.3),
-    inset 0 1px 0 rgba(255,255,255,.18),
-    inset 0 -1px 0 rgba(255,255,255,.04);
+  box-shadow: var(--pk-shadow), inset 0 1px 0 rgba(255, 255, 255, .18);
   overflow: hidden;
 }
 
@@ -39134,12 +40137,10 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  color: #f7f5fb;
-  background:
-    radial-gradient(circle at 40% -5%, color-mix(in srgb, var(--pocket-inline-accent) 11%, transparent), transparent 34%),
-    linear-gradient(180deg, #15131a 0%, #100f14 100%);
+  color: var(--pk-screen-text);
+  background: var(--pk-screen-bg);
   border-radius: 36px;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-status {
@@ -39150,7 +40151,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   align-items: center;
   flex: 0 0 35px;
   padding: 0 17px;
-  color: rgba(255,255,255,.92);
+  color: var(--pk-status-color);
   font-size: 10px;
   font-weight: 720;
 }
@@ -39160,12 +40161,56 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island {
-  width: 76px;
+  min-width: 76px;
   height: 20px;
+  padding: 0 6px;
   border-radius: 999px;
-  background: rgba(0,0,0,.82);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 1px 0 rgba(255,255,255,.02);
+  background: var(--pk-island);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 1px 2px rgba(0, 0, 0, .2);
 }
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island[data-call="connected"] {
+  min-width: 92px;
+  background: #060908;
+  border: 1px solid rgba(60, 224, 134, .35);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island[data-call="missed"] {
+  min-width: 84px;
+  border: 1px solid rgba(255, 105, 126, .35);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island-dot {
+  width: 4px;
+  height: 4px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #1c284f;
+  box-shadow: inset 0 0 0 1px #2f4585;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island-wave {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5px;
+  height: 9px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island-wave i {
+  display: block;
+  width: 1.5px;
+  border-radius: 99px;
+  background: #3ce086;
+  animation: pk-eq .9s ease-in-out infinite alternate;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island-wave i:nth-child(1) { height: 4px; animation-delay: 0s; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island-wave i:nth-child(2) { height: 8px; animation-delay: .18s; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-island-wave i:nth-child(3) { height: 5px; animation-delay: .35s; }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-indicators {
   display: flex;
@@ -39187,28 +40232,36 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   position: absolute;
   left: 50%;
   bottom: 7px;
+  transform: translateX(-50%);
+  z-index: 4;
+  pointer-events: none;
   width: 92px;
   height: 4px;
-  transform: translateX(-50%);
   border-radius: 999px;
-  background: rgba(255,255,255,.64);
-  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  background: var(--pk-home-bar);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .2);
 }
 
 /* Lock screen */
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock {
   background:
-    radial-gradient(circle at 68% 8%, color-mix(in srgb,var(--pocket-inline-accent) 34%,transparent), transparent 28%),
-    radial-gradient(circle at 18% 44%, color-mix(in srgb,var(--pocket-inline-accent) 22%,transparent), transparent 34%),
-    linear-gradient(155deg, #242229 0%, #17151b 44%, #0d0c10 100%);
+    radial-gradient(circle at 68% 8%, color-mix(in srgb, var(--pk-accent) 28%, transparent), transparent 34%),
+    radial-gradient(circle at 18% 44%, color-mix(in srgb, var(--pk-wallpaper-2) 55%, transparent), transparent 44%),
+    linear-gradient(155deg, var(--pk-wallpaper-1) 0%, var(--pk-screen-bg) 82%);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock::after {
-  content: '';
-  position: absolute;
-  inset: 35px 0 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 24%, rgba(0,0,0,.12));
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock[data-custom-wallpaper="true"] {
+  color: #ffffff;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock[data-custom-wallpaper="true"] .pocket-phone-status,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock[data-custom-wallpaper="true"] .pocket-phone-clock {
+  color: #ffffff;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock[data-custom-wallpaper="true"] .pocket-phone-lock-label,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock[data-custom-wallpaper="true"] .pocket-phone-lock-caption {
+  color: rgba(255, 255, 255, .78);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-hero {
@@ -39218,18 +40271,17 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  padding: 40px 18px 26px;
-  text-shadow: 0 2px 14px rgba(0,0,0,.28);
+  padding: 36px 18px 22px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-label {
-  color: rgba(255,255,255,.64);
+  color: var(--pk-screen-muted);
   font-size: 11px;
   font-weight: 580;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock {
-  color: #fff;
+  color: var(--pk-screen-text);
   font-size: 54px;
   font-weight: 280;
   line-height: 1;
@@ -39237,10 +40289,16 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="approximate"],
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] { font-size:28px; line-height:1.2; letter-spacing:-.02em; max-width:100%; overflow-wrap:anywhere; }
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-clock[data-precision="unknown"] {
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -.02em;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock-caption {
-  color: rgba(255,255,255,.74);
+  color: var(--pk-screen-muted);
   font-size: 12px;
 }
 
@@ -39249,20 +40307,21 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: calc(100% - 28px);
-  margin: 0 14px;
-  padding: 13px 14px 14px;
-  color: #f7f4fb;
+  gap: 9px;
+  width: calc(100% - 26px);
+  margin: 0 13px;
+  padding: 12px 13px;
+  color: var(--pk-screen-text);
   text-align: left;
   font: inherit;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.024)),
-    rgba(28,25,34,.86);
-  border: 1px solid rgba(255,255,255,.11);
+  background: var(--pk-glass);
+  border: 1px solid var(--pk-border-strong);
   border-radius: 18px;
-  box-shadow: 0 14px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.055);
-  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, .18), inset 0 1px 0 var(--pk-glass-highlight);
+  backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device button.pocket-phone-notification {
   cursor: pointer;
 }
 
@@ -39270,7 +40329,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   display: flex;
   align-items: center;
   gap: 6px;
-  color: rgba(255,255,255,.68);
+  color: var(--pk-screen-muted);
   font-size: 10px;
   font-weight: 650;
 }
@@ -39278,12 +40337,30 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-app svg {
   width: 14px;
   height: 14px;
-  color: color-mix(in srgb, var(--pocket-inline-accent) 88%, white 8%);
+  color: var(--pk-accent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-notif-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--pk-screen-muted);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-notif-open-chip {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--pk-border-strong);
+  background: var(--pk-surface);
+  color: var(--pk-accent);
+  font-size: 9.5px;
+  font-weight: 680;
+  cursor: pointer;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-body {
   display: grid;
-  grid-template-columns: 34px minmax(0,1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   align-items: start;
 }
@@ -39298,48 +40375,47 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-avatar {
   width: 34px;
   height: 34px;
-  border-radius: 50%;
   font-size: 12px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-sender {
   font-size: 13px;
   font-weight: 760;
+  color: var(--pk-screen-text);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notification-copy {
   display: -webkit-box;
   overflow: hidden;
-  color: rgba(255,255,255,.9);
+  color: color-mix(in srgb, var(--pk-screen-text) 90%, transparent);
   font-size: 12px;
   line-height: 1.4;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
 }
 
-/* Open chat */
+/* Open chat inside Full Phone */
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-chat {
   background:
-    radial-gradient(circle at 70% -8%, color-mix(in srgb, var(--pocket-inline-accent) 8%, transparent), transparent 32%),
-    #0c0b0f;
+    radial-gradient(circle at 75% 0%, color-mix(in srgb, var(--pk-accent) 12%, transparent), transparent 42%),
+    linear-gradient(175deg, var(--pk-chat-1) 0%, var(--pk-chat-2) 100%);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-app-header {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: 36px minmax(0,1fr) 36px;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
   align-items: center;
-  flex: 0 0 72px;
+  flex: 0 0 60px;
   width: 100%;
-  padding: 7px 12px 9px;
-  color: inherit;
+  padding: 6px 10px;
+  color: var(--pk-screen-text);
   text-align: center;
   font: inherit;
-  background: linear-gradient(180deg, rgba(31,28,36,.98), rgba(22,20,27,.96));
-  border: 0;
-  border-bottom: 1px solid rgba(255,255,255,.065);
-  box-shadow: 0 9px 18px rgba(0,0,0,.12);
+  background: color-mix(in srgb, var(--pk-surface) 92%, transparent);
+  border-bottom: 1px solid var(--pk-border);
+  backdrop-filter: blur(16px);
   cursor: pointer;
 }
 
@@ -39347,26 +40423,25 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  color: color-mix(in srgb, var(--pocket-inline-accent) 82%, white 10%);
+  width: 30px;
+  height: 30px;
+  color: var(--pk-accent);
   border-radius: 50%;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-back svg,
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action svg {
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-action {
-  background: rgba(255,255,255,.055);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+  background: var(--pk-surface-2);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity {
   display: grid;
-  grid-template-columns: 34px minmax(0,1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: auto auto;
   align-items: center;
   justify-self: center;
@@ -39375,7 +40450,8 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   text-align: left;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pocket-phone-avatar {
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pocket-phone-avatar,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-header-identity .pk-group-stack {
   grid-row: 1 / 3;
 }
 
@@ -39384,13 +40460,14 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   font-size: 13px;
   font-weight: 760;
   line-height: 1.2;
+  color: var(--pk-screen-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-subtitle {
-  color: #918b99;
-  font-size: 9px;
+  color: var(--pk-screen-muted);
+  font-size: 9.5px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread {
@@ -39399,18 +40476,18 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   min-height: 0;
   overflow: auto;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 13px 20px;
-  scrollbar-color: rgba(255,255,255,.12) transparent;
+  gap: 10px;
+  padding: 14px 12px 18px;
+  scrollbar-color: var(--pk-border-strong) transparent;
   scrollbar-width: thin;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-thread::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,.12);
+  background: var(--pk-border-strong);
   border-radius: 999px;
 }
 
@@ -39437,232 +40514,353 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   visibility: hidden;
 }
 
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message .pocket-phone-avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message-content {
   display: flex;
-  max-width: 76%;
+  max-width: 78%;
   min-width: 0;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-sender {
   margin-left: 4px;
-  color: #878190;
-  font-size: 9px;
-  font-weight: 680;
+  color: var(--speaker-accent, var(--pk-screen-muted));
+  font-size: 9.5px;
+  font-weight: 700;
   letter-spacing: .01em;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-bubble {
   display: block;
-  padding: 10px 12px;
-  color: #f3eff7;
+  padding: 9px 12px;
+  color: var(--pk-bubble-in-text);
   font-size: 12px;
   line-height: 1.42;
-  background: linear-gradient(145deg, #2b2731, #232029);
-  border: 1px solid rgba(255,255,255,.045);
+  background: var(--pk-bubble-in);
+  border: 1px solid var(--pk-border);
   border-radius: 6px 15px 15px 15px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 12px rgba(0,0,0,.16);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .1);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-message[data-direction="sent"] .pocket-phone-bubble {
-  color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #a698ff 8%), color-mix(in srgb, var(--pocket-inline-accent) 78%, #5f54d5));
+  color: #ffffff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pk-outgoing, var(--pk-accent)) 92%, #fff 8%), var(--pk-outgoing, var(--pk-accent)));
+  border-color: transparent;
   border-radius: 15px 15px 5px 15px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 8px 18px rgba(67,52,149,.18);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--pk-accent) 26%, transparent), inset 0 1px 0 rgba(255, 255, 255, .16);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-delivery {
   align-self: flex-end;
   margin: -3px 3px 0 0;
-  color: #77727f;
-  font-size: 8px;
+  color: var(--pk-screen-muted);
+  font-size: 8.5px;
   font-weight: 680;
   text-transform: uppercase;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer {
   display: grid;
-  grid-template-columns: 34px minmax(0,1fr) 32px;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
   align-items: center;
   flex: 0 0 58px;
   gap: 7px;
-  padding: 8px 10px 13px;
-  background: linear-gradient(180deg, rgba(19,17,23,.94), rgba(11,10,14,.98));
-  border-top: 1px solid rgba(255,255,255,.065);
+  padding: 7px 10px 18px;
+  background: color-mix(in srgb, var(--pk-surface) 88%, transparent);
+  border-top: 1px solid var(--pk-border);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action,
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  color: #aaa4b3;
-  background: #24212a;
-  border: 1px solid rgba(255,255,255,.055);
+  width: 28px;
+  height: 28px;
+  color: var(--pk-screen-muted);
+  background: var(--pk-surface-2);
+  border: 1px solid var(--pk-border);
   border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send {
-  color: #fff;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--pocket-inline-accent) 92%, #aaa0ff), color-mix(in srgb, var(--pocket-inline-accent) 72%, #5449c7));
+  color: #ffffff;
+  background: var(--pk-outgoing, var(--pk-accent));
+  border-color: transparent;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-action svg,
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-send svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-composer-field {
   display: flex;
   align-items: center;
   min-width: 0;
-  height: 34px;
-  padding: 0 12px;
-  color: #797480;
+  height: 30px;
+  padding: 0 11px;
+  color: var(--pk-screen-muted);
   font-size: 11px;
-  background: #131117;
-  border: 1px solid rgba(255,255,255,.12);
+  background: var(--pk-screen-bg);
+  border: 1px solid var(--pk-border-strong);
   border-radius: 999px;
-  box-shadow: inset 0 2px 8px rgba(0,0,0,.2);
 }
 
-/* Dedicated call screen */
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call {
-  background:
-    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--pocket-inline-accent) 26%, transparent), transparent 34%),
-    radial-gradient(circle at 80% 75%, color-mix(in srgb,var(--pocket-inline-accent) 18%,transparent), transparent 30%),
-    linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
+/* Full Phone Call Screen: iOS Contact Poster + Adapted Live Activity Dock */
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px 0;
+  flex: none;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header {
-  grid-template-columns: 36px 1fr;
-  justify-items: start;
-  flex-basis: 54px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  flex: none;
+  padding: 4px;
   background: transparent;
   border-bottom: 0;
-  box-shadow: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header .pocket-phone-header-back {
+  width: 22px;
+  height: 22px;
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-header .pocket-phone-app-label {
-  color: #aaa4b3;
-  font-size: 11px;
+  color: var(--pk-accent);
+  font-size: 11.5px;
+  font-weight: 660;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity {
-  display: flex;
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-call {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 6px 14px 22px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-poster {
+  display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 9px;
-  padding: 0 24px 40px;
   text-align: center;
+  gap: 6px;
+  padding: 12px 8px 0;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-identity .pocket-phone-avatar {
-  width: 86px;
-  height: 86px;
-  margin-bottom: 9px;
-  font-size: 28px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 18px 42px rgba(0,0,0,.28);
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 660;
+  color: var(--pk-screen-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-name {
-  font-size: 20px;
-  font-weight: 760;
-  letter-spacing: -.025em;
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call[data-call-status="connected"] .pk-ios-kicker {
+  color: var(--pk-live);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-status {
-  color: #a39dab;
-  font-size: 12px;
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call[data-call-status="missed"] .pk-ios-kicker {
+  color: var(--pk-missed);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-name {
+  font-size: 27px;
+  font-weight: 780;
+  line-height: 1.08;
+  letter-spacing: -.03em;
+  color: var(--pk-screen-text);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-portrait {
+  margin: 14px 0 8px;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-portrait::after {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--caller-glow, var(--pk-accent)) 32%, transparent), transparent 68%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-portrait .pk-call-avatar-ring {
+  position: relative;
+  z-index: 1;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-portrait .pocket-phone-avatar {
+  width: 102px;
+  height: 102px;
+  font-size: 34px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .28);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-dock {
+  margin-top: auto;
+  padding: 11px 12px 12px;
+  border-radius: 22px;
+  background: var(--pk-glass);
+  border: 1px solid var(--pk-border-strong);
+  backdrop-filter: blur(22px) saturate(1.25);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .2), inset 0 1px 0 var(--pk-glass-highlight);
+  display: grid;
+  gap: 11px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--pk-border);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pk-ios-activity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 680;
+  color: var(--pk-screen-muted);
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-controls {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 9px;
-  flex: 0 0 auto;
-  padding: 0 18px 36px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  justify-items: center;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-controls[data-cols="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  color: #aaa4b3;
-  font-size: 9px;
-}
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon {
   display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  color: #f8f6fb;
-  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
-  border: 1px solid rgba(255,255,255,.09);
-  border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 9px 20px rgba(0,0,0,.18);
+  justify-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  font-weight: 620;
+  color: var(--pk-screen-muted);
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon > svg,
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol svg {
-  width: 19px;
-  height: 19px;
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control .pk-call-btn.is-circle {
+  width: 42px;
+  height: 42px;
 }
 
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control.pocket-phone-call-danger .pocket-phone-call-control-icon {
-  background: linear-gradient(145deg, #c35d69, #984651);
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control .pk-call-btn.is-circle svg {
+  width: 17px;
+  height: 17px;
 }
-
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-call-control-icon .pocket-call-symbol {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-}
-
-@media (max-width: 560px) {
-  .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
-    width: 100%;
-  }
-
-  .pocket-inline-frame[data-pocket-ui="true"] .pocket-inline-artifact {
-    padding: 14px;
-    border-radius: 16px;
-  }
-
-  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {
-    width: min(340px, 94vw);
-  }
-}
-
-.pocket-inline-frame[data-pocket-ui="true"] [hidden] { display: none; }
 
 /* Between-turn connectors stay compact even when prose artifacts use Full Phone. */
-.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] { width:100%; max-width:none; margin:8px 0; }
-.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] { display:none; }
-.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] { width:100%; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector { display:grid; gap:0; border:1px solid var(--pocket-inline-border); border-radius:12px; background:var(--pocket-inline-surface,#201e25); overflow:hidden; box-shadow:0 3px 12px #0002; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading { display:block; width:100%; padding:9px 12px; text-align:left; color:var(--pocket-inline-text); font-size:11px; font-weight:650; border-bottom:1px solid var(--pocket-inline-border); cursor:pointer; opacity:.8; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row { display:grid; position:relative; grid-template-columns:minmax(0,1fr); gap:3px; width:100%; padding:10px 12px; text-align:left; cursor:pointer; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row { border-top:1px solid var(--pocket-inline-border); }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] { text-align:right; border-right:2px solid var(--pocket-inline-accent); }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender { font-size:10px; font-weight:650; opacity:.65; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy { font-size:13px; line-height:1.45; white-space:pre-wrap; }
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover { background:color-mix(in srgb,var(--pocket-inline-text) 4%,transparent); }
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"] {
+  width: 100%;
+  max-width: none;
+  margin: 8px 0;
+}
+
+.pocket-receipt-host[data-pocket-host="true"][data-pocket-connector="true"][hidden] {
+  display: none;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-appearance="connector"] {
+  width: 100%;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--pk-border);
+  border-radius: 12px;
+  background: var(--pocket-inline-surface, var(--pk-surface-solid));
+  overflow: hidden;
+  box-shadow: 0 3px 12px #0002;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  color: var(--pocket-inline-text, var(--pk-screen-text));
+  font-size: 11px;
+  font-weight: 650;
+  border-bottom: 1px solid var(--pk-border);
+  cursor: pointer;
+  opacity: .8;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row {
+  display: grid;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row + .pocket-connector-row {
+  border-top: 1px solid var(--pk-border);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row[data-direction="sent"] {
+  text-align: right;
+  border-right: 2px solid var(--pk-accent);
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-sender {
+  font-size: 10px;
+  font-weight: 650;
+  opacity: .65;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-copy {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:hover {
+  background: color-mix(in srgb, var(--pocket-inline-text, #fff) 4%, transparent);
+}
+
 .pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-row:focus-visible,
-.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible { outline:2px solid var(--pocket-inline-accent); outline-offset:-3px; }
+.pocket-inline-frame[data-pocket-ui="true"] .pocket-connector-heading:focus-visible {
+  outline: 2px solid var(--pk-accent);
+  outline-offset: -3px;
+}
+
+/* Sequence notifications & playback */
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-notifications {
   position: relative;
   z-index: 2;
@@ -39674,6 +40872,7 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   flex: 1;
   padding: 0 0 12px;
 }
+
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback {
   position: relative;
   z-index: 2;
@@ -39681,28 +40880,80 @@ var pocket_inline_redesign_default = `/* Normalize the Pocket-owned mount wrappe
   justify-content: center;
   gap: 12px;
   flex-shrink: 0;
-  padding: 8px 14px 26px;
+  margin-top: auto;
+  padding: 8px 14px 10px;
 }
+
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-lock .pocket-phone-playback {
+  padding: 8px 14px 24px;
+}
+
+.pocket-inline-frame[data-pocket-ui="true"] .pk-msg-row[hidden],
+.pocket-inline-frame[data-pocket-ui="true"] .pk-voice-transcript[hidden],
+.pocket-inline-frame[data-pocket-ui="true"] [hidden] {
+  display: none;
+}
+
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device .pocket-phone-playback button {
-  color: #ded9ef;
-  background: #27232f;
-  border: 1px solid #51495f;
+  color: var(--pk-screen-text);
+  background: var(--pk-surface);
+  border: 1px solid var(--pk-border-strong);
   border-radius: 12px;
   padding: 6px 12px;
   font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
+
 .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step {
   animation: pocket-phone-arrival .35s ease-out var(--pocket-step-delay, 0s) both;
 }
+
 @keyframes pocket-phone-arrival {
   from { opacity: 0; visibility: hidden; transform: translateY(-8px); }
   to { opacity: 1; visibility: visible; transform: translateY(0); }
 }
-.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] .pocket-phone-step { animation: none; }
+
+@keyframes pk-eq {
+  from { transform: scaleY(.35); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes pk-ring-pulse {
+  0% { transform: scale(.96); opacity: .75; }
+  70% { transform: scale(1.13); opacity: 0; }
+  100% { transform: scale(1.13); opacity: 0; }
+}
+
+@keyframes pk-voice-pulse {
+  from { transform: scaleY(.65); }
+  to { transform: scaleY(1.15); }
+}
+
+.pocket-inline-frame[data-pocket-ui="true"][data-reduced-motion="true"] *,
+.pocket-inline-frame[data-pocket-ui="true"][data-reduced-motion="true"] *::before,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] *,
+.pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-reduced-motion="true"] *::before {
+  animation: none;
+  transition: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device[data-playback="playing"] .pocket-phone-step { animation: none; }
+  .pocket-inline-frame[data-pocket-ui="true"] *,
+  .pocket-inline-frame[data-pocket-ui="true"] *::before {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .pocket-inline-frame[data-pocket-ui="true"][data-appearance="cards"] {
+    width: 100%;
+  }
+
+  .pocket-inline-frame[data-pocket-ui="true"].pocket-phone-device {
+    width: min(340px, 94vw);
+  }
 }
 `;
 
@@ -39877,38 +41128,15 @@ function connector(group, open) {
 
 // src/frontend/activity.ts
 function frameArtifact(artifact, activity, options) {
-  const frame = document.createElement("div");
-  frame.className = "pocket-inline-frame";
+  const frame = el2("div", "pocket-inline-frame");
   frame.dataset.pocketUi = "true";
   frame.dataset.appearance = options.appearance || "cards";
+  frame.dataset.dir = "strip";
   frame.dataset.kind = activity.presentation?.kind || activity.kind;
-  if (options.accent)
-    frame.style.setProperty("--pocket-inline-accent", options.accent);
-  if (options.background)
-    frame.style.setProperty("--pocket-inline-bg", options.background);
-  if (options.backgroundSize)
-    frame.style.backgroundSize = options.backgroundSize;
-  if (options.backgroundPosition)
-    frame.style.backgroundPosition = options.backgroundPosition;
-  if (options.textColor)
-    frame.style.setProperty("--pocket-inline-text", options.textColor);
-  if (options.surfaceColor)
-    frame.style.setProperty("--pocket-inline-surface", options.surfaceColor);
+  frame.dataset.reducedMotion = String(Boolean(options.reducedMotion));
+  applyFrameTokens(frame, options);
   frame.append(artifact);
   return frame;
-}
-function avatar3(name, url) {
-  const icon = document.createElement("span");
-  icon.className = "pocket-inline-avatar";
-  icon.setAttribute("aria-hidden", "true");
-  icon.textContent = name.slice(0, 1).toUpperCase();
-  if (url) {
-    const image = document.createElement("img");
-    image.src = url;
-    image.alt = "";
-    icon.replaceChildren(image);
-  }
-  return icon;
 }
 var ICONS2 = {
   message: "Pocket",
@@ -39962,78 +41190,120 @@ function observedDeviceLine(activity) {
   const recipient = recipientLine(activity);
   return recipient ? `${recipient}'s phone` : "Another phone";
 }
-function messageChrome(stateText = "", appName = "Messages") {
-  const chrome = document.createElement("span");
-  chrome.className = "pocket-inline-artifact-chrome";
-  const app = document.createElement("span");
-  app.className = "pocket-inline-artifact-app";
-  app.textContent = appName;
-  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  icon.setAttribute("viewBox", "0 0 24 24");
-  icon.setAttribute("fill", "none");
-  icon.setAttribute("stroke", "currentColor");
-  icon.setAttribute("stroke-width", "1.8");
-  icon.setAttribute("stroke-linecap", "round");
-  icon.setAttribute("stroke-linejoin", "round");
-  icon.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", appName === "Phone" ? "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z" : "M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z");
-  icon.append(path);
-  app.prepend(icon);
-  const state = document.createElement("span");
-  state.className = "pocket-inline-artifact-state";
-  state.textContent = stateText;
-  chrome.append(app, state);
-  return chrome;
+function resolveClockText(activity, options) {
+  const clock = options.clock || activityClock(activity);
+  if (clock.precision === "exact" || clock.precision === "approximate")
+    return clock.time;
+  return activity.presentation?.storyAt?.slice(11, 16) || "";
+}
+function sceneNav(options) {
+  const nav = options.asButton ? el2("button", "pk-app-nav pk-app-nav-button") : el2("span", "pk-app-nav");
+  if (options.asButton) {
+    nav.type = "button";
+    nav.setAttribute("aria-label", options.openAria);
+    nav.addEventListener("click", options.onOpen);
+  }
+  const back = el2("span", "pk-nav-btn");
+  back.append(pocketIcon("back"));
+  const identity = el2("span", "pk-nav-identity");
+  if (options.groupSpeakers && options.groupSpeakers.length >= 2) {
+    const stack = el2("span", "pk-group-stack");
+    stack.setAttribute("aria-hidden", "true");
+    for (const speaker of options.groupSpeakers.slice(0, 2)) {
+      stack.append(portrait2(speaker.name, "pocket-inline-avatar", speaker.url));
+    }
+    identity.append(stack);
+  } else {
+    identity.append(portrait2(options.title, "pocket-inline-avatar", options.avatarUrl));
+  }
+  const titles = el2("span", "pk-nav-titles");
+  titles.append(el2("strong", "pk-nav-name pocket-inline-transcript-title", options.title), el2("span", "pk-nav-sub", options.subtitle));
+  identity.append(titles);
+  const right = el2("span", "pk-nav-btn is-action");
+  right.append(pocketIcon(options.actionIcon));
+  nav.append(back, identity, right);
+  return nav;
 }
 function buildBatchArtifact(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (presentation?.kind !== "batch" || !presentation.batchMessages?.length)
     return null;
-  const primary = document.createElement("button");
-  primary.type = "button";
-  primary.className = "pocket-inline-artifact pocket-inline-chat-transcript";
-  primary.dataset.kind = "batch";
-  const header = document.createElement("span");
-  header.className = "pocket-inline-transcript-header";
-  header.appendChild(messageChrome(`${presentation.batchMessages.length} messages`));
-  const title = document.createElement("strong");
-  title.className = "pocket-inline-transcript-title";
-  title.textContent = presentation.conversationTitle || activity.title || "Group chat";
-  header.appendChild(title);
-  primary.appendChild(header);
-  const transcript = document.createElement("span");
-  transcript.className = "pocket-inline-transcript";
   const visible = presentation.batchMessages;
+  const hasVoice = visible.some((item) => item.format === "voice");
+  const titleText = presentation.conversationTitle || activity.title || "Group chat";
+  const openAria = `Open ${titleText} in Pocket`;
+  const primary = hasVoice ? el2("div", "pocket-inline-artifact pocket-inline-chat-transcript") : el2("button", "pocket-inline-artifact pocket-inline-chat-transcript");
+  primary.dataset.kind = "batch";
+  if (!hasVoice) {
+    primary.type = "button";
+    primary.setAttribute("aria-label", openAria);
+    primary.addEventListener("click", () => openRoute(activity.route));
+  } else {
+    primary.setAttribute("role", "region");
+    primary.setAttribute("aria-label", titleText);
+  }
+  const speakers = [];
+  const seenSpeakers = new Set;
+  for (const item of visible) {
+    if (item.direction === "sent")
+      continue;
+    const key = item.senderActorId || item.senderName;
+    if (!seenSpeakers.has(key)) {
+      seenSpeakers.add(key);
+      speakers.push({ name: item.senderName, url: options.avatars?.[item.senderActorId || ""] });
+    }
+    if (speakers.length >= 2)
+      break;
+  }
+  primary.append(sceneNav({
+    title: titleText,
+    subtitle: `${visible.length} messages`,
+    actionIcon: "video",
+    asButton: hasVoice,
+    openAria,
+    onOpen: () => openRoute(activity.route),
+    groupSpeakers: speakers
+  }));
+  const transcript = el2("span", "pocket-inline-transcript pk-thread-canvas");
   for (const [index, item] of visible.entries()) {
-    const row = document.createElement("span");
-    row.className = "pocket-inline-transcript-row";
+    const row = el2("span", "pocket-inline-transcript-row pk-msg-row");
     row.dataset.direction = item.direction;
     const previous = visible[index - 1];
-    row.dataset.continuation = String(Boolean(previous && (previous.senderActorId || previous.senderName) === (item.senderActorId || item.senderName)));
+    const cont = Boolean(previous && (previous.senderActorId || previous.senderName) === (item.senderActorId || item.senderName));
+    row.dataset.continuation = String(cont);
     row.hidden = index >= 3;
-    const content = document.createElement("span");
-    content.className = "pocket-inline-transcript-content";
-    const sender = document.createElement("strong");
-    sender.className = "pocket-inline-transcript-sender";
-    sender.textContent = item.senderName;
-    const bubble = document.createElement("span");
-    bubble.className = "pocket-inline-transcript-bubble";
-    bubble.textContent = `${item.format === "voice" ? "▶ Voice message · " : ""}${item.text}`;
-    content.append(sender, bubble);
-    row.append(avatar3(item.senderName, options.avatars?.[item.senderActorId || ""]), content);
+    const isVoice = item.format === "voice";
+    const isSent = item.direction === "sent";
+    const content = el2("span", "pocket-inline-transcript-content pk-msg-col");
+    const bubble = el2("span", `pocket-inline-transcript-bubble pk-bubble${isVoice ? " is-voice" : ""}`);
+    if (isVoice) {
+      bubble.append(renderInlineVoiceNode({
+        text: item.text,
+        senderName: item.senderName,
+        senderActorId: item.senderActorId
+      }, options.renderInlineVoice));
+    } else {
+      bubble.textContent = item.text;
+    }
+    if (!isSent) {
+      const speakerColor = avatarColor(item.senderActorId || item.senderName);
+      row.style.setProperty("--speaker-accent", speakerColor);
+      const sender = el2("strong", "pocket-inline-transcript-sender pk-msg-sender", item.senderName);
+      content.append(sender, bubble);
+      row.append(portrait2(item.senderName, "pocket-inline-avatar", options.avatars?.[item.senderActorId || ""], speakerColor), content);
+    } else {
+      content.append(bubble);
+      row.append(content);
+    }
     transcript.appendChild(row);
   }
   primary.appendChild(transcript);
-  primary.setAttribute("aria-label", `Open ${presentation.conversationTitle || activity.title || "group chat"} in Pocket`);
-  primary.addEventListener("click", () => openRoute(activity.route));
-  const group = document.createElement("div");
-  group.className = "pocket-inline-batch";
+  const group = el2("div", "pocket-inline-batch pk-screen");
+  group.dataset.wallpaper = "chat";
   group.append(primary);
   if (visible.length > 3) {
-    const more = document.createElement("button");
+    const more = el2("button", "pocket-inline-transcript-more pk-thread-more-btn");
     more.type = "button";
-    more.className = "pocket-inline-transcript-more";
     more.setAttribute("aria-expanded", "false");
     const collapsed = `Show ${visible.length - 3} more messages`;
     more.textContent = collapsed;
@@ -40041,8 +41311,9 @@ function buildBatchArtifact(activity, openRoute, options) {
       const expanded = more.getAttribute("aria-expanded") !== "true";
       more.setAttribute("aria-expanded", String(expanded));
       more.textContent = expanded ? "Show fewer messages" : collapsed;
-      for (const [index, row] of [...transcript.children].entries())
+      for (const [index, row] of [...transcript.children].entries()) {
         row.hidden = !expanded && index >= 3;
+      }
     });
     group.append(more);
   }
@@ -40052,66 +41323,176 @@ function buildMessageArtifact(activity, openRoute, options) {
   const presentation = activity.presentation;
   if (!presentation || !["sent", "received", "observed"].includes(presentation.kind))
     return null;
-  const primary = document.createElement("button");
-  primary.type = "button";
-  primary.className = "pocket-inline-artifact";
-  primary.dataset.kind = presentation.kind;
-  const copy = document.createElement("span");
-  copy.className = "pocket-inline-artifact-copy";
-  copy.textContent = `${activity.presentation?.format === "voice" ? "▶ Voice message · " : ""}${activity.summary || ""}`;
+  const clockTime = resolveClockText(activity, options);
   if (presentation.call) {
-    primary.classList.add("pocket-inline-call");
-    primary.dataset.callStatus = presentation.call.status;
-    const identity = document.createElement("span");
-    identity.className = "pocket-inline-call-identity";
-    identity.append(avatar3(presentation.senderName || "Call", options.avatarUrl));
-    const details = document.createElement("span");
-    details.className = "pocket-inline-call-details";
-    details.append(messageChrome("", "Phone"));
-    const name = document.createElement("strong");
-    name.className = "pocket-inline-artifact-actors";
-    name.textContent = actorLine(activity) || activity.title;
-    const status = document.createElement("span");
-    status.className = "pocket-inline-artifact-copy";
-    status.textContent = callSummary(presentation.call);
-    details.append(name, status);
-    identity.append(details);
-    primary.append(identity, callSymbol());
-  } else if (presentation.kind === "sent") {
-    const header = document.createElement("span");
-    header.className = "pocket-inline-artifact-header";
-    const recipient = document.createElement("span");
-    recipient.className = "pocket-inline-artifact-recipient";
-    const recipientName = recipientLine(activity);
-    recipient.textContent = recipientName ? `To ${recipientName}` : "Sent message";
-    header.append(messageChrome("sent"), recipient);
-    const bubble = document.createElement("span");
-    bubble.className = "pocket-inline-chat-bubble";
-    bubble.append(copy);
-    primary.append(header, bubble);
-  } else {
-    if (presentation.kind === "observed") {
-      const device = document.createElement("span");
-      device.className = "pocket-inline-artifact-device";
-      device.textContent = observedDeviceLine(activity);
-      primary.appendChild(device);
+    const call = presentation.call;
+    const primary = el2("button", "pocket-inline-artifact pocket-inline-call pk-call-screen");
+    primary.type = "button";
+    primary.dataset.kind = presentation.kind;
+    primary.dataset.callStatus = call.status;
+    const callerName = presentation.senderName || recipientLine(activity) || activity.title || "Call";
+    const isObserved = presentation.kind === "observed";
+    const isSent = presentation.kind === "sent";
+    const displayName = isSent ? `To ${callerName}` : callerName;
+    const durationText = formatCallDuration(call.durationSeconds);
+    const ownerLine = observedDeviceLine(activity);
+    const standby = el2("span", "pk-standby-card");
+    const head = el2("span", "pk-standby-head");
+    const headLeft = el2("span", "pk-standby-app");
+    headLeft.append(appTile("phone"), el2("span", "", isObserved ? `${ownerLine} · Phone` : "Phone Audio"));
+    const headRight = el2("span", "pk-call-chip");
+    if (call.status === "connected") {
+      headRight.classList.add("is-live");
+      headRight.textContent = clockTime || "Live";
+    } else if (call.status === "missed") {
+      headRight.classList.add("is-missed");
+      headRight.append(pocketIcon("missed"), el2("span", "", "Missed"));
+    } else {
+      headRight.textContent = durationText || "Ended";
     }
-    primary.appendChild(messageChrome(presentation.storyAt?.slice(11, 16) || ""));
-    const body = document.createElement("span");
-    body.className = "pocket-inline-message-body";
-    body.append(avatar3(presentation.senderName || "Messages", options.avatarUrl));
-    const content = document.createElement("span");
-    content.className = "pocket-inline-message-content";
-    const sender = document.createElement("strong");
-    sender.className = "pocket-inline-artifact-actors";
-    sender.textContent = presentation.senderName || presentation.conversationTitle || activity.title;
-    content.append(sender, copy);
-    body.append(content);
-    primary.append(body);
+    head.append(headLeft, headRight);
+    const body = el2("span", "pk-standby-body");
+    const ring = el2("span", "pk-call-avatar-ring");
+    ring.append(portrait2(callerName, "pocket-inline-avatar", options.avatarUrl, avatarColor(presentation.senderActorId || callerName)));
+    const info = el2("span", "pk-standby-info");
+    info.append(el2("strong", "pocket-inline-artifact-actors pk-callkit-name", displayName), el2("span", "pocket-inline-artifact-copy pk-standby-sub", callSummary(call)));
+    body.append(ring, info, waveformTrack(call.status === "ended"));
+    const foot = el2("span", "pk-standby-foot");
+    const footChips = el2("span", "pk-standby-chips");
+    if (call.status === "connected") {
+      const liveChip = el2("span", "pk-call-chip is-live", "Live audio");
+      footChips.append(liveChip);
+    } else if (call.status === "missed") {
+      footChips.append(el2("span", "pk-call-chip", isObserved ? ownerLine : isSent ? "Outgoing" : "Incoming"));
+    } else {
+      footChips.append(el2("span", "pk-call-chip", call.speakerphone ? "Speaker" : "Handset"));
+    }
+    const footDock = el2("span", "pk-call-hud-dock");
+    if (call.status === "connected") {
+      const speakerPill = el2("span", `pk-call-btn is-pill${call.speakerphone ? " is-active" : ""}`);
+      speakerPill.append(pocketIcon("speaker"), el2("span", "", "Speaker"));
+      const mutePill = el2("span", "pk-call-btn is-pill");
+      mutePill.append(pocketIcon("mute"), el2("span", "", "Mute"));
+      const endCircle = el2("span", "pk-call-btn is-circle is-danger");
+      endCircle.append(pocketIcon("phoneEnd"));
+      footDock.append(speakerPill, mutePill, endCircle);
+    } else {
+      const msgPill = el2("span", "pk-call-btn is-pill");
+      msgPill.append(pocketIcon("chatOutline"), el2("span", "", "Message"));
+      const backPill = el2("span", `pk-call-btn is-pill${call.status === "missed" ? " is-answer" : ""}`);
+      backPill.append(pocketIcon("phone"), el2("span", "", call.status === "missed" ? "Call back" : "Call again"));
+      footDock.append(msgPill, backPill);
+    }
+    foot.append(footChips, footDock);
+    standby.append(head, body, foot);
+    primary.append(standby);
+    primary.setAttribute("aria-label", `Open ${isObserved ? `${ownerLine} · ` : ""}${callerName} call in Pocket`);
+    primary.addEventListener("click", () => openRoute(activity.route));
+    const screen = el2("div", "pk-screen");
+    screen.append(primary);
+    return frameArtifact(screen, activity, options);
   }
-  primary.setAttribute("aria-label", `Open ${presentation.kind === "observed" ? `${observedDeviceLine(activity)} · ` : ""}${presentation.conversationTitle || activity.title} in Pocket`);
-  primary.addEventListener("click", () => openRoute(activity.route));
-  return frameArtifact(primary, activity, options);
+  const isVoice = presentation.format === "voice";
+  if (presentation.kind === "sent") {
+    const recipientName = recipientLine(activity);
+    const openAria = `Open ${recipientName || activity.title} in Pocket`;
+    const primary = isVoice ? el2("div", "pocket-inline-artifact pk-sent-card") : el2("button", "pocket-inline-artifact pk-sent-card");
+    primary.dataset.kind = "sent";
+    if (!isVoice) {
+      primary.type = "button";
+      primary.setAttribute("aria-label", openAria);
+      primary.addEventListener("click", () => openRoute(activity.route));
+    } else {
+      primary.setAttribute("role", "region");
+      primary.setAttribute("aria-label", recipientName || "Sent message");
+    }
+    primary.append(sceneNav({
+      title: recipientName || "Messages",
+      subtitle: "Messages",
+      actionIcon: "phone",
+      asButton: isVoice,
+      openAria,
+      onOpen: () => openRoute(activity.route),
+      avatarUrl: options.avatarUrl
+    }));
+    const canvas = el2("span", "pk-thread-canvas");
+    const row = el2("span", "pk-msg-row");
+    row.dataset.direction = "sent";
+    row.dataset.continuation = "false";
+    const col = el2("span", "pk-msg-col");
+    const bubble = el2("span", `pocket-inline-chat-bubble pk-bubble${isVoice ? " is-voice" : ""}`);
+    if (isVoice) {
+      bubble.append(renderInlineVoiceNode({
+        text: activity.summary || "",
+        senderName: presentation.senderName || "You",
+        senderActorId: presentation.senderActorId
+      }, options.renderInlineVoice));
+    } else {
+      bubble.textContent = activity.summary || "";
+    }
+    col.append(bubble);
+    row.append(col);
+    canvas.append(row, el2("span", "pk-delivery-receipt", clockTime ? `Delivered · ${clockTime}` : "Delivered"));
+    primary.append(canvas);
+    const screen = el2("div", "pk-screen");
+    screen.dataset.wallpaper = "chat";
+    screen.append(primary);
+    return frameArtifact(screen, activity, options);
+  }
+  const isObserved = presentation.kind === "observed";
+  const senderName = presentation.senderName || presentation.conversationTitle || activity.title;
+  const openAria = `Open ${isObserved ? `${observedDeviceLine(activity)} · ` : ""}${presentation.conversationTitle || activity.title} in Pocket`;
+  const screen = el2("div", "pk-screen");
+  screen.dataset.wallpaper = "lock";
+  const lockBody = el2("div", "pk-lock-body");
+  if (isObserved) {
+    const deviceBar = el2("div", "pk-lock-device-bar");
+    const ownerPill = el2("span", "pk-lock-owner-pill");
+    ownerPill.append(pocketIcon("lock"), el2("span", "", observedDeviceLine(activity)));
+    deviceBar.append(ownerPill, el2("span", "pk-lock-clock-mini", clockTime || "Locked"));
+    lockBody.append(deviceBar);
+  }
+  const primary = isVoice ? el2("div", "pocket-inline-artifact pk-notif-card") : el2("button", "pocket-inline-artifact pk-notif-card");
+  primary.dataset.kind = presentation.kind;
+  if (!isVoice) {
+    primary.type = "button";
+    primary.setAttribute("aria-label", openAria);
+    primary.addEventListener("click", () => openRoute(activity.route));
+  } else {
+    primary.setAttribute("role", "region");
+    primary.setAttribute("aria-label", `Voice message from ${senderName}`);
+  }
+  const avatarWrap = el2("span", "pk-avatar-wrap");
+  avatarWrap.append(portrait2(senderName || "Messages", "pocket-inline-avatar", options.avatarUrl, avatarColor(presentation.senderActorId || senderName)));
+  const appCorner = el2("span", "pk-app-corner-badge");
+  appCorner.dataset.app = "messages";
+  appCorner.setAttribute("aria-hidden", "true");
+  appCorner.append(pocketIcon("message"));
+  avatarWrap.append(appCorner);
+  const main = el2("span", "pk-notif-main");
+  const top = el2("span", "pk-notif-top");
+  const meta = el2("span", "pk-notif-meta", `Messages${clockTime ? ` · ${clockTime}` : ""}`);
+  top.append(meta);
+  if (isVoice) {
+    const openSender = el2("button", "pk-notif-open-sender");
+    openSender.type = "button";
+    openSender.setAttribute("aria-label", openAria);
+    openSender.addEventListener("click", () => openRoute(activity.route));
+    openSender.append(el2("strong", "pk-notif-sender pocket-inline-artifact-actors", senderName));
+    top.append(openSender);
+    main.append(top, renderInlineVoiceNode({
+      text: activity.summary || "",
+      senderName,
+      senderActorId: presentation.senderActorId
+    }, options.renderInlineVoice));
+  } else {
+    top.append(el2("strong", "pk-notif-sender pocket-inline-artifact-actors", senderName));
+    main.append(top, el2("span", "pk-notif-text pocket-inline-artifact-copy", activity.summary || ""));
+  }
+  primary.append(avatarWrap, main);
+  lockBody.append(primary);
+  screen.append(lockBody);
+  return frameArtifact(screen, activity, options);
 }
 function buildActivityStack(activity, openRoute, options = {}) {
   const stack = document.createElement("span");
@@ -40145,10 +41526,8 @@ function buildActivityStack(activity, openRoute, options = {}) {
     arrow.setAttribute("aria-hidden", "true");
     arrow.textContent = "›";
     receipt.append(label, copy, arrow);
-    if (receipt instanceof HTMLButtonElement) {
-      receipt.setAttribute("aria-label", `Open ${activity.presentation?.conversationTitle || activity.title} in Pocket`);
-      receipt.addEventListener("click", () => openRoute(activity.route));
-    }
+    receipt.setAttribute("aria-label", `Open ${activity.presentation?.conversationTitle || activity.title} in Pocket`);
+    receipt.addEventListener("click", () => openRoute(activity.route));
     stack.appendChild(receipt);
     const detail = actorLine(activity) || activity.summary;
     if (detail) {
@@ -45015,7 +46394,7 @@ var ICONS3 = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg>'
 };
-function icon4(name) {
+function icon3(name) {
   const node = el("span");
   node.innerHTML = ICONS3[name] || ICONS3.home;
   return node;
@@ -45023,12 +46402,13 @@ function icon4(name) {
 function iconButton(name, label) {
   const node = button("", "lp-button lp-button-icon");
   node.setAttribute("aria-label", label);
-  node.appendChild(icon4(name));
+  node.appendChild(icon3(name));
   return node;
 }
 
 class PocketController {
   voicePlayer = new VoiceMessagePlayer;
+  inlineVoicePlayer = new VoiceMessagePlayer;
   ctx;
   surfaceId = pocketSurfaceId();
   cleanups = [];
@@ -45348,6 +46728,7 @@ class PocketController {
     }
     this.socialGifRequests.clear();
     this.voicePlayer.stop();
+    this.inlineVoicePlayer.stop();
     this.setupModalDismiss?.();
     this.authoringSheetDismiss?.();
     this.destroyed = true;
@@ -45689,6 +47070,7 @@ class PocketController {
     this.groupSaveRequest = "";
     this.trackerSaveRequest = "";
     this.voicePlayer.stop();
+    this.inlineVoicePlayer.stop();
     window.clearTimeout(this.notificationTimer);
     this.shell.querySelector(".lp-floating-notification")?.remove();
     this.render(false);
@@ -47774,7 +49156,7 @@ class PocketController {
     this.shell.querySelector(".lp-floating-notification")?.remove();
     const toast = button("", "lp-floating-notification");
     toast.setAttribute("role", "status");
-    toast.append(icon4(notification.app), el("span", "lp-grow", ""), el("span", "lp-home-activity-arrow", "›"));
+    toast.append(icon3(notification.app), el("span", "lp-grow", ""), el("span", "lp-home-activity-arrow", "›"));
     const copy = toast.children[1];
     copy.append(el("strong", "", notification.title), el("span", "", notification.body));
     toast.addEventListener("click", () => {
@@ -47867,6 +49249,7 @@ class PocketController {
     this.lorebookPicker?.dismiss();
     this.lorebookPicker = null;
     this.voicePlayer.stop();
+    this.inlineVoicePlayer.stop();
     for (const ui of this.launcherSessions.values()) {
       ui.placingSlot = undefined;
       ui.drawer = false;
@@ -47913,6 +49296,9 @@ class PocketController {
   openApp(app) {
     this.openPocket({ app });
   }
+  renderVoiceFor(player, message, variant, defaultTranscriptOpen = false) {
+    return player.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""], { variant, defaultTranscriptOpen });
+  }
   inlineOptions(activity) {
     if (!this.state)
       return {};
@@ -47933,6 +49319,8 @@ class PocketController {
       backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
       textColor: appearance.colors.text,
       surfaceColor: appearance.colors.surface,
+      theme: appearance.theme,
+      renderInlineVoice: (message) => this.renderVoiceFor(this.inlineVoicePlayer, message, "inline", true),
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map((row) => [row.senderActorId || "", resolvePocketActor(this.state, row.senderActorId || "")?.avatarUrl || ""]))
     };
@@ -48219,8 +49607,10 @@ class PocketController {
     this.pendingActivities.clear();
     window.clearInterval(this.receiptSweepTimer);
     this.receiptSweepTimer = 0;
-    if (clearKnown)
+    if (clearKnown) {
       this.knownActivities.clear();
+      this.inlineVoicePlayer.stop();
+    }
     if (clearProvisional)
       this.provisionalActivities.clear();
     for (const host of document.querySelectorAll("[data-pocket-inline-anchor]")) {
@@ -49015,7 +50405,7 @@ class PocketController {
       dating,
       state: datingDisplayState(this.state, dating ? this.selectedConversationId : undefined),
       selectedConversationId: this.selectedConversationId,
-      renderVoiceMessage: (message) => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ""]),
+      renderVoiceMessage: (message) => this.renderVoiceFor(this.voicePlayer, message, "dm", false),
       chatTheme: (conversationId) => this.showChatTheme(conversationId),
       datingPhotoAction: (conversationId, messageId) => this.datingAction("message_photo", { conversationId, messageId }),
       datingPhotoAvailable: Boolean(this.caps?.imageGen),
@@ -51514,7 +52904,7 @@ ${body}`;
   empty(iconName, title, copy) {
     const node = el("div", "lp-empty");
     const inner = el("div");
-    let art = icon4(iconName);
+    let art = icon3(iconName);
     if (iconName === "messages") {
       art = el("span", "lp-app-icon-box lp-icon-messages lp-empty-app-icon");
       art.setAttribute("aria-hidden", "true");
@@ -53385,15 +54775,41 @@ ${SURFACE_TOKENS}
 
 // src/frontend/components/voice-message-styles.ts
 var VOICE_MESSAGE_STYLES = `
-.lp-voice-message { display:grid; gap:8px; min-width:0; }
-.lp-voice-play { padding:9px 12px; border:1px solid currentColor; border-radius:10px; color:inherit; background:transparent; font:inherit; cursor:pointer; text-align:left; }
-.lp-voice-play:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
-.lp-voice-play:disabled { opacity:.6; cursor:default; }
-.lp-voice-status { font-size:11px; }
+.lp-voice-message { display:grid; gap:calc(6px * var(--pocket-ui-scale, 1)); min-width:min(180px, 100%); max-width:100%; white-space:normal; }
+.lp-voice-bar { display:flex; align-items:center; gap:calc(8px * var(--pocket-ui-scale, 1)); min-width:0; }
+.lp-voice-play {
+  appearance:none; width:calc(28px * var(--pocket-ui-scale, 1)); height:calc(28px * var(--pocket-ui-scale, 1));
+  border-radius:50%; border:0; padding:0; display:grid; place-items:center; flex:none; cursor:pointer;
+  background:var(--lp-outgoing, var(--lp-accent)); color:#fff;
+  box-shadow:0 2px 8px rgba(0,0,0,.18); transition:transform .14s ease, opacity .14s ease;
+}
+.lp-bubble[data-sender="persona"] .lp-voice-play { background:rgba(255,255,255,.24); color:#fff; box-shadow:none; }
+.lp-voice-play svg { width:calc(12px * var(--pocket-ui-scale, 1)); height:calc(12px * var(--pocket-ui-scale, 1)); }
+.lp-voice-play:focus-visible, .lp-voice-transcript-toggle:focus-visible { outline:2px solid currentColor; outline-offset:3px; border-radius:8px; }
+.lp-voice-play:focus-visible { border-radius:50%; }
+.lp-voice-play:disabled { opacity:.55; cursor:default; }
+.lp-voice-wave { flex:1 1 auto; min-width:48px; display:flex; align-items:center; gap:calc(3px * var(--pocket-ui-scale, 1)); height:calc(20px * var(--pocket-ui-scale, 1)); overflow:hidden; }
+.lp-voice-wave i { flex:0 0 3px; width:3px; border-radius:99px; background:currentColor; opacity:.36; transition:opacity .15s ease, transform .15s ease; }
+.lp-voice-message.is-playing .lp-voice-wave i { opacity:.92; animation:lp-voice-pulse .7s ease-in-out infinite alternate; }
+.lp-voice-message.is-playing .lp-voice-wave i:nth-child(odd) { animation-delay:.15s; }
+.lp-voice-message.is-playing .lp-voice-wave i:nth-child(3n) { animation-delay:.3s; }
+.lp-voice-dur { font-size:calc(10px * var(--pocket-ui-scale, 1)); font-weight:700; font-variant-numeric:tabular-nums; opacity:.78; flex:none; }
+.lp-voice-status { font-size:calc(10px * var(--pocket-ui-scale, 1)); font-weight:600; color:var(--lp-destructive, #ff697e); line-height:1.35; }
+.lp-bubble[data-sender="persona"] .lp-voice-status { color:#fff; background:rgba(0,0,0,.2); padding:3px 7px; border-radius:7px; width:max-content; max-width:100%; }
 .lp-voice-status:empty { display:none; }
-.lp-voice-transcript { font-size:12px; }
-.lp-voice-transcript summary { cursor:pointer; }
-.lp-voice-transcript p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
+.lp-voice-transcript-toggle {
+  appearance:none; border:0; background:transparent; color:inherit; padding:2px 0;
+  display:inline-flex; align-items:center; gap:5px; font:inherit;
+  font-size:calc(10px * var(--pocket-ui-scale, 1)); font-weight:650; opacity:.8; cursor:pointer; width:max-content;
+}
+.lp-voice-transcript-toggle:hover { opacity:1; }
+.lp-voice-transcript-toggle svg { width:calc(11px * var(--pocket-ui-scale, 1)); height:calc(11px * var(--pocket-ui-scale, 1)); flex:none; }
+.lp-voice-transcript { padding-top:calc(6px * var(--pocket-ui-scale, 1)); border-top:1px solid color-mix(in srgb, currentColor 16%, transparent); font-size:1em; line-height:1.45; }
+.lp-voice-transcript[hidden] { display:none; }
+.lp-voice-transcript p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+@keyframes lp-voice-pulse { from { transform:scaleY(.65); } to { transform:scaleY(1.15); } }
+.lumiphone-shell[data-reduced-motion="true"] .lp-voice-message.is-playing .lp-voice-wave i { animation:none; }
+@media (prefers-reduced-motion:reduce) { .lp-voice-message.is-playing .lp-voice-wave i { animation:none; } }
 `;
 
 // src/frontend/components/launcher-styles.ts

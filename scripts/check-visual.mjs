@@ -77,7 +77,8 @@ try {
       if (file === 'weather-app.html') assert.ok(await page.locator('.lumiphone-screen').evaluate(node => node.getBoundingClientRect().width > 200), 'Weather screen must keep its visible handset width')
       if (file === 'chat-voice.html') {
         assert.equal(await page.locator('.lp-voice-play').count(), 1)
-        await page.locator('.lp-voice-transcript summary').click()
+        assert.equal(await page.locator('.lp-voice-message details').count(), 0)
+        await page.locator('.lp-voice-transcript-toggle').click()
         assert.ok(await page.locator('.lp-voice-transcript p').isVisible(), 'Voice transcript must remain accessible without playback')
       }
       if (file === 'contacts.html') {

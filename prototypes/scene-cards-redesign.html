@@ -1,0 +1,3385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket · Scene Cards &amp; Calls Redesign Lab</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --lab-bg: #0b0a10;
+    --lab-panel: #13111b;
+    --lab-panel-2: #1a1724;
+    --lab-border: rgba(255, 255, 255, 0.09);
+    --lab-text: #f5f2fb;
+    --lab-muted: #9e97ad;
+    --lab-accent: #8b7dff;
+    --lab-prose-bg: #121118;
+    --lab-prose-text: #ddd8e8;
+    --lab-prose-muted: #8c859c;
+    --lab-radius: 14px;
+    --lab-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --lab-serif: "Newsreader", "Georgia", "Times New Roman", serif;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--lab-bg);
+    color: var(--lab-text);
+    font-family: var(--lab-font);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--lab-accent);
+    outline-offset: 2px;
+  }
+
+  /* ======================== DESIGN LAB CHROME ======================== */
+  .lab-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(13, 11, 19, 0.9);
+    backdrop-filter: blur(18px) saturate(1.25);
+    border-bottom: 1px solid var(--lab-border);
+  }
+
+  .lab-header-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 12px 18px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .lab-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .lab-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .lab-logo {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(145deg, #9d91ff, #6555d9);
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    box-shadow: 0 6px 16px rgba(139, 125, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    flex: none;
+  }
+
+  .lab-title-group { min-width: 0; }
+  .lab-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 760;
+    letter-spacing: -0.015em;
+  }
+  .lab-subtitle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    color: var(--lab-muted);
+    font-size: 11px;
+  }
+  .lab-demo-badge {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(139, 125, 255, 0.14);
+    border: 1px solid rgba(139, 125, 255, 0.28);
+    color: #c7bfff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .lab-tabs {
+    display: inline-flex;
+    padding: 3px;
+    background: var(--lab-panel-2);
+    border: 1px solid var(--lab-border);
+    border-radius: 10px;
+    gap: 2px;
+  }
+
+  .lab-tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--lab-muted);
+    padding: 6px 12px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 650;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .lab-tab[aria-selected="true"] {
+    background: var(--lab-accent);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(139, 125, 255, 0.28);
+  }
+
+  .lab-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.055);
+  }
+
+  .lab-control-group {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .lab-control-label {
+    font-size: 10px;
+    font-weight: 750;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--lab-muted);
+    margin-right: 2px;
+  }
+
+  .lab-seg {
+    display: inline-flex;
+    flex-wrap: wrap;
+    max-width: 100%;
+    padding: 2px;
+    border-radius: 9px;
+    background: var(--lab-panel);
+    border: 1px solid var(--lab-border);
+    gap: 2px;
+  }
+
+  .lab-seg-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--lab-muted);
+    padding: 4px 9px;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 620;
+    white-space: nowrap;
+  }
+  .lab-seg-btn:hover { color: var(--lab-text); }
+  .lab-seg-btn[aria-pressed="true"] {
+    background: rgba(255, 255, 255, 0.11);
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .lab-theme-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .lab-theme-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    display: inline-block;
+  }
+
+  .lab-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--lab-muted);
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: var(--lab-panel);
+    border: 1px solid var(--lab-border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .lab-check input { accent-color: var(--lab-accent); margin: 0; }
+
+  /* ======================== MAIN LAYOUT ======================== */
+  .lab-main {
+    max-width: 1280px;
+    min-width: 0;
+    margin: 0 auto;
+    padding: 22px 18px 80px;
+  }
+
+  .lab-panel[hidden] { display: none; }
+
+  .lab-banner-note {
+    margin: 0 0 18px;
+    padding: 11px 14px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(139, 125, 255, 0.09), rgba(255, 255, 255, 0.02));
+    border: 1px solid rgba(139, 125, 255, 0.22);
+    color: #d9d3eb;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .lab-banner-note strong { color: #fff; }
+
+  /* Viewport preview containers */
+  .prose-stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    justify-items: center;
+  }
+  .prose-stage[data-width="both"] {
+    grid-template-columns: minmax(0, 680px) 360px;
+    justify-content: center;
+    align-items: start;
+  }
+
+  .prose-viewport {
+    width: 100%;
+    min-width: 0;
+    max-width: 680px;
+    background: var(--lab-prose-bg);
+    border: 1px solid var(--lab-border);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+    overflow: hidden;
+  }
+  .prose-stage[data-width="mobile"] .prose-viewport {
+    max-width: 360px;
+  }
+  .prose-viewport-bar {
+    padding: 9px 14px;
+    background: rgba(255, 255, 255, 0.025);
+    border-bottom: 1px solid var(--lab-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--lab-muted);
+  }
+  .prose-viewport-bar strong { color: var(--lab-text); font-weight: 680; }
+
+  .rp-thread {
+    padding: 18px 20px 26px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .prose-viewport.is-mobile .rp-thread {
+    padding: 14px 13px 22px;
+    gap: 14px;
+  }
+
+  .rp-turn {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+  }
+  .rp-speaker-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--lab-prose-muted);
+  }
+  .rp-speaker-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 760;
+    color: #fff;
+    background: linear-gradient(145deg, #4b4661, #2e2a3b);
+  }
+  .rp-speaker-meta strong { color: var(--lab-text); font-weight: 700; }
+
+  .rp-prose {
+    font-size: 14.5px;
+    line-height: 1.66;
+    color: var(--lab-prose-text);
+    min-width: 0;
+  }
+  .prose-viewport.is-mobile .rp-prose { font-size: 14px; line-height: 1.6; }
+  .rp-prose p { margin: 0 0 12px; }
+  .rp-prose p:last-child { margin-bottom: 0; }
+  .rp-prose em { color: #b8b0cc; font-style: italic; }
+
+  .rp-anchor {
+    margin: 14px 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .rp-anchor-tag {
+    font-size: 10px;
+    font-weight: 680;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--lab-prose-muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  /* Interactive Call Sandbox controls inside prose/matrix */
+  .call-playground-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    margin-bottom: 4px;
+  }
+  .call-playground-bar span.cp-label {
+    font-size: 10px;
+    font-weight: 720;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--lab-muted);
+    margin-right: 2px;
+  }
+  .cp-chip {
+    appearance: none;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--lab-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .cp-chip[aria-pressed="true"] {
+    background: var(--lab-accent);
+    border-color: transparent;
+    color: #fff;
+  }
+
+  /* =====================================================================
+     POCKET THEME TOKENS FOR THE TINY PHONE INTERFACES
+     Supports all 5 Pocket themes: Midnight, Porcelain, Rose, Forest, Pink
+     ===================================================================== */
+  .pk-theme-scope {
+    --pk-accent: #8b7dff;
+    --pk-on-accent: #ffffff;
+    --pk-accent-soft: rgba(139, 125, 255, 0.16);
+    --pk-bezel-a: #44404c;
+    --pk-bezel-b: #16141b;
+    --pk-bezel-border: rgba(255, 255, 255, 0.14);
+    --pk-screen-bg: #111016;
+    --pk-screen-text: #f7f5fb;
+    --pk-screen-muted: #9b95a8;
+    --pk-surface: rgba(29, 26, 36, 0.88);
+    --pk-surface-solid: #1e1b26;
+    --pk-surface-2: #2b2735;
+    --pk-bubble-in: #272330;
+    --pk-bubble-in-text: #f3eff9;
+    --pk-border: rgba(255, 255, 255, 0.09);
+    --pk-border-strong: rgba(255, 255, 255, 0.15);
+    --pk-glass: rgba(31, 28, 40, 0.72);
+    --pk-glass-highlight: rgba(255, 255, 255, 0.09);
+    --pk-wallpaper-1: #1a1630;
+    --pk-wallpaper-2: #123a4a;
+    --pk-chat-1: #13111c;
+    --pk-chat-2: #0a090e;
+    --pk-island: #050507;
+    --pk-status-color: rgba(255, 255, 255, 0.92);
+    --pk-home-bar: rgba(255, 255, 255, 0.55);
+    --pk-shadow: 0 20px 46px rgba(0, 0, 0, 0.42), 0 4px 14px rgba(0, 0, 0, 0.28);
+    --pk-live: #3ce086;
+    --pk-missed: #ff697e;
+    --pk-danger: #d94c5f;
+    --pk-is-light: 0;
+  }
+
+  .pk-theme-scope[data-theme="porcelain"] {
+    --pk-accent: #6657d9;
+    --pk-on-accent: #ffffff;
+    --pk-accent-soft: rgba(102, 87, 217, 0.14);
+    --pk-bezel-a: #e3deda;
+    --pk-bezel-b: #b9b2ab;
+    --pk-bezel-border: rgba(255, 255, 255, 0.72);
+    --pk-screen-bg: #f4f2ef;
+    --pk-screen-text: #1f1c25;
+    --pk-screen-muted: #6c6674;
+    --pk-surface: rgba(255, 255, 255, 0.88);
+    --pk-surface-solid: #ffffff;
+    --pk-surface-2: #e7e2dc;
+    --pk-bubble-in: #ffffff;
+    --pk-bubble-in-text: #221f29;
+    --pk-border: rgba(35, 28, 46, 0.1);
+    --pk-border-strong: rgba(35, 28, 46, 0.16);
+    --pk-glass: rgba(255, 255, 255, 0.78);
+    --pk-glass-highlight: rgba(255, 255, 255, 0.85);
+    --pk-wallpaper-1: #e5dfd9;
+    --pk-wallpaper-2: #c6d4e6;
+    --pk-chat-1: #eae5f7;
+    --pk-chat-2: #f7f5f2;
+    --pk-island: #16141a;
+    --pk-status-color: rgba(28, 24, 34, 0.9);
+    --pk-home-bar: rgba(28, 24, 34, 0.36);
+    --pk-shadow: 0 18px 42px rgba(10, 8, 18, 0.32), 0 4px 12px rgba(0, 0, 0, 0.18);
+    --pk-live: #159b52;
+    --pk-missed: #d63651;
+    --pk-danger: #d63651;
+    --pk-is-light: 1;
+  }
+
+  .pk-theme-scope[data-theme="rose"] {
+    --pk-accent: #ffb27d;
+    --pk-on-accent: #241418;
+    --pk-accent-soft: rgba(255, 178, 125, 0.18);
+    --pk-bezel-a: #543e46;
+    --pk-bezel-b: #1e1518;
+    --pk-bezel-border: rgba(255, 206, 173, 0.18);
+    --pk-screen-bg: #171216;
+    --pk-screen-text: #fff5ec;
+    --pk-screen-muted: #cbb1a7;
+    --pk-surface: rgba(41, 30, 37, 0.9);
+    --pk-surface-solid: #281e25;
+    --pk-surface-2: #3b2c33;
+    --pk-bubble-in: #34262e;
+    --pk-bubble-in-text: #fff4ea;
+    --pk-border: rgba(255, 201, 160, 0.14);
+    --pk-border-strong: rgba(255, 201, 160, 0.24);
+    --pk-glass: rgba(48, 34, 42, 0.74);
+    --pk-glass-highlight: rgba(255, 224, 200, 0.1);
+    --pk-wallpaper-1: #5a4663;
+    --pk-wallpaper-2: #8a5648;
+    --pk-chat-1: #2f2128;
+    --pk-chat-2: #171216;
+    --pk-island: #080608;
+    --pk-status-color: rgba(255, 245, 236, 0.92);
+    --pk-home-bar: rgba(255, 245, 236, 0.48);
+    --pk-live: #76e3a8;
+    --pk-missed: #ff7c8e;
+    --pk-danger: #d95264;
+  }
+
+  .pk-theme-scope[data-theme="forest"] {
+    --pk-accent: #63d8a4;
+    --pk-on-accent: #072015;
+    --pk-accent-soft: rgba(99, 216, 164, 0.16);
+    --pk-bezel-a: #2c473a;
+    --pk-bezel-b: #080f0b;
+    --pk-bezel-border: rgba(187, 255, 224, 0.16);
+    --pk-screen-bg: #0a130e;
+    --pk-screen-text: #f0fff7;
+    --pk-screen-muted: #93b3a2;
+    --pk-surface: rgba(18, 35, 27, 0.9);
+    --pk-surface-solid: #12241b;
+    --pk-surface-2: #1c382b;
+    --pk-bubble-in: #183024;
+    --pk-bubble-in-text: #eefcf5;
+    --pk-border: rgba(190, 255, 222, 0.11);
+    --pk-border-strong: rgba(190, 255, 222, 0.2);
+    --pk-glass: rgba(20, 42, 32, 0.74);
+    --pk-glass-highlight: rgba(204, 255, 224, 0.08);
+    --pk-wallpaper-1: #133829;
+    --pk-wallpaper-2: #1c5b43;
+    --pk-chat-1: #0c2117;
+    --pk-chat-2: #060d09;
+    --pk-island: #030705;
+    --pk-status-color: rgba(240, 255, 247, 0.92);
+    --pk-home-bar: rgba(240, 255, 247, 0.45);
+    --pk-live: #63d8a4;
+    --pk-missed: #ff7a8f;
+    --pk-danger: #d64e62;
+  }
+
+  .pk-theme-scope[data-theme="pink"] {
+    --pk-accent: #e84393;
+    --pk-on-accent: #ffffff;
+    --pk-accent-soft: rgba(232, 67, 147, 0.14);
+    --pk-bezel-a: #ff9dd2;
+    --pk-bezel-b: #df69a8;
+    --pk-bezel-border: rgba(255, 255, 255, 0.65);
+    --pk-screen-bg: #fff2f8;
+    --pk-screen-text: #3a122c;
+    --pk-screen-muted: #7d4c68;
+    --pk-surface: rgba(255, 255, 255, 0.88);
+    --pk-surface-solid: #ffffff;
+    --pk-surface-2: #fbdced;
+    --pk-bubble-in: #ffffff;
+    --pk-bubble-in-text: #3a122c;
+    --pk-border: rgba(74, 20, 54, 0.11);
+    --pk-border-strong: rgba(74, 20, 54, 0.18);
+    --pk-glass: rgba(255, 244, 250, 0.82);
+    --pk-glass-highlight: rgba(255, 255, 255, 0.9);
+    --pk-wallpaper-1: #ffabd7;
+    --pk-wallpaper-2: #ffd9ec;
+    --pk-chat-1: #ffe2f1;
+    --pk-chat-2: #fff6fa;
+    --pk-island: #281020;
+    --pk-status-color: rgba(58, 18, 44, 0.9);
+    --pk-home-bar: rgba(58, 18, 44, 0.34);
+    --pk-shadow: 0 18px 40px rgba(32, 8, 24, 0.28);
+    --pk-live: #159b52;
+    --pk-missed: #cf2850;
+    --pk-danger: #cf2850;
+    --pk-is-light: 1;
+  }
+
+  /* =====================================================================
+     TINY PHONE INTERFACE CORE ARCHITECTURE
+     3 Directions: slice | surface | strip
+     ===================================================================== */
+  .pk-scene-wrap {
+    width: min(100%, 440px);
+    font-family: var(--lab-font);
+    color: var(--pk-screen-text);
+    text-align: left;
+  }
+  .prose-viewport.is-mobile .pk-scene-wrap { width: 100%; }
+
+  /* ---------- OUTER HARDWARE / FRAME SHELL ---------- */
+  .pk-phone-cutout {
+    position: relative;
+    overflow: hidden;
+    color: var(--pk-screen-text);
+    transition: border-radius 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  /* Direction 1: Phone Slice (mini cropped phone chassis) */
+  .pk-scene-wrap[data-dir="slice"] .pk-phone-cutout {
+    padding: 4px;
+    border-radius: 27px;
+    background: linear-gradient(145deg, var(--pk-bezel-a) 0%, var(--pk-bezel-b) 55%, var(--pk-bezel-a) 100%);
+    border: 1px solid var(--pk-bezel-border);
+    box-shadow: var(--pk-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  }
+  .pk-scene-wrap[data-dir="slice"] .pk-screen {
+    position: relative;
+    overflow: hidden;
+    border-radius: 23px;
+    background: var(--pk-screen-bg);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  /* Direction 2: OS Surface (bezel-free frosted OS window) */
+  .pk-screen {
+    color: var(--pk-screen-text);
+  }
+  .pk-scene-wrap[data-dir="surface"] .pk-phone-cutout {
+    border-radius: 20px;
+    box-shadow: var(--pk-shadow);
+  }
+  .pk-scene-wrap[data-dir="surface"] .pk-screen {
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    background: var(--pk-screen-bg);
+    border: 1px solid var(--pk-border-strong);
+  }
+
+  /* Direction 3: Compact Strip (trim inline phone widget) */
+  .pk-scene-wrap[data-dir="strip"] .pk-phone-cutout {
+    border-radius: 17px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-screen {
+    position: relative;
+    overflow: hidden;
+    border-radius: 17px;
+    background: var(--pk-screen-bg);
+    border: 1px solid var(--pk-border-strong);
+  }
+
+  /* Wallpaper backdrops */
+  .pk-screen[data-wallpaper="lock"] {
+    background:
+      radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--pk-accent) 28%, transparent), transparent 45%),
+      radial-gradient(circle at 12% 88%, color-mix(in srgb, var(--pk-wallpaper-2) 60%, transparent), transparent 55%),
+      linear-gradient(150deg, var(--pk-wallpaper-1) 0%, var(--pk-screen-bg) 78%);
+  }
+  .pk-screen[data-wallpaper="chat"] {
+    background:
+      radial-gradient(circle at 75% 0%, color-mix(in srgb, var(--pk-accent) 12%, transparent), transparent 42%),
+      linear-gradient(175deg, var(--pk-chat-1) 0%, var(--pk-chat-2) 100%);
+  }
+  .pk-scene-wrap[data-wallpaper-mode="minimal"] .pk-screen[data-wallpaper="lock"],
+  .pk-scene-wrap[data-wallpaper-mode="minimal"] .pk-screen[data-wallpaper="chat"] {
+    background: var(--pk-screen-bg);
+  }
+
+  /* ---------- MINI STATUS BAR (Phone Slice) ---------- */
+  .pk-statusbar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    height: 25px;
+    padding: 4px 14px 0;
+    font-size: 10px;
+    font-weight: 720;
+    color: var(--pk-status-color);
+    letter-spacing: 0.01em;
+    position: relative;
+    z-index: 3;
+    user-select: none;
+  }
+  .pk-scene-wrap:not([data-dir="slice"]) .pk-statusbar { display: none; }
+
+  .pk-status-time {
+    justify-self: start;
+    max-width: 118px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pk-island {
+    width: 62px;
+    height: 15px;
+    border-radius: 999px;
+    background: var(--pk-island);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 5px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.25);
+  }
+  .pk-island[data-call="connected"] {
+    width: 82px;
+    background: #060908;
+    border: 1px solid rgba(60, 224, 134, 0.35);
+  }
+  .pk-island[data-call="missed"] {
+    width: 74px;
+    border: 1px solid rgba(255, 105, 126, 0.35);
+  }
+  .pk-island-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #1c284f;
+    box-shadow: inset 0 0 0 1px #2f4585;
+  }
+  .pk-island[data-call="connected"] .pk-island-wave {
+    display: inline-flex;
+    align-items: center;
+    gap: 1.5px;
+    height: 9px;
+  }
+  .pk-island[data-call="connected"] .pk-island-wave i {
+    width: 1.5px;
+    border-radius: 99px;
+    background: #3ce086;
+    animation: pk-eq 0.9s ease-in-out infinite alternate;
+  }
+  .pk-island[data-call="connected"] .pk-island-wave i:nth-child(1) { height: 4px; animation-delay: 0s; }
+  .pk-island[data-call="connected"] .pk-island-wave i:nth-child(2) { height: 8px; animation-delay: 0.18s; }
+  .pk-island[data-call="connected"] .pk-island-wave i:nth-child(3) { height: 5px; animation-delay: 0.35s; }
+
+  .pk-status-icons {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.9;
+  }
+  .pk-status-icons svg { width: 12px; height: 12px; display: block; }
+  .pk-status-icons svg.pk-battery { width: 17px; }
+
+  .pk-home-indicator {
+    height: 11px;
+    display: grid;
+    place-items: center;
+  }
+  .pk-home-indicator::after {
+    content: "";
+    width: 76px;
+    height: 3.5px;
+    border-radius: 999px;
+    background: var(--pk-home-bar);
+  }
+  .pk-scene-wrap:not([data-dir="slice"]) .pk-home-indicator { display: none; }
+
+  /* ---------- SHARED AVATARS & MICRO BADGES ---------- */
+  .pk-avatar-wrap {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+  }
+  .pk-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-weight: 760;
+    font-size: 13px;
+    overflow: hidden;
+    flex: none;
+    background: linear-gradient(145deg, color-mix(in srgb, var(--av-color, var(--pk-accent)) 84%, #fff), color-mix(in srgb, var(--av-color, var(--pk-accent)) 62%, #14111c));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 3px 10px rgba(0, 0, 0, 0.18);
+  }
+  .pk-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* Miniature green Messages tile pinned to avatar corner on Lock notifications */
+  .pk-app-corner-badge {
+    position: absolute;
+    right: -3px;
+    bottom: -2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 5px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(145deg, #4ee580, #12aa4b);
+    color: #fff;
+    border: 1.5px solid var(--pk-surface-solid);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+  }
+  .pk-app-corner-badge svg { width: 9px; height: 9px; }
+  .pk-app-corner-badge[data-app="phone"] { background: linear-gradient(145deg, #4ae188, #149d52); }
+  .pk-app-corner-badge[data-app="missed"] { background: linear-gradient(145deg, #ff7086, #cc2f48); }
+
+  .pk-app-tile {
+    width: 16px;
+    height: 16px;
+    border-radius: 4.5px;
+    display: inline-grid;
+    place-items: center;
+    background: linear-gradient(145deg, #4ee580, #12aa4b);
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    flex: none;
+  }
+  .pk-app-tile svg { width: 10px; height: 10px; }
+  .pk-app-tile[data-app="phone"] { background: linear-gradient(145deg, #4ae188, #149d52); }
+
+  /* ---------- 1. LOCK SCREEN NOTIFICATION (received & observed) ---------- */
+  .pk-lock-body {
+    padding: 8px 10px 10px;
+    display: grid;
+    gap: 8px;
+  }
+  .pk-scene-wrap[data-dir="surface"] .pk-lock-body { padding: 11px; }
+  .pk-scene-wrap[data-dir="strip"] .pk-lock-body { padding: 0; gap: 0; }
+
+  .pk-lock-device-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--pk-screen-muted);
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-lock-device-bar {
+    padding: 7px 12px 6px;
+    background: color-mix(in srgb, var(--pk-surface) 70%, transparent);
+    border-bottom: 1px solid var(--pk-border);
+  }
+  .pk-lock-owner-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--pk-glass);
+    border: 1px solid var(--pk-border);
+    color: var(--pk-screen-text);
+    font-size: 10.5px;
+    font-weight: 650;
+    backdrop-filter: blur(10px);
+  }
+  .pk-lock-owner-pill svg { width: 10px; height: 10px; opacity: 0.78; flex: none; }
+
+  .pk-lock-clock-mini {
+    font-size: 11px;
+    font-weight: 650;
+    color: var(--pk-screen-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .pk-scene-wrap[data-dir="slice"] .pk-lock-clock-mini { display: none; }
+
+  .pk-notif-card {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: 17px;
+    background: var(--pk-glass);
+    border: 1px solid var(--pk-border-strong);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14), inset 0 1px 0 var(--pk-glass-highlight);
+    backdrop-filter: blur(18px) saturate(1.25);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 11px;
+    align-items: start;
+    transition: transform 0.14s ease, border-color 0.14s ease;
+  }
+  .pk-notif-card:hover {
+    border-color: color-mix(in srgb, var(--pk-accent) 42%, var(--pk-border-strong));
+    transform: translateY(-1px);
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-notif-card {
+    padding: 11px 12px;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+    gap: 10px;
+  }
+
+  .pk-notif-main {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+  .pk-notif-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+  .pk-notif-sender {
+    font-size: 13px;
+    font-weight: 740;
+    color: var(--pk-screen-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pk-notif-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--pk-screen-muted);
+    white-space: nowrap;
+    flex: none;
+  }
+  .pk-notif-sub {
+    font-size: 11px;
+    font-weight: 620;
+    color: var(--pk-accent);
+  }
+  .pk-notif-text {
+    font-size: 12.5px;
+    line-height: 1.42;
+    color: color-mix(in srgb, var(--pk-screen-text) 90%, transparent);
+    overflow-wrap: anywhere;
+  }
+
+  /* ---------- 2. CROPPED MESSAGES THREAD (sent & batch) ---------- */
+  .pk-app-nav {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    background: color-mix(in srgb, var(--pk-surface) 92%, transparent);
+    border-bottom: 1px solid var(--pk-border);
+    backdrop-filter: blur(16px);
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-app-nav {
+    padding: 6px 10px;
+  }
+
+  .pk-nav-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--pk-accent);
+    padding: 0;
+  }
+  .pk-nav-btn svg { width: 17px; height: 17px; }
+  .pk-nav-btn.is-action {
+    background: var(--pk-surface-2);
+    width: 26px;
+    height: 26px;
+  }
+  .pk-nav-btn.is-action svg { width: 14px; height: 14px; }
+
+  .pk-nav-identity {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: 2px 4px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    text-align: left;
+  }
+  .pk-nav-identity .pk-avatar { width: 26px; height: 26px; font-size: 11px; }
+
+  .pk-group-stack {
+    position: relative;
+    width: 32px;
+    height: 26px;
+    flex: none;
+  }
+  .pk-group-stack .pk-avatar {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    font-size: 9px;
+    border: 1.5px solid var(--pk-surface-solid);
+  }
+  .pk-group-stack .pk-avatar:first-child { left: 0; top: 0; z-index: 2; }
+  .pk-group-stack .pk-avatar:last-child { right: 0; bottom: 0; z-index: 1; }
+
+  .pk-nav-titles {
+    min-width: 0;
+    display: grid;
+  }
+  .pk-nav-name {
+    font-size: 12.5px;
+    font-weight: 740;
+    line-height: 1.2;
+    color: var(--pk-screen-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pk-nav-sub {
+    font-size: 9.5px;
+    font-weight: 560;
+    color: var(--pk-screen-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pk-thread-canvas {
+    padding: 11px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-thread-canvas { padding: 9px 10px; gap: 5px; }
+
+  .pk-msg-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 7px;
+    width: 100%;
+  }
+  .pk-msg-row[data-dir="sent"] { justify-content: flex-end; }
+  .pk-msg-row[data-cont="false"]:not(:first-child) { margin-top: 4px; }
+  .pk-msg-row[data-cont="true"] .pk-avatar { visibility: hidden; }
+  .pk-msg-row .pk-avatar { width: 24px; height: 24px; font-size: 10px; }
+
+  .pk-msg-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 80%;
+    min-width: 0;
+  }
+  .pk-msg-row[data-dir="sent"] .pk-msg-col { align-items: flex-end; }
+
+  .pk-msg-sender {
+    font-size: 10px;
+    font-weight: 700;
+    margin-left: 4px;
+    color: var(--speaker-accent, var(--pk-screen-muted));
+  }
+
+  .pk-bubble {
+    padding: 8px 11px;
+    font-size: 12.5px;
+    line-height: 1.42;
+    border-radius: 16px 16px 16px 4px;
+    background: var(--pk-bubble-in);
+    color: var(--pk-bubble-in-text);
+    border: 1px solid var(--pk-border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    overflow-wrap: anywhere;
+  }
+  .pk-msg-row[data-cont="true"] .pk-bubble { border-radius: 6px 16px 16px 16px; }
+
+  .pk-msg-row[data-dir="sent"] .pk-bubble {
+    background: linear-gradient(145deg, color-mix(in srgb, var(--pk-accent) 92%, #fff 8%), color-mix(in srgb, var(--pk-accent) 82%, #000 18%));
+    color: var(--pk-on-accent);
+    border-color: transparent;
+    border-radius: 16px 16px 4px 16px;
+    box-shadow: 0 5px 14px color-mix(in srgb, var(--pk-accent) 26%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  }
+  .pk-msg-row[data-dir="sent"][data-cont="true"] .pk-bubble {
+    border-radius: 16px 6px 16px 16px;
+  }
+
+  .pk-delivery-receipt {
+    align-self: flex-end;
+    font-size: 9.5px;
+    font-weight: 660;
+    color: var(--pk-screen-muted);
+    margin: 1px 3px 0;
+  }
+
+  .pk-thread-more-btn {
+    appearance: none;
+    align-self: center;
+    margin-top: 4px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: var(--pk-surface);
+    border: 1px solid var(--pk-border-strong);
+    color: var(--pk-accent);
+    font-size: 10.5px;
+    font-weight: 680;
+    transition: background 0.14s ease;
+  }
+  .pk-thread-more-btn:hover { background: var(--pk-surface-2); }
+
+  /* Dormant tiny phone composer bar (strictly non-input spans) */
+  .pk-mini-composer {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) 24px;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px 7px;
+    background: color-mix(in srgb, var(--pk-surface) 88%, transparent);
+    border-top: 1px solid var(--pk-border);
+  }
+  .pk-scene-wrap:not([data-dir="slice"]) .pk-mini-composer { display: none; }
+  .pk-mc-plus, .pk-mc-send {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--pk-surface-2);
+    color: var(--pk-screen-muted);
+  }
+  .pk-mc-send {
+    background: var(--pk-accent);
+    color: var(--pk-on-accent);
+  }
+  .pk-mc-plus svg, .pk-mc-send svg { width: 12px; height: 12px; }
+  .pk-mc-pill {
+    height: 24px;
+    border-radius: 999px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    font-size: 10.5px;
+    color: var(--pk-screen-muted);
+    background: var(--pk-screen-bg);
+    border: 1px solid var(--pk-border);
+    opacity: 0.85;
+  }
+
+  /* ---------- 3. INTERACTIVE VOICE MESSAGE PILL ---------- */
+  .pk-voice-pill {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
+  .pk-voice-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .pk-voice-play {
+    appearance: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 0;
+    background: var(--pk-accent);
+    color: var(--pk-on-accent);
+    display: grid;
+    place-items: center;
+    flex: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  }
+  .pk-msg-row[data-dir="sent"] .pk-voice-play {
+    background: rgba(255, 255, 255, 0.24);
+    color: var(--pk-on-accent);
+  }
+  .pk-voice-play svg { width: 11px; height: 11px; }
+
+  .pk-voice-wave {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 3px;
+    height: 20px;
+  }
+  .pk-voice-wave i {
+    flex: 0 0 3px;
+    width: 3px;
+    border-radius: 99px;
+    background: currentColor;
+    opacity: 0.36;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .pk-voice-wave i.is-lit { opacity: 0.95; }
+  .pk-voice-pill.is-playing .pk-voice-wave i {
+    animation: pk-voice-pulse 0.7s ease-in-out infinite alternate;
+  }
+  .pk-voice-pill.is-playing .pk-voice-wave i:nth-child(odd) { animation-delay: 0.15s; }
+  .pk-voice-pill.is-playing .pk-voice-wave i:nth-child(3n) { animation-delay: 0.3s; }
+
+  .pk-voice-dur {
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.78;
+    flex: none;
+  }
+
+  .pk-voice-transcript-toggle {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: 2px 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    font-weight: 660;
+    color: inherit;
+    opacity: 0.78;
+    text-align: left;
+    width: max-content;
+  }
+  .pk-voice-transcript-toggle:hover { opacity: 1; }
+  .pk-voice-transcript-toggle svg { width: 11px; height: 11px; opacity: 0.85; }
+  .pk-voice-transcript {
+    padding-top: 6px;
+    border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    font-size: 12px;
+    line-height: 1.44;
+    opacity: 0.94;
+  }
+  .pk-voice-status {
+    font-size: 10px;
+    font-weight: 620;
+    color: var(--pk-missed);
+    padding: 3px 7px;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--pk-missed) 12%, transparent);
+    width: max-content;
+    max-width: 100%;
+  }
+
+  /* =====================================================================
+     4. REDESIGNED CALL PRESENTATIONS (3 Distinct Directions!)
+     ===================================================================== */
+  .pk-call-screen {
+    position: relative;
+    overflow: hidden;
+  }
+  .pk-call-screen[data-call-status="connected"] {
+    background:
+      radial-gradient(circle at 22% 24%, color-mix(in srgb, var(--pk-live) 20%, transparent), transparent 48%),
+      radial-gradient(circle at 82% 76%, color-mix(in srgb, var(--pk-accent) 22%, transparent), transparent 52%),
+      linear-gradient(155deg, color-mix(in srgb, var(--pk-wallpaper-1) 85%, var(--pk-screen-bg)), var(--pk-screen-bg) 82%);
+  }
+  .pk-call-screen[data-call-status="missed"] {
+    background:
+      radial-gradient(circle at 18% 28%, color-mix(in srgb, var(--pk-missed) 22%, transparent), transparent 50%),
+      linear-gradient(155deg, color-mix(in srgb, var(--pk-missed) 9%, var(--pk-screen-bg)), var(--pk-screen-bg) 80%);
+  }
+  .pk-call-screen[data-call-status="ended"] {
+    background:
+      radial-gradient(circle at 75% 15%, color-mix(in srgb, var(--pk-accent) 12%, transparent), transparent 48%),
+      linear-gradient(160deg, var(--pk-surface-solid), var(--pk-screen-bg));
+  }
+
+  /* Shared Call Avatar Halo */
+  .pk-call-avatar-ring {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 50%;
+    flex: none;
+  }
+  .pk-call-screen[data-call-status="connected"] .pk-call-avatar-ring::before {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--pk-live) 55%, transparent);
+    animation: pk-ring-pulse 1.8s ease-out infinite;
+  }
+  .pk-call-screen[data-call-status="missed"] .pk-call-avatar-ring::before {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--pk-missed) 58%, transparent);
+  }
+
+  /* Equalizer wave */
+  .pk-eq {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 12px;
+  }
+  .pk-eq i {
+    width: 2px;
+    border-radius: 99px;
+    background: var(--pk-live);
+    animation: pk-eq 0.78s ease-in-out infinite alternate;
+  }
+  .pk-eq i:nth-child(1) { height: 5px; animation-delay: 0s; }
+  .pk-eq i:nth-child(2) { height: 11px; animation-delay: 0.14s; }
+  .pk-eq i:nth-child(3) { height: 7px; animation-delay: 0.28s; }
+  .pk-eq i:nth-child(4) { height: 12px; animation-delay: 0.1s; }
+  .pk-eq i:nth-child(5) { height: 6px; animation-delay: 0.22s; }
+
+  .pk-call-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 680;
+    background: var(--pk-glass);
+    border: 1px solid var(--pk-border);
+    color: var(--pk-screen-text);
+  }
+  .pk-call-chip svg { width: 10px; height: 10px; }
+  .pk-call-chip.is-live {
+    color: var(--pk-live);
+    background: color-mix(in srgb, var(--pk-live) 13%, var(--pk-glass));
+    border-color: color-mix(in srgb, var(--pk-live) 34%, transparent);
+  }
+  .pk-call-chip.is-missed {
+    color: var(--pk-missed);
+    background: color-mix(in srgb, var(--pk-missed) 14%, var(--pk-glass));
+    border-color: color-mix(in srgb, var(--pk-missed) 34%, transparent);
+  }
+
+  .pk-call-btn {
+    appearance: none;
+    border: 1px solid var(--pk-border-strong);
+    background: var(--pk-glass);
+    color: var(--pk-screen-text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 660;
+    transition: transform 0.12s ease, background 0.14s ease, border-color 0.14s ease;
+  }
+  .pk-call-btn:hover { transform: translateY(-1px); border-color: var(--pk-accent); }
+  .pk-call-btn svg { width: 14px; height: 14px; flex: none; }
+  .pk-call-btn.is-circle { width: 34px; height: 34px; border-radius: 50%; padding: 0; }
+  .pk-call-btn.is-pill { height: 30px; padding: 0 11px; border-radius: 999px; }
+  .pk-call-btn.is-active {
+    background: var(--pk-screen-text);
+    color: var(--pk-screen-bg);
+    border-color: transparent;
+  }
+  .pk-call-btn.is-danger {
+    background: linear-gradient(145deg, #e05264, #b53245);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 6px 16px rgba(181, 50, 69, 0.35);
+  }
+  .pk-call-btn.is-answer {
+    background: linear-gradient(145deg, #27c771, #139650);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 6px 16px rgba(19, 150, 80, 0.3);
+  }
+
+  /* CALL PRESENTATION A: Cropped Call Screen HUD */
+  .pk-call-hud-inner {
+    padding: 10px 14px 12px;
+    display: grid;
+    gap: 12px;
+  }
+  .pk-call-hud-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .pk-call-hud-app {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    font-weight: 680;
+    color: var(--pk-screen-muted);
+  }
+  .pk-call-hud-identity {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .pk-call-hud-identity .pk-avatar { width: 50px; height: 50px; font-size: 18px; }
+  .pk-call-hud-copy { min-width: 0; display: grid; gap: 3px; flex: 1; }
+  .pk-call-hud-name {
+    font-size: 16px;
+    font-weight: 760;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pk-call-hud-sub {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--pk-screen-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .pk-call-hud-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--pk-border);
+  }
+  .pk-call-hud-dock {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pk-call-hud-dock-item {
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+    font-size: 9px;
+    font-weight: 620;
+    color: var(--pk-screen-muted);
+  }
+
+  /* CALL PRESENTATION B: Dynamic CallKit Banner */
+  .pk-callkit-wrap {
+    padding: 8px 10px 10px;
+    display: grid;
+    gap: 6px;
+  }
+  .pk-callkit-pill {
+    padding: 10px 12px;
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--pk-surface-solid) 86%, #000 14%);
+    border: 1px solid var(--pk-border-strong);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 var(--pk-glass-highlight);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 11px;
+  }
+  .pk-theme-scope[data-theme="porcelain"] .pk-callkit-pill,
+  .pk-theme-scope[data-theme="pink"] .pk-callkit-pill {
+    background: var(--pk-surface-solid);
+  }
+  .pk-callkit-pill .pk-avatar { width: 42px; height: 42px; font-size: 15px; }
+  .pk-callkit-info { min-width: 0; display: grid; gap: 2px; }
+  .pk-callkit-kicker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 720;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pk-screen-muted);
+  }
+  .pk-call-screen[data-call-status="connected"] .pk-callkit-kicker { color: var(--pk-live); }
+  .pk-call-screen[data-call-status="missed"] .pk-callkit-kicker { color: var(--pk-missed); }
+  .pk-callkit-name {
+    font-size: 14px;
+    font-weight: 760;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pk-callkit-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--pk-screen-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .pk-callkit-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* CALL PRESENTATION C: StandBy Live Activity Audio Card */
+  .pk-standby-inner {
+    padding: 10px 12px 11px;
+    display: grid;
+    gap: 9px;
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-standby-inner { padding: 0; }
+  .pk-standby-card {
+    padding: 11px 13px;
+    border-radius: 17px;
+    background: var(--pk-glass);
+    border: 1px solid var(--pk-border-strong);
+    backdrop-filter: blur(18px);
+    display: grid;
+    gap: 10px;
+  }
+  .pk-scene-wrap[data-dir="strip"] .pk-standby-card {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 11px 13px;
+  }
+  .pk-standby-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 10.5px;
+    font-weight: 680;
+    color: var(--pk-screen-muted);
+  }
+  .pk-standby-body {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+  .pk-standby-body .pk-avatar { width: 42px; height: 42px; font-size: 15px; }
+  .pk-standby-track {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 16px;
+  }
+  .pk-standby-track i {
+    width: 2.5px;
+    border-radius: 99px;
+    background: var(--pk-screen-muted);
+    opacity: 0.35;
+  }
+  .pk-call-screen[data-call-status="connected"] .pk-standby-track i {
+    background: var(--pk-live);
+    opacity: 0.9;
+    animation: pk-eq 0.85s ease-in-out infinite alternate;
+  }
+  .pk-call-screen[data-call-status="connected"] .pk-standby-track i:nth-child(even) { animation-delay: 0.2s; }
+  .pk-call-screen[data-call-status="missed"] .pk-standby-track i {
+    background: var(--pk-missed);
+    opacity: 0.55;
+  }
+  .pk-standby-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* =====================================================================
+     BEFORE / AFTER & MATRIX TAB
+     ===================================================================== */
+  .matrix-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    min-width: 0;
+  }
+  .matrix-section {
+    background: var(--lab-panel);
+    border: 1px solid var(--lab-border);
+    border-radius: 18px;
+    padding: 18px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    min-width: 0;
+  }
+  .matrix-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .matrix-head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 760;
+    letter-spacing: -0.015em;
+  }
+  .matrix-head p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--lab-muted);
+  }
+  .compare-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 16px;
+    align-items: start;
+    min-width: 0;
+  }
+  .compare-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .compare-tag {
+    font-size: 10.5px;
+    font-weight: 740;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--lab-muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .compare-tag.is-new { color: #b7adff; }
+  .compare-tag.is-old { color: #eb8f9d; }
+
+  /* Faithful miniature recreation of CURRENT Pocket Scene Cards for honest Before/After */
+  .old-card {
+    width: 100%;
+    max-width: 440px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: linear-gradient(145deg, #27242d 0%, #211f27 68%, #1d1b22 100%);
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    color: #f5f2fb;
+    display: grid;
+    gap: 10px;
+    text-align: left;
+  }
+  .old-chrome {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #a9a3b2;
+    font-weight: 650;
+  }
+  .old-body { display: grid; grid-template-columns: 34px 1fr; gap: 11px; align-items: start; }
+  .old-av {
+    width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    background: linear-gradient(145deg, #8b7dff, #4f4488); color: #fff; font-weight: 700; font-size: 13px;
+  }
+  .old-call {
+    align-items: center;
+    justify-items: center;
+    text-align: center;
+    min-height: 175px;
+    background: radial-gradient(circle at 50% 0%, rgba(139, 125, 255, 0.1), transparent 48%), linear-gradient(160deg, #28252e, #1d1b22);
+  }
+  .old-call-circle {
+    width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+    background: linear-gradient(145deg, #bd5d69, #974552); color: #fff;
+  }
+
+  /* Full Phone 9:18.4 Call Screen Comparison (Current vs Proposed) */
+  .full-phone-compare {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 310px));
+    gap: 20px;
+    justify-content: start;
+  }
+  .mini-full-handset {
+    width: 100%;
+    aspect-ratio: 9 / 17.6;
+    padding: 5px;
+    border-radius: 36px;
+    background: linear-gradient(145deg, var(--pk-bezel-a), var(--pk-bezel-b));
+    border: 1px solid var(--pk-bezel-border);
+    box-shadow: var(--pk-shadow);
+    display: flex;
+  }
+  .mini-full-screen {
+    flex: 1;
+    border-radius: 31px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    color: var(--pk-screen-text);
+  }
+  .mini-full-screen.is-old {
+    background: radial-gradient(circle at 50% 15%, rgba(139, 125, 255, 0.24), transparent 34%), linear-gradient(180deg, #24202d 0%, #151219 55%, #0d0c10 100%);
+    color: #f7f5fb;
+  }
+  .mini-full-old-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+    padding: 20px;
+  }
+  .mini-full-old-controls {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 0 14px 26px;
+    text-align: center;
+    font-size: 9px;
+    color: #aaa4b3;
+  }
+  .mini-full-old-btn {
+    width: 40px; height: 40px; margin: 0 auto 4px; border-radius: 50%;
+    display: grid; place-items: center; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.09);
+  }
+  .mini-full-old-btn.is-red { background: linear-gradient(145deg, #c35d69, #984651); color: #fff; }
+
+  /* Modern iOS Contact Poster Call Screen + Adapted Live Activity Dock */
+  .mini-full-ios-call {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 8px 14px 14px;
+    min-height: 0;
+  }
+  .mini-full-ios-poster {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 6px;
+    padding: 14px 8px 0;
+  }
+  .mini-full-ios-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 660;
+    color: var(--pk-screen-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .pk-call-screen[data-call-status="connected"] .mini-full-ios-kicker { color: var(--pk-live); }
+  .pk-call-screen[data-call-status="missed"] .mini-full-ios-kicker { color: var(--pk-missed); }
+
+  .mini-full-ios-name {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 780;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    color: var(--pk-screen-text);
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+  .mini-full-ios-portrait {
+    margin: 14px 0 8px;
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+  .mini-full-ios-portrait::after {
+    content: "";
+    position: absolute;
+    inset: -18px;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--caller-glow, var(--pk-accent)) 32%, transparent), transparent 68%);
+    z-index: 0;
+    pointer-events: none;
+  }
+  .mini-full-ios-portrait .pk-call-avatar-ring { position: relative; z-index: 1; }
+  .mini-full-ios-portrait .pk-avatar {
+    width: 106px;
+    height: 106px;
+    font-size: 34px;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  }
+
+  .mini-full-ios-dock {
+    margin-top: auto;
+    padding: 11px 12px 12px;
+    border-radius: 22px;
+    background: var(--pk-glass);
+    border: 1px solid var(--pk-border-strong);
+    backdrop-filter: blur(22px) saturate(1.25);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), inset 0 1px 0 var(--pk-glass-highlight);
+    display: grid;
+    gap: 12px;
+  }
+  .mini-full-ios-activity-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--pk-border);
+  }
+  .mini-full-ios-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    justify-items: center;
+  }
+  .mini-full-ios-actions[data-cols="3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .mini-full-ios-btn-wrap {
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    font-size: 9.5px;
+    font-weight: 620;
+    color: var(--pk-screen-muted);
+  }
+  .mini-full-ios-btn-wrap .pk-call-btn.is-circle {
+    width: 42px;
+    height: 42px;
+  }
+  .mini-full-ios-btn-wrap .pk-call-btn.is-circle svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .mini-full-lock-clock {
+    display: grid;
+    justify-items: center;
+    text-align: center;
+    gap: 4px;
+    padding: 26px 12px 10px;
+  }
+  .mini-full-lock-clock .pk-clock-digits {
+    font-size: 48px;
+    font-weight: 260;
+    line-height: 1;
+    letter-spacing: -0.045em;
+    color: var(--pk-screen-text);
+  }
+  .mini-full-lock-clock .pk-clock-digits.is-approx {
+    font-size: 24px;
+    font-weight: 420;
+    letter-spacing: -0.02em;
+  }
+  .mini-full-lock-clock .pk-clock-date {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--pk-screen-muted);
+  }
+
+  /* Full Phone DM & Inline Chat Preview inside 9:18.4 handset */
+  .mini-full-dm-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+  }
+  .mini-full-dm-bubbles {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .mini-full-dm-bubbles .pk-msg-col { max-width: 86%; }
+  .mini-full-dm-time {
+    display: block;
+    margin-top: 4px;
+    font-size: 8.5px;
+    opacity: 0.62;
+    text-align: right;
+  }
+
+  /* Faithful recreation of CURRENT raw <details> voice message UI */
+  .old-dm-voice {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+  }
+  .old-dm-voice-btn {
+    padding: 8px 11px;
+    border: 1px solid currentColor;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: default;
+  }
+  .old-dm-voice details {
+    font-size: 11.5px;
+  }
+  .old-dm-voice summary { cursor: pointer; }
+  .old-dm-voice details p { margin: 6px 0 0; }
+
+  /* Design Contract table */
+  .contract-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .contract-card {
+    padding: 13px 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid var(--lab-border);
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+  .contract-card h3 { margin: 0; font-size: 13px; color: #fff; }
+  .contract-card ul { margin: 0; padding-left: 16px; color: var(--lab-muted); font-size: 12px; display: grid; gap: 4px; }
+  .contract-card code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.07);
+    color: #d6ceff;
+  }
+
+  /* Toast */
+  .demo-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 90;
+    max-width: min(380px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(24, 21, 33, 0.94);
+    border: 1px solid rgba(139, 125, 255, 0.42);
+    color: #f5f2fb;
+    font-size: 12px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.48);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.16s ease, transform 0.16s ease;
+  }
+  .demo-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .demo-toast-tag {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(139, 125, 255, 0.22);
+    color: #d2caff;
+    font-size: 10px;
+    font-weight: 720;
+    text-transform: uppercase;
+  }
+
+  @keyframes pk-eq {
+    from { transform: scaleY(0.35); }
+    to { transform: scaleY(1); }
+  }
+  @keyframes pk-ring-pulse {
+    0% { transform: scale(0.96); opacity: 0.75; }
+    70% { transform: scale(1.13); opacity: 0; }
+    100% { transform: scale(1.13); opacity: 0; }
+  }
+  @keyframes pk-voice-pulse {
+    from { transform: scaleY(0.65); }
+    to { transform: scaleY(1.15); }
+  }
+
+  .is-reduced-motion *, .is-reduced-motion *::before, .is-reduced-motion *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
+  @media (max-width: 1060px) {
+    .prose-stage[data-width="both"] { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 720px) {
+    .lab-header { position: static; width: 100%; overflow-x: hidden; }
+    .lab-control-group { width: 100%; }
+    .lab-seg { width: auto; max-width: 100%; }
+    .matrix-section { padding: 14px 12px; }
+    .compare-cols { grid-template-columns: minmax(0, 1fr); }
+    .compare-col { padding: 11px; }
+  }
+  @media (max-width: 600px) {
+    .lab-header-inner { padding: 10px 12px; }
+    .lab-main { padding: 14px 10px 64px; }
+    .rp-thread { padding: 12px 12px 20px; }
+    .pk-callkit-pill { grid-template-columns: auto minmax(0, 1fr); }
+    .pk-callkit-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <div class="lab-header-inner">
+    <div class="lab-top-row">
+      <div class="lab-brand">
+        <div class="lab-logo" aria-hidden="true">P</div>
+        <div class="lab-title-group">
+          <h1 class="lab-title">Pocket · Scene Cards &amp; Calls Redesign Lab</h1>
+          <div class="lab-subtitle">
+            <span>Phone events in prose (<code>inlineAppearance: 'cards'</code>)</span>
+            <span class="lab-demo-badge">Prototype · Demo Data</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-tabs" role="tablist" aria-label="Prototype views">
+        <button class="lab-tab" type="button" role="tab" id="tab-prose" aria-selected="true" aria-controls="panel-prose">Prose · Scene Cards</button>
+        <button class="lab-tab" type="button" role="tab" id="tab-full" aria-selected="false" aria-controls="panel-full">Full Phone &amp; DMs (Calls + Voice)</button>
+        <button class="lab-tab" type="button" role="tab" id="tab-matrix" aria-selected="false" aria-controls="panel-matrix">Before / After &amp; Contract</button>
+      </div>
+    </div>
+
+    <div class="lab-controls">
+      <div class="lab-control-group">
+        <span class="lab-control-label">Scene Framing</span>
+        <div class="lab-seg" data-control="dir">
+          <button class="lab-seg-btn" type="button" data-val="strip" aria-pressed="true">Compact Strip</button>
+          <button class="lab-seg-btn" type="button" data-val="slice" aria-pressed="false">Phone Slice</button>
+          <button class="lab-seg-btn" type="button" data-val="surface" aria-pressed="false">OS Surface</button>
+        </div>
+      </div>
+
+      <div class="lab-control-group">
+        <span class="lab-control-label">Call Style</span>
+        <div class="lab-seg" data-control="callStyle">
+          <button class="lab-seg-btn" type="button" data-val="standby" aria-pressed="true">Live Activity</button>
+          <button class="lab-seg-btn" type="button" data-val="hud" aria-pressed="false">Call HUD</button>
+          <button class="lab-seg-btn" type="button" data-val="callkit" aria-pressed="false">Dynamic CallKit</button>
+        </div>
+      </div>
+
+      <div class="lab-control-group">
+        <span class="lab-control-label">Theme</span>
+        <div class="lab-seg" data-control="theme">
+          <button class="lab-seg-btn" type="button" data-val="midnight" aria-pressed="true"><span class="lab-theme-dot"><span class="lab-theme-swatch" style="background:#8b7dff"></span>Midnight</span></button>
+          <button class="lab-seg-btn" type="button" data-val="porcelain" aria-pressed="false"><span class="lab-theme-dot"><span class="lab-theme-swatch" style="background:#f2f0ed"></span>Porcelain</span></button>
+          <button class="lab-seg-btn" type="button" data-val="rose" aria-pressed="false"><span class="lab-theme-dot"><span class="lab-theme-swatch" style="background:#ffb27d"></span>Rose</span></button>
+          <button class="lab-seg-btn" type="button" data-val="forest" aria-pressed="false"><span class="lab-theme-dot"><span class="lab-theme-swatch" style="background:#63d8a4"></span>Forest</span></button>
+          <button class="lab-seg-btn" type="button" data-val="pink" aria-pressed="false"><span class="lab-theme-dot"><span class="lab-theme-swatch" style="background:#ff69b4"></span>Pink</span></button>
+        </div>
+      </div>
+
+      <div class="lab-control-group">
+        <span class="lab-control-label">Width</span>
+        <div class="lab-seg" data-control="width">
+          <button class="lab-seg-btn" type="button" data-val="desktop" aria-pressed="true">Desktop 680px</button>
+          <button class="lab-seg-btn" type="button" data-val="mobile" aria-pressed="false">Mobile 360px</button>
+          <button class="lab-seg-btn" type="button" data-val="both" aria-pressed="false">Split Both</button>
+        </div>
+      </div>
+
+      <div class="lab-control-group">
+        <span class="lab-control-label">Clock</span>
+        <div class="lab-seg" data-control="clock">
+          <button class="lab-seg-btn" type="button" data-val="exact" aria-pressed="true">21:42</button>
+          <button class="lab-seg-btn" type="button" data-val="approx" aria-pressed="false">Late night</button>
+          <button class="lab-seg-btn" type="button" data-val="unknown" aria-pressed="false">Unknown</button>
+        </div>
+      </div>
+
+      <div class="lab-control-group">
+        <span class="lab-control-label">Data</span>
+        <div class="lab-seg" data-control="stress">
+          <button class="lab-seg-btn" type="button" data-val="normal" aria-pressed="true">Standard RP</button>
+          <button class="lab-seg-btn" type="button" data-val="long" aria-pressed="false">Long Names</button>
+          <button class="lab-seg-btn" type="button" data-val="no-avatar" aria-pressed="false">No Avatars</button>
+        </div>
+      </div>
+
+      <label class="lab-check">
+        <input type="checkbox" id="toggle-wallpaper" checked>
+        <span>Wallpaper tint</span>
+      </label>
+      <label class="lab-check">
+        <input type="checkbox" id="toggle-motion">
+        <span>Reduce motion</span>
+      </label>
+    </div>
+  </div>
+</header>
+
+<main class="lab-main">
+  <div class="lab-banner-note">
+    <span><strong>Updated Preview:</strong> <em>Live Activity</em> call card is now mirrored to the <strong>Full Phone</strong> call screen (see Tab 2), and <strong>Voice Messages</strong> drop the raw <code>&lt;details&gt;</code> box across DMs, Scene Cards, and Full Phone inline inserts.</span>
+    <span>Click any interactive play, transcript, or call button to test.</span>
+  </div>
+
+  <!-- TAB 1: PROSE STAGE -->
+  <section id="panel-prose" class="lab-panel" role="tabpanel" aria-labelledby="tab-prose">
+    <div id="prose-stage" class="prose-stage" data-width="desktop"></div>
+  </section>
+
+  <!-- TAB 2: FULL PHONE & DMs (LIVE ACTIVITY CALL + VOICE MESSAGES) -->
+  <section id="panel-full" class="lab-panel" role="tabpanel" aria-labelledby="tab-full" hidden>
+    <div id="full-root" class="matrix-grid"></div>
+  </section>
+
+  <!-- TAB 3: MATRIX & BEFORE/AFTER -->
+  <section id="panel-matrix" class="lab-panel" role="tabpanel" aria-labelledby="tab-matrix" hidden>
+    <div id="matrix-root" class="matrix-grid"></div>
+  </section>
+</main>
+
+<div id="demo-toast" class="demo-toast" role="status" aria-live="polite">
+  <span class="demo-toast-tag">Demo</span>
+  <span id="demo-toast-text"></span>
+</div>
+
+<script>
+(() => {
+  const state = {
+    tab: 'prose',
+    dir: 'strip',        // 'strip' | 'slice' | 'surface'
+    callStyle: 'standby', // 'standby' | 'hud' | 'callkit'
+    theme: 'midnight',   // 'midnight' | 'porcelain' | 'rose' | 'forest' | 'pink'
+    width: 'desktop',    // 'desktop' | 'mobile' | 'both'
+    clock: 'exact',      // 'exact' | 'approx' | 'unknown'
+    stress: 'normal',    // 'normal' | 'long' | 'no-avatar'
+    wallpaper: true,
+    reduceMotion: false,
+    // Interactive demo states:
+    batchExpanded: false,
+    voicePlayingId: null,
+    voiceProgress: 0,
+    voiceSimulateError: false,
+    voiceTranscriptOpen: new Set(['voice-dm', 'batch-voice', 'dm-in-voice', 'full-lock-voice', 'full-chat-voice']),
+    callDemo: {
+      status: 'connected', // 'connected' | 'ended' | 'missed'
+      speakerphone: true,
+      pov: 'received',     // 'received' | 'sent' | 'observed'
+      muted: false,
+      elapsedSec: 134,
+    },
+  };
+
+  // Inline SVG icons (self-contained, crisp 24x24)
+  const SVG = {
+    signal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="15" width="3" height="5" rx="1" fill="currentColor"/><rect x="8" y="12" width="3" height="8" rx="1" fill="currentColor"/><rect x="13" y="8" width="3" height="12" rx="1" fill="currentColor"/><rect x="18" y="5" width="3" height="15" rx="1" fill="currentColor"/></svg>',
+    wifi: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 9.5a14.5 14.5 0 0 1 18 0"/><path d="M6.8 13.2a9 9 0 0 1 10.4 0"/><path d="M10.4 16.8a3.4 3.4 0 0 1 3.2 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>',
+    battery: '<svg class="pk-battery" viewBox="0 0 28 14" fill="none" aria-hidden="true"><rect x="1" y="2" width="22" height="10" rx="2.5" stroke="currentColor" stroke-width="1.5" opacity=".75"/><rect x="3" y="4" width="15" height="6" rx="1.2" fill="currentColor"/><path d="M25 5v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".75"/></svg>',
+    message: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3C6.5 3 2 6.8 2 11.5c0 2.5 1.2 4.7 3.2 6.3L4 21.5l4.2-1.8c1.2.4 2.5.6 3.8.6 5.5 0 10-3.8 10-8.8S17.5 3 12 3Z"/></svg>',
+    phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z"/></svg>',
+    phoneEnd: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.7 15.2c-.8-.8-2-1.5-3.4-2-1.1-.4-2.3-.6-3.4-.6-.6 0-1.1.4-1.3.9l-.6 1.5c-1.3-.3-2.7-.3-4 0l-.6-1.5c-.2-.5-.7-.9-1.3-.9-1.1 0-2.3.2-3.4.6-1.4.5-2.6 1.2-3.4 2-.5.5-.6 1.3-.2 1.9l1.2 1.8c.4.6 1.2.8 1.9.5l2.5-1.1c.6-.3.9-.9.9-1.5v-.7c1.4-.2 2.8-.2 4.2 0v.7c0 .6.3 1.2.9 1.5l2.5 1.1c.7.3 1.5.1 1.9-.5l1.2-1.8c.4-.6.3-1.4-.2-1.9Z"/></svg>',
+    missed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7 7 17"/><path d="M17 17H7V7"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+    video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 10l4.6-2.6A1 1 0 0 1 21 8.3v7.4a1 1 0 0 1-1.4.9L15 14"/><rect x="3" y="6.5" width="12" height="11" rx="2"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="m3 3 18 18"/></svg>',
+    speaker: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5.2v13.6a1 1 0 0 0 1.5.85l10.6-6.8a1 1 0 0 0 0-1.7L8.5 4.35A1 1 0 0 0 7 5.2Z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+    chatOutline: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg>',
+    transcript: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>',
+  };
+
+  // Generated clean SVG portraits so avatars feel like real contacts (and can be toggled off via stress="no-avatar")
+  function makePortrait(bgA, bgB, hair, shirt, skin, initial) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${bgA}"/><stop offset="1" stop-color="${bgB}"/></linearGradient></defs>
+      <rect width="80" height="80" fill="url(#g)"/>
+      <circle cx="40" cy="78" r="26" fill="${shirt}"/>
+      <circle cx="40" cy="34" r="15" fill="${skin}"/>
+      <path d="M24 34c0-13 8-20 16-20s16 7 16 20c-3-7-9-10-16-10s-13 3-16 10Z" fill="${hair}"/>
+      <circle cx="34.5" cy="34.5" r="1.7" fill="#1b1822"/>
+      <circle cx="45.5" cy="34.5" r="1.7" fill="#1b1822"/>
+    </svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  }
+
+  const AVATARS = {
+    devon: makePortrait('#4d6a8f', '#243145', '#2a222b', '#41506b', '#efd0bd', 'D'),
+    alice: makePortrait('#8e64a8', '#3c254d', '#e4d8ef', '#644478', '#f6ded4', 'A'),
+    shoto: makePortrait('#6a82a6', '#33283c', '#d8e3f2', '#263447', '#f5dfd5', 'S'),
+    izuku: makePortrait('#37805e', '#1a382a', '#214d35', '#2d5942', '#f2d3be', 'I'),
+    mina: makePortrait('#b84d82', '#4c1d35', '#f287bd', '#33283d', '#f5b0d2', 'M'),
+    denki: makePortrait('#b59030', '#4a3b14', '#f4d35e', '#26232d', '#f2d5bf', 'D'),
+    kiri: makePortrait('#b34242', '#451818', '#c73a3a', '#302b36', '#ecc9b4', 'E'),
+    momo: makePortrait('#75476e', '#2f192d', '#1d1a22', '#4d2b46', '#f6dfd5', 'M'),
+    yuga: makePortrait('#6a67b8', '#2a2854', '#f7df79', '#494787', '#f7e1d7', 'Y'),
+  };
+
+  function getFixtures() {
+    const long = state.stress === 'long';
+    const noAv = state.stress === 'no-avatar';
+    const av = (key) => noAv ? '' : AVATARS[key];
+
+    return {
+      received: {
+        id: 'act-received',
+        kind: 'received',
+        senderName: long ? 'Devon Vance-Sterling (Operations Lead)' : 'Devon',
+        senderColor: '#6788b5',
+        avatar: av('devon'),
+        text: long
+          ? 'He is awake, already cleared medical intake, and currently walking across the lower courtyard toward the east gate. Do not let the station monitors catch him alone before you get downstairs.'
+          : 'He is awake and on his way.',
+      },
+      observed: {
+        id: 'act-observed',
+        kind: 'observed',
+        ownerName: long ? 'Shoto Todoroki-Enji' : 'Shoto Todoroki',
+        senderName: long ? 'Izuku Midoriya · Class Representative' : 'Izuku Midoriya',
+        senderColor: '#4da87a',
+        avatar: av('izuku'),
+        text: 'Todoroki. I am sitting in a budget review. Please tell me you are okay.',
+      },
+      sent: {
+        id: 'act-sent',
+        kind: 'sent',
+        recipientName: long ? 'Shoto Todoroki (East Dormitory Wing)' : 'Shoto Todoroki',
+        recipientColor: '#7290bd',
+        avatar: av('shoto'),
+        text: 'Bring some food when you come over.',
+      },
+      voice: {
+        id: 'voice-dm',
+        kind: 'received',
+        format: 'voice',
+        duration: '0:11',
+        senderName: long ? 'Alice Montgomery-Vane' : 'Alice',
+        senderColor: '#9b74c4',
+        avatar: av('alice'),
+        text: "Hey, train's held at the bridge for two minutes—save me a seat by the heater if you're already inside.",
+      },
+      batch: {
+        id: 'act-batch',
+        title: long ? 'Class 3-A · Emergency After-Hours Coordination & Snacks' : 'Class 3-A',
+        membersLabel: '7 messages · 7 active',
+        messages: [
+          { id: 'b1', sender: 'Mina Ashido', color: '#f06ba6', avatar: av('mina'), dir: 'received', text: 'YOU COUNTED THE SECONDS????' },
+          { id: 'b2', sender: 'Denki Kaminari', color: '#f2c349', avatar: av('denki'), dir: 'received', text: 'BROOOOOOOOO' },
+          { id: 'b3', sender: 'Eijiro Kirishima', color: '#ea5c5c', avatar: av('kiri'), dir: 'received', text: 'WAIT LET HIM EXPLAIN' },
+          { id: 'b4', sender: 'Katsuki Bakugo', color: '#ff8b42', avatar: '', dir: 'sent', text: 'Shut up before Aizawa mutes the whole chat.' },
+          { id: 'b5', sender: 'Izuku Midoriya', color: '#4fc98a', avatar: av('izuku'), dir: 'received', format: 'voice', duration: '0:07', text: 'Technically the timestamps do support what happened at the gate—' },
+          { id: 'b6', sender: 'Shoto Todoroki', color: '#7ea2d6', avatar: av('shoto'), dir: 'received', text: 'I am not participating in this analysis.' },
+          { id: 'b7', sender: 'Momo Yaoyorozu', color: '#b47fd1', avatar: av('momo'), dir: 'received', text: 'Please stop yelling in the class chat past nine.' },
+        ],
+      },
+      call: {
+        id: 'act-call',
+        callerName: long ? 'Alice Montgomery-Vane' : 'Alice',
+        callerColor: '#9b74c4',
+        avatar: av('alice'),
+        deviceOwner: long ? 'Kai Ishikawa' : 'Kai',
+      },
+    };
+  }
+
+  function clockText(compact = false) {
+    if (state.clock === 'exact') return compact ? '21:42' : '21:42';
+    if (state.clock === 'approx') return 'Late night';
+    return compact ? 'Pocket' : '';
+  }
+
+  function fmtDuration(sec) {
+    const s = Math.max(0, Math.round(sec));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  function esc(str) {
+    return String(str)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+  }
+
+  function avatarHtml(name, url, color = '') {
+    const style = color ? ` style="--av-color:${esc(color)}"` : '';
+    const inner = url ? `<img src="${url}" alt="">` : esc((name || '?').trim().slice(0, 1).toUpperCase());
+    return `<span class="pk-avatar"${style} aria-hidden="true">${inner}</span>`;
+  }
+
+  function statusBarHtml(callBadgeStatus = '') {
+    const label = clockText(true);
+    const islandContent = callBadgeStatus === 'connected'
+      ? `<span class="pk-island-wave" aria-hidden="true"><i></i><i></i><i></i></span><span class="pk-island-dot"></span>`
+      : `<span class="pk-island-dot"></span>`;
+    return `
+      <div class="pk-statusbar" aria-hidden="true">
+        <span class="pk-status-time">${esc(label)}</span>
+        <span class="pk-island" data-call="${esc(callBadgeStatus)}">${islandContent}</span>
+        <span class="pk-status-icons">${SVG.signal}${SVG.wifi}${SVG.battery}</span>
+      </div>`;
+  }
+
+  function voicePillHtml(id, duration, text, options = {}) {
+    const playing = state.voicePlayingId === id && !options.disabled;
+    const open = options.forceOpen ? true : state.voiceTranscriptOpen.has(id);
+    const heights = [45, 75, 55, 95, 65, 85, 40, 78, 92, 52, 68, 88, 50, 62];
+    const litCount = playing ? Math.max(2, Math.round((state.voiceProgress % 1) * heights.length)) : 0;
+    const bars = heights.map((h, i) => `<i style="height:${h}%" class="${i < litCount ? 'is-lit' : ''}"></i>`).join('');
+    return `
+      <div class="pk-voice-pill ${playing ? 'is-playing' : ''}" data-voice-id="${esc(id)}">
+        <div class="pk-voice-bar">
+          <button type="button" class="pk-voice-play" ${options.disabled ? 'disabled' : ''} data-action="voice-play" data-voice-id="${esc(id)}" aria-pressed="${playing}" aria-label="${playing ? 'Pause' : 'Play'} voice message (${esc(duration)})">
+            ${playing ? SVG.pause : SVG.play}
+          </button>
+          <span class="pk-voice-wave" aria-hidden="true">${bars}</span>
+          <span class="pk-voice-dur">${esc(duration)}</span>
+        </div>
+        ${options.statusText ? `<div class="pk-voice-status" role="status">${esc(options.statusText)}</div>` : ''}
+        <button type="button" class="pk-voice-transcript-toggle" data-action="voice-transcript" data-voice-id="${esc(id)}" aria-expanded="${open}">
+          ${SVG.transcript}<span>${open ? 'Hide transcript' : 'Transcript'}</span>
+        </button>
+        ${open ? `<div class="pk-voice-transcript">${esc(text)}</div>` : ''}
+      </div>`;
+  }
+
+  /* =====================================================================
+     RENDERERS FOR REDESIGNED SCENE CARDS
+     ===================================================================== */
+  function wrapScene(innerHtml, wallpaperType = 'lock') {
+    const wpAttr = state.wallpaper ? 'rich' : 'minimal';
+    return `
+      <div class="pk-theme-scope pk-scene-wrap" data-theme="${esc(state.theme)}" data-dir="${esc(state.dir)}" data-wallpaper-mode="${wpAttr}">
+        <div class="pk-phone-cutout">
+          <div class="pk-screen" data-wallpaper="${esc(wallpaperType)}">
+            ${innerHtml}
+            <div class="pk-home-indicator" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderLockNotificationCard(item) {
+    const time = clockText(false);
+    const isObserved = item.kind === 'observed';
+    const isVoice = item.format === 'voice';
+    const rightMeta = [
+      'Messages',
+      time || 'now',
+    ].filter(Boolean).join(' · ');
+
+    const bodyCopy = isVoice
+      ? voicePillHtml(item.id, item.duration, item.text)
+      : `<div class="pk-notif-text">${esc(item.text)}</div>`;
+
+    const lockDate = state.clock === 'exact' ? 'Thursday, Sep 4' : state.clock === 'approx' ? 'Late night' : 'Locked';
+    const deviceBar = (isObserved || state.dir === 'slice')
+      ? `<div class="pk-lock-device-bar">
+          ${isObserved
+            ? `<span class="pk-lock-owner-pill">${SVG.lock}<span>${esc(item.ownerName)}'s phone</span></span>`
+            : `<span class="pk-lock-owner-pill">${SVG.lock}<span>${esc(lockDate)}</span></span>`}
+          <span class="pk-lock-clock-mini">${esc(time || 'Locked')}</span>
+        </div>`
+      : '';
+
+    const routeDesc = isObserved
+      ? `Messages › ${item.ownerName}'s phone (${item.senderName})`
+      : `Messages › ${item.senderName}`;
+
+    // Note: if voice card has interactive play button inside, keep outer wrapper non-nested button!
+    const tag = isVoice ? 'div' : 'button';
+    const btnAttrs = isVoice
+      ? `role="region" aria-label="Voice message from ${esc(item.senderName)}"`
+      : `type="button" data-action="route" data-route="${esc(routeDesc)}" aria-label="Open ${esc(routeDesc)} in Pocket"`;
+
+    return wrapScene(`
+      ${statusBarHtml()}
+      <div class="pk-lock-body">
+        ${deviceBar}
+        <${tag} class="pk-notif-card" ${btnAttrs}>
+          <span class="pk-avatar-wrap">
+            ${avatarHtml(item.senderName, item.avatar, item.senderColor)}
+            <span class="pk-app-corner-badge" aria-hidden="true">${SVG.message}</span>
+          </span>
+          <span class="pk-notif-main">
+            <span class="pk-notif-top">
+              <strong class="pk-notif-sender">${esc(item.senderName)}</strong>
+              <span class="pk-notif-meta">${esc(rightMeta)}</span>
+            </span>
+            ${bodyCopy}
+          </span>
+        </${tag}>
+      </div>
+    `, 'lock');
+  }
+
+  function renderSentCard(item) {
+    const time = clockText(false);
+    const route = `Messages › ${item.recipientName}`;
+    return wrapScene(`
+      ${statusBarHtml()}
+      <div class="pk-app-nav">
+        <button type="button" class="pk-nav-btn" data-action="route" data-route="${esc(route)}" aria-label="Back to Messages">${SVG.back}</button>
+        <button type="button" class="pk-nav-identity" data-action="route" data-route="${esc(route)}">
+          ${avatarHtml(item.recipientName, item.avatar, item.recipientColor)}
+          <span class="pk-nav-titles">
+            <strong class="pk-nav-name">${esc(item.recipientName)}</strong>
+            <span class="pk-nav-sub">Messages · Direct</span>
+          </span>
+        </button>
+        <button type="button" class="pk-nav-btn is-action" data-action="route" data-route="Call › ${esc(item.recipientName)}" aria-label="Start call">${SVG.phone}</button>
+      </div>
+      <div class="pk-thread-canvas">
+        <div class="pk-msg-row" data-dir="sent" data-cont="false">
+          <div class="pk-msg-col">
+            <div class="pk-bubble">${esc(item.text)}</div>
+          </div>
+        </div>
+        <div class="pk-delivery-receipt">${time ? `Delivered · ${esc(time)}` : 'Delivered'}</div>
+      </div>
+      <div class="pk-mini-composer" aria-hidden="true">
+        <span class="pk-mc-plus">${SVG.plus}</span>
+        <span class="pk-mc-pill">Message…</span>
+        <span class="pk-mc-send">${SVG.send}</span>
+      </div>
+    `, 'chat');
+  }
+
+  function renderBatchCard(batch) {
+    const visibleLimit = 5;
+    const expanded = state.batchExpanded;
+    const rows = batch.messages;
+    const hiddenCount = Math.max(0, rows.length - visibleLimit);
+    const route = `Messages › ${batch.title}`;
+
+    const rowsHtml = rows.map((msg, i) => {
+      if (!expanded && i >= visibleLimit) return '';
+      const prev = rows[i - 1];
+      const cont = Boolean(prev && prev.sender === msg.sender && prev.dir === msg.dir);
+      const isSent = msg.dir === 'sent';
+      const content = msg.format === 'voice'
+        ? voicePillHtml('batch-voice', msg.duration, msg.text)
+        : esc(msg.text);
+      return `
+        <div class="pk-msg-row" data-dir="${esc(msg.dir)}" data-cont="${cont}" style="--speaker-accent:${esc(msg.color)}">
+          ${isSent ? '' : avatarHtml(msg.sender, msg.avatar, msg.color)}
+          <div class="pk-msg-col">
+            ${!isSent && !cont ? `<strong class="pk-msg-sender">${esc(msg.sender)}</strong>` : ''}
+            <div class="pk-bubble">${content}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const avA = rows[0];
+    const avB = rows[1] || rows[0];
+
+    return wrapScene(`
+      ${statusBarHtml()}
+      <div class="pk-app-nav">
+        <button type="button" class="pk-nav-btn" data-action="route" data-route="${esc(route)}" aria-label="Back to Messages">${SVG.back}</button>
+        <button type="button" class="pk-nav-identity" data-action="route" data-route="${esc(route)}">
+          <span class="pk-group-stack" aria-hidden="true">
+            ${avatarHtml(avA.sender, avA.avatar, avA.color)}
+            ${avatarHtml(avB.sender, avB.avatar, avB.color)}
+          </span>
+          <span class="pk-nav-titles">
+            <strong class="pk-nav-name">${esc(batch.title)}</strong>
+            <span class="pk-nav-sub">${esc(batch.membersLabel)}</span>
+          </span>
+        </button>
+        <button type="button" class="pk-nav-btn is-action" data-action="route" data-route="${esc(route)} › Group details" aria-label="Group details">${SVG.video}</button>
+      </div>
+      <div class="pk-thread-canvas">
+        ${rowsHtml}
+        ${hiddenCount > 0 ? `
+          <button type="button" class="pk-thread-more-btn" data-action="toggle-batch" aria-expanded="${expanded}">
+            ${expanded ? 'Show fewer messages' : `Show ${hiddenCount} more messages`}
+          </button>` : ''}
+      </div>
+      <div class="pk-mini-composer" aria-hidden="true">
+        <span class="pk-mc-plus">${SVG.plus}</span>
+        <span class="pk-mc-pill">Message ${esc(batch.title)}…</span>
+        <span class="pk-mc-send">${SVG.send}</span>
+      </div>
+    `, 'chat');
+  }
+
+  /* =====================================================================
+     CALL RENDERERS (3 Distinct Call Presentations!)
+     ===================================================================== */
+  function renderLiveActivityCardMarkup(callFixture, { cStatus, speaker, pov, muted, dur, statusLine, displayName, deviceLabel, isObserved, isOutgoing, route, speakerChip }) {
+    const trackBars = [30, 55, 85, 65, 95, 48, 76, 90, 52, 70, 42, 60].map(h => `<i style="height:${cStatus === 'ended' ? 28 : h}%"></i>`).join('');
+    const headRight = cStatus === 'connected'
+      ? `<span class="pk-call-chip is-live">${dur}</span>`
+      : cStatus === 'missed'
+        ? `<span class="pk-call-chip is-missed">${SVG.missed}<span>Missed</span></span>`
+        : `<span class="pk-call-chip">${dur}</span>`;
+
+    const footBtns = cStatus === 'connected'
+      ? `<div class="pk-call-hud-dock">
+           <button type="button" class="pk-call-btn is-pill ${speaker ? 'is-active' : ''}" data-action="call-speaker">${SVG.speaker}<span>Speaker</span></button>
+           <button type="button" class="pk-call-btn is-pill ${muted ? 'is-active' : ''}" data-action="call-mute">${SVG.mute}<span>Mute</span></button>
+           <button type="button" class="pk-call-btn is-circle is-danger" data-action="call-end" aria-label="End call">${SVG.phoneEnd}</button>
+         </div>`
+      : `<div class="pk-call-hud-dock">
+           <button type="button" class="pk-call-btn is-pill" data-action="route" data-route="${esc(route)}">${SVG.chatOutline}<span>Message</span></button>
+           <button type="button" class="pk-call-btn is-pill ${cStatus === 'missed' ? 'is-answer' : ''}" data-action="call-back">${SVG.phone}<span>${cStatus === 'missed' ? 'Call back' : 'Call again'}</span></button>
+         </div>`;
+
+    const footLeft = cStatus === 'connected'
+      ? `<span class="pk-call-chip is-live">Live audio</span>`
+      : cStatus === 'missed'
+        ? `<span class="pk-call-chip">${esc(isObserved ? deviceLabel : isOutgoing ? 'Outgoing' : 'Incoming')}</span>`
+        : (speakerChip || `<span class="pk-call-chip">Handset</span>`);
+
+    return `
+      <div class="pk-standby-card">
+        <div class="pk-standby-head">
+          <span style="display:inline-flex;align-items:center;gap:6px;">
+            <span class="pk-app-tile" data-app="phone">${SVG.phone}</span>
+            <span>${esc(isObserved ? `${deviceLabel} · Phone` : 'Phone Audio')}</span>
+          </span>
+          ${headRight}
+        </div>
+        <div class="pk-standby-body">
+          <span class="pk-call-avatar-ring">${avatarHtml(callFixture.callerName, callFixture.avatar, callFixture.callerColor)}</span>
+          <div style="min-width:0;display:grid;gap:2px;">
+            <strong class="pk-callkit-name">${esc(displayName)}</strong>
+            <span style="font-size:11px;color:var(--pk-screen-muted);">${esc(statusLine)}</span>
+          </div>
+          <div class="pk-standby-track" aria-hidden="true">${trackBars}</div>
+        </div>
+        <div class="pk-standby-foot">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">${footLeft}</div>
+          ${footBtns}
+        </div>
+      </div>`;
+  }
+
+  function renderCallCard(callFixture, overrideStyle = null, overrideStatus = null, overrideSpeaker = null, overridePov = null) {
+    const style = overrideStyle || state.callStyle;
+    const cStatus = overrideStatus || state.callDemo.status;
+    const speaker = overrideSpeaker !== null ? overrideSpeaker : state.callDemo.speakerphone;
+    const pov = overridePov || state.callDemo.pov;
+    const muted = state.callDemo.muted;
+    const time = clockText(false);
+    const dur = cStatus === 'connected' ? fmtDuration(state.callDemo.elapsedSec) : '04:00';
+
+    const isObserved = pov === 'observed';
+    const isOutgoing = pov === 'sent';
+    const deviceLabel = isObserved ? `${callFixture.deviceOwner}'s phone` : '';
+    const displayName = isOutgoing ? `To ${callFixture.callerName}` : callFixture.callerName;
+    const route = isObserved
+      ? `Phone › ${callFixture.deviceOwner}'s call with ${callFixture.callerName}`
+      : `Messages › Call with ${callFixture.callerName}`;
+
+    const statusLine = cStatus === 'connected'
+      ? (isObserved ? `On call · ${dur}` : `Connected · ${dur}`)
+      : cStatus === 'missed'
+        ? (time ? `Missed call · ${time}` : 'Missed call')
+        : `Call ended · ${dur}`;
+
+    const eqHtml = cStatus === 'connected'
+      ? `<span class="pk-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>`
+      : '';
+
+    const speakerChip = (speaker && cStatus !== 'missed')
+      ? `<span class="pk-call-chip">${SVG.speaker}<span>Speaker</span></span>`
+      : '';
+
+    const povBadge = isObserved
+      ? `<span class="pk-call-chip">${SVG.lock}<span>${esc(deviceLabel)}</span></span>`
+      : isOutgoing
+        ? `<span class="pk-call-chip"><span>Outgoing</span></span>`
+        : '';
+
+    let inner = '';
+
+    if (style === 'hud') {
+      let controlsHtml = '';
+      if (cStatus === 'connected') {
+        controlsHtml = `
+          <div class="pk-call-hud-dock">
+            <div class="pk-call-hud-dock-item">
+              <button type="button" class="pk-call-btn is-circle ${muted ? 'is-active' : ''}" data-action="call-mute" aria-pressed="${muted}" aria-label="Mute call">${SVG.mute}</button>
+              <span>Mute</span>
+            </div>
+            <div class="pk-call-hud-dock-item">
+              <button type="button" class="pk-call-btn is-circle ${speaker ? 'is-active' : ''}" data-action="call-speaker" aria-pressed="${speaker}" aria-label="Toggle speakerphone">${SVG.speaker}</button>
+              <span>Speaker</span>
+            </div>
+            <div class="pk-call-hud-dock-item">
+              <button type="button" class="pk-call-btn is-circle" data-action="route" data-route="${esc(route)}" aria-label="Open messages">${SVG.chatOutline}</button>
+              <span>Message</span>
+            </div>
+          </div>
+          <div class="pk-call-hud-dock-item">
+            <button type="button" class="pk-call-btn is-circle is-danger" data-action="call-end" aria-label="End call">${SVG.phoneEnd}</button>
+            <span>End</span>
+          </div>`;
+      } else if (cStatus === 'missed') {
+        controlsHtml = `
+          <span class="pk-call-chip is-missed">${SVG.missed}<span>Missed</span></span>
+          <div class="pk-call-hud-dock">
+            <button type="button" class="pk-call-btn is-pill" data-action="route" data-route="${esc(route)}">${SVG.chatOutline}<span>Message</span></button>
+            <button type="button" class="pk-call-btn is-pill is-answer" data-action="call-back">${SVG.phone}<span>Call back</span></button>
+          </div>`;
+      } else {
+        controlsHtml = `
+          <span class="pk-call-chip"><span>${esc(isOutgoing ? 'Outgoing · Ended' : 'Voice Call')}</span></span>
+          <div class="pk-call-hud-dock">
+            <button type="button" class="pk-call-btn is-pill" data-action="route" data-route="${esc(route)}">${SVG.chatOutline}<span>Message</span></button>
+            <button type="button" class="pk-call-btn is-pill" data-action="call-back">${SVG.phone}<span>Call back</span></button>
+          </div>`;
+      }
+
+      inner = `
+        <div class="pk-call-screen" data-call-status="${esc(cStatus)}">
+          ${statusBarHtml(cStatus)}
+          <div class="pk-call-hud-inner">
+            <div class="pk-call-hud-top">
+              <span class="pk-call-hud-app">
+                <span class="pk-app-tile" data-app="phone">${SVG.phone}</span>
+                <span>Phone</span>
+              </span>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
+                ${povBadge}
+                ${cStatus === 'ended' ? speakerChip : ''}
+              </div>
+            </div>
+            <div class="pk-call-hud-identity">
+              <span class="pk-call-avatar-ring">${avatarHtml(callFixture.callerName, callFixture.avatar, callFixture.callerColor)}</span>
+              <div class="pk-call-hud-copy">
+                <strong class="pk-call-hud-name">${esc(displayName)}</strong>
+                <div class="pk-call-hud-sub">
+                  ${eqHtml}
+                  <span>${esc(statusLine)}</span>
+                </div>
+              </div>
+            </div>
+            <div class="pk-call-hud-controls">${controlsHtml}</div>
+          </div>
+          <div class="pk-home-indicator" aria-hidden="true"></div>
+        </div>`;
+    } else if (style === 'callkit') {
+      let actions = '';
+      if (cStatus === 'connected') {
+        actions = `
+          <button type="button" class="pk-call-btn is-circle ${speaker ? 'is-active' : ''}" data-action="call-speaker" aria-pressed="${speaker}" aria-label="Toggle speaker">${SVG.speaker}</button>
+          <button type="button" class="pk-call-btn is-circle ${muted ? 'is-active' : ''}" data-action="call-mute" aria-pressed="${muted}" aria-label="Toggle mute">${SVG.mute}</button>
+          <button type="button" class="pk-call-btn is-circle is-danger" data-action="call-end" aria-label="End call">${SVG.phoneEnd}</button>`;
+      } else if (cStatus === 'missed') {
+        actions = `
+          <button type="button" class="pk-call-btn is-circle" data-action="route" data-route="${esc(route)}" aria-label="Message ${esc(callFixture.callerName)}">${SVG.chatOutline}</button>
+          <button type="button" class="pk-call-btn is-circle is-answer" data-action="call-back" aria-label="Call back ${esc(callFixture.callerName)}">${SVG.phone}</button>`;
+      } else {
+        actions = `
+          <button type="button" class="pk-call-btn is-pill" data-action="route" data-route="${esc(route)}">${SVG.chatOutline}<span>Chat</span></button>
+          <button type="button" class="pk-call-btn is-circle" data-action="call-back" aria-label="Call again">${SVG.phone}</button>`;
+      }
+
+      const corner = cStatus === 'missed' ? 'missed' : 'phone';
+      const kicker = cStatus === 'connected'
+        ? (isObserved ? `${deviceLabel} · Live` : 'Live Call')
+        : cStatus === 'missed'
+          ? (isObserved ? `${deviceLabel} · Missed` : 'Missed Call')
+          : (isObserved ? `${deviceLabel} · Ended` : 'Call Ended');
+
+      inner = `
+        <div class="pk-call-screen" data-call-status="${esc(cStatus)}">
+          ${statusBarHtml(cStatus)}
+          <div class="pk-callkit-wrap">
+            <div class="pk-callkit-pill">
+              <span class="pk-avatar-wrap pk-call-avatar-ring">
+                ${avatarHtml(callFixture.callerName, callFixture.avatar, callFixture.callerColor)}
+                <span class="pk-app-corner-badge" data-app="${corner}" aria-hidden="true">${cStatus === 'missed' ? SVG.missed : SVG.phone}</span>
+              </span>
+              <div class="pk-callkit-info">
+                <div class="pk-callkit-kicker">
+                  ${eqHtml}
+                  <span>${esc(kicker)}</span>
+                </div>
+                <strong class="pk-callkit-name">${esc(displayName)}</strong>
+                <div class="pk-callkit-meta">
+                  <span>${cStatus === 'missed' ? (time || 'Audio call') : dur}</span>
+                  ${speaker && cStatus !== 'missed' ? `<span>· Speakerphone</span>` : ''}
+                </div>
+              </div>
+              <div class="pk-callkit-actions">${actions}</div>
+            </div>
+          </div>
+          <div class="pk-home-indicator" aria-hidden="true"></div>
+        </div>`;
+    } else {
+      // Live Activity Call Card
+      inner = `
+        <div class="pk-call-screen" data-call-status="${esc(cStatus)}">
+          ${statusBarHtml(cStatus)}
+          <div class="pk-standby-inner">
+            ${renderLiveActivityCardMarkup(callFixture, { cStatus, speaker, pov, muted, dur, statusLine, displayName, deviceLabel, isObserved, isOutgoing, route, speakerChip })}
+          </div>
+          <div class="pk-home-indicator" aria-hidden="true"></div>
+        </div>`;
+    }
+
+    const wpAttr = state.wallpaper ? 'rich' : 'minimal';
+    return `
+      <div class="pk-theme-scope pk-scene-wrap" data-theme="${esc(state.theme)}" data-dir="${esc(state.dir)}" data-wallpaper-mode="${wpAttr}">
+        <div class="pk-phone-cutout">
+          <div class="pk-screen">${inner}</div>
+        </div>
+      </div>`;
+  }
+
+  /* =====================================================================
+     PROSE STAGE RENDERING
+     ===================================================================== */
+  function renderCallPlaygroundControls() {
+    const d = state.callDemo;
+    return `
+      <div class="call-playground-bar" role="group" aria-label="Interactive call state controls">
+        <span class="cp-label">Call State:</span>
+        <button type="button" class="cp-chip" data-action="set-call-status" data-val="connected" aria-pressed="${d.status === 'connected'}">Connected (Live)</button>
+        <button type="button" class="cp-chip" data-action="set-call-status" data-val="missed" aria-pressed="${d.status === 'missed'}">Missed</button>
+        <button type="button" class="cp-chip" data-action="set-call-status" data-val="ended" aria-pressed="${d.status === 'ended'}">Ended (4:00)</button>
+        <button type="button" class="cp-chip" data-action="toggle-call-speaker" aria-pressed="${d.speakerphone}">Speakerphone</button>
+        <button type="button" class="cp-chip" data-action="cycle-call-pov" aria-pressed="${d.pov !== 'received'}">POV: ${d.pov === 'received' ? 'Incoming' : d.pov === 'sent' ? 'Outgoing' : "Observed (Kai's)"}</button>
+      </div>`;
+  }
+
+  function renderProseColumn(isMobile, label) {
+    const f = getFixtures();
+    return `
+      <div class="prose-viewport ${isMobile ? 'is-mobile' : ''}">
+        <div class="prose-viewport-bar">
+          <strong>${esc(label)}</strong>
+          <span>Theme: ${esc(state.theme)} · ${esc(state.dir)} · Call: ${esc(state.callStyle)}</span>
+        </div>
+        <div class="rp-thread">
+          <article class="rp-turn">
+            <div class="rp-speaker-meta">
+              <span class="rp-speaker-avatar">N</span>
+              <strong>Narrator</strong>
+              <span>· Scene cards embedded inline inside roleplay turns</span>
+            </div>
+            <div class="rp-prose">
+              <p>Rain ticked steadily against the waiting-room glass. Kai set his mug beside the folded coat just as the screen face-up on the wooden table flared awake with a quiet buzz.</p>
+
+              <div class="rp-anchor">
+                <div class="rp-anchor-tag"><span>1 · Incoming DM (received)</span><span>Lock-screen notification</span></div>
+                ${renderLockNotificationCard(f.received)}
+              </div>
+
+              <p>Before he could reach for his jacket, Shoto's phone across the table chimed too—lighting up beside his keys where anyone sitting near the lamp could catch the banner.</p>
+
+              <div class="rp-anchor">
+                <div class="rp-anchor-tag"><span>2 · Another character's phone (observed)</span><span>Owner-labeled lock peek</span></div>
+                ${renderLockNotificationCard(f.observed)}
+              </div>
+
+              <p>Kai unlocked his phone with his thumb, thumbed open Shoto's thread right across from him, and fired off a quick three-second note before stepping out into the hall.</p>
+
+              <div class="rp-anchor">
+                <div class="rp-anchor-tag"><span>3 · Sent message (sent)</span><span>Cropped Messages viewport</span></div>
+                ${renderSentCard(f.sent)}
+              </div>
+
+              <p>Two floors down, his coat pocket rattled again—this time a rapid-fire avalanche of notifications from the dorm group thread, half of them screaming in caps while Izuku tried to leave a breathy voice note mid-walk.</p>
+
+              <div class="rp-anchor">
+                <div class="rp-anchor-tag"><span>4 · Group burst + Voice message (message_batch)</span><span>Mixed directions + interactive audio</span></div>
+                ${renderBatchCard(f.batch)}
+              </div>
+
+              <p>And before the elevator doors even finished sliding open, Alice's voice came crackling through—speakerphone echoing softly down the empty stairwell.</p>
+
+              <div class="rp-anchor">
+                <div class="rp-anchor-tag"><span>5 · Phone Call (call — try states below!)</span><span>${esc(state.callStyle)}</span></div>
+                ${renderCallPlaygroundControls()}
+                ${renderCallCard(f.call)}
+              </div>
+
+              <p>Seconds later, a quick voice note followed from the train platform so Kai knew exactly which exit she was aiming for.</p>
+
+              <div class="rp-anchor">
+                <div class="rp-anchor-tag"><span>6 · Voice Message DM (format: "voice")</span><span>Playable waveform + transcript</span></div>
+                ${renderLockNotificationCard(f.voice)}
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>`;
+  }
+
+  /* =====================================================================
+     BEFORE / AFTER & FULL MATRIX RENDERING
+     ===================================================================== */
+  function renderOldSceneCards(f) {
+    return `
+      <div class="compare-col">
+        <div class="compare-tag is-old"><span>Current Scene Cards</span><span>Flat dark boxes</span></div>
+
+        <div class="old-card">
+          <div class="old-chrome"><span>Messages</span><span>21:42</span></div>
+          <div class="old-body">
+            <span class="old-av">D</span>
+            <div><strong>${esc(f.received.senderName)}</strong><div style="font-size:13px;color:#e5e1ea;margin-top:3px;">${esc(f.received.text)}</div></div>
+          </div>
+        </div>
+
+        <div class="old-card">
+          <div class="old-chrome"><span>Messages</span><span>To ${esc(f.sent.recipientName)}</span></div>
+          <div style="justify-self:end;padding:9px 13px;border-radius:15px 15px 5px 15px;background:linear-gradient(145deg,#8b7dff,#6a5cd4);font-size:13px;">${esc(f.sent.text)}</div>
+        </div>
+
+        <div class="old-card old-call">
+          <span class="old-av" style="width:46px;height:46px;">A</span>
+          <div style="font-size:11px;color:#a9a3b2;">Phone</div>
+          <strong>Alice → Kai</strong>
+          <div style="font-size:13px;color:#e5e1ea;">Call ended · Speakerphone · 4:00</div>
+          <span class="old-call-circle" style="transform:rotate(135deg);">${SVG.phone}</span>
+        </div>
+      </div>`;
+  }
+
+  function renderFullPhoneCallUpgrade(f) {
+    const wpAttr = state.wallpaper ? 'rich' : 'minimal';
+    const d = state.callDemo;
+    const cStatus = d.status;
+    const speaker = d.speakerphone;
+    const pov = d.pov;
+    const muted = d.muted;
+    const time = clockText(false);
+    const dur = cStatus === 'connected' ? fmtDuration(d.elapsedSec) : '04:00';
+    const isObserved = pov === 'observed';
+    const isOutgoing = pov === 'sent';
+    const deviceLabel = isObserved ? `${f.call.deviceOwner}'s phone` : '';
+    const displayName = isOutgoing ? `To ${f.call.callerName}` : f.call.callerName;
+    const route = isObserved
+      ? `Phone › ${f.call.deviceOwner}'s call with ${f.call.callerName}`
+      : `Messages › Call with ${f.call.callerName}`;
+
+    const posterKicker = cStatus === 'connected'
+      ? (isObserved ? `${deviceLabel} · ${dur}` : `Pocket Audio · ${dur}`)
+      : cStatus === 'missed'
+        ? (time ? `Missed Call · ${time}` : 'Missed Call')
+        : `Call Ended · ${dur}`;
+
+    const trackBars = [30, 55, 85, 65, 95, 48, 76, 90, 52, 70, 42, 60]
+      .map(h => `<i style="height:${cStatus === 'ended' ? 28 : h}%"></i>`).join('');
+
+    const dockStatusRight = cStatus === 'connected'
+      ? `<span class="pk-call-chip is-live">${dur}</span>`
+      : cStatus === 'missed'
+        ? `<span class="pk-call-chip is-missed">${SVG.missed}<span>Missed</span></span>`
+        : `<span class="pk-call-chip">${speaker ? 'Speaker · ' : ''}${dur}</span>`;
+
+    const dockButtons = cStatus === 'connected'
+      ? `<div class="mini-full-ios-actions">
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle ${speaker ? 'is-active' : ''}" data-action="call-speaker" aria-pressed="${speaker}" aria-label="Toggle speaker">${SVG.speaker}</button>
+             <span>Speaker</span>
+           </div>
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle ${muted ? 'is-active' : ''}" data-action="call-mute" aria-pressed="${muted}" aria-label="Mute call">${SVG.mute}</button>
+             <span>Mute</span>
+           </div>
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle" data-action="route" data-route="${esc(route)}" aria-label="Open messages">${SVG.chatOutline}</button>
+             <span>Message</span>
+           </div>
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle is-danger" data-action="call-end" aria-label="End call">${SVG.phoneEnd}</button>
+             <span>End</span>
+           </div>
+         </div>`
+      : `<div class="mini-full-ios-actions" data-cols="3">
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle" data-action="route" data-route="${esc(route)}" aria-label="Open messages">${SVG.chatOutline}</button>
+             <span>Message</span>
+           </div>
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle ${cStatus === 'missed' ? 'is-answer' : ''}" data-action="call-back" aria-label="${cStatus === 'missed' ? 'Call back' : 'Call again'}">${SVG.phone}</button>
+             <span>${cStatus === 'missed' ? 'Call back' : 'Call again'}</span>
+           </div>
+           <div class="mini-full-ios-btn-wrap">
+             <button type="button" class="pk-call-btn is-circle" data-action="route" data-route="Phone › Call history" aria-label="Call history">${SVG.back}</button>
+             <span>History</span>
+           </div>
+         </div>`;
+
+    return `
+      <section class="matrix-section">
+        <div class="matrix-head">
+          <h2>Full Phone Call Screen (<code>inlineAppearance: 'phone'</code> · iOS Contact Poster + Live Activity Dock)</h2>
+          <p>Full-screen iOS Call layout: status + giant caller name, ambient portrait centerpiece, and the <strong>Live Activity</strong> waveform &amp; audio dock adapted cleanly to the bottom.</p>
+        </div>
+        ${renderCallPlaygroundControls()}
+        <div class="full-phone-compare pk-theme-scope" data-theme="${esc(state.theme)}" data-wallpaper-mode="${wpAttr}">
+          <div>
+            <div class="compare-tag is-old" style="margin-bottom:8px;"><span>Current Full Phone Call</span><span>Static controls + arrow</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen is-old">
+                <div style="padding:10px 14px;display:flex;justify-content:space-between;font-size:10px;opacity:.8;"><span>Pocket</span><span>‹ Phone</span><span>•••</span></div>
+                <div class="mini-full-old-center">
+                  <div class="old-av" style="width:74px;height:74px;font-size:24px;">A</div>
+                  <strong style="font-size:17px;">Alice → Kai</strong>
+                  <span style="font-size:11px;color:#a39dab;">Call ended · Speakerphone · 4:00</span>
+                </div>
+                <div class="mini-full-old-controls">
+                  <div><div class="mini-full-old-btn">${SVG.mute}</div>Mute</div>
+                  <div><div class="mini-full-old-btn">${SVG.speaker}</div>Speaker</div>
+                  <div><div class="mini-full-old-btn">${SVG.chatOutline}</div>Message</div>
+                  <div><div class="mini-full-old-btn is-red">${SVG.phoneEnd}</div>Ended</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="compare-tag is-new" style="margin-bottom:8px;"><span>Proposed Full Phone Call</span><span>iOS Poster + Live Activity Dock</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen pk-call-screen" data-call-status="${esc(cStatus)}" style="--caller-glow:${esc(f.call.callerColor)}">
+                <div class="pk-statusbar" style="display:grid;"><span class="pk-status-time">${esc(clockText(true))}</span><span class="pk-island" data-call="${esc(cStatus)}">${cStatus === 'connected' ? '<span class="pk-island-wave"><i></i><i></i><i></i></span>' : ''}<span class="pk-island-dot"></span></span><span class="pk-status-icons">${SVG.signal}${SVG.battery}</span></div>
+                <div class="mini-full-ios-call">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                    <button type="button" class="pk-nav-btn" style="display:inline-flex;align-items:center;width:auto;gap:3px;padding:0 4px;font-size:11px;font-weight:660;white-space:nowrap;" data-action="route" data-route="Phone › Call history">${SVG.back}<span>Phone</span></button>
+                    ${isObserved ? `<span class="pk-lock-owner-pill">${SVG.lock}<span>${esc(deviceLabel)}</span></span>` : isOutgoing ? `<span class="pk-call-chip">Outgoing</span>` : ''}
+                  </div>
+
+                  <div class="mini-full-ios-poster">
+                    <div class="mini-full-ios-kicker">
+                      ${cStatus === 'connected' ? '<span class="pk-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>' : ''}
+                      <span>${esc(posterKicker)}</span>
+                    </div>
+                    <h3 class="mini-full-ios-name">${esc(displayName)}</h3>
+                    <div class="mini-full-ios-portrait">
+                      <span class="pk-call-avatar-ring">${avatarHtml(f.call.callerName, f.call.avatar, f.call.callerColor)}</span>
+                    </div>
+                    ${speaker && cStatus === 'connected' ? `<span class="pk-call-chip">${SVG.speaker}<span>Speakerphone</span></span>` : ''}
+                  </div>
+
+                  <div class="mini-full-ios-dock">
+                    <div class="mini-full-ios-activity-row">
+                      <span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:680;color:var(--pk-screen-muted);">
+                        <span class="pk-app-tile" data-app="phone">${SVG.phone}</span>
+                        <span>${cStatus === 'connected' ? 'Live Audio' : cStatus === 'missed' ? 'Missed Call' : 'Call Summary'}</span>
+                      </span>
+                      <div class="pk-standby-track" aria-hidden="true">${trackBars}</div>
+                      ${dockStatusRight}
+                    </div>
+                    ${dockButtons}
+                  </div>
+                </div>
+                <div class="pk-home-indicator" style="display:grid;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function renderFullPhoneTab() {
+    const f = getFixtures();
+    const wpAttr = state.wallpaper ? 'rich' : 'minimal';
+    const err = state.voiceSimulateError;
+    const statusMsg = err ? 'Speech playback unavailable — transcript preserved below.' : '';
+    const vText = f.voice.text;
+
+    return `
+      ${renderFullPhoneCallUpgrade(f)}
+
+      <section class="matrix-section">
+        <div class="matrix-head">
+          <h2>Voice Messages in Pocket DMs &amp; Groups (<code>messages.ts</code> / <code>voice-message.ts</code>)</h2>
+          <p>Replaces the rectangular bordered play button and raw <code>&lt;details&gt;</code> disclosure box with a unified Audio Bubble + integrated transcript.</p>
+        </div>
+        <div class="call-playground-bar" role="group" aria-label="DM Voice state controls">
+          <span class="cp-label">Voice Fallback:</span>
+          <button type="button" class="cp-chip" data-action="toggle-voice-error" aria-pressed="${err}">
+            ${err ? 'Showing: Speech Unavailable / Error State' : 'Simulate Speech Unavailable / Error'}
+          </button>
+        </div>
+
+        <div class="full-phone-compare pk-theme-scope" data-theme="${esc(state.theme)}" data-wallpaper-mode="${wpAttr}">
+          <div>
+            <div class="compare-tag is-old" style="margin-bottom:8px;"><span>Current DM Voice Bubble</span><span>Box button + raw &lt;details&gt;</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen" style="background:#000;color:#f7f5ff;">
+                <div style="padding:10px 14px;display:flex;justify-content:space-between;font-size:10px;opacity:.85;"><span>9:00</span><span>5G</span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.09);font-size:11px;">
+                  <span style="color:#ff69b4;font-weight:700;">‹ Back</span>
+                  <div style="text-align:center;"><strong>${esc(f.voice.senderName)}</strong><div style="font-size:8.5px;color:#999;">Direct message</div></div>
+                  <span style="color:#ff69b4;">⋯</span>
+                </div>
+                <div class="mini-full-dm-bubbles" style="background:#000;">
+                  <div class="pk-msg-row" data-dir="received" data-cont="false">
+                    <div class="pk-msg-col" style="max-width:88%;">
+                      <div class="pk-bubble" style="background:#17151c;color:#f7f5ff;border-color:rgba(255,255,255,.08);">
+                        <div class="old-dm-voice">
+                          <button type="button" class="old-dm-voice-btn">▶ Play voice message</button>
+                          <details open>
+                            <summary>Voice message transcript</summary>
+                            <p>${esc(vText)}</p>
+                          </details>
+                        </div>
+                        <span class="mini-full-dm-time">21:42 · delivered</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="pk-mini-composer" style="display:grid;background:#0a090c;"><span class="pk-mc-plus">+</span><span class="pk-mc-pill">Message…</span><span class="pk-mc-send">${SVG.send}</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="compare-tag is-new" style="margin-bottom:8px;"><span>Proposed DM Voice Thread</span><span>No &lt;details&gt; · Incoming + Outgoing</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen pk-screen" data-wallpaper="chat">
+                <div class="pk-statusbar" style="display:grid;"><span class="pk-status-time">${esc(clockText(true))}</span><span class="pk-island"><span class="pk-island-dot"></span></span><span class="pk-status-icons">${SVG.signal}${SVG.wifi}${SVG.battery}</span></div>
+                <div class="pk-app-nav">
+                  <button type="button" class="pk-nav-btn" data-action="route" data-route="Messages">${SVG.back}</button>
+                  <button type="button" class="pk-nav-identity" data-action="route" data-route="Messages › Alice">
+                    ${avatarHtml(f.voice.senderName, f.voice.avatar, f.voice.senderColor)}
+                    <span class="pk-nav-titles">
+                      <strong class="pk-nav-name">${esc(f.voice.senderName)}</strong>
+                      <span class="pk-nav-sub">Direct message</span>
+                    </span>
+                  </button>
+                  <button type="button" class="pk-nav-btn is-action" data-action="route" data-route="Phone › Call Alice">${SVG.phone}</button>
+                </div>
+                <div class="mini-full-dm-body">
+                  <div class="mini-full-dm-bubbles">
+                    <div class="pk-msg-row" data-dir="received" data-cont="false">
+                      <div class="pk-msg-col">
+                        <div class="pk-bubble">
+                          ${voicePillHtml('dm-in-voice', '0:11', vText, { disabled: err, statusText: statusMsg, forceOpen: err })}
+                          <span class="mini-full-dm-time">21:42 · delivered</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="pk-msg-row" data-dir="sent" data-cont="false">
+                      <div class="pk-msg-col">
+                        <div class="pk-bubble">
+                          ${voicePillHtml('dm-out-voice', '0:06', "Got it—grabbing a booth by the radiator now.", { disabled: err })}
+                          <span class="mini-full-dm-time">21:43 · read</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="pk-mini-composer" style="display:grid;" aria-hidden="true"><span class="pk-mc-plus">${SVG.plus}</span><span class="pk-mc-pill">Message…</span><span class="pk-mc-send">${SVG.send}</span></div>
+                </div>
+                <div class="pk-home-indicator" style="display:grid;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="matrix-section">
+        <div class="matrix-head">
+          <h2>Voice Messages in Full Phone Prose Inserts (<code>phone-screen.ts</code>)</h2>
+          <p>Both <strong>Scene cards</strong> and <strong>Full phone</strong> prose modes share the new Audio Pill instead of prepending literal <code>▶ Voice message · </code> strings.</p>
+        </div>
+        <div class="full-phone-compare pk-theme-scope" data-theme="${esc(state.theme)}" data-wallpaper-mode="${wpAttr}">
+          <div>
+            <div class="compare-tag is-old" style="margin-bottom:8px;"><span>Current Full Phone Voice</span><span>Plain text prefix</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen is-old">
+                <div style="padding:10px 14px;display:flex;justify-content:space-between;font-size:10px;opacity:.8;"><span>21:42</span><span>•••</span></div>
+                <div class="mini-full-lock-clock">
+                  <span class="pk-clock-date" style="color:#aaa4b3;">Kai's phone</span>
+                  <span class="pk-clock-digits" style="color:#fff;">21:42</span>
+                  <span class="pk-clock-date" style="color:#aaa4b3;">Thursday, Sep 4</span>
+                </div>
+                <div style="margin:12px 12px;padding:12px;border-radius:16px;background:rgba(28,25,34,.86);border:1px solid rgba(255,255,255,.11);display:grid;gap:8px;">
+                  <div style="font-size:10px;color:#aaa4b3;">Messages</div>
+                  <div style="display:grid;grid-template-columns:32px 1fr;gap:9px;align-items:start;">
+                    <span class="old-av" style="width:32px;height:32px;">A</span>
+                    <div><strong style="font-size:12px;">${esc(f.voice.senderName)}</strong><div style="font-size:11px;color:#ddd;margin-top:3px;">▶ Voice message · ${esc(vText)}</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="compare-tag is-new" style="margin-bottom:8px;"><span>Proposed Full Phone · Lock</span><span>Audio Pill in notification</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen pk-screen" data-wallpaper="lock">
+                <div class="pk-statusbar" style="display:grid;"><span class="pk-status-time">${esc(clockText(true))}</span><span class="pk-island"><span class="pk-island-dot"></span></span><span class="pk-status-icons">${SVG.signal}${SVG.wifi}${SVG.battery}</span></div>
+                <div class="mini-full-lock-clock">
+                  <span class="pk-clock-date">Kai's phone</span>
+                  <span class="pk-clock-digits ${state.clock !== 'exact' ? 'is-approx' : ''}">${esc(state.clock === 'exact' ? '21:42' : state.clock === 'approx' ? 'Late night' : 'New message')}</span>
+                  ${state.clock === 'exact' ? '<span class="pk-clock-date">Thursday, Sep 4</span>' : ''}
+                </div>
+                <div style="padding:10px 11px;">
+                  <div class="pk-notif-card" role="region" aria-label="Voice notification from ${esc(f.voice.senderName)}">
+                    <span class="pk-avatar-wrap">
+                      ${avatarHtml(f.voice.senderName, f.voice.avatar, f.voice.senderColor)}
+                      <span class="pk-app-corner-badge" aria-hidden="true">${SVG.message}</span>
+                    </span>
+                    <span class="pk-notif-main">
+                      <span class="pk-notif-top">
+                        <strong class="pk-notif-sender">${esc(f.voice.senderName)}</strong>
+                        <span class="pk-notif-meta">Messages · ${esc(clockText(false) || 'now')}</span>
+                      </span>
+                      ${voicePillHtml('full-lock-voice', '0:11', vText)}
+                    </span>
+                  </div>
+                </div>
+                <div class="pk-home-indicator" style="display:grid;margin-top:auto;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="compare-tag is-new" style="margin-bottom:8px;"><span>Proposed Full Phone · Chat</span><span>Audio Pill in thread bubble</span></div>
+            <div class="mini-full-handset">
+              <div class="mini-full-screen pk-screen" data-wallpaper="chat">
+                <div class="pk-statusbar" style="display:grid;"><span class="pk-status-time">${esc(clockText(true))}</span><span class="pk-island"><span class="pk-island-dot"></span></span><span class="pk-status-icons">${SVG.signal}${SVG.wifi}${SVG.battery}</span></div>
+                <div class="pk-app-nav">
+                  <button type="button" class="pk-nav-btn" data-action="route" data-route="Messages">${SVG.back}</button>
+                  <button type="button" class="pk-nav-identity" data-action="route" data-route="Messages › Alice">
+                    ${avatarHtml(f.voice.senderName, f.voice.avatar, f.voice.senderColor)}
+                    <span class="pk-nav-titles"><strong class="pk-nav-name">${esc(f.voice.senderName)}</strong><span class="pk-nav-sub">Messages</span></span>
+                  </button>
+                  <button type="button" class="pk-nav-btn is-action" data-action="route" data-route="Call › Alice">${SVG.phone}</button>
+                </div>
+                <div class="mini-full-dm-body">
+                  <div class="mini-full-dm-bubbles">
+                    <div class="pk-msg-row" data-dir="sent" data-cont="false">
+                      <div class="pk-msg-col">
+                        <div class="pk-bubble">
+                          ${voicePillHtml('full-chat-voice', '0:06', "Train's coming in—meet you at the east steps.")}
+                        </div>
+                      </div>
+                    </div>
+                    <div class="pk-delivery-receipt">Delivered</div>
+                  </div>
+                  <div class="pk-mini-composer" style="display:grid;" aria-hidden="true"><span class="pk-mc-plus">${SVG.plus}</span><span class="pk-mc-pill">Message…</span><span class="pk-mc-send">${SVG.send}</span></div>
+                </div>
+                <div class="pk-home-indicator" style="display:grid;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderMatrix() {
+    const f = getFixtures();
+    return `
+      <section class="matrix-section">
+        <div class="matrix-head">
+          <h2>Before / After · Scene Cards in Prose</h2>
+          <p>Direct visual comparison using your current <code>SceneFraming: ${esc(state.dir)}</code> &amp; <code>Theme: ${esc(state.theme)}</code>.</p>
+        </div>
+        <div class="compare-cols">
+          ${renderOldSceneCards(f)}
+          <div class="compare-col">
+            <div class="compare-tag is-new"><span>Redesigned Tiny Phone Interfaces</span><span>Matches Pocket OS</span></div>
+            ${renderLockNotificationCard(f.received)}
+            ${renderSentCard(f.sent)}
+            ${renderCallCard(f.call)}
+          </div>
+        </div>
+      </section>
+
+      <section class="matrix-section">
+        <div class="matrix-head">
+          <h2>Call Presentations · Side-by-Side Comparison</h2>
+          <p>Compare all 3 Call UI presentations across <strong>Connected</strong>, <strong>Missed</strong>, and <strong>Ended</strong> states.</p>
+        </div>
+        ${renderCallPlaygroundControls()}
+        <div class="compare-cols">
+          <div class="compare-col">
+            <div class="compare-tag is-new"><span>1 · Live Activity Card (StandBy)</span><span>Selected · Mirrored to Full Phone</span></div>
+            ${renderCallCard(f.call, 'standby', 'connected', true, 'received')}
+            ${renderCallCard(f.call, 'standby', 'missed', false, 'received')}
+            ${renderCallCard(f.call, 'standby', 'ended', true, 'observed')}
+          </div>
+          <div class="compare-col">
+            <div class="compare-tag is-new"><span>2 · Call HUD (Cropped Screen)</span><span>Live + Missed + Ended</span></div>
+            ${renderCallCard(f.call, 'hud', 'connected', true, 'received')}
+            ${renderCallCard(f.call, 'hud', 'missed', false, 'received')}
+            ${renderCallCard(f.call, 'hud', 'ended', true, 'observed')}
+          </div>
+          <div class="compare-col">
+            <div class="compare-tag is-new"><span>3 · Dynamic CallKit Banner</span><span>Ultra-compact</span></div>
+            ${renderCallCard(f.call, 'callkit', 'connected', true, 'received')}
+            ${renderCallCard(f.call, 'callkit', 'missed', false, 'received')}
+            ${renderCallCard(f.call, 'callkit', 'ended', true, 'observed')}
+          </div>
+        </div>
+      </section>
+
+      ${renderFullPhoneCallUpgrade(f)}
+
+      <section class="matrix-section">
+        <div class="matrix-head">
+          <h2>Implementation Design Contract (Before Coding)</h2>
+          <p>Exact production boundaries, data inputs, and protected behaviors in <code>Pocket-main</code>.</p>
+        </div>
+        <div class="contract-grid">
+          <div class="contract-card">
+            <h3>Files Owned by Redesign</h3>
+            <ul>
+              <li><code>src/frontend/activity.ts</code> — Scene Card DOM builders (<code>buildMessageArtifact</code>, <code>buildBatchArtifact</code>) &amp; unified Voice Pill.</li>
+              <li><code>src/frontend/phone-screen.ts</code> — Full Phone Live Activity call screen + Voice Pill in <code>phone-lock</code> / <code>phone-chat</code> / <code>phone-group</code>.</li>
+              <li><code>src/frontend/components/voice-message.ts</code> &amp; <code>voice-message-styles.ts</code> — Replace raw <code>&lt;details&gt;</code> &amp; box button with integrated Audio Bubble + transcript toggle.</li>
+              <li><code>src/frontend/components/pocket-inline-redesign.css</code> &amp; <code>src/frontend/controller.ts</code> — Light/dark theme tokens, cropped phone chrome, wallpaper &amp; speaker accents.</li>
+            </ul>
+          </div>
+          <div class="contract-card">
+            <h3>Real App Data Contracts</h3>
+            <ul>
+              <li><code>PocketActivity.presentation</code>: <code>kind</code> (<code>received|observed|sent|batch</code>), <code>senderName</code>, <code>recipientNames</code>, <code>conversationTitle</code>, <code>format: 'voice'</code>, <code>batchMessages[]</code>.</li>
+              <li><code>PocketCallMarker</code>: <code>status</code> (<code>connected|ended|missed</code>), <code>speakerphone</code>, <code>durationSeconds</code>.</li>
+              <li><code>VoiceMessagePlayer</code>: preserves gesture-only SpeechSynthesis / Lumiverse TTS playback, <code>[role="status"]</code> errors, and always-accessible transcript.</li>
+            </ul>
+          </div>
+          <div class="contract-card">
+            <h3>Protected Invariants &amp; Test Updates</h3>
+            <ul>
+              <li>Shadow DOM isolation via <code>&lt;pocket-inline-ui&gt;</code>; zero <code>:root</code> or <code>!important</code> rules in <code>pocket-inline-redesign.css</code>.</li>
+              <li>Decorative mini-composers must use <code>&lt;span&gt;</code>, never <code>&lt;input&gt;</code> or <code>&lt;textarea&gt;</code> (<code>tests/contracts.mjs</code>).</li>
+              <li>No middleware arrows (<code>Alice → Kai</code>) or debug phrases (<code>observed phone</code>) in visible text.</li>
+              <li>Update <code>tests/voice.test.ts</code> (replacing <code>details</code> assertion with integrated transcript container), <code>scripts/check-visual.mjs</code> (<code>chat-voice.html</code>), and visual baselines intentionally during implementation.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  /* =====================================================================
+     RENDER ORCHESTRATION & EVENT WIRING
+     ===================================================================== */
+  let toastTimer = 0;
+  function showToast(msg) {
+    const el = document.getElementById('demo-toast');
+    const txt = document.getElementById('demo-toast-text');
+    txt.textContent = msg;
+    el.classList.add('is-visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('is-visible'), 2800);
+  }
+
+  function syncTabButtons() {
+    document.getElementById('tab-prose').setAttribute('aria-selected', String(state.tab === 'prose'));
+    document.getElementById('tab-full').setAttribute('aria-selected', String(state.tab === 'full'));
+    document.getElementById('tab-matrix').setAttribute('aria-selected', String(state.tab === 'matrix'));
+  }
+
+  function render() {
+    document.body.classList.toggle('is-reduced-motion', state.reduceMotion);
+    syncTabButtons();
+
+    const prosePanel = document.getElementById('panel-prose');
+    const fullPanel = document.getElementById('panel-full');
+    const matrixPanel = document.getElementById('panel-matrix');
+    prosePanel.hidden = state.tab !== 'prose';
+    fullPanel.hidden = state.tab !== 'full';
+    matrixPanel.hidden = state.tab !== 'matrix';
+
+    if (state.tab === 'prose') {
+      const stage = document.getElementById('prose-stage');
+      stage.dataset.width = state.width;
+      if (state.width === 'both') {
+        stage.innerHTML = renderProseColumn(false, 'Desktop Prose (680px)') + renderProseColumn(true, 'Mobile Chat (360px)');
+      } else {
+        const isMob = state.width === 'mobile';
+        stage.innerHTML = renderProseColumn(isMob, isMob ? 'Mobile Chat (360px)' : 'Desktop Prose (680px)');
+      }
+    } else if (state.tab === 'full') {
+      document.getElementById('full-root').innerHTML = renderFullPhoneTab();
+    } else {
+      document.getElementById('matrix-root').innerHTML = renderMatrix();
+    }
+  }
+
+  // Top controls delegation
+  document.querySelectorAll('.lab-seg').forEach(seg => {
+    const key = seg.dataset.control;
+    seg.addEventListener('click', e => {
+      const btn = e.target.closest('.lab-seg-btn');
+      if (!btn) return;
+      state[key] = btn.dataset.val;
+      seg.querySelectorAll('.lab-seg-btn').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      render();
+    });
+  });
+
+  document.getElementById('tab-prose').addEventListener('click', () => { state.tab = 'prose'; render(); });
+  document.getElementById('tab-full').addEventListener('click', () => { state.tab = 'full'; render(); });
+  document.getElementById('tab-matrix').addEventListener('click', () => { state.tab = 'matrix'; render(); });
+
+  document.getElementById('toggle-wallpaper').addEventListener('change', e => {
+    state.wallpaper = e.target.checked;
+    render();
+  });
+  document.getElementById('toggle-motion').addEventListener('change', e => {
+    state.reduceMotion = e.target.checked;
+    render();
+  });
+
+  // Delegated interactive actions inside rendered cards
+  document.addEventListener('click', e => {
+    const target = e.target.closest('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+
+    if (action === 'route') {
+      showToast(`Would open: ${target.dataset.route}`);
+    } else if (action === 'toggle-batch') {
+      state.batchExpanded = !state.batchExpanded;
+      render();
+    } else if (action === 'toggle-voice-error') {
+      state.voiceSimulateError = !state.voiceSimulateError;
+      if (state.voiceSimulateError) state.voicePlayingId = null;
+      render();
+    } else if (action === 'voice-play') {
+      const id = target.dataset.voiceId;
+      state.voicePlayingId = state.voicePlayingId === id ? null : id;
+      state.voiceProgress = 0.25;
+      render();
+    } else if (action === 'voice-transcript') {
+      const id = target.dataset.voiceId;
+      if (state.voiceTranscriptOpen.has(id)) state.voiceTranscriptOpen.delete(id);
+      else state.voiceTranscriptOpen.add(id);
+      render();
+    } else if (action === 'set-call-status') {
+      state.callDemo.status = target.dataset.val;
+      render();
+    } else if (action === 'toggle-call-speaker') {
+      state.callDemo.speakerphone = !state.callDemo.speakerphone;
+      render();
+    } else if (action === 'cycle-call-pov') {
+      const order = ['received', 'sent', 'observed'];
+      state.callDemo.pov = order[(order.indexOf(state.callDemo.pov) + 1) % order.length];
+      render();
+    } else if (action === 'call-mute') {
+      state.callDemo.muted = !state.callDemo.muted;
+      showToast(`Demo call ${state.callDemo.muted ? 'muted' : 'unmuted'}`);
+      render();
+    } else if (action === 'call-speaker') {
+      state.callDemo.speakerphone = !state.callDemo.speakerphone;
+      showToast(`Demo speakerphone ${state.callDemo.speakerphone ? 'on' : 'off'}`);
+      render();
+    } else if (action === 'call-end') {
+      state.callDemo.status = 'ended';
+      showToast('Demo call ended');
+      render();
+    } else if (action === 'call-back') {
+      state.callDemo.status = 'connected';
+      state.callDemo.elapsedSec = 1;
+      showToast('Demo call connected');
+      render();
+    }
+  });
+
+  // Escape dismisses toast
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.getElementById('demo-toast').classList.remove('is-visible');
+    }
+  });
+
+  // Subtle live timer for connected demo call & active mock voice playback
+  setInterval(() => {
+    let dirty = false;
+    if (state.callDemo.status === 'connected' && !state.reduceMotion) {
+      state.callDemo.elapsedSec += 1;
+      dirty = true;
+    }
+    if (state.voicePlayingId) {
+      state.voiceProgress += 0.14;
+      if (state.voiceProgress >= 1) { state.voicePlayingId = null; state.voiceProgress = 0; }
+      dirty = true;
+    }
+    if (dirty) render();
+  }, 1000);
+
+  // Support optional URL preview params (e.g. ?tab=full&theme=porcelain)
+  const params = new URLSearchParams(location.search);
+  if (['prose', 'full', 'matrix'].includes(params.get('tab'))) state.tab = params.get('tab');
+  if (['slice', 'surface', 'strip'].includes(params.get('dir'))) state.dir = params.get('dir');
+  if (['hud', 'callkit', 'standby'].includes(params.get('call'))) state.callStyle = params.get('call');
+  if (['midnight', 'porcelain', 'rose', 'forest', 'pink'].includes(params.get('theme'))) state.theme = params.get('theme');
+  if (['desktop', 'mobile', 'both'].includes(params.get('width'))) state.width = params.get('width');
+
+  // Sync initial UI controls to state
+  document.querySelectorAll('.lab-seg').forEach(seg => {
+    const key = seg.dataset.control;
+    seg.querySelectorAll('.lab-seg-btn').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.val === state[key])));
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

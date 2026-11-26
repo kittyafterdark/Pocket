@@ -151,6 +151,7 @@ function iconButton(name: string, label: string): HTMLButtonElement {
 
 class PocketController {
   private voicePlayer = new VoiceMessagePlayer()
+  private inlineVoicePlayer = new VoiceMessagePlayer()
   private ctx: SpindleFrontendContext
   private readonly surfaceId = pocketSurfaceId()
   private cleanups: Cleanup[] = []
@@ -447,6 +448,7 @@ class PocketController {
     this.lorebookPicker?.dismiss(); this.lorebookPicker = null; this.lorebookProgress.clear()
     for(const job of this.socialGifRequests.values()){clearTimeout(job.timer);job.reject(new Error('Pocket was closed.'))};this.socialGifRequests.clear()
     this.voicePlayer.stop()
+    this.inlineVoicePlayer.stop()
     this.setupModalDismiss?.()
     this.authoringSheetDismiss?.()
     this.destroyed = true
@@ -720,6 +722,7 @@ class PocketController {
     this.trackerMutationRequest = ''; this.trackerJevRequest = ''; this.jevWorking = false
     this.collectionRequest = ''; this.groupSaveRequest = ''; this.trackerSaveRequest = ''
     this.voicePlayer.stop()
+    this.inlineVoicePlayer.stop()
     window.clearTimeout(this.notificationTimer); this.shell.querySelector('.lp-floating-notification')?.remove()
     this.render(false)
   }
@@ -2301,6 +2304,7 @@ class PocketController {
     this.conversationDeleteDismiss?.(); this.conversationDeleteDismiss = null
     this.lorebookPicker?.dismiss(); this.lorebookPicker = null
     this.voicePlayer.stop()
+    this.inlineVoicePlayer.stop()
     for (const ui of this.launcherSessions.values()) {
       ui.placingSlot = undefined; ui.drawer = false; ui.query = ''
       if (!ui.pending) { ui.draft = undefined; ui.selected = undefined; ui.selectedItem = undefined; ui.placingSlot = undefined; ui.folderId = undefined; ui.widgetPicker = false; ui.error = undefined }
@@ -2336,6 +2340,10 @@ class PocketController {
     this.openPocket({ app } as PocketRoute)
   }
 
+  private renderVoiceFor(player: VoiceMessagePlayer, message: { text: string; senderName: string; senderActorId?: string }, variant: 'dm' | 'inline', defaultTranscriptOpen = false): HTMLElement {
+    return player.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || ''], { variant, defaultTranscriptOpen })
+  }
+
   private inlineOptions(activity: PocketActivity): ActivityRenderOptions {
     if (!this.state) return {}
     const owner = activityDeviceOwner(this.state, activity, this.currentDeviceOwnerActorId())
@@ -2347,7 +2355,7 @@ class PocketController {
     const background = wallpaper.source && image.url ? `linear-gradient(rgba(7,6,11,${wallpaper.scrim}),rgba(7,6,11,${wallpaper.scrim})),url(${JSON.stringify(image.url)}),${gradient}` : gradient
     return { appearance: this.preferences.inlineAppearance || 'cards', reducedMotion: this.preferences.reducedMotion || this.preferences.animation === 'none', clock: activityClock(activity, this.state), accent: appearance.colors.accent, background,
       backgroundSize: `cover,${wallpaper.fit},cover`, backgroundPosition: `center,${wallpaper.focalX * 100}% ${wallpaper.focalY * 100}%,center`,
-      textColor: appearance.colors.text, surfaceColor: appearance.colors.surface,
+      textColor: appearance.colors.text, surfaceColor: appearance.colors.surface, theme: appearance.theme, renderInlineVoice: message => this.renderVoiceFor(this.inlineVoicePlayer, message, 'inline', true),
       avatarUrl: activity.presentation?.senderActorId ? resolvePocketActor(this.state, activity.presentation.senderActorId)?.avatarUrl : undefined,
       avatars: Object.fromEntries((activity.presentation?.batchMessages || []).map(row => [row.senderActorId || '', resolvePocketActor(this.state!, row.senderActorId || '')?.avatarUrl || ''])) }
   }
@@ -2573,7 +2581,7 @@ class PocketController {
     this.pendingActivities.clear()
     window.clearInterval(this.receiptSweepTimer)
     this.receiptSweepTimer = 0
-    if (clearKnown) this.knownActivities.clear()
+    if (clearKnown) { this.knownActivities.clear(); this.inlineVoicePlayer.stop() }
     if (clearProvisional) this.provisionalActivities.clear()
     for (const host of document.querySelectorAll<HTMLElement>('[data-pocket-inline-anchor]')) {
       host.replaceChildren()
@@ -3091,7 +3099,7 @@ class PocketController {
     return renderMessagesView({
       dating,
       state: datingDisplayState(this.state!,dating?this.selectedConversationId:undefined), selectedConversationId: this.selectedConversationId,
-      renderVoiceMessage: message => this.voicePlayer.render(message, this.preferences.ttsVoiceURI, this.preferences.voiceMessages !== false, this.preferences.ttsConnectionId, this.preferences.ttsConnectionOptions?.[this.preferences.ttsConnectionId || '']),
+      renderVoiceMessage: message => this.renderVoiceFor(this.voicePlayer, message, 'dm', false),
       chatTheme:conversationId=>this.showChatTheme(conversationId),
       datingPhotoAction:(conversationId,messageId)=>this.datingAction('message_photo',{conversationId,messageId}),
       datingPhotoAvailable:Boolean(this.caps?.imageGen),datingPhotoBusy:this.datingUI.busy,

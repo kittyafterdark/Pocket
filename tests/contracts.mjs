@@ -2251,6 +2251,8 @@ dom.window.SpeechSynthesisUtterance = class { constructor(text) { this.text = te
 voiceUiState.state.conversations.find(entry => entry.id === 'picker-latest').messages[0].format = 'voice'
 backendReceiver({ ...voiceUiState, reason: 'refresh' })
 assert.ok(dockRoot.querySelector('.lp-voice-message'), 'canonical voice messages must render a playback control and transcript')
+assert.equal(dockRoot.querySelector('.lp-voice-message details'), null, 'DM voice messages must use the redesigned Audio Pill instead of a raw <details> box')
+assert.ok(dockRoot.querySelector('.lp-voice-transcript-toggle') && dockRoot.querySelector('.lp-voice-transcript'))
 await exportVisual('chat-voice', dockRoot)
 backendReceiver({ ...identityUiState, reason: 'refresh' })
 if (speechBeforeVoiceFixture.synthesis === undefined) delete dom.window.speechSynthesis
@@ -2970,7 +2972,7 @@ sentArtifactHost.dataset.pocketInlineAnchor = sentInlineActivity.id
 messageBubble.prepend(sentArtifactHost)
 backendReceiver({ type: 'lumiphone:activity', activity: sentInlineActivity })
 assert.equal(inlineAll(sentArtifactHost, '.pocket-inline-artifact[data-kind="sent"] .pocket-inline-chat-bubble').length, 1, 'sent inline communication must use the chat-bubble primitive')
-assert.match(inlineText(sentArtifactHost) || '', /Messages.*sent.*To Shoto Todoroki.*Bring some food when you come over\./s)
+assert.match(inlineText(sentArtifactHost) || '', /Shoto Todoroki.*Messages.*Bring some food when you come over\..*Delivered/s)
 assert.doesNotMatch(inlineText(sentArtifactHost) || '', /Pocket chat|Kai\s*→\s*Shoto Todoroki/i, 'sent diegetic UI must avoid middleware-style sender arrows')
 const batchInlineActivity = {
   ...inlineMessageActivity,
@@ -3045,16 +3047,30 @@ const callUiActivity = { ...inlineMessageActivity, id: 'call-ui', kind: 'call', 
 const callUiAnchor = document.createElement('div'); callUiAnchor.dataset.pocketInlineAnchor = callUiActivity.id; messageBubble.prepend(callUiAnchor)
 backendReceiver({ type: 'lumiphone:activity', activity: callUiActivity })
 assert.ok(inlineOne(callUiAnchor, '.pocket-phone-call[data-call-status="ended"]'))
+assert.ok(inlineOne(callUiAnchor, '.pk-ios-poster') && inlineOne(callUiAnchor, '.pk-ios-dock') && inlineOne(callUiAnchor, '.pk-standby-track'))
 assert.equal(inlineOne(callUiAnchor, '.pocket-inline-artifact'), null, 'call must be a dedicated screen, not a message panel')
 assert.equal(inlineOne(callUiAnchor, '.pocket-mock-composer'), null)
 assert.ok(inlineOne(callUiAnchor, '.pocket-phone-call-controls svg'))
 assert.match(inlineText(callUiAnchor), /Call ended.*Speakerphone.*4:00/)
+assert.doesNotMatch(inlineText(callUiAnchor), /Alice\s*→\s*Kai/)
 await exportVisual('phone-call', callUiAnchor)
-backendReceiver({ ...inlineAppearanceState, state: { ...inlineAppearanceState.state, activities: [...inlineAppearanceState.state.activities, callUiActivity] }, preferences: { ...firstState.preferences, inlineAppearance: 'cards' } })
+const voiceInlineActivity = { ...inlineMessageActivity, id: 'voice-inline-ui', summary: 'Catch the 21:50 platform.', presentation: { kind: 'received', senderName: 'Alice', format: 'voice' } }
+const voiceInlineAnchor = document.createElement('div'); voiceInlineAnchor.dataset.pocketInlineAnchor = voiceInlineActivity.id; messageBubble.prepend(voiceInlineAnchor)
+backendReceiver({ type: 'lumiphone:activity', activity: voiceInlineActivity })
+assert.ok(inlineOne(voiceInlineAnchor, '.pk-voice-pill'), 'Full Phone lock voice note uses Audio Pill')
+assert.equal(inlineOne(voiceInlineAnchor, 'details'), null)
+assert.doesNotMatch(inlineText(voiceInlineAnchor), /▶ Voice message/)
+backendReceiver({ ...inlineAppearanceState, state: { ...inlineAppearanceState.state, activities: [...inlineAppearanceState.state.activities, callUiActivity, voiceInlineActivity] }, preferences: { ...firstState.preferences, inlineAppearance: 'cards' } })
 assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.appearance, 'cards')
 assert.equal(inlineOne(batchArtifactHost, '.pocket-inline-frame').dataset.pocketUi, 'true', 'scene cards must declare the Pocket styling boundary')
 assert.equal(inlineOne(batchArtifactHost, '.lp-message-surface'), null, 'inline bubbles must not carry shared handset surface hooks')
 assert.equal(inlineOne(batchArtifactHost, '.pocket-mock-composer'), null)
+assert.ok(inlineOne(callUiAnchor, '.pk-standby-card') && inlineOne(callUiAnchor, '.pk-standby-track'), 'Scene call uses Live Activity card')
+assert.doesNotMatch(inlineText(callUiAnchor), /Alice\s*→\s*Kai/)
+assert.ok(inlineOne(voiceInlineAnchor, '.pk-voice-pill'), 'Scene card voice note uses Audio Pill')
+assert.equal(inlineOne(voiceInlineAnchor, 'details'), null)
+assert.doesNotMatch(inlineText(voiceInlineAnchor), /▶ Voice message/)
+voiceInlineAnchor.remove()
 await exportVisual('scene-message', exactArtifactHost)
 
 const activity = { ...tagActivity, route: { app: 'notes', noteId: 'missing-safe-fallback' } }
